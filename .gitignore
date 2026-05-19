@@ -1,0 +1,44 @@
+# Local secrets and machine-specific settings
+config.py
+*.local.py
+.env
+.env.*
+
+# Runtime state and logs
+*.log
+automation_record_log.txt
+last_result.json
+work_hours.json
+slack_message_rotation_state.json
+crm_state.json
+crm_processing_state.json
+crm_address_validator_state.json
+
+# Browser profiles and downloaded drivers
+.wdm/
+workers/.wdm/
+chrome_profile/
+chrome_profile_crm/
+chrome_profile_crm_auto_splitter_workers/
+slack_chrome_profile/
+
+# Generated artifacts
+screenshots/
+exports/
+backups/
+Test Files/
+workers/*_pre_*
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local third-party binaries/config
+LibreHardwareMonitor/
+
+# OS/editor files
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
