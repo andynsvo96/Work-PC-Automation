@@ -26,6 +26,24 @@ from automation_audit import log_automation_result
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULT_FILE = os.path.join(SCRIPT_DIR, "last_result.json")
 
+FAILURE_SCREENSHOT_MARKERS = (
+    "error",
+    "fail",
+    "failed",
+    "not_found",
+    "login_required",
+    "retry",
+    "tiny_viewport",
+    "stopped",
+)
+SUCCESS_SCREENSHOT_MARKERS = (
+    "success",
+    "sent",
+    "already_",
+    "dry_run_detected",
+    "loaded",
+)
+
 
 def configure_console_utf8():
     """Ensure stdout/stderr can print Unicode emitted by web pages."""
@@ -90,7 +108,31 @@ def write_result_payload(
     return payload
 
 
+def _runtime_config_bool(name, default=False):
+    try:
+        import config as runtime_config
+        return bool(getattr(runtime_config, name, default))
+    except Exception:
+        return bool(default)
+
+
+def _screenshot_allowed(name):
+    if _runtime_config_bool("AUTOMATION_DEBUG_SCREENSHOTS", False):
+        return True
+    lowered = str(name or "").lower()
+    failure_like = any(marker in lowered for marker in FAILURE_SCREENSHOT_MARKERS)
+    success_like = any(marker in lowered for marker in SUCCESS_SCREENSHOT_MARKERS)
+    if failure_like:
+        return _runtime_config_bool("AUTOMATION_SCREENSHOTS_ON_FAILURE", True)
+    if success_like:
+        return _runtime_config_bool("AUTOMATION_SCREENSHOTS_ON_SUCCESS", False)
+    return True
+
+
 def take_screenshot(driver, name, screenshots_dir=None):
+    if not _screenshot_allowed(name):
+        print(f"Screenshot skipped by policy: {name}")
+        return None
     if not screenshots_dir:
         screenshots_dir = os.path.join(SCRIPT_DIR, "screenshots")
     os.makedirs(screenshots_dir, exist_ok=True)

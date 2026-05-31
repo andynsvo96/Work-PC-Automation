@@ -2,12 +2,15 @@
 Work-domain route registration for the automation server.
 """
 
+import re
+
 from flask import jsonify, request
 
 
 def register_work_routes(
     app,
     *,
+    enqueue_automation,
     run_clock,
     automation_test_catalog,
     run_automation_test_suite,
@@ -23,22 +26,33 @@ def register_work_routes(
     clear_auto_clock_out_schedule,
     get_work_status_payload,
     start_crm_run,
+    run_crm_run_queued,
     get_crm_status_payload,
     get_crm_state_payload,
     clear_crm_history,
     start_crm_address_run,
+    run_crm_address_run_queued,
     get_crm_address_status_payload,
     get_crm_address_state_payload,
     clear_crm_address_history,
     set_crm_address_filter,
     update_crm_address_preferences,
     start_crm_order_goods_run,
+    run_crm_order_goods_run_queued,
     get_crm_order_goods_status_payload,
     update_crm_order_goods_preferences,
+    start_crm_shipping_bypasser_run,
+    run_crm_shipping_bypasser_run_queued,
+    get_crm_shipping_bypasser_status_payload,
+    start_crm_product_separator_run,
+    run_crm_product_separator_run_queued,
+    get_crm_product_separator_status_payload,
     start_crm_auto_splitter_run,
+    run_crm_auto_splitter_run_queued,
     get_crm_auto_splitter_status_payload,
     clear_crm_auto_splitter_history,
     start_crm_processing_run,
+    run_crm_processing_run_queued,
     get_crm_processing_status_payload,
     get_crm_processing_state_payload,
     update_crm_processing_preferences,
@@ -49,25 +63,28 @@ def register_work_routes(
                 return value
         return None
 
+    def _queue_response(label, category, fn, status_payload_fn=None, queue_details=None, queue_options=None):
+        queue_options = queue_options if isinstance(queue_options, dict) else {}
+        ok, msg, task = enqueue_automation(label, category, fn, details=queue_details, **queue_options)
+        payload = status_payload_fn() if callable(status_payload_fn) else {"success": True}
+        payload.update({"success": ok, "message": msg, "queued": ok, "queue_task": task})
+        return jsonify(payload), (202 if ok else 500)
+
     @app.route("/clock/in", methods=["POST", "GET"])
     def clock_in():
-        ok, msg = run_clock("in", dry_run=False)
-        return jsonify({"success": ok, "message": msg}), (200 if ok else 500)
+        return _queue_response("Paycom Clock In", "Communications", lambda: run_clock("in", dry_run=False))
 
     @app.route("/clock/out", methods=["POST", "GET"])
     def clock_out():
-        ok, msg = run_clock("out", dry_run=False)
-        return jsonify({"success": ok, "message": msg}), (200 if ok else 500)
+        return _queue_response("Paycom Clock Out", "Communications", lambda: run_clock("out", dry_run=False))
 
     @app.route("/clock/test/in", methods=["POST", "GET"])
     def clock_test_in():
-        ok, msg = run_clock("in", dry_run=True)
-        return jsonify({"success": ok, "message": msg}), (200 if ok else 500)
+        return _queue_response("Paycom Clock In Dry Run", "Development", lambda: run_clock("in", dry_run=True))
 
     @app.route("/clock/test/out", methods=["POST", "GET"])
     def clock_test_out():
-        ok, msg = run_clock("out", dry_run=True)
-        return jsonify({"success": ok, "message": msg}), (200 if ok else 500)
+        return _queue_response("Paycom Clock Out Dry Run", "Development", lambda: run_clock("out", dry_run=True))
 
     @app.route("/automation/test-options", methods=["GET"])
     def automation_test_options():
@@ -82,18 +99,19 @@ def register_work_routes(
     def automation_test_suite():
         data = request.get_json(silent=True) or {}
         selected = data.get("tests")
-        ok, msg, results = run_automation_test_suite(selected)
-        return jsonify({"success": ok, "message": msg, "results": results}), 200
+        return _queue_response(
+            "Automation Test Suite",
+            "Development",
+            lambda: run_automation_test_suite(selected)[:2],
+        )
 
     @app.route("/slack/in", methods=["POST", "GET"])
     def slack_in():
-        ok, msg = run_slack("in")
-        return jsonify({"success": ok, "message": msg}), (200 if ok else 500)
+        return _queue_response("Slack In", "Communications", lambda: run_slack("in"))
 
     @app.route("/slack/out", methods=["POST", "GET"])
     def slack_out():
-        ok, msg = run_slack("out")
-        return jsonify({"success": ok, "message": msg}), (200 if ok else 500)
+        return _queue_response("Slack Out", "Communications", lambda: run_slack("out"))
 
     @app.route("/slack/lunch", methods=["POST", "GET"])
     def slack_lunch():
@@ -103,9 +121,13 @@ def register_work_routes(
             use_test_url = is_trueish(data.get("test_url"))
         else:
             use_test_url = is_trueish(request.args.get("test_url"))
-        ok, msg = start_slack_lunch_break(force_test_url=use_test_url)
-        payload = get_slack_lunch_payload()
-        return jsonify({"success": ok, "message": msg, "lunch": payload}), (200 if ok else 500)
+        label = "Slack Lunch Test Start" if use_test_url else "Slack Lunch Start"
+        return _queue_response(
+            label,
+            "Development" if use_test_url else "Communications",
+            lambda: start_slack_lunch_break(force_test_url=use_test_url),
+            lambda: {"success": True, "lunch": get_slack_lunch_payload()},
+        )
 
     @app.route("/slack/lunch/status", methods=["GET"])
     def slack_lunch_status():
@@ -119,18 +141,15 @@ def register_work_routes(
 
     @app.route("/work/in", methods=["POST", "GET"])
     def work_in():
-        ok, msg = run_work("in", automatic=False)
-        return jsonify({"success": ok, "message": msg}), (200 if ok else 500)
+        return _queue_response("Work In", "Communications", lambda: run_work("in", automatic=False))
 
     @app.route("/work/out", methods=["POST", "GET"])
     def work_out():
-        ok, msg = run_work("out", automatic=False)
-        return jsonify({"success": ok, "message": msg}), (200 if ok else 500)
+        return _queue_response("Work Out", "Communications", lambda: run_work("out", automatic=False))
 
     @app.route("/work/sync", methods=["POST", "GET"])
     def work_sync():
-        ok, msg = run_work_sync()
-        return jsonify({"success": ok, "message": msg}), (200 if ok else 500)
+        return _queue_response("Sync Paycom Hours", "Communications", run_work_sync)
 
     @app.route("/work/schedule", methods=["POST", "GET"])
     def work_schedule():
@@ -161,10 +180,7 @@ def register_work_routes(
 
     @app.route("/crm/unlock", methods=["POST", "GET"])
     def crm_unlock():
-        ok, msg = start_crm_run(dry_run=False)
-        payload = get_crm_status_payload()
-        payload.update({"success": ok, "message": msg})
-        return jsonify(payload), (202 if ok else 409)
+        return _queue_response("Stock Unlocker", "Processing", lambda: run_crm_run_queued(dry_run=False), get_crm_status_payload)
 
     def _crm_processing_request_options():
         data = request.get_json(silent=True) if request.method == "POST" else None
@@ -188,6 +204,18 @@ def register_work_routes(
                 request.args.get("order_goods_enabled"),
                 request.args.get("orderGoodsEnabled"),
             ),
+            "shipping_bypasser_enabled": _first_present(
+                data.get("shipping_bypasser_enabled"),
+                data.get("shippingBypasserEnabled"),
+                request.args.get("shipping_bypasser_enabled"),
+                request.args.get("shippingBypasserEnabled"),
+            ),
+            "product_separator_enabled": _first_present(
+                data.get("product_separator_enabled"),
+                data.get("productSeparatorEnabled"),
+                request.args.get("product_separator_enabled"),
+                request.args.get("productSeparatorEnabled"),
+            ),
             "processing_filter": _first_present(
                 data.get("processing_filter"),
                 data.get("processingFilter"),
@@ -196,33 +224,224 @@ def register_work_routes(
                 request.args.get("processingFilter"),
                 request.args.get("filter"),
             ),
+            "advanced_mode": _first_present(
+                data.get("advanced_mode"),
+                data.get("advancedMode"),
+                data.get("queue_mode"),
+                data.get("queueMode"),
+                request.args.get("advanced_mode"),
+                request.args.get("advancedMode"),
+                request.args.get("queue_mode"),
+                request.args.get("queueMode"),
+            ),
+            "repeat_interval_minutes": _first_present(
+                data.get("repeat_interval_minutes"),
+                data.get("repeatIntervalMinutes"),
+                data.get("repeat_minutes"),
+                data.get("repeatMinutes"),
+                request.args.get("repeat_interval_minutes"),
+                request.args.get("repeatIntervalMinutes"),
+                request.args.get("repeat_minutes"),
+                request.args.get("repeatMinutes"),
+            ),
+            "scheduled_time": _first_present(
+                data.get("scheduled_time"),
+                data.get("scheduledTime"),
+                data.get("scheduled_for"),
+                data.get("scheduledFor"),
+                request.args.get("scheduled_time"),
+                request.args.get("scheduledTime"),
+                request.args.get("scheduled_for"),
+                request.args.get("scheduledFor"),
+            ),
         }
+
+    def _crm_processing_filter_label(processing_filter):
+        key = str(processing_filter or "").strip().lower()
+        if key == "all":
+            return "All"
+        if key == "free":
+            return "Free Ship"
+        return "Rush"
+
+    def _crm_processing_bool(value, default=False):
+        if value is None:
+            return bool(default)
+        if isinstance(value, bool):
+            return value
+        return is_trueish(value)
+
+    def _crm_processing_effective_options(options):
+        options = dict(options or {})
+        payload = get_crm_processing_state_payload()
+        state = payload.get("state") if isinstance(payload, dict) else {}
+        state = state if isinstance(state, dict) else {}
+        raw_filter = options.get("processing_filter")
+        processing_filter = str(raw_filter if raw_filter is not None else state.get("processing_filter") or "rush").strip().lower()
+        if processing_filter not in {"rush", "free", "all"}:
+            processing_filter = "rush"
+
+        effective = {
+            "stock_unlocker_enabled": _crm_processing_bool(
+                options.get("stock_unlocker_enabled"),
+                state.get("stock_unlocker_enabled", True),
+            ),
+            "address_validator_enabled": _crm_processing_bool(
+                options.get("address_validator_enabled"),
+                state.get("address_validator_enabled", True),
+            ),
+            "product_separator_enabled": _crm_processing_bool(
+                options.get("product_separator_enabled"),
+                state.get("product_separator_enabled", True),
+            ),
+            "order_goods_enabled": _crm_processing_bool(
+                options.get("order_goods_enabled"),
+                state.get("order_goods_enabled", True),
+            ),
+            "shipping_bypasser_enabled": _crm_processing_bool(
+                options.get("shipping_bypasser_enabled"),
+                state.get("shipping_bypasser_enabled", True),
+            ),
+            "processing_filter": processing_filter,
+        }
+        if processing_filter == "all":
+            effective["address_validator_enabled"] = True
+            effective["stock_unlocker_enabled"] = False
+            effective["order_goods_enabled"] = False
+            effective["shipping_bypasser_enabled"] = False
+        elif processing_filter != "rush":
+            effective["stock_unlocker_enabled"] = False
+            effective["order_goods_enabled"] = False
+            effective["shipping_bypasser_enabled"] = False
+        return effective
+
+    def _crm_processing_advanced_mode(options):
+        key = str((options or {}).get("advanced_mode") or "").strip().lower()
+        if key in {"repeat", "scheduled"}:
+            return key
+        return "normal"
+
+    def _crm_processing_step_signature(effective):
+        steps = []
+        if effective.get("address_validator_enabled"):
+            steps.append("validator")
+        if effective.get("product_separator_enabled"):
+            steps.append("separator")
+        if effective.get("stock_unlocker_enabled") and effective.get("processing_filter") == "rush":
+            steps.append("unlocker")
+        if (
+            (effective.get("order_goods_enabled") or effective.get("shipping_bypasser_enabled"))
+            and effective.get("processing_filter") == "rush"
+        ):
+            steps.append("order_goods")
+        return steps
+
+    def _crm_processing_queue_options(options):
+        effective = _crm_processing_effective_options(options)
+        mode = _crm_processing_advanced_mode(options)
+        steps = _crm_processing_step_signature(effective)
+        signature = {
+            "type": "crm_processing",
+            "mode": effective.get("processing_filter"),
+            "steps": steps,
+            "advanced_mode": mode,
+        }
+        queue_options = {"automation_signature": signature}
+        if mode == "repeat":
+            interval = options.get("repeat_interval_minutes")
+            queue_options.update(
+                {
+                    "queue_mode": "repeat",
+                    "repeat_interval_minutes": interval,
+                    "advanced_summary": f"Repeat every {interval or 5} minutes | {effective.get('processing_filter')} | {', '.join(steps)}",
+                }
+            )
+            signature["repeat_interval_minutes"] = interval
+        elif mode == "scheduled":
+            scheduled = options.get("scheduled_time")
+            queue_options.update(
+                {
+                    "queue_mode": "scheduled",
+                    "scheduled_for": scheduled,
+                    "advanced_summary": f"Scheduled for {scheduled} | {effective.get('processing_filter')} | {', '.join(steps)}",
+                }
+            )
+            signature["scheduled_time"] = scheduled
+        return queue_options
+
+    def _crm_processing_queue_label(options):
+        effective = _crm_processing_effective_options(options)
+        advanced_mode = _crm_processing_advanced_mode(options)
+        steps = []
+        if effective.get("address_validator_enabled"):
+            steps.append("Validator")
+        if effective.get("product_separator_enabled"):
+            steps.append("Separator")
+        if effective.get("stock_unlocker_enabled") and effective.get("processing_filter") == "rush":
+            steps.append("Unlocker")
+        if (
+            (effective.get("order_goods_enabled") or effective.get("shipping_bypasser_enabled"))
+            and effective.get("processing_filter") == "rush"
+        ):
+            if effective.get("order_goods_enabled") and effective.get("shipping_bypasser_enabled"):
+                steps.append("Order Goods: Stock + Bypass")
+            elif effective.get("order_goods_enabled"):
+                steps.append("Order Goods: Stock Only")
+            else:
+                steps.append("Order Goods: Bypass Only")
+        step_text = ", ".join(steps) if steps else "none selected"
+        prefix = "Processing"
+        if advanced_mode == "repeat":
+            prefix = "Repeat Processing"
+        elif advanced_mode == "scheduled":
+            prefix = "Scheduled Processing"
+        return f"{prefix} - {_crm_processing_filter_label(effective.get('processing_filter'))}: {step_text}"
 
     @app.route("/crm/process", methods=["POST", "GET"])
     def crm_process():
-        ok, msg = start_crm_processing_run(**_crm_processing_request_options())
-        payload = get_crm_processing_status_payload()
-        payload.update({"success": ok, "message": msg})
-        return jsonify(payload), (202 if ok else 409)
+        raw_options = _crm_processing_request_options()
+        options = _crm_processing_effective_options(raw_options)
+        queue_source = {**raw_options, **options}
+        return _queue_response(
+            _crm_processing_queue_label(queue_source),
+            "Processing",
+            lambda: run_crm_processing_run_queued(**options),
+            get_crm_processing_status_payload,
+            queue_options=_crm_processing_queue_options(queue_source),
+        )
 
     def _crm_processing_mode_options(processing_filter):
         options = _crm_processing_request_options()
         options["processing_filter"] = processing_filter
         if processing_filter == "rush":
-            options["stock_unlocker_enabled"] = True
-            options["address_validator_enabled"] = True
-            options["order_goods_enabled"] = True
+            if options.get("stock_unlocker_enabled") is None:
+                options["stock_unlocker_enabled"] = True
+            if options.get("address_validator_enabled") is None:
+                options["address_validator_enabled"] = True
+            if options.get("product_separator_enabled") is None:
+                options["product_separator_enabled"] = True
+            if options.get("order_goods_enabled") is None:
+                options["order_goods_enabled"] = True
+            if options.get("shipping_bypasser_enabled") is None:
+                options["shipping_bypasser_enabled"] = True
         else:
             options["stock_unlocker_enabled"] = False
             options["address_validator_enabled"] = True
             options["order_goods_enabled"] = False
+            options["shipping_bypasser_enabled"] = False
         return options
 
     def _start_crm_processing_mode(processing_filter):
-        ok, msg = start_crm_processing_run(**_crm_processing_mode_options(processing_filter))
-        payload = get_crm_processing_status_payload()
-        payload.update({"success": ok, "message": msg})
-        return jsonify(payload), (202 if ok else 409)
+        raw_options = _crm_processing_mode_options(processing_filter)
+        options = _crm_processing_effective_options(raw_options)
+        queue_source = {**raw_options, **options}
+        return _queue_response(
+            _crm_processing_queue_label(queue_source),
+            "Processing",
+            lambda: run_crm_processing_run_queued(**options),
+            get_crm_processing_status_payload,
+            queue_options=_crm_processing_queue_options(queue_source),
+        )
 
     @app.route("/crm/process/rush", methods=["POST", "GET"])
     @app.route("/crm/process/rushes", methods=["POST", "GET"])
@@ -250,17 +469,25 @@ def register_work_routes(
     @app.route("/crm/process/preferences", methods=["POST"])
     def crm_process_preferences():
         options = _crm_processing_request_options()
-        ok, msg, _state = update_crm_processing_preferences(**options)
+        preference_options = {
+            key: options.get(key)
+            for key in (
+                "stock_unlocker_enabled",
+                "address_validator_enabled",
+                "product_separator_enabled",
+                "order_goods_enabled",
+                "shipping_bypasser_enabled",
+                "processing_filter",
+            )
+        }
+        ok, msg, _state = update_crm_processing_preferences(**preference_options)
         payload = get_crm_processing_status_payload()
         payload.update({"success": ok, "message": msg})
         return jsonify(payload), 200
 
     @app.route("/crm/unlock/dry-run", methods=["POST", "GET"])
     def crm_unlock_dry_run():
-        ok, msg = start_crm_run(dry_run=True)
-        payload = get_crm_status_payload()
-        payload.update({"success": ok, "message": msg})
-        return jsonify(payload), (202 if ok else 409)
+        return _queue_response("Stock Unlocker Dry Run", "Processing", lambda: run_crm_run_queued(dry_run=True), get_crm_status_payload)
 
     @app.route("/crm/status", methods=["GET"])
     def crm_status():
@@ -312,6 +539,25 @@ def register_work_routes(
             "list_url": _first_present(data.get("list_url"), data.get("listUrl"), request.args.get("list_url"), request.args.get("listUrl")),
         }
 
+    def _crm_shipping_bypasser_request_options():
+        data = request.get_json(silent=True) if request.method == "POST" else None
+        data = data if isinstance(data, dict) else {}
+        return {
+            "order_id": _first_present(data.get("order_id"), data.get("orderId"), data.get("target_order_id"), request.args.get("order_id"), request.args.get("orderId"), request.args.get("target_order_id")),
+            "batch_size": _first_present(data.get("batch_size"), data.get("batchSize"), request.args.get("batch_size"), request.args.get("batchSize")),
+            "list_url": _first_present(data.get("list_url"), data.get("listUrl"), request.args.get("list_url"), request.args.get("listUrl")),
+        }
+
+    def _crm_product_separator_request_options():
+        data = request.get_json(silent=True) if request.method == "POST" else None
+        data = data if isinstance(data, dict) else {}
+        return {
+            "order_id": _first_present(data.get("order_id"), data.get("orderId"), data.get("target_order_id"), request.args.get("order_id"), request.args.get("orderId"), request.args.get("target_order_id")),
+            "list_mode": _first_present(data.get("list_mode"), data.get("listMode"), data.get("mode"), data.get("filter"), request.args.get("list_mode"), request.args.get("listMode"), request.args.get("mode"), request.args.get("filter")),
+            "parallel_workers": _first_present(data.get("parallel_workers"), data.get("parallelWorkers"), request.args.get("parallel_workers"), request.args.get("parallelWorkers")),
+            "list_url": _first_present(data.get("list_url"), data.get("listUrl"), request.args.get("list_url"), request.args.get("listUrl")),
+        }
+
     def _crm_auto_splitter_request_options():
         data = request.get_json(silent=True) if request.method == "POST" else None
         data = data if isinstance(data, dict) else {}
@@ -336,19 +582,48 @@ def register_work_routes(
             "parallel_workers": _first_present(data.get("parallel_workers"), data.get("parallelWorkers"), request.args.get("parallel_workers"), request.args.get("parallelWorkers")),
         }
 
+    def _crm_auto_splitter_order_label(order_target):
+        text = str(order_target or "").strip()
+        match = re.search(r"(?:^|/order/|[?&]order_id=)(\d{5,})", text, flags=re.I) or re.search(r"\b(\d{5,})\b", text)
+        return match.group(1) if match else text
+
+    def _crm_auto_splitter_queue_label(options, dry_run=False):
+        order = _crm_auto_splitter_order_label(options.get("order_target"))
+        prefix = "Auto Splitter Dry Run" if dry_run else "Auto Splitter"
+        return f"{prefix} - Order {order}" if order else prefix
+
+    def _crm_auto_splitter_queue_details(options):
+        parts = []
+        tab_count = options.get("tab_count")
+        divisions = options.get("divisions")
+        workers = options.get("parallel_workers")
+        if tab_count not in (None, ""):
+            parts.append(f"Tabs {tab_count}")
+        if divisions not in (None, ""):
+            parts.append(f"Divisions {divisions}")
+        if workers not in (None, ""):
+            parts.append(f"Workers {workers}")
+        return " | ".join(parts)
+
     @app.route("/crm/address-validator", methods=["POST", "GET"])
     def crm_address_validator():
-        ok, msg = start_crm_address_run(dry_run=False, **_crm_address_request_options())
-        payload = get_crm_address_status_payload()
-        payload.update({"success": ok, "message": msg})
-        return jsonify(payload), (202 if ok else 409)
+        options = _crm_address_request_options()
+        return _queue_response(
+            "Address Validator",
+            "Processing",
+            lambda: run_crm_address_run_queued(dry_run=False, **options),
+            get_crm_address_status_payload,
+        )
 
     @app.route("/crm/address-validator/dry-run", methods=["POST", "GET"])
     def crm_address_validator_dry_run():
-        ok, msg = start_crm_address_run(dry_run=True, **_crm_address_request_options())
-        payload = get_crm_address_status_payload()
-        payload.update({"success": ok, "message": msg})
-        return jsonify(payload), (202 if ok else 409)
+        options = _crm_address_request_options()
+        return _queue_response(
+            "Address Validator Dry Run",
+            "Processing",
+            lambda: run_crm_address_run_queued(dry_run=True, **options),
+            get_crm_address_status_payload,
+        )
 
     @app.route("/crm/address-validator/status", methods=["GET"])
     def crm_address_validator_status():
@@ -388,21 +663,54 @@ def register_work_routes(
 
     @app.route("/crm/order-goods", methods=["POST", "GET"])
     def crm_order_goods():
-        ok, msg = start_crm_order_goods_run(dry_run=False, **_crm_order_goods_request_options())
-        payload = get_crm_order_goods_status_payload()
-        payload.update({"success": ok, "message": msg})
-        return jsonify(payload), (202 if ok else 409)
+        options = _crm_order_goods_request_options()
+        return _queue_response(
+            "Rush Order Goods",
+            "Processing",
+            lambda: run_crm_order_goods_run_queued(dry_run=False, **options),
+            get_crm_order_goods_status_payload,
+        )
 
     @app.route("/crm/order-goods/dry-run", methods=["POST", "GET"])
     def crm_order_goods_dry_run():
-        ok, msg = start_crm_order_goods_run(dry_run=True, **_crm_order_goods_request_options())
-        payload = get_crm_order_goods_status_payload()
-        payload.update({"success": ok, "message": msg})
-        return jsonify(payload), (202 if ok else 409)
+        options = _crm_order_goods_request_options()
+        return _queue_response(
+            "Rush Order Goods Dry Run",
+            "Processing",
+            lambda: run_crm_order_goods_run_queued(dry_run=True, **options),
+            get_crm_order_goods_status_payload,
+        )
 
     @app.route("/crm/order-goods/status", methods=["GET"])
     def crm_order_goods_status():
         return jsonify(get_crm_order_goods_status_payload()), 200
+
+    @app.route("/crm/shipping-bypasser", methods=["POST", "GET"])
+    @app.route("/crm/shipping-bypass", methods=["POST", "GET"])
+    def crm_shipping_bypasser():
+        options = _crm_shipping_bypasser_request_options()
+        return _queue_response(
+            "Shipping Bypasser",
+            "Processing",
+            lambda: run_crm_shipping_bypasser_run_queued(dry_run=False, **options),
+            get_crm_shipping_bypasser_status_payload,
+        )
+
+    @app.route("/crm/shipping-bypasser/dry-run", methods=["POST", "GET"])
+    @app.route("/crm/shipping-bypass/dry-run", methods=["POST", "GET"])
+    def crm_shipping_bypasser_dry_run():
+        options = _crm_shipping_bypasser_request_options()
+        return _queue_response(
+            "Shipping Bypasser Dry Run",
+            "Processing",
+            lambda: run_crm_shipping_bypasser_run_queued(dry_run=True, **options),
+            get_crm_shipping_bypasser_status_payload,
+        )
+
+    @app.route("/crm/shipping-bypasser/status", methods=["GET"])
+    @app.route("/crm/shipping-bypass/status", methods=["GET"])
+    def crm_shipping_bypasser_status():
+        return jsonify(get_crm_shipping_bypasser_status_payload()), 200
 
     @app.route("/crm/order-goods/preferences", methods=["POST"])
     def crm_order_goods_preferences():
@@ -414,21 +722,60 @@ def register_work_routes(
         payload.update({"success": ok, "message": msg})
         return jsonify(payload), 200
 
+    @app.route("/crm/product-separator", methods=["POST", "GET"])
+    @app.route("/crm/product-seperator", methods=["POST", "GET"])
+    @app.route("/crm/separator", methods=["POST", "GET"])
+    @app.route("/crm/seperator", methods=["POST", "GET"])
+    def crm_product_separator():
+        options = _crm_product_separator_request_options()
+        return _queue_response(
+            "Product Separator",
+            "Processing",
+            lambda: run_crm_product_separator_run_queued(dry_run=False, **options),
+            get_crm_product_separator_status_payload,
+        )
+
+    @app.route("/crm/product-separator/dry-run", methods=["POST", "GET"])
+    @app.route("/crm/product-seperator/dry-run", methods=["POST", "GET"])
+    @app.route("/crm/separator/dry-run", methods=["POST", "GET"])
+    @app.route("/crm/seperator/dry-run", methods=["POST", "GET"])
+    def crm_product_separator_dry_run():
+        options = _crm_product_separator_request_options()
+        return _queue_response(
+            "Product Separator Dry Run",
+            "Processing",
+            lambda: run_crm_product_separator_run_queued(dry_run=True, **options),
+            get_crm_product_separator_status_payload,
+        )
+
+    @app.route("/crm/product-separator/status", methods=["GET"])
+    @app.route("/crm/product-seperator/status", methods=["GET"])
+    @app.route("/crm/separator/status", methods=["GET"])
+    @app.route("/crm/seperator/status", methods=["GET"])
+    def crm_product_separator_status():
+        return jsonify(get_crm_product_separator_status_payload()), 200
+
     @app.route("/crm/auto-splitter", methods=["POST", "GET"])
     def crm_auto_splitter():
         options = _crm_auto_splitter_request_options()
-        ok, msg = start_crm_auto_splitter_run(dry_run=False, **options)
-        payload = get_crm_auto_splitter_status_payload()
-        payload.update({"success": ok, "message": msg})
-        return jsonify(payload), (202 if ok else 409)
+        return _queue_response(
+            _crm_auto_splitter_queue_label(options, dry_run=False),
+            "Processing",
+            lambda: run_crm_auto_splitter_run_queued(dry_run=False, **options),
+            get_crm_auto_splitter_status_payload,
+            queue_details=_crm_auto_splitter_queue_details(options),
+        )
 
     @app.route("/crm/auto-splitter/dry-run", methods=["POST", "GET"])
     def crm_auto_splitter_dry_run():
         options = _crm_auto_splitter_request_options()
-        ok, msg = start_crm_auto_splitter_run(dry_run=True, **options)
-        payload = get_crm_auto_splitter_status_payload()
-        payload.update({"success": ok, "message": msg})
-        return jsonify(payload), (202 if ok else 409)
+        return _queue_response(
+            _crm_auto_splitter_queue_label(options, dry_run=True),
+            "Processing",
+            lambda: run_crm_auto_splitter_run_queued(dry_run=True, **options),
+            get_crm_auto_splitter_status_payload,
+            queue_details=_crm_auto_splitter_queue_details(options),
+        )
 
     @app.route("/crm/auto-splitter/status", methods=["GET"])
     def crm_auto_splitter_status():

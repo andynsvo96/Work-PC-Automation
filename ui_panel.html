@@ -92,10 +92,36 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .tab-bar{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 12px}
 .tab-btn{background:#e2e8f0;border-color:#cbd5e1;color:#0f172a}
 .tab-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
-.console-tab-btn{margin-left:auto}
+.queue-tab-btn{margin-left:auto}
+.console-tab-btn{margin-left:0}
 .master-refresh-btn{background:#fff;border-color:#2563eb;color:#2563eb}
 .tab-panel{display:none}
 .tab-panel.active{display:block}
+.queue-panel{display:none;margin:0 0 12px;border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:10px;box-shadow:0 12px 28px rgba(15,23,42,.12)}
+.queue-panel.active{display:block}
+.queue-header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.queue-header h2{margin:0;font-size:16px}
+.queue-list{display:flex;flex-direction:column;gap:6px}
+.queue-item{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:8px;align-items:center;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;padding:8px}
+.queue-item[draggable=true]{cursor:grab}
+.queue-item.running{border-color:#2563eb;background:#eff6ff}
+.queue-item.idle{border-color:#94a3b8;background:#f8fafc}
+.queue-item.completed{opacity:.72}
+.queue-item.failed,.queue-item.canceled{opacity:.82}
+.queue-drag{width:22px;text-align:center;color:#64748b;font-weight:800}
+.queue-title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.queue-meta{font-size:12px;color:#64748b;margin-top:2px}
+.queue-status{font-size:12px;font-weight:700;text-transform:uppercase}
+.queue-status.running{color:#1d4ed8}
+.queue-status.queued{color:#854d0e}
+.queue-status.idle{color:#475569}
+.queue-status.completed{color:#166534}
+.queue-status.failed,.queue-status.canceled{color:#b91c1c}
+.queue-cancel-btn{width:30px;height:30px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:999px}
+.queue-runs{grid-column:2 / -1;border-top:1px solid #e2e8f0;margin-top:4px;padding-top:6px;font-size:12px;color:#334155}
+.queue-runs table{width:100%;border-collapse:collapse}
+.queue-runs td,.queue-runs th{padding:4px 6px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}
+.queue-empty{color:#64748b;font-size:13px;padding:10px}
 .desktop-metrics-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:8px;margin:10px 0}
 .desktop-metric-value{font-size:20px;font-weight:700}
 .metrics-title-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
@@ -124,8 +150,22 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
   <button class='tab-btn' id='tabBtnDevelopment' onclick="setActiveTab('development')">Development</button>
   <button class='tab-btn' id='tabBtnMetrics' onclick="setActiveTab('metrics')">Desktop Metrics Server</button>
   <button class='tab-btn' id='tabBtnPower' onclick="setActiveTab('power')">System Power</button>
+  <button class='tab-btn queue-tab-btn' id='tabBtnQueue' onclick='toggleQueuePanel()'>Queue</button>
   <button class='tab-btn console-tab-btn' id='tabBtnConsole' onclick="setActiveTab('console')">Console</button>
   <button class='tab-btn master-refresh-btn' id='masterRefreshBtn' onclick='refreshAllStatuses(this)'>Refresh All</button>
+</div>
+
+<div id='queuePanel' class='queue-panel'>
+  <div class='queue-header'>
+    <h2>Automation Queue</h2>
+    <div class='row' style='margin-bottom:0'>
+      <span class='muted' id='queueSummaryText'>Queue loading...</span>
+      <button class='secondary tiny' onclick='loadQueue(true)'>Refresh Queue</button>
+      <button class='secondary tiny' onclick='clearFinishedQueueTasks()'>Clear All</button>
+      <button class='danger tiny' onclick='cancelAllQueueTasks()'>Cancel All Tasks</button>
+    </div>
+  </div>
+  <div id='queueList' class='queue-list'><div class='queue-empty'>Loading queue...</div></div>
 </div>
 
 <div id='tabAutomation' class='tab-panel active'>
@@ -215,7 +255,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       <details class='section-note'>
         <summary>Read More</summary>
         <div class='section-note-body'>
-          <p>The Rush/Free/All toggle here only affects Automate Processing. Rush mode defaults to Validator, Unlocker, and Order Goods. Free Ship and All run Address Validator only.</p>
+          <p>The Rush/Free/All toggle here only affects Automate Processing. Rush mode defaults to Validator, Separator, Unlocker, and Order Goods. The Order Goods button cycles Stock/Bypass, Order Only, Bypass Only, and Disabled. Free Ship and All run Validator and Separator.</p>
           <p>Home Assistant / Alexa endpoints: /crm/process/rush, /crm/process/free-ship, and /crm/process/all. The original /crm/process endpoint still runs whatever is currently selected above.</p>
         </div>
       </details>
@@ -226,16 +266,44 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
     </div>
     <div class='row' style='align-items:center'>
       <button class='secondary toggle-btn active' id='crmProcessingAddressToggleBtn' onclick='toggleCrmProcessingSelection("address_validator_batch")'>Validator</button>
+      <button class='secondary toggle-btn active' id='crmProcessingSeparatorToggleBtn' onclick='toggleCrmProcessingSelection("product_separator")'>Separator</button>
       <button class='secondary toggle-btn active' id='crmProcessingUnlockToggleBtn' onclick='toggleCrmProcessingSelection("stock_unlocker")'>Unlocker</button>
       <button class='secondary toggle-btn active' id='crmProcessingOrderGoodsToggleBtn' onclick='toggleCrmProcessingSelection("order_goods")'>Order Goods</button>
     </div>
+    <details class='section-note' style='margin-top:8px'>
+      <summary>Advanced Controls</summary>
+      <div class='section-note-body'>
+        <div class='row' style='align-items:center;flex-wrap:wrap'>
+          <label class='check'><input type='checkbox' id='crmProcessingRepeatToggle' onchange='syncCrmProcessingAdvancedControls("repeat")'> REPEAT</label>
+          <label for='crmProcessingRepeatMinutesInput' class='muted'>Every</label>
+          <input id='crmProcessingRepeatMinutesInput' type='number' min='5' max='60' step='5' value='5' style='width:92px;padding:7px;border:1px solid #cbd5e1;border-radius:6px' oninput='syncCrmProcessingAdvancedControls()'>
+          <span class='muted'>minutes</span>
+          <label class='check' style='margin-left:8px'><input type='checkbox' id='crmProcessingScheduledToggle' onchange='syncCrmProcessingAdvancedControls("scheduled")'> SCHEDULED</label>
+          <label for='crmProcessingScheduledTimeInput' class='muted'>At</label>
+          <input id='crmProcessingScheduledTimeInput' type='time' step='60' style='width:140px;padding:7px;border:1px solid #cbd5e1;border-radius:6px' onchange='syncCrmProcessingAdvancedControls()'>
+        </div>
+        <div class='muted' id='crmProcessingAdvancedSummaryText'>Advanced controls are off.</div>
+      </div>
+    </details>
     <div class='notice' id='crmProcessingStatusText' style='display:none'>Automate Processing status loading...</div>
     <div class='muted' id='crmProcessingRuntimeText'>No automated processing runs yet.</div>
     <div class='muted' id='crmProcessingSelectionText'>Selected automations: loading...</div>
   </div>
 
   <div class='card' style='margin-top:14px'>
-    <h2>Stock Unlocker</h2>
+    <h2>Stock Automation</h2>
+    <h3 style='margin:0 0 6px'>Product Separator</h3>
+    <div class='row' style='margin-top:8px;align-items:end;flex-wrap:wrap'>
+      <div class='field' style='min-width:320px;flex:1 1 360px'>
+        <label for='crmProductSeparatorOrderInput'>Single Order ID Or URL</label>
+        <input id='crmProductSeparatorOrderInput' placeholder='1234567 or https://crm2.legacy.printfly.com/order/1234567'>
+      </div>
+      <button class='secondary' id='crmProductSeparatorSingleDryRunBtn' onclick="startCrmProductSeparatorRun(true, this, true)">Single Separator Dry Run</button>
+      <button class='secondary' id='crmProductSeparatorSingleRunBtn' onclick="startCrmProductSeparatorRun(false, this, true)">Single Separator Run</button>
+    </div>
+    <div class='notice' id='crmProductSeparatorStatusText'>Product Separator status loading...</div>
+    <div class='muted' id='crmProductSeparatorRuntimeText'>No Product Separator runs yet.</div>
+    <h3 style='margin:14px 0 6px'>Stock Unlocker</h3>
     <div class='row'>
       <button class='secondary' id='crmDryRunBtn' onclick="startCrmRun(true, this)">Stock Unlocker Dry Run</button>
     </div>
@@ -248,9 +316,12 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
         <input id='crmOrderGoodsOrderInput' placeholder='1234567 or https://crm2.legacy.printfly.com/order/1234567'>
       </div>
       <button class='secondary' id='crmOrderGoodsSingleRunBtn' onclick="startCrmOrderGoodsRun(false, this, true)">Single Stock Run</button>
+      <button class='secondary' id='crmShippingBypasserSingleDryRunBtn' onclick="startCrmShippingBypasserRun(true, this, true)">Single Bypasser Dry Run</button>
     </div>
     <div class='notice' id='crmOrderGoodsStatusText'>Order Goods status loading...</div>
     <div class='muted' id='crmOrderGoodsRuntimeText'>No Order Goods runs yet.</div>
+    <div class='notice' id='crmShippingBypasserStatusText'>Shipping Bypasser status loading...</div>
+    <div class='muted' id='crmShippingBypasserRuntimeText'>No Shipping Bypasser runs yet.</div>
     <div class='metrics' style='margin-top:10px'>
       <div class='metric'>
         <div class='k'>Last Stock Tool Run</div>
@@ -383,10 +454,10 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
         <label for='crmAutoSplitterParallelWorkersInput'>Workers</label>
         <input id='crmAutoSplitterParallelWorkersInput' type='number' min='1' max='4' step='1' value='1' placeholder='1-4'>
       </div>
-      <button class='secondary' id='crmAutoSplitterRunBtn' onclick='startCrmAutoSplitterRun(this)'>Run Auto Splitter</button>
+      <button class='secondary' id='crmAutoSplitterRunBtn' onclick='startCrmAutoSplitterRun(this)'>Add to Queue</button>
     </div>
     <div class='notice' id='crmAutoSplitterStatusText'>Auto Splitter status loading...</div>
-    <div class='muted' id='crmAutoSplitterRuntimeText'>Enter an order and run Auto Splitter. Dry run preflight runs before live split.</div>
+    <div class='muted' id='crmAutoSplitterRuntimeText'>Enter an order and add it to the queue. Dry run preflight runs before live split.</div>
     <div class='muted' id='crmAutoSplitterReportText'>No Auto Splitter report yet.</div>
     <div class='row' style='justify-content:space-between;align-items:center;margin-top:12px'>
       <h3 style='margin:0'>Auto Splitter History</h3>
@@ -765,6 +836,10 @@ if (UI_OPENED_FROM_FILE) {
 const fieldMap = {};
 let lastConfigGroups = null;
 let activeTab = 'automation';
+let queueVisible = false;
+let queuePayload = null;
+let queueExpandedTaskId = null;
+let queueDragTaskId = null;
 let settingsSaveTimer = null;
 let settingsSavePromise = Promise.resolve();
 let desktopMetricsAutoRefresh = true;
@@ -800,8 +875,12 @@ let crmProcessingPollIntervalMs = 0;
 let crmStatusPayload = null;
 let crmPollTimer = null;
 let crmHistoryExpanded = false;
+let crmProductSeparatorStatusPayload = null;
+let crmProductSeparatorPollTimer = null;
 let crmOrderGoodsStatusPayload = null;
 let crmOrderGoodsPollTimer = null;
+let crmShippingBypasserStatusPayload = null;
+let crmShippingBypasserPollTimer = null;
 let crmAutoSplitterStatusPayload = null;
 let crmAutoSplitterPollTimer = null;
 let crmAutoSplitterHistoryExpanded = false;
@@ -813,10 +892,12 @@ let crmAddressMode = 'single';
 let crmAddressModeDirty = false;
 const CRM_PROCESSING_STEP_LABELS = {
   address_validator_batch: 'Address Validator (Batch)',
+  product_separator: 'Product Separator',
   stock_unlocker: 'Stock Unlocker',
   order_goods: 'Rush Order Goods',
 };
 const CRM_PROCESSING_FILTER_SEQUENCE = ['rush', 'free', 'all'];
+const CRM_PROCESSING_ORDER_GOODS_MODE_SEQUENCE = ['stock_bypass', 'stock_only', 'bypass_only', 'disabled'];
 
 function normalizeCrmProcessingFilter(value) {
   const key = String(value || '').trim().toLowerCase();
@@ -827,19 +908,51 @@ function formatCrmProcessingStepLabel(stepKey) {
   return CRM_PROCESSING_STEP_LABELS[stepKey] || 'Unknown';
 }
 
+function normalizeCrmProcessingOrderGoodsMode(state = {}) {
+  const stock = Boolean(state && state.order_goods_enabled);
+  const bypass = Boolean(state && state.shipping_bypasser_enabled);
+  if (stock && bypass) return 'stock_bypass';
+  if (stock) return 'stock_only';
+  if (bypass) return 'bypass_only';
+  return 'disabled';
+}
+
+function crmProcessingOrderGoodsModeFlags(mode) {
+  const key = CRM_PROCESSING_ORDER_GOODS_MODE_SEQUENCE.includes(mode) ? mode : 'stock_bypass';
+  return {
+    order_goods_enabled: key === 'stock_bypass' || key === 'stock_only',
+    shipping_bypasser_enabled: key === 'stock_bypass' || key === 'bypass_only',
+  };
+}
+
+function formatCrmProcessingOrderGoodsMode(mode) {
+  const key = CRM_PROCESSING_ORDER_GOODS_MODE_SEQUENCE.includes(mode) ? mode : 'stock_bypass';
+  if (key === 'stock_only') return 'Order Only';
+  if (key === 'bypass_only') return 'Bypass Only';
+  if (key === 'disabled') return 'Disabled';
+  return 'Stock/Bypass';
+}
+
+function formatCrmProcessingStepLabelForState(stepKey, state = {}) {
+  if (stepKey === 'order_goods') return `Order Goods: ${formatCrmProcessingOrderGoodsMode(normalizeCrmProcessingOrderGoodsMode(state))}`;
+  return formatCrmProcessingStepLabel(stepKey);
+}
+
 function normalizeCrmProcessingStepList(stepList, state = {}) {
   const steps = [];
   const processingFilter = normalizeCrmProcessingFilter(state && state.processing_filter);
+  const orderGoodsEnabled = state && processingFilter === 'rush' && (state.order_goods_enabled || state.shipping_bypasser_enabled);
   const source = Array.isArray(stepList) && stepList.length > 0
     ? stepList
     : [
       processingFilter === 'all' || (state && state.address_validator_enabled) ? 'address_validator_batch' : '',
+      state && state.product_separator_enabled !== false ? 'product_separator' : '',
       state && state.stock_unlocker_enabled && processingFilter === 'rush' ? 'stock_unlocker' : '',
-      state && state.order_goods_enabled && processingFilter === 'rush' ? 'order_goods' : '',
+      orderGoodsEnabled ? 'order_goods' : '',
     ];
   for (const raw of source) {
     const key = String(raw || '').trim();
-    if ((key === 'address_validator_batch' || key === 'stock_unlocker' || key === 'order_goods') && !steps.includes(key)) steps.push(key);
+    if ((key === 'address_validator_batch' || key === 'product_separator' || key === 'stock_unlocker' || key === 'order_goods') && !steps.includes(key)) steps.push(key);
   }
   return steps;
 }
@@ -952,6 +1065,7 @@ async function api(path, opts = {}) {
   const r = await fetch(path, opts);
   const d = await r.json().catch(() => ({ success: false, message: 'Invalid JSON response' }));
   if (!r.ok) throw new Error((d && d.message) || 'Request failed');
+  if (d && d.queue_task) setTimeout(() => { loadQueue(false); }, 0);
   return d;
 }
 
@@ -971,6 +1085,237 @@ function setStatus(msg, targetTab = null) {
   if (el) el.textContent = msg;
 }
 function setProcessingStatus(msg) { setStatus(msg, 'processing'); }
+
+function queueStatusLabel(status) {
+  const key = String(status || '').toLowerCase();
+  if (key === 'queued') return 'Queued';
+  if (key === 'running') return 'Running';
+  if (key === 'idle') return 'Idle';
+  if (key === 'completed') return 'Done';
+  if (key === 'failed') return 'Failed';
+  if (key === 'canceled') return 'Canceled';
+  return key || '-';
+}
+
+function formatCountdownSeconds(totalSeconds) {
+  const sec = Math.max(0, Math.ceil(Number(totalSeconds) || 0));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function queueNextRunSeconds(task) {
+  if (!task || !task.next_run_at) return null;
+  const ts = Date.parse(task.next_run_at);
+  if (!Number.isFinite(ts)) return null;
+  return Math.max(0, Math.ceil((ts - Date.now()) / 1000));
+}
+
+function queueTimeText(task) {
+  if (!task) return '';
+  if (task.status === 'running' && task.started_at) return `Started ${fmtTime(task.started_at)}`;
+  if (task.status === 'queued' && task.activated_at) return `Queued ${fmtTime(task.activated_at)}`;
+  if (task.status === 'idle') {
+    const seconds = queueNextRunSeconds(task);
+    if (task.queue_mode === 'repeat') {
+      return seconds == null ? 'Idle between repeat runs' : `Next repeat in ${formatCountdownSeconds(seconds)}`;
+    }
+    if (task.queue_mode === 'scheduled') {
+      const at = task.scheduled_for || task.next_run_at;
+      return seconds == null ? 'Idle until scheduled time' : `Scheduled ${fmtTime(at)} | starts in ${formatCountdownSeconds(seconds)}`;
+    }
+    return 'Idle';
+  }
+  if (task.completed_at) {
+    const duration = task.duration_seconds != null ? ` | Duration ${fmtDuration(task.duration_seconds)}` : '';
+    return `Finished ${fmtTime(task.completed_at)}${duration}`;
+  }
+  return task.activated_at ? `Queued ${fmtTime(task.activated_at)}` : '';
+}
+
+function queueRunHistoryHtml(task) {
+  const rows = Array.isArray(task && task.run_history) ? task.run_history : [];
+  if (!rows.length) return "<div class='muted'>No repeat runs recorded yet.</div>";
+  return `
+    <table>
+      <thead><tr><th>Run</th><th>Started</th><th>Duration</th><th>Status</th><th>Message</th></tr></thead>
+      <tbody>${rows.map((row) => {
+        const ok = row && row.success;
+        return `<tr><td>${esc(row.run_number || '-')}</td><td>${esc(fmtDateTime(row.started_at))}</td><td>${esc(fmtDuration(row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${esc(ok ? 'Success' : 'Failed')}</td><td>${esc(row.message || '')}</td></tr>`;
+      }).join('')}</tbody>
+    </table>`;
+}
+
+function toggleQueueRunHistory(taskId) {
+  queueExpandedTaskId = queueExpandedTaskId === taskId ? null : taskId;
+  renderQueue(queuePayload || {});
+}
+
+function renderQueue(payload) {
+  queuePayload = payload || {};
+  const panel = document.getElementById('queuePanel');
+  const btn = document.getElementById('tabBtnQueue');
+  if (panel) panel.classList.toggle('active', queueVisible);
+  if (btn) {
+    btn.classList.toggle('active', queueVisible);
+    const queuedCount = Number(queuePayload.queued_count || 0);
+    const idleCount = Number(queuePayload.idle_count || 0);
+    const runningCount = Number(queuePayload.running_count || 0);
+    btn.textContent = queuedCount || runningCount || idleCount ? `Queue (${queuedCount + runningCount + idleCount})` : 'Queue';
+  }
+
+  const summary = document.getElementById('queueSummaryText');
+  if (summary) {
+    const queuedCount = Number(queuePayload.queued_count || 0);
+    const idleCount = Number(queuePayload.idle_count || 0);
+    const running = queuePayload.running;
+    summary.textContent = running
+      ? `Running: ${running.label || 'Automation'} | ${queuedCount} waiting | ${idleCount} idle`
+      : (queuedCount || idleCount ? `${queuedCount} waiting | ${idleCount} idle` : 'No waiting tasks');
+  }
+
+  const root = document.getElementById('queueList');
+  if (!root) return;
+  const tasks = Array.isArray(queuePayload.tasks) ? queuePayload.tasks : [];
+  if (!tasks.length) {
+    root.innerHTML = "<div class='queue-empty'>No queued automations yet.</div>";
+    return;
+  }
+  root.innerHTML = tasks.map((task) => {
+    const status = String(task.status || '').toLowerCase();
+    const canCancel = status === 'queued' || status === 'running' || status === 'idle';
+    const canDelete = status === 'completed' || status === 'failed';
+    const draggable = status === 'queued';
+    const dragGlyph = draggable ? '&#8942;&#8942;' : '';
+    const pos = status === 'queued' && task.position ? `#${task.position} ` : '';
+    const details = task.details ? ` | ${task.details}` : '';
+    const advanced = task.advanced_summary ? ` | ${task.advanced_summary}` : '';
+    const messageText = status === 'idle' ? '' : (task.message || '');
+    const msg = messageText ? ` | ${messageText}` : '';
+    const canExpand = task.queue_mode === 'repeat';
+    const expanded = canExpand && queueExpandedTaskId === task.id;
+    return `
+      <div class='queue-item ${esc(status)}' data-task-id='${esc(task.id || '')}' draggable='${draggable ? 'true' : 'false'}'
+        ondragstart='handleQueueDragStart(event)' ondragover='handleQueueDragOver(event)' ondrop='handleQueueDrop(event)' ondragend='handleQueueDragEnd(event)'>
+        <div class='queue-drag'>${dragGlyph}</div>
+        <div ${canExpand ? `onclick="toggleQueueRunHistory('${esc(task.id || '')}')" style='cursor:pointer' title='Open repeat run history'` : ''}>
+          <div class='queue-title'>${esc(pos)}${esc(task.label || 'Automation Task')}</div>
+          <div class='queue-meta'>${esc(task.category || 'Automation')}${esc(details)}${esc(advanced)} | ${esc(queueTimeText(task))}${esc(msg)}</div>
+        </div>
+        <div class='queue-status ${esc(status)}'>${esc(queueStatusLabel(status))}</div>
+        ${canCancel ? `<button class='danger queue-cancel-btn' title='Cancel task' aria-label='Cancel task' onclick="cancelQueueTask('${esc(task.id || '')}')">X</button>` : (canDelete ? `<button class='secondary tiny' title='Delete queue entry' onclick="deleteQueueTask('${esc(task.id || '')}')">Delete</button>` : "<span></span>")}
+        ${expanded ? `<div class='queue-runs'>${queueRunHistoryHtml(task)}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+async function loadQueue(showBusy = false) {
+  const summary = document.getElementById('queueSummaryText');
+  if (showBusy && summary) summary.textContent = 'Refreshing queue...';
+  try {
+    const d = await api('/api/queue');
+    renderQueue(d);
+    return d;
+  } catch (e) {
+    if (summary) summary.textContent = 'Queue load failed: ' + e.message;
+    return null;
+  }
+}
+
+function toggleQueuePanel() {
+  queueVisible = !queueVisible;
+  renderQueue(queuePayload || {});
+  if (queueVisible) loadQueue(true);
+}
+
+async function cancelQueueTask(taskId) {
+  if (!taskId) return;
+  try {
+    const d = await api(`/api/queue/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' });
+    renderQueue(d);
+    await refreshAutomationStatusesAfterStop();
+  } catch (e) {
+    setStatus('Queue cancel failed: ' + e.message);
+  }
+}
+
+async function cancelAllQueueTasks() {
+  if (!confirm('Cancel all queued tasks? The running task will receive a stop request.')) return;
+  try {
+    const d = await api('/api/queue/cancel-all', { method: 'POST' });
+    renderQueue(d);
+    await refreshAutomationStatusesAfterStop();
+  } catch (e) {
+    setStatus('Queue cancel-all failed: ' + e.message);
+  }
+}
+
+async function deleteQueueTask(taskId) {
+  if (!taskId) return;
+  try {
+    const d = await api(`/api/queue/${encodeURIComponent(taskId)}/delete`, { method: 'POST' });
+    renderQueue(d);
+  } catch (e) {
+    setStatus('Queue delete failed: ' + e.message);
+  }
+}
+
+async function clearFinishedQueueTasks() {
+  try {
+    const d = await api('/api/queue/clear-finished', { method: 'POST' });
+    renderQueue(d);
+  } catch (e) {
+    setStatus('Queue clear failed: ' + e.message);
+  }
+}
+
+function handleQueueDragStart(event) {
+  const item = event.currentTarget;
+  if (!item || item.getAttribute('draggable') !== 'true') return;
+  queueDragTaskId = item.getAttribute('data-task-id') || '';
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', queueDragTaskId);
+  }
+}
+
+function handleQueueDragOver(event) {
+  const item = event.currentTarget;
+  if (!queueDragTaskId || !item || item.getAttribute('draggable') !== 'true') return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+}
+
+async function handleQueueDrop(event) {
+  event.preventDefault();
+  const target = event.currentTarget;
+  const targetId = target ? target.getAttribute('data-task-id') : '';
+  if (!queueDragTaskId || !targetId || queueDragTaskId === targetId) return;
+  const queued = Array.isArray(queuePayload && queuePayload.queued) ? queuePayload.queued.slice() : [];
+  const ids = queued.map((task) => task.id).filter(Boolean);
+  const from = ids.indexOf(queueDragTaskId);
+  const to = ids.indexOf(targetId);
+  if (from < 0 || to < 0) return;
+  const [moved] = ids.splice(from, 1);
+  ids.splice(to, 0, moved);
+  queueDragTaskId = null;
+  try {
+    const d = await api('/api/queue/reorder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_ids: ids }),
+    });
+    renderQueue(d);
+  } catch (e) {
+    setStatus('Queue reorder failed: ' + e.message);
+  }
+}
+
+function handleQueueDragEnd() {
+  queueDragTaskId = null;
+}
 
 async function openChromeProfileSetup(profile, button = null) {
   return withButtonBusy(button, 'OPENING...', async () => {
@@ -1023,6 +1368,7 @@ async function refreshAutomationStatusesAfterStop() {
     loadStatus(false),
     loadCrmProcessingStatus(false),
     loadCrmStatus(false),
+    loadCrmProductSeparatorStatus(false),
     loadCrmOrderGoodsStatus(false),
     loadCrmAutoSplitterStatus(false),
     loadCrmAddressStatus(false),
@@ -1400,7 +1746,9 @@ function setActiveTab(tabName) {
   if (isProcessing) {
     loadCrmProcessingStatus(false);
     loadCrmStatus(false);
+    loadCrmProductSeparatorStatus(false);
     loadCrmOrderGoodsStatus(false);
+    loadCrmShippingBypasserStatus(false);
     loadCrmAutoSplitterStatus(false);
     loadCrmAddressStatus(false);
   }
@@ -2361,6 +2709,7 @@ function renderWorkSettings(fields) {
   for (const f of fields) by[f.key] = f;
   const labelOverrides = {
     WORK_CLOCK_DEFAULT_DAILY_HOURS: 'Legacy Daily Target (not used for cap-target auto clock-out)',
+    WORK_CLOCK_AUTO_OUT_MAX_HOURS: 'Auto Out Max Hours',
   };
 
   const tip = document.createElement('div');
@@ -2370,7 +2719,7 @@ function renderWorkSettings(fields) {
 
   const groups = [
     { title: 'Cap Rules', keys: ['WORK_CLOCK_CAPPED', 'WORK_CLOCK_CAP_HOURS', 'WORK_CLOCK_RESET_ON_FRIDAY_CLOCK_OUT'] },
-    { title: 'Hours Tracking', keys: ['WORK_CLOCK_DEFAULT_DAILY_HOURS', 'WORK_CLOCK_BREAK_MINUTES', 'WORK_CLOCK_BREAK_APPLIES_AFTER_HOURS', 'WORK_CLOCK_STATE_FILE'] },
+    { title: 'Hours Tracking', keys: ['WORK_CLOCK_DEFAULT_DAILY_HOURS', 'WORK_CLOCK_AUTO_OUT_MAX_HOURS', 'WORK_CLOCK_BREAK_MINUTES', 'WORK_CLOCK_BREAK_APPLIES_AFTER_HOURS', 'WORK_CLOCK_STATE_FILE'] },
     { title: 'Paycom Sync Behavior', keys: ['WORK_CLOCK_SYNC_FROM_PAYCOM', 'WORK_CLOCK_SYNC_BEFORE_CLOCK_IN', 'WORK_CLOCK_SYNC_AFTER_CLOCK_OUT'] },
   ];
 
@@ -2736,7 +3085,9 @@ async function pollCrmProcessingStatus() {
   const running = Boolean(d && d.running);
   if (running || wasRunning) {
     loadCrmStatus(false);
+    loadCrmProductSeparatorStatus(false);
     loadCrmOrderGoodsStatus(false);
+    loadCrmShippingBypasserStatus(false);
     loadCrmAddressStatus(false);
   }
 }
@@ -2758,11 +3109,12 @@ function syncCrmProcessingPolling() {
   }
 }
 
-function renderCrmProcessingSelectionButtons(state = {}, running = false) {
+function renderCrmProcessingSelectionButtons(state = {}) {
   const selectedSteps = normalizeCrmProcessingStepList([], state);
   const processingFilter = normalizeCrmProcessingFilter(state && state.processing_filter);
   const unlockBtn = document.getElementById('crmProcessingUnlockToggleBtn');
   const addressBtn = document.getElementById('crmProcessingAddressToggleBtn');
+  const separatorBtn = document.getElementById('crmProcessingSeparatorToggleBtn');
   const orderGoodsBtn = document.getElementById('crmProcessingOrderGoodsToggleBtn');
   const filterBtn = document.getElementById('crmProcessingFilterToggleBtn');
   const filterBtns = {
@@ -2773,35 +3125,44 @@ function renderCrmProcessingSelectionButtons(state = {}, running = false) {
   if (addressBtn) {
     const enabled = selectedSteps.includes('address_validator_batch');
     addressBtn.classList.toggle('active', enabled);
-    addressBtn.disabled = running || processingFilter === 'all';
+    addressBtn.disabled = processingFilter === 'all';
     addressBtn.classList.remove('processing-disabled');
     addressBtn.textContent = 'Validator';
     addressBtn.title = processingFilter === 'all'
-      ? 'All mode always runs Address Validator only.'
+      ? 'All mode always includes Address Validator.'
       : 'Toggle batch Address Validator in Automate Processing.';
+  }
+  if (separatorBtn) {
+    const enabled = selectedSteps.includes('product_separator');
+    separatorBtn.classList.toggle('active', enabled);
+    separatorBtn.classList.remove('processing-disabled');
+    separatorBtn.disabled = false;
+    separatorBtn.textContent = 'Separator';
+    separatorBtn.title = 'Toggle Product Separator in Automate Processing.';
   }
   if (unlockBtn) {
     const enabled = selectedSteps.includes('stock_unlocker');
     unlockBtn.classList.toggle('active', enabled);
     unlockBtn.classList.toggle('processing-disabled', processingFilter !== 'rush');
-    unlockBtn.disabled = running || processingFilter !== 'rush';
+    unlockBtn.disabled = processingFilter !== 'rush';
     unlockBtn.textContent = 'Unlocker';
     unlockBtn.title = processingFilter !== 'rush'
       ? `Unlocker is rush-only and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
       : 'Toggle Stock Unlocker in Automate Processing.';
   }
   if (orderGoodsBtn) {
+    const mode = normalizeCrmProcessingOrderGoodsMode(state);
     const enabled = selectedSteps.includes('order_goods');
     orderGoodsBtn.classList.toggle('active', enabled);
     orderGoodsBtn.classList.toggle('processing-disabled', processingFilter !== 'rush');
-    orderGoodsBtn.disabled = running || processingFilter !== 'rush';
-    orderGoodsBtn.textContent = 'Order Goods';
+    orderGoodsBtn.disabled = processingFilter !== 'rush';
+    orderGoodsBtn.textContent = `Order Goods: ${formatCrmProcessingOrderGoodsMode(mode)}`;
     orderGoodsBtn.title = processingFilter !== 'rush'
       ? `Rush Order Goods is rush-only and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
-      : 'Toggle Rush Order Goods in Automate Processing.';
+      : 'Click to switch Order Goods mode: Stock/Bypass, Order Only, Bypass Only, Disabled.';
   }
   if (filterBtn) {
-    filterBtn.disabled = running;
+    filterBtn.disabled = false;
     filterBtn.textContent = processingFilter.toUpperCase();
     filterBtn.title = `Automate Processing is set to ${formatCrmAddressFilterLabel(processingFilter)}. Click to switch.`;
     filterBtn.classList.remove('all', 'free', 'rush');
@@ -2810,7 +3171,7 @@ function renderCrmProcessingSelectionButtons(state = {}, running = false) {
   }
   for (const [filterKey, filterBtn] of Object.entries(filterBtns)) {
     if (!filterBtn) continue;
-    filterBtn.disabled = running;
+    filterBtn.disabled = false;
     filterBtn.classList.toggle('active', processingFilter === filterKey);
     filterBtn.title = processingFilter === filterKey
       ? `Automate Processing is set to ${formatCrmAddressFilterLabel(filterKey)}.`
@@ -2823,12 +3184,12 @@ function renderCrmProcessingStatus(payload) {
   const state = payload && payload.state ? payload.state : {};
   const runtime = payload && payload.runtime ? payload.runtime : {};
   const running = Boolean(payload && payload.running);
-  const processingFilter = normalizeCrmProcessingFilter((running ? runtime.processingFilter : state.processing_filter) || state.processing_filter || 'rush');
-  const selectedSteps = running
-    ? normalizeCrmProcessingStepList(runtime.selectedSteps, { ...state, processing_filter: processingFilter })
-    : normalizeCrmProcessingStepList([], { ...state, processing_filter: processingFilter });
+  const runningFilter = normalizeCrmProcessingFilter(runtime.processingFilter || state.processing_filter || 'rush');
+  const processingFilter = normalizeCrmProcessingFilter(state.processing_filter || 'rush');
+  const runningSteps = normalizeCrmProcessingStepList(runtime.selectedSteps, { ...state, processing_filter: runningFilter });
+  const selectedSteps = normalizeCrmProcessingStepList([], { ...state, processing_filter: processingFilter });
   const completedSteps = Array.isArray(runtime.completedSteps) ? runtime.completedSteps : [];
-  const currentStepLabel = runtime.currentStep ? formatCrmProcessingStepLabel(runtime.currentStep) : '';
+  const currentStepLabel = runtime.currentStep ? formatCrmProcessingStepLabelForState(runtime.currentStep, state) : '';
   const lastSuccess = state.last_run_success;
   let headline = 'Automate Processing is idle.';
   if (running) {
@@ -2840,10 +3201,13 @@ function renderCrmProcessingStatus(payload) {
   }
 
   const selectionText = selectedSteps.length > 0
-    ? `${formatCrmAddressFilterLabel(processingFilter)} | ${selectedSteps.map((step) => formatCrmProcessingStepLabel(step)).join(' + ')}.`
+    ? `${formatCrmAddressFilterLabel(processingFilter)} | ${selectedSteps.map((step) => formatCrmProcessingStepLabelForState(step, state)).join(' + ')}.`
     : `${formatCrmAddressFilterLabel(processingFilter)} | none selected.`;
+  const runningSelectionText = runningSteps.length > 0
+    ? `${formatCrmAddressFilterLabel(runningFilter)} | ${runningSteps.map((step) => formatCrmProcessingStepLabelForState(step, state)).join(' + ')}.`
+    : `${formatCrmAddressFilterLabel(runningFilter)} | none selected.`;
   const runtimeText = running
-    ? `${selectionText} Completed ${completedSteps.length}/${selectedSteps.length}. ${runtime.lastMessage || ''}`.trim()
+    ? `${runningSelectionText} Completed ${completedSteps.length}/${runningSteps.length}. ${runtime.lastMessage || ''}`.trim()
     : (state.last_run_message || 'No automated processing runs yet.');
   const runBtn = document.getElementById('crmProcessingRunBtn');
 
@@ -2851,14 +3215,10 @@ function renderCrmProcessingStatus(payload) {
   document.getElementById('crmProcessingStatusText').textContent = headline;
   document.getElementById('crmProcessingRuntimeText').textContent = runtimeText;
   document.getElementById('crmProcessingSelectionText').textContent = `Automate selection: ${selectionText}`;
-  renderCrmProcessingSelectionButtons({ ...state, processing_filter: processingFilter }, running);
+  renderCrmProcessingSelectionButtons({ ...state, processing_filter: processingFilter });
   if (runBtn) {
-    if (running) {
-      markButtonStoppable(runBtn);
-    } else {
-      restoreStoppableButton(runBtn);
-      runBtn.disabled = selectedSteps.length === 0;
-    }
+    restoreStoppableButton(runBtn);
+    runBtn.disabled = selectedSteps.length === 0;
   }
   syncCrmProcessingPolling();
 }
@@ -2876,10 +3236,9 @@ async function persistCrmProcessingSelection(payload, statusFallback) {
 
 async function toggleCrmProcessingSelection(stepKey) {
   const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
-  if (crmProcessingStatusPayload && crmProcessingStatusPayload.running) return;
   const processingFilter = normalizeCrmProcessingFilter(state.processing_filter);
   if (stepKey === 'address_validator_batch' && processingFilter === 'all') {
-    setStatus('All mode always runs Address Validator only.');
+    setStatus('All mode always includes Address Validator.');
     return;
   }
   if ((stepKey === 'stock_unlocker' || stepKey === 'order_goods') && processingFilter !== 'rush') {
@@ -2893,16 +3252,28 @@ async function toggleCrmProcessingSelection(stepKey) {
   const nextAddress = stepKey === 'address_validator_batch'
     ? !Boolean(state.address_validator_enabled)
     : Boolean(state.address_validator_enabled);
-  const nextOrderGoods = stepKey === 'order_goods'
-    ? !Boolean(state.order_goods_enabled)
-    : Boolean(state.order_goods_enabled);
+  const nextSeparator = stepKey === 'product_separator'
+    ? !(state.product_separator_enabled !== false)
+    : state.product_separator_enabled !== false;
+  let nextOrderGoods = Boolean(state.order_goods_enabled);
+  let nextShippingBypasser = Boolean(state.shipping_bypasser_enabled);
+  if (stepKey === 'order_goods') {
+    const currentMode = normalizeCrmProcessingOrderGoodsMode(state);
+    const currentIndex = CRM_PROCESSING_ORDER_GOODS_MODE_SEQUENCE.indexOf(currentMode);
+    const nextMode = CRM_PROCESSING_ORDER_GOODS_MODE_SEQUENCE[(currentIndex + 1) % CRM_PROCESSING_ORDER_GOODS_MODE_SEQUENCE.length];
+    const flags = crmProcessingOrderGoodsModeFlags(nextMode);
+    nextOrderGoods = flags.order_goods_enabled;
+    nextShippingBypasser = flags.shipping_bypasser_enabled;
+  }
   const selectionPayload = {
     stock_unlocker_enabled: nextUnlock,
     address_validator_enabled: nextAddress,
+    product_separator_enabled: nextSeparator,
     order_goods_enabled: nextOrderGoods,
+    shipping_bypasser_enabled: nextShippingBypasser,
     processing_filter: processingFilter,
   };
-  const label = stepKey === 'stock_unlocker' ? 'Unlocker' : (stepKey === 'order_goods' ? 'Rush Order Goods' : 'Validator');
+  const label = stepKey === 'stock_unlocker' ? 'Unlocker' : (stepKey === 'order_goods' ? 'Order Goods mode' : (stepKey === 'product_separator' ? 'Product Separator' : 'Validator'));
   try {
     await persistCrmProcessingSelection(selectionPayload, `${label} selection updated.`);
   } catch (e) {
@@ -2912,7 +3283,6 @@ async function toggleCrmProcessingSelection(stepKey) {
 
 async function toggleCrmProcessingFilter() {
   const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
-  if (crmProcessingStatusPayload && crmProcessingStatusPayload.running) return;
   const currentFilter = normalizeCrmProcessingFilter(state.processing_filter);
   const currentIndex = CRM_PROCESSING_FILTER_SEQUENCE.indexOf(currentFilter);
   const nextFilter = CRM_PROCESSING_FILTER_SEQUENCE[(currentIndex + 1) % CRM_PROCESSING_FILTER_SEQUENCE.length];
@@ -2921,12 +3291,13 @@ async function toggleCrmProcessingFilter() {
 
 async function setCrmProcessingFilter(nextFilter) {
   const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
-  if (crmProcessingStatusPayload && crmProcessingStatusPayload.running) return;
   nextFilter = normalizeCrmProcessingFilter(nextFilter);
   const payload = {
-    stock_unlocker_enabled: nextFilter === 'rush',
-    address_validator_enabled: true,
-    order_goods_enabled: nextFilter === 'rush',
+    stock_unlocker_enabled: nextFilter === 'rush' ? Boolean(state.stock_unlocker_enabled) : false,
+    address_validator_enabled: nextFilter === 'all' ? true : Boolean(state.address_validator_enabled),
+    product_separator_enabled: state.product_separator_enabled !== false,
+    order_goods_enabled: nextFilter === 'rush' ? Boolean(state.order_goods_enabled) : false,
+    shipping_bypasser_enabled: nextFilter === 'rush' ? Boolean(state.shipping_bypasser_enabled) : false,
     processing_filter: nextFilter,
   };
   try {
@@ -2958,31 +3329,94 @@ async function loadCrmProcessingStatus(setStatusText = false) {
   }
 }
 
+function crmProcessingAdvancedMode() {
+  const repeat = document.getElementById('crmProcessingRepeatToggle');
+  const scheduled = document.getElementById('crmProcessingScheduledToggle');
+  if (repeat && repeat.checked) return 'repeat';
+  if (scheduled && scheduled.checked) return 'scheduled';
+  return 'normal';
+}
+
+function normalizeCrmProcessingRepeatMinutes(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 5;
+  return Math.max(5, Math.min(60, Math.trunc(number)));
+}
+
+function syncCrmProcessingAdvancedControls(source = '') {
+  const repeat = document.getElementById('crmProcessingRepeatToggle');
+  const scheduled = document.getElementById('crmProcessingScheduledToggle');
+  const minutes = document.getElementById('crmProcessingRepeatMinutesInput');
+  const timeInput = document.getElementById('crmProcessingScheduledTimeInput');
+  const summary = document.getElementById('crmProcessingAdvancedSummaryText');
+  if (source === 'repeat' && repeat && repeat.checked && scheduled) scheduled.checked = false;
+  if (source === 'scheduled' && scheduled && scheduled.checked && repeat) repeat.checked = false;
+  const mode = crmProcessingAdvancedMode();
+  if (minutes) {
+    minutes.disabled = mode !== 'repeat';
+    minutes.value = String(normalizeCrmProcessingRepeatMinutes(minutes.value));
+  }
+  if (timeInput) timeInput.disabled = mode !== 'scheduled';
+  if (!summary) return;
+  if (mode === 'repeat') {
+    summary.textContent = `Repeat is on. AUTOMATE will stay in Queue and rerun every ${minutes ? minutes.value : 5} minutes until canceled.`;
+  } else if (mode === 'scheduled') {
+    summary.textContent = `Scheduled is on. AUTOMATE will stay idle in Queue until ${timeInput && timeInput.value ? timeInput.value : 'the selected time'}.`;
+  } else {
+    summary.textContent = 'Advanced controls are off.';
+  }
+}
+
+function buildCrmProcessingAdvancedPayload() {
+  const mode = crmProcessingAdvancedMode();
+  const payload = {};
+  if (mode === 'repeat') {
+    const minutes = normalizeCrmProcessingRepeatMinutes((document.getElementById('crmProcessingRepeatMinutesInput') || {}).value);
+    payload.advanced_mode = 'repeat';
+    payload.repeat_interval_minutes = minutes;
+  } else if (mode === 'scheduled') {
+    const scheduledTime = String((document.getElementById('crmProcessingScheduledTimeInput') || {}).value || '').trim();
+    if (!scheduledTime) {
+      throw new Error('Choose a scheduled time before queuing scheduled AUTOMATE.');
+    }
+    payload.advanced_mode = 'scheduled';
+    payload.scheduled_time = scheduledTime;
+  }
+  return payload;
+}
+
 async function startCrmProcessingRun(button = null) {
-  if (await maybeForceStopFromButton(button)) return;
+  return withButtonBusy(button, 'QUEUING...', async () => {
   const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
   const processingFilter = normalizeCrmProcessingFilter(state.processing_filter);
   const payload = {
     stock_unlocker_enabled: processingFilter === 'rush' ? Boolean(state.stock_unlocker_enabled) : false,
     address_validator_enabled: processingFilter === 'all' ? true : Boolean(state.address_validator_enabled),
+    product_separator_enabled: state.product_separator_enabled !== false,
     order_goods_enabled: processingFilter === 'rush' ? Boolean(state.order_goods_enabled) : false,
+    shipping_bypasser_enabled: processingFilter === 'rush' ? Boolean(state.shipping_bypasser_enabled) : false,
     processing_filter: processingFilter,
   };
+  try {
+    Object.assign(payload, buildCrmProcessingAdvancedPayload());
+  } catch (e) {
+    setStatus(e.message);
+    return;
+  }
   const selectedSteps = normalizeCrmProcessingStepList([], payload);
   if (selectedSteps.length === 0) {
     setStatus('Select at least one processing automation first.');
     return;
   }
   if (processingFilter === 'all') {
-    const confirmed = window.confirm('ALL mode will run Address Validator against the configured ALL CRM list only. Stock Unlocker and Rush Order Goods will not run. Continue?');
+    const confirmed = window.confirm('ALL mode will run Address Validator and Product Separator against the configured ALL CRM lists. Stock Unlocker and Rush Order Goods will not run. Continue?');
     if (!confirmed) {
       setStatus('ALL mode Automate Processing canceled.');
       return;
     }
   }
-  let resultMsg = `Starting ${formatCrmAddressFilterLabel(processingFilter)} Automate Processing for ${selectedSteps.map((step) => formatCrmProcessingStepLabel(step)).join(' + ')}...`;
+  let resultMsg = `Starting ${formatCrmAddressFilterLabel(processingFilter)} Automate Processing for ${selectedSteps.map((step) => formatCrmProcessingStepLabelForState(step, payload)).join(' + ')}...`;
   setStatus(resultMsg);
-  markButtonStoppable(button);
   try {
     const d = await api('/crm/process', {
       method: 'POST',
@@ -2994,13 +3428,16 @@ async function startCrmProcessingRun(button = null) {
   } catch (e) {
     resultMsg = 'Automate Processing request failed: ' + e.message;
   }
+  await loadQueue(false);
   await loadCrmProcessingStatus(false);
   await loadCrmStatus(false);
+  await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
+  await loadCrmShippingBypasserStatus(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmAddressStatus(false);
   setStatus(resultMsg);
-  if (!(crmProcessingStatusPayload && crmProcessingStatusPayload.running)) restoreStoppableButton(button);
+  });
 }
 
 function stopCrmPolling() {
@@ -3056,8 +3493,9 @@ function normalizeCrmOrderDetails(details, orderIds = [], fallbackDetail = null)
       success: Boolean(row.success),
       status: String(row.status || (row.success ? 'Success' : 'Needs attention')),
       outcome: String(row.outcome || ''),
-        message: String(row.message || ''),
-        duration_seconds: row.duration_seconds != null ? Number(row.duration_seconds) : null,
+      message: String(row.message || ''),
+      duration_seconds: row.duration_seconds != null ? Number(row.duration_seconds) : null,
+      sanmar_confirmation: row.sanmar_confirmation && typeof row.sanmar_confirmation === 'object' ? row.sanmar_confirmation : null,
     };
   });
   const fallback = fallbackDetail && typeof fallbackDetail === 'object' ? fallbackDetail : {};
@@ -3068,6 +3506,7 @@ function normalizeCrmOrderDetails(details, orderIds = [], fallbackDetail = null)
     outcome: String(fallback.outcome || ''),
     message: String(fallback.message || ''),
     duration_seconds: fallback.duration_seconds != null ? Number(fallback.duration_seconds) : null,
+    sanmar_confirmation: fallback.sanmar_confirmation && typeof fallback.sanmar_confirmation === 'object' ? fallback.sanmar_confirmation : null,
   });
 }
 
@@ -3078,7 +3517,14 @@ function buildCrmOrderDetailsHtml(details, orderIds = []) {
     const statusClass = row.success ? 'ok' : 'bad';
     const message = row.message ? ` - ${esc(row.message)}` : '';
     const duration = row.duration_seconds != null ? ` <span class='muted'>${esc(fmtDuration(row.duration_seconds))}</span>` : '';
-    return `${crmOrderLinkHtml(row.order_id)} <span class='${statusClass}'>${esc(row.status)}</span>${duration}${message}`;
+    const confirmation = row.sanmar_confirmation && typeof row.sanmar_confirmation === 'object' ? row.sanmar_confirmation : null;
+    const sanmarUrl = confirmation && confirmation.url ? String(confirmation.url) : '';
+    const webReference = confirmation && confirmation.web_reference ? ` ${esc(confirmation.web_reference)}` : '';
+    const sanmarLink = sanmarUrl
+      ? ` <a href="${esc(sanmarUrl)}" target="_blank" rel="noopener noreferrer">SanMar${webReference}</a>`
+      : '';
+    const screenshot = confirmation && confirmation.screenshot ? ` <span class='muted'>Screenshot: ${esc(confirmation.screenshot)}</span>` : '';
+    return `${crmOrderLinkHtml(row.order_id)} <span class='${statusClass}'>${esc(row.status)}</span>${duration}${sanmarLink}${message}${screenshot}`;
   }).join('<br>');
 }
 
@@ -3088,7 +3534,9 @@ function buildCrmOrderDetailsText(details, orderIds = []) {
   return rows.map((row) => {
     const message = row.message ? ` - ${row.message}` : '';
     const duration = row.duration_seconds != null ? ` (${fmtDuration(row.duration_seconds)})` : '';
-    return `${row.order_id}: ${row.status}${duration}${message}`;
+    const confirmation = row.sanmar_confirmation && typeof row.sanmar_confirmation === 'object' ? row.sanmar_confirmation : null;
+    const sanmarUrl = confirmation && confirmation.url ? ` | SanMar: ${confirmation.url}` : '';
+    return `${row.order_id}: ${row.status}${duration}${sanmarUrl}${message}`;
   }).join('\n');
 }
 
@@ -3294,11 +3742,135 @@ async function startCrmRun(dryRun, button = null) {
     resultMsg = 'Stock Unlocker request failed: ' + e.message;
   }
   await loadCrmStatus(false);
+  await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
+  await loadCrmShippingBypasserStatus(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmProcessingStatus(false);
   setStatus(resultMsg);
   if (!(crmStatusPayload && crmStatusPayload.running)) restoreStoppableButton(button);
+}
+
+function stopCrmProductSeparatorPolling() {
+  if (crmProductSeparatorPollTimer) {
+    clearInterval(crmProductSeparatorPollTimer);
+    crmProductSeparatorPollTimer = null;
+  }
+}
+
+function syncCrmProductSeparatorPolling() {
+  if (crmProductSeparatorStatusPayload && crmProductSeparatorStatusPayload.running) {
+    if (!crmProductSeparatorPollTimer) {
+      crmProductSeparatorPollTimer = setInterval(() => {
+        loadCrmProductSeparatorStatus(false);
+      }, 2000);
+    }
+  } else {
+    stopCrmProductSeparatorPolling();
+  }
+}
+
+function renderCrmProductSeparatorStatus(payload) {
+  crmProductSeparatorStatusPayload = payload;
+  const runtime = payload && payload.runtime ? payload.runtime : {};
+  const resultPayload = runtime && runtime.payload ? runtime.payload : {};
+  const state = payload && payload.state ? payload.state : (resultPayload && resultPayload.state ? resultPayload.state : null);
+  const running = Boolean(payload && payload.running);
+  const processingRunning = Boolean(crmProcessingStatusPayload && crmProcessingStatusPayload.running);
+  const targetOrderId = runtime.targetOrderId || resultPayload.target_order_id || '';
+  const isSingle = String(runtime.lastAction || resultPayload.action || '') === 'product_separator_order' || Boolean(targetOrderId);
+  const listMode = normalizeCrmProcessingFilter(runtime.listMode || resultPayload.list_mode || 'rush');
+  let headline = 'Product Separator is idle.';
+  if (running) {
+    headline = isSingle
+      ? (runtime.dryRun ? `Single Separator dry run in progress for order ${targetOrderId}.` : `Single Separator run in progress for order ${targetOrderId}.`)
+      : (runtime.dryRun ? `Product Separator ${listMode.toUpperCase()} dry run in progress.` : `Product Separator is running for ${listMode.toUpperCase()}.`);
+  } else if (processingRunning) {
+    headline = 'Product Separator is waiting for Automate Processing to finish.';
+  } else if (runtime.lastSuccess === true) {
+    headline = 'Last Product Separator run completed successfully.';
+  } else if (runtime.lastSuccess === false) {
+    headline = 'Last Product Separator run needs attention.';
+  }
+
+  const runtimeText = running
+    ? (isSingle ? `Order ${targetOrderId || '-'} | ${runtime.lastMessage || headline}` : `Mode ${listMode.toUpperCase()} | Workers ${runtime.parallelWorkers || 1} | ${runtime.lastMessage || headline}`)
+    : (runtime.lastMessage || resultPayload.message || 'No Product Separator runs yet.');
+
+  const statusEl = document.getElementById('crmProductSeparatorStatusText');
+  if (statusEl) statusEl.textContent = headline;
+  const runtimeEl = document.getElementById('crmProductSeparatorRuntimeText');
+  if (runtimeEl) runtimeEl.textContent = runtimeText;
+  ['crmProductSeparatorSingleDryRunBtn', 'crmProductSeparatorSingleRunBtn'].forEach((id) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    if (running && !processingRunning) {
+      markButtonStoppable(btn);
+    } else {
+      restoreStoppableButton(btn);
+      btn.disabled = processingRunning;
+    }
+  });
+  if (state && Array.isArray(state.run_history)) renderCrmHistory(state.run_history);
+  syncCrmProductSeparatorPolling();
+}
+
+async function loadCrmProductSeparatorStatus(setStatusText = false) {
+  try {
+    const d = await api('/crm/product-separator/status');
+    renderCrmProductSeparatorStatus(d);
+    if (setStatusText) {
+      const runtime = d && d.runtime ? d.runtime : {};
+      const statusMsg = d.running ? 'Product Separator is running.' : (runtime.lastMessage || 'Product Separator status refreshed.');
+      setStatus(statusMsg);
+    }
+    return d;
+  } catch (e) {
+    if (setStatusText) setStatus('Product Separator status load failed: ' + e.message);
+    const statusEl = document.getElementById('crmProductSeparatorStatusText');
+    if (statusEl) statusEl.textContent = 'Product Separator status load failed.';
+    const runtimeEl = document.getElementById('crmProductSeparatorRuntimeText');
+    if (runtimeEl) runtimeEl.textContent = e.message;
+    stopCrmProductSeparatorPolling();
+    return null;
+  }
+}
+
+async function startCrmProductSeparatorRun(dryRun, button = null, singleOrder = false) {
+  if (await maybeForceStopFromButton(button)) return;
+  const rawOrderTarget = String((document.getElementById('crmProductSeparatorOrderInput') || {}).value || '').trim();
+  if (singleOrder && !rawOrderTarget) {
+    setStatus('Enter a single order ID or CRM order URL before starting Single Separator.');
+    return;
+  }
+  const path = dryRun ? '/crm/product-separator/dry-run' : '/crm/product-separator';
+  let resultMsg = singleOrder
+    ? (dryRun ? `Starting Single Separator dry run for order ${rawOrderTarget}...` : `Starting Single Separator run for order ${rawOrderTarget}...`)
+    : (dryRun ? 'Starting Product Separator dry run...' : 'Starting Product Separator...');
+  setStatus(resultMsg);
+  markButtonStoppable(button);
+  try {
+    const payload = {};
+    if (singleOrder) payload.order_id = rawOrderTarget;
+    const d = await api(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    renderCrmProductSeparatorStatus(d);
+    resultMsg = d.message || (singleOrder
+      ? (dryRun ? `Single Separator dry run started for order ${rawOrderTarget}.` : `Single Separator run started for order ${rawOrderTarget}.`)
+      : (dryRun ? 'Product Separator dry run started.' : 'Product Separator started.'));
+  } catch (e) {
+    resultMsg = 'Product Separator request failed: ' + e.message;
+  }
+  await loadCrmStatus(false);
+  await loadCrmProductSeparatorStatus(false);
+  await loadCrmOrderGoodsStatus(false);
+  await loadCrmShippingBypasserStatus(false);
+  await loadCrmProcessingStatus(false);
+  setStatus(resultMsg);
+  if (!(crmProductSeparatorStatusPayload && crmProductSeparatorStatusPayload.running)) restoreStoppableButton(button);
 }
 
 function stopCrmOrderGoodsPolling() {
@@ -3417,11 +3989,133 @@ async function startCrmOrderGoodsRun(dryRun, button = null, singleOrder = false)
     resultMsg = 'Rush Order Goods request failed: ' + e.message;
   }
   await loadCrmStatus(false);
+  await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
+  await loadCrmShippingBypasserStatus(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmProcessingStatus(false);
   setStatus(resultMsg);
   if (!(crmOrderGoodsStatusPayload && crmOrderGoodsStatusPayload.running)) restoreStoppableButton(button);
+}
+
+function setCrmShippingBypasserStatusText(message) {
+  const el = document.getElementById('crmShippingBypasserStatusText');
+  if (el) el.textContent = message;
+}
+
+function renderCrmShippingBypasserStatus(payload) {
+  crmShippingBypasserStatusPayload = payload;
+  const runtime = payload && payload.runtime ? payload.runtime : {};
+  const resultPayload = runtime && runtime.payload ? runtime.payload : {};
+  const state = payload && payload.state ? payload.state : (resultPayload && resultPayload.state ? resultPayload.state : null);
+  const running = Boolean(payload && payload.running);
+  const processingRunning = Boolean(crmProcessingStatusPayload && crmProcessingStatusPayload.running);
+  const targetOrderId = runtime.targetOrderId || resultPayload.target_order_id || '';
+  const isSingle = String(runtime.lastAction || resultPayload.action || '') === 'shipping_bypass_single' || Boolean(targetOrderId);
+  let headline = 'Shipping Bypasser is idle.';
+  if (running) {
+    headline = isSingle
+      ? (runtime.dryRun ? `Single Bypasser dry run in progress for order ${targetOrderId}.` : `Single Bypasser run in progress for order ${targetOrderId}.`)
+      : (runtime.dryRun ? 'Shipping Bypasser dry run in progress.' : 'Shipping Bypasser is running.');
+  } else if (processingRunning) {
+    headline = 'Shipping Bypasser is waiting for Automate Processing to finish.';
+  } else if (runtime.lastSuccess === true) {
+    headline = 'Last Shipping Bypasser run completed successfully.';
+  } else if (runtime.lastSuccess === false) {
+    headline = 'Last Shipping Bypasser run needs attention.';
+  }
+  const runtimeText = running
+    ? (isSingle ? `Order ${targetOrderId || '-'} | ${runtime.lastMessage || headline}` : (runtime.lastMessage || headline))
+    : (runtime.lastMessage || resultPayload.message || 'No Shipping Bypasser runs yet.');
+  setCrmShippingBypasserStatusText(headline);
+  const runtimeEl = document.getElementById('crmShippingBypasserRuntimeText');
+  if (runtimeEl) runtimeEl.textContent = runtimeText;
+  ['crmShippingBypasserSingleDryRunBtn'].forEach((id) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    if (running && !processingRunning) {
+      markButtonStoppable(btn);
+    } else {
+      restoreStoppableButton(btn);
+      btn.disabled = processingRunning;
+    }
+  });
+  if (state && Array.isArray(state.run_history)) renderCrmHistory(state.run_history);
+  syncCrmShippingBypasserPolling();
+}
+
+async function loadCrmShippingBypasserStatus(setStatusText = false) {
+  try {
+    const d = await api('/crm/shipping-bypasser/status');
+    renderCrmShippingBypasserStatus(d);
+    if (setStatusText) {
+      const runtime = d && d.runtime ? d.runtime : {};
+      setStatus(d.running ? 'Shipping Bypasser is running.' : (runtime.lastMessage || 'Shipping Bypasser status refreshed.'));
+    }
+    return d;
+  } catch (e) {
+    if (setStatusText) setStatus('Shipping Bypasser status load failed: ' + e.message);
+    setCrmShippingBypasserStatusText('Shipping Bypasser status load failed.');
+    const runtimeEl = document.getElementById('crmShippingBypasserRuntimeText');
+    if (runtimeEl) runtimeEl.textContent = e.message;
+    stopCrmShippingBypasserPolling();
+    return null;
+  }
+}
+
+async function startCrmShippingBypasserRun(dryRun, button = null, singleOrder = false) {
+  if (await maybeForceStopFromButton(button)) return;
+  const rawOrderTarget = String((document.getElementById('crmOrderGoodsOrderInput') || {}).value || '').trim();
+  if (singleOrder && !rawOrderTarget) {
+    setStatus('Enter a single order ID or CRM order URL before starting Single Bypasser.');
+    return;
+  }
+  const path = dryRun ? '/crm/shipping-bypasser/dry-run' : '/crm/shipping-bypasser';
+  let resultMsg = singleOrder
+    ? (dryRun ? `Starting Single Bypasser dry run for order ${rawOrderTarget}...` : `Starting Single Bypasser run for order ${rawOrderTarget}...`)
+    : (dryRun ? 'Starting Shipping Bypasser dry run...' : 'Starting Shipping Bypasser...');
+  setStatus(resultMsg);
+  markButtonStoppable(button);
+  try {
+    const payload = {};
+    if (singleOrder) payload.order_id = rawOrderTarget;
+    const d = await api(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    renderCrmShippingBypasserStatus(d);
+    resultMsg = d.message || resultMsg;
+  } catch (e) {
+    resultMsg = 'Shipping Bypasser request failed: ' + e.message;
+  }
+  await loadCrmStatus(false);
+  await loadCrmProductSeparatorStatus(false);
+  await loadCrmOrderGoodsStatus(false);
+  await loadCrmShippingBypasserStatus(false);
+  await loadCrmAutoSplitterStatus(false);
+  await loadCrmProcessingStatus(false);
+  setStatus(resultMsg);
+  if (!(crmShippingBypasserStatusPayload && crmShippingBypasserStatusPayload.running)) restoreStoppableButton(button);
+}
+
+function stopCrmShippingBypasserPolling() {
+  if (crmShippingBypasserPollTimer) {
+    clearInterval(crmShippingBypasserPollTimer);
+    crmShippingBypasserPollTimer = null;
+  }
+}
+
+function syncCrmShippingBypasserPolling() {
+  if (crmShippingBypasserStatusPayload && crmShippingBypasserStatusPayload.running) {
+    if (!crmShippingBypasserPollTimer) {
+      crmShippingBypasserPollTimer = setInterval(() => {
+        loadCrmShippingBypasserStatus(false);
+      }, 2000);
+    }
+  } else {
+    stopCrmShippingBypasserPolling();
+  }
 }
 
 function stopCrmAutoSplitterPolling() {
@@ -3512,6 +4206,16 @@ function formatCrmAutoSplitterReport(resultPayload) {
   return `Order ${resultPayload.target_order_id || '-'} | Tabs ${detected}/${expected} | Divisions ${divisions} | Workers ${workers} | Designs ${designs.length}. ${planText}`;
 }
 
+function formatCrmAutoSplitterRunDetails(runtime = {}) {
+  const order = runtime.targetOrderId || crmAutoSplitterExtractOrderId(runtime.orderUrl) || runtime.orderUrl || '';
+  const parts = [];
+  if (order) parts.push(`Order ${order}`);
+  if (runtime.tabCount) parts.push(`Tabs ${runtime.tabCount}`);
+  if (runtime.divisions) parts.push(`Divisions ${runtime.divisions}`);
+  if (runtime.parallelWorkers) parts.push(`Workers ${runtime.parallelWorkers}`);
+  return parts.join(' | ');
+}
+
 function renderCrmAutoSplitterHistory(rows) {
   const root = document.getElementById('crmAutoSplitterHistoryRows');
   const moreBtn = document.getElementById('crmAutoSplitterHistoryMoreBtn');
@@ -3579,8 +4283,10 @@ function renderCrmAutoSplitterStatus(payload) {
   const running = Boolean(payload && payload.running);
   const resultPayload = crmAutoSplitterLastPayload(payload);
   let headline = 'Auto Splitter is idle.';
+  const activeDetails = formatCrmAutoSplitterRunDetails(runtime);
   if (running) {
     headline = runtime.dryRun ? 'Auto Splitter dry run in progress.' : 'Auto Splitter live split in progress.';
+    if (activeDetails) headline = `Auto Splitter working on ${activeDetails}.`;
   } else if (runtime.lastSuccess === true) {
     headline = runtime.dryRun ? 'Last Auto Splitter dry run completed successfully.' : 'Last Auto Splitter live run completed successfully.';
   } else if (runtime.lastSuccess === false) {
@@ -3589,20 +4295,27 @@ function renderCrmAutoSplitterStatus(payload) {
 
   setCrmAutoSplitterStatusText(headline);
   const runtimeEl = document.getElementById('crmAutoSplitterRuntimeText');
-  if (runtimeEl) runtimeEl.textContent = running ? (runtime.lastMessage || headline) : ((resultPayload && resultPayload.message) || runtime.lastMessage || 'Enter an order and run Auto Splitter. Dry run preflight runs before live split.');
+  if (runtimeEl) {
+    const idleMessage = (resultPayload && resultPayload.message) || runtime.lastMessage || 'Enter an order and add it to the queue. Dry run preflight runs before live split.';
+    runtimeEl.textContent = running
+      ? `${activeDetails || headline}${runtime.lastMessage ? ` | ${runtime.lastMessage}` : ''}`
+      : idleMessage;
+  }
   const reportEl = document.getElementById('crmAutoSplitterReportText');
   if (reportEl) reportEl.textContent = formatCrmAutoSplitterReport(resultPayload);
 
+  const workersInput = document.getElementById('crmAutoSplitterParallelWorkersInput');
+  const savedWorkers = payload && payload.state ? Number(payload.state.saved_auto_splitter_parallel_workers) : NaN;
+  if (workersInput && !running && Number.isFinite(savedWorkers) && savedWorkers >= 1 && savedWorkers <= 4 && workersInput.dataset.userEdited !== '1') {
+    workersInput.value = String(savedWorkers);
+  }
+
   const liveBtn = document.getElementById('crmAutoSplitterRunBtn');
   if (liveBtn) {
-    if (running) {
-      markButtonStoppable(liveBtn);
-    } else {
-      restoreStoppableButton(liveBtn);
-      liveBtn.disabled = false;
-      liveBtn.textContent = 'Run Auto Splitter';
-      liveBtn.title = 'Run dry run preflight, then live split if the dry run succeeds.';
-    }
+    restoreStoppableButton(liveBtn);
+    liveBtn.disabled = false;
+    liveBtn.textContent = 'Add to Queue';
+    liveBtn.title = 'Queue this order. Use the Queue panel to cancel a running or waiting Auto Splitter task.';
   }
   renderCrmAutoSplitterHistory(payload && payload.state ? payload.state.auto_splitter_run_history || [] : []);
   syncCrmAutoSplitterPolling();
@@ -3613,6 +4326,7 @@ function ensureCrmAutoSplitterInputWiring() {
     const input = document.getElementById(id);
     if (!input || input.dataset.bound === '1') return;
     input.addEventListener('input', () => {
+      input.dataset.userEdited = '1';
       if (crmAutoSplitterStatusPayload) renderCrmAutoSplitterStatus(crmAutoSplitterStatusPayload);
     });
     input.dataset.bound = '1';
@@ -3639,7 +4353,6 @@ async function loadCrmAutoSplitterStatus(setStatusText = false) {
 }
 
 async function startCrmAutoSplitterRun(button = null) {
-  if (await maybeForceStopFromButton(button)) return;
   const payload = crmAutoSplitterInputs();
   const validation = crmAutoSplitterValidation(payload);
   if (validation) {
@@ -3647,19 +4360,19 @@ async function startCrmAutoSplitterRun(button = null) {
     setCrmAutoSplitterLocalMessage('Auto Splitter needs input.', validation);
     return;
   }
-  const confirmed = window.confirm('Auto Splitter will run a dry run preflight first. If it succeeds, it will create split orders and update the original CRM order. Continue?');
+  const confirmed = window.confirm('Add this Auto Splitter order to the queue? It will use a recent matching dry run when available; otherwise it will run a dry run preflight before the live split.');
   if (!confirmed) {
-    setStatus('Auto Splitter run canceled.');
-    setCrmAutoSplitterLocalMessage('Auto Splitter run canceled.', 'No changes were made.');
+    setStatus('Auto Splitter queue add canceled.');
+    setCrmAutoSplitterLocalMessage('Auto Splitter queue add canceled.', 'No queue entry was added.');
     return;
   }
 
   const path = '/crm/auto-splitter';
-  let resultMsg = 'Starting Auto Splitter dry run preflight...';
+  let resultMsg = 'Adding Auto Splitter order to queue...';
   let requestFailed = false;
   setStatus(resultMsg);
-  setCrmAutoSplitterLocalMessage('Auto Splitter starting.', resultMsg);
-  markButtonStoppable(button);
+  setCrmAutoSplitterLocalMessage('Auto Splitter queueing.', resultMsg);
+  setButtonBusy(button, true, 'QUEUING...');
   try {
     const d = await api(path, {
       method: 'POST',
@@ -3671,12 +4384,14 @@ async function startCrmAutoSplitterRun(button = null) {
   } catch (e) {
     requestFailed = true;
     resultMsg = 'Auto Splitter request failed: ' + e.message;
+  } finally {
+    setButtonBusy(button, false);
   }
+  await loadQueue(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmStatus(false);
   if (requestFailed) setCrmAutoSplitterLocalMessage('Auto Splitter request failed.', resultMsg);
   setStatus(resultMsg);
-  if (!(crmAutoSplitterStatusPayload && crmAutoSplitterStatusPayload.running)) restoreStoppableButton(button);
 }
 
 function stopCrmAddressPolling() {
@@ -4167,7 +4882,9 @@ async function startCrmAddressRun(dryRun, button = null) {
   }
   await loadCrmAddressStatus(false);
   await loadCrmProcessingStatus(false);
+  await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
+  await loadCrmShippingBypasserStatus(false);
   await loadCrmAutoSplitterStatus(false);
   setStatus(resultMsg);
   if (!(crmAddressStatusPayload && crmAddressStatusPayload.running)) restoreStoppableButton(button);
@@ -4191,6 +4908,10 @@ function renderSuiteResult(data) {
   const box = document.getElementById('suiteResult');
   if (!box) return;
   const lines = [];
+  if (data && data.queue_task) {
+    box.textContent = `${data.message || 'Automation suite queued.'}\nWatch the Queue panel for live progress.`;
+    return;
+  }
   if (!data || !Array.isArray(data.results)) {
     box.textContent = 'Suite result unavailable.';
     return;
@@ -4223,7 +4944,7 @@ async function runAutomationSuite(button = null) {
     });
     renderSuiteResult(d);
     const status = await loadStatus(false);
-    const prefix = d.success ? 'Suite passed' : 'Suite finished with failures';
+    const prefix = d.queue_task ? 'Suite queued' : (d.success ? 'Suite passed' : 'Suite finished with failures');
     setStatus(prefix + ': ' + (d.message || '') + ' | ' + status.summary);
   } catch (e) {
     setStatus('Automation suite failed: ' + e.message);
@@ -4329,19 +5050,23 @@ async function saveConfig() {
 async function reloadAll() {
   ensureManualAutoOutInputWiring();
   ensureCrmAutoSplitterInputWiring();
+  syncCrmProcessingAdvancedControls();
   ensurePowerScheduleDefaults();
   renderTemperatureThresholdSettings();
   renderTemperatureGauges(desktopMetricsLastPayload || {});
   await loadStatus();
   await loadCrmProcessingStatus(false);
   await loadCrmStatus(false);
+  await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
+  await loadCrmShippingBypasserStatus(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmAddressStatus(false);
   await loadConfig();
   await loadSlackLunchStatus(false);
   await loadPowerStatus(false);
   await loadConsoleLog(false);
+  await loadQueue(false);
 }
 
 async function refreshAllStatuses(button = null) {
@@ -4355,6 +5080,7 @@ async function refreshAllStatuses(button = null) {
 if (!UI_OPENED_FROM_FILE) {
   ensureManualAutoOutInputWiring();
   ensureCrmAutoSplitterInputWiring();
+  syncCrmProcessingAdvancedControls();
   ensurePowerScheduleDefaults();
   setTemperatureUnit(temperatureUnit);
   renderCrmAddressModeControls();
@@ -4364,11 +5090,14 @@ if (!UI_OPENED_FROM_FILE) {
     loadStatus(false);
     loadCrmProcessingStatus(false);
     loadCrmStatus(false);
+    loadCrmProductSeparatorStatus(false);
     loadCrmOrderGoodsStatus(false);
+    loadCrmShippingBypasserStatus(false);
     loadCrmAutoSplitterStatus(false);
     loadCrmAddressStatus(false);
     loadSlackLunchStatus(false);
     loadPowerStatus(false);
+    loadQueue(false);
   }, 30000);
   setInterval(() => {
     if (powerCountdownPayload && powerCountdownPayload.active) {
@@ -4380,7 +5109,15 @@ if (!UI_OPENED_FROM_FILE) {
     if (activeTab === 'console') {
       loadConsoleLog(false);
     }
+    if (queueVisible || (queuePayload && (queuePayload.running_count || queuePayload.queued_count || queuePayload.idle_count))) {
+      loadQueue(false);
+    }
   }, 5000);
+  setInterval(() => {
+    if (queueVisible && queuePayload && Number(queuePayload.idle_count || 0) > 0) {
+      renderQueue(queuePayload);
+    }
+  }, 1000);
 }
 </script>
 </body>

@@ -19,11 +19,14 @@ crm_address_validator_state.json
 workers/.wdm/
 chrome_profile/
 chrome_profile_crm/
+chrome_profile_crm_worker_pool/
 chrome_profile_crm_auto_splitter_workers/
 slack_chrome_profile/
 
 # Generated artifacts
 screenshots/
+product_separator_results/
+crm_state_corrupt_*.json
 exports/
 backups/
 Test Files/

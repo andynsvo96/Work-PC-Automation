@@ -45,6 +45,7 @@ from crm_validate_address import (
     _normalize_requested_batch_size,
     _normalize_target_order_id,
     _open_target_order,
+    _worker_profile_lock,
 )
 from crm_unlock_orders import wait_for_order_preview_panel as _wait_for_stock_unlock_preview_panel
 
@@ -55,6 +56,7 @@ PROFILE_PATH = os.path.join(SCRIPT_DIR, CRM_PROFILE_DIR)
 RUSH_FILTER = "rush"
 CONTINUOUS_ORDER_FETCH_LIMIT = 25
 CRM_STATE_PATH = os.path.join(SCRIPT_DIR, "crm_state.json")
+STOCK_UNLOCK_STATUS = "Stock Auto Ordering Unlocked"
 
 
 def _elapsed_seconds(started_at):
@@ -161,6 +163,22 @@ const controls = Array.from(document.querySelectorAll([
   '[class*="btn"]',
   '[class*="button"]'
 ].join(',')));
+const directMatches = controls
+  .filter((control) => {
+    const tag = String(control.tagName || '').toLowerCase();
+    if (!['button', 'input', 'a'].includes(tag) && control.getAttribute('role') !== 'button') return false;
+    if (lower(control.innerText || control.textContent || control.value || control.getAttribute('aria-label')) !== 'order goods') return false;
+    return isVisible(control);
+  })
+  .map((control) => ({
+    control,
+    disabled: !!control.disabled || control.getAttribute('disabled') !== null || /(?:^|\s)disabled(?:\s|$)/i.test(String(control.className || '')),
+    top: centerY(control)
+  }));
+if (directMatches.length) {
+  directMatches.sort((a, b) => Number(a.disabled) - Number(b.disabled) || a.top - b.top);
+  return directMatches[0].control;
+}
 const matches = [];
 for (const control of controls) {
   const controlText = lower(control.innerText || control.textContent || control.value || control.getAttribute('aria-label'));
@@ -1041,7 +1059,7 @@ if (chooseNativeSelect(pair.input)) {
 }
 pair.input.click && pair.input.click();
 const searchInput = findSearchInput() || pair.input;
-setTypedValue(searchInput, 'unlock');
+setTypedValue(searchInput, 'Stock Auto Ordering Unlocked');
 let tries = 0;
 const timer = setInterval(() => {
   tries += 1;
@@ -1093,7 +1111,7 @@ def _choose_stock_unlock_status_from_control(driver, control):
     if _select_native_stock_unlock_option(driver, control):
         time.sleep(0.3)
         return True
-    typed = _set_stock_unlock_control_text(driver, control, "unlock")
+    typed = _set_stock_unlock_control_text(driver, control, STOCK_UNLOCK_STATUS)
     if not typed:
         try:
             control.send_keys(Keys.CONTROL, "a")
@@ -1103,7 +1121,7 @@ def _choose_stock_unlock_status_from_control(driver, control):
                 control.clear()
             except Exception:
                 pass
-        control.send_keys("unlock")
+        control.send_keys(STOCK_UNLOCK_STATUS)
 
     option = None
     deadline = time.time() + 6
@@ -1118,7 +1136,7 @@ def _choose_stock_unlock_status_from_control(driver, control):
         return True
 
     try:
-        _set_stock_unlock_control_text(driver, control, "Stock Auto Ordering Unlocked")
+        _set_stock_unlock_control_text(driver, control, STOCK_UNLOCK_STATUS)
         time.sleep(0.5)
         option = _find_stock_unlock_option(driver)
         if option is not None:
@@ -1227,7 +1245,7 @@ def _unlock_current_order_for_auto_ordering(driver, order_id, dry_run=False, for
 
 
 def _wait_after_stock_unlock(driver, order_id, timeout=None, stock_tab_index=None):
-    timeout = timeout or 8
+    timeout = timeout or 12
     deadline = time.time() + timeout
     while time.time() < deadline:
         _wait_for_order_goods_page_ready(driver, order_id, timeout=4)
@@ -1248,6 +1266,44 @@ def _wait_after_stock_unlock(driver, order_id, timeout=None, stock_tab_index=Non
                 pass
         time.sleep(1.0)
     return "timeout"
+
+
+def _stock_unlock_message(unlock_result):
+    if isinstance(unlock_result, dict):
+        return unlock_result.get("message") or "Applied Stock Auto Ordering Unlocked before Order Goods."
+    return "Applied Stock Auto Ordering Unlocked before Order Goods."
+
+
+def _mark_result_stock_unlocked(result, unlock_result):
+    if not isinstance(result, dict):
+        return result
+    result["stock_unlocked_before_order_goods"] = True
+    warnings = result.get("warnings")
+    if not isinstance(warnings, list):
+        warnings = []
+    message = _stock_unlock_message(unlock_result)
+    if message not in warnings:
+        warnings.append(message)
+    result["warnings"] = warnings
+    return result
+
+
+def _refresh_order_after_stock_unlock(driver, order_id, stock_tab_index=None):
+    try:
+        driver.refresh()
+        time.sleep(1.0)
+    except Exception:
+        pass
+    if not _wait_for_order_goods_page_ready(driver, order_id):
+        _open_target_order(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
+        _wait_for_order_goods_page_ready(driver, order_id)
+    if stock_tab_index is not None:
+        try:
+            _activate_stock_tab(driver, int(stock_tab_index))
+            time.sleep(0.3)
+        except Exception:
+            pass
+    return _wait_after_stock_unlock(driver, order_id, stock_tab_index=stock_tab_index)
 
 
 def _page_indicates_non_vendor_stock_tab(driver):
@@ -1276,20 +1332,15 @@ def _order_goods_for_open_order(driver, order_id, dry_run=False, allow_unlock_re
                     "message": "Order appears locked: Sanmar / S&S Activewear order goods button is missing or disabled.",
                     "manual_review_required": True,
                 }
-            try:
-                driver.refresh()
-                time.sleep(1.0)
-            except Exception:
-                pass
-            if not _wait_for_order_goods_page_ready(driver, order_id):
-                _open_target_order(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
-                _wait_for_order_goods_page_ready(driver, order_id)
-            if stock_tab_index is not None:
-                try:
-                    _activate_stock_tab(driver, int(stock_tab_index))
-                    time.sleep(0.3)
-                except Exception:
-                    pass
+            post_unlock_state = _refresh_order_after_stock_unlock(driver, order_id, stock_tab_index=stock_tab_index)
+            if post_unlock_state == "ordered":
+                return _mark_result_stock_unlocked(
+                    _stock_already_ordered_result(
+                        order_id,
+                        "Skipped because stock was already ordered after applying Stock Auto Ordering Unlocked.",
+                    ),
+                    unlock_result,
+                )
             result = _order_goods_for_open_order(
                 driver,
                 order_id,
@@ -1297,14 +1348,7 @@ def _order_goods_for_open_order(driver, order_id, dry_run=False, allow_unlock_re
                 allow_unlock_retry=False,
                 stock_tab_index=stock_tab_index,
             )
-            if isinstance(result, dict):
-                result["stock_unlocked_before_order_goods"] = True
-                warnings = result.get("warnings")
-                if not isinstance(warnings, list):
-                    warnings = []
-                warnings.append(unlock_result.get("message") or "Applied Stock Auto Ordering Unlocked before Order Goods.")
-                result["warnings"] = warnings
-            return result
+            return _mark_result_stock_unlocked(result, unlock_result)
         raise TimeoutException(
             "The Sanmar / S&S Activewear order goods button was not found on this stock tab."
         )
@@ -1313,7 +1357,7 @@ def _order_goods_for_open_order(driver, order_id, dry_run=False, allow_unlock_re
     except Exception:
         enabled = False
     if not enabled:
-        if allow_unlock_retry and _page_indicates_stock_locked_for_auto_ordering(driver):
+        if allow_unlock_retry:
             unlock_result = _unlock_current_order_for_auto_ordering(driver, order_id, dry_run=dry_run, force=True)
             if dry_run or not unlock_result or not unlock_result.get("success"):
                 return unlock_result or {
@@ -1323,20 +1367,15 @@ def _order_goods_for_open_order(driver, order_id, dry_run=False, allow_unlock_re
                     "message": "Order appears locked: Sanmar / S&S Activewear order goods button is disabled and cannot be clicked.",
                     "manual_review_required": True,
                 }
-            try:
-                driver.refresh()
-                time.sleep(1.0)
-            except Exception:
-                pass
-            if not _wait_for_order_goods_page_ready(driver, order_id):
-                _open_target_order(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
-                _wait_for_order_goods_page_ready(driver, order_id)
-            if stock_tab_index is not None:
-                try:
-                    _activate_stock_tab(driver, int(stock_tab_index))
-                    time.sleep(0.3)
-                except Exception:
-                    pass
+            post_unlock_state = _refresh_order_after_stock_unlock(driver, order_id, stock_tab_index=stock_tab_index)
+            if post_unlock_state == "ordered":
+                return _mark_result_stock_unlocked(
+                    _stock_already_ordered_result(
+                        order_id,
+                        "Skipped because stock was already ordered after applying Stock Auto Ordering Unlocked.",
+                    ),
+                    unlock_result,
+                )
             result = _order_goods_for_open_order(
                 driver,
                 order_id,
@@ -1344,14 +1383,7 @@ def _order_goods_for_open_order(driver, order_id, dry_run=False, allow_unlock_re
                 allow_unlock_retry=False,
                 stock_tab_index=stock_tab_index,
             )
-            if isinstance(result, dict):
-                result["stock_unlocked_before_order_goods"] = True
-                warnings = result.get("warnings")
-                if not isinstance(warnings, list):
-                    warnings = []
-                warnings.append(unlock_result.get("message") or "Applied Stock Auto Ordering Unlocked before Order Goods.")
-                result["warnings"] = warnings
-            return result
+            return _mark_result_stock_unlocked(result, unlock_result)
         return {
             "order_id": order_id,
             "success": False,
@@ -1573,14 +1605,7 @@ def _run_order_with_driver(driver, order_id, dry_run=False):
             return [result]
         results = _order_goods_for_all_stock_tabs(driver, normalized_order_id, dry_run=dry_run)
         for item in results:
-            if not isinstance(item, dict):
-                continue
-            item["stock_unlocked_before_order_goods"] = True
-            warnings = item.get("warnings")
-            if not isinstance(warnings, list):
-                warnings = []
-            warnings.append(unlocked_message)
-            item["warnings"] = warnings
+            _mark_result_stock_unlocked(item, unlock_result)
         return results
     results = _order_goods_for_all_stock_tabs(driver, normalized_order_id, dry_run=dry_run)
     return results
@@ -1607,7 +1632,7 @@ def _summary_message(report_items, refresh_passes=1, order_count=0):
     return " ".join(parts)
 
 
-def _order_goods_worker_payload(order_id, headless_mode, dry_run=False, profile_path=None):
+def _order_goods_worker_payload(order_id, headless_mode, dry_run=False, profile_path=None, skip_stale_chrome_check=False):
     started_at = time.monotonic()
     driver = None
     report_items = []
@@ -1616,6 +1641,7 @@ def _order_goods_worker_payload(order_id, headless_mode, dry_run=False, profile_
             profile_path,
             headless_mode=headless_mode,
             profile_label=f"CRM order goods worker {order_id}",
+            skip_stale_chrome_check=skip_stale_chrome_check,
         )
         report_items = _run_order_with_driver(driver, order_id, dry_run=dry_run)
         duration = _elapsed_seconds(started_at)
@@ -1764,12 +1790,16 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
                 attempt_count = 0
                 retry_allowed = not bool(dry_run)
                 total_attempts = 2 if retry_allowed else 1
+                worker_slot = (order_index % worker_limit) + 1
                 for attempt in range(1, total_attempts + 1):
                     attempt_count = attempt
                     try:
                         temp_root, cloned_profile_path = _clone_profile_for_worker(
                             resolved_profile_path,
                             f"order_goods_{order_index + 1}_{order_id}_attempt_{attempt}",
+                            worker_slot=worker_slot,
+                            pool_name="order_goods",
+                            rebuild=attempt > 1,
                         )
                     except Exception as exc:
                         payload = {
@@ -1794,14 +1824,17 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
                         if attempt > 1:
                             print(f"Retrying Rush Order Goods order {order_id} once with a fresh CRM worker profile...")
                             time.sleep(1)
-                        payload = _order_goods_worker_payload(
-                            order_id,
-                            headless_mode=headless_mode,
-                            dry_run=dry_run,
-                            profile_path=cloned_profile_path,
-                        )
+                        with _worker_profile_lock(cloned_profile_path):
+                            payload = _order_goods_worker_payload(
+                                order_id,
+                                headless_mode=headless_mode,
+                                dry_run=dry_run,
+                                profile_path=cloned_profile_path,
+                                skip_stale_chrome_check=True,
+                            )
                     finally:
-                        shutil.rmtree(temp_root, ignore_errors=True)
+                        if temp_root:
+                            shutil.rmtree(temp_root, ignore_errors=True)
                     if not _payload_has_retryable_order_goods_exception(payload):
                         break
                     if attempt < total_attempts:

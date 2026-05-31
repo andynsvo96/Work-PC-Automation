@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
 
@@ -18,6 +19,7 @@ import server  # noqa: E402
 import crm_validate_address  # noqa: E402
 import crm_order_goods  # noqa: E402
 import crm_auto_splitter  # noqa: E402
+import crm_product_separator  # noqa: E402
 import automation_runtime  # noqa: E402
 
 
@@ -55,6 +57,172 @@ class CrmAutoSplitterTests(unittest.TestCase):
             original_grand_total = split_total.quantize(crm_auto_splitter.Decimal("0.01"))
 
         self.assertEqual(original_grand_total, crm_auto_splitter.Decimal("445.11"))
+
+
+class CrmProductSeparatorTests(unittest.TestCase):
+    def test_not_authenticated_page_is_detected_before_design_tab_failure(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = "\u00d7 Error Not authenticated close"
+
+        self.assertTrue(crm_product_separator._is_not_authenticated_page(driver))
+
+    @mock.patch.object(crm_product_separator, "_run_order_dry_worker")
+    def test_order_chunk_worker_retries_transient_crm_readiness_error(self, mock_dry_worker):
+        mock_dry_worker.side_effect = [
+            {
+                "success": False,
+                "message": "Product Separator failed for order 4607189: CRM app did not become ready.",
+                "target_order_id": "4607189",
+            },
+            {
+                "success": True,
+                "message": "Product Separator skipped order 4607189: no mixed product tabs detected.",
+                "target_order_id": "4607189",
+            },
+        ]
+
+        results = crm_product_separator._run_order_chunk_worker(["4607189"], "profile", "results")
+
+        self.assertEqual(mock_dry_worker.call_count, 2)
+        self.assertTrue(results[0]["success"])
+        self.assertTrue(results[0]["retried_after_transient_error"])
+        self.assertIn("CRM app did not become ready", results[0]["first_attempt_message"])
+
+    def test_stock_ordered_status_accepts_stock_history_confirmation(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = {
+            "already_applied": True,
+            "clicked_apply": False,
+            "confirmation": "stock_history",
+        }
+
+        result = crm_product_separator._apply_stock_ordered_status(driver)
+
+        self.assertTrue(result["already_applied"])
+        self.assertEqual(result["confirmation"], "stock_history")
+        driver.execute_script.assert_called_once()
+
+    def test_tabs_still_needing_split_filters_mixed_tabs(self):
+        scan = {
+            "tabs": [
+                {"tab_number": 1, "needs_split": False},
+                {"tab_number": 2, "needs_split": True},
+            ]
+        }
+
+        remaining = crm_product_separator._tabs_still_needing_split(scan)
+
+        self.assertEqual([tab["tab_number"] for tab in remaining], [2])
+
+    @mock.patch.object(server, "_execute_crm_product_separator_script")
+    def test_live_batch_continues_when_preflight_has_split_orders_and_one_failure(self, mock_run_script):
+        preflight_payload = {
+            "success": False,
+            "message": "Product Separator list dry run complete. 1 order(s) need splitting, 0 already okay.",
+            "action": "product_separator_list",
+            "dry_run": True,
+            "list_mode": "rush",
+            "parallel_workers": 4,
+            "order_ids": ["4609102", "4607350"],
+            "split_order_ids": ["4609102"],
+            "failed_order_ids": ["4607350"],
+            "report": [
+                {
+                    "order_id": "4609102",
+                    "success": True,
+                    "resolution": "dry_run_ready",
+                    "needs_split": True,
+                    "message": "ready",
+                },
+                {
+                    "order_id": "4607350",
+                    "success": False,
+                    "resolution": None,
+                    "needs_split": False,
+                    "message": "CRM authentication failed: Not authenticated.",
+                },
+            ],
+        }
+        live_payload = {
+            "success": True,
+            "message": "Product Separator completed order 4609102.",
+            "action": "product_separator_order",
+            "dry_run": False,
+            "target_order_id": "4609102",
+            "order_ids": ["4609102"],
+            "resolution": "split_complete",
+            "duration_seconds": 12.0,
+        }
+        mock_run_script.side_effect = [
+            (False, preflight_payload["message"], preflight_payload),
+            (True, live_payload["message"], live_payload),
+        ]
+
+        ok, message, payload = server._execute_crm_product_separator_worker(
+            dry_run=False,
+            list_mode="rush",
+            parallel_workers=4,
+        )
+
+        self.assertFalse(ok)
+        self.assertEqual(mock_run_script.call_count, 2)
+        self.assertEqual(payload["dry_run"], False)
+        self.assertEqual(payload["live_order_ids"], ["4609102"])
+        self.assertIn("1/1 live order", message)
+        rows_by_order = {row["order_id"]: row for row in payload["order_results"]}
+        self.assertEqual(rows_by_order["4609102"]["status"], "Separated")
+        self.assertEqual(rows_by_order["4607350"]["status"], "Needs attention")
+
+    @mock.patch.object(server, "_execute_crm_product_separator_script")
+    def test_live_batch_retries_transient_live_order_failure(self, mock_run_script):
+        preflight_payload = {
+            "success": True,
+            "message": "Product Separator list dry run complete. 1 order(s) need splitting, 0 already okay.",
+            "action": "product_separator_list",
+            "dry_run": True,
+            "list_mode": "rush",
+            "parallel_workers": 4,
+            "order_ids": ["4607567"],
+            "split_order_ids": ["4607567"],
+            "report": [
+                {
+                    "order_id": "4607567",
+                    "success": True,
+                    "resolution": "dry_run_ready",
+                    "needs_split": True,
+                    "message": "ready",
+                },
+            ],
+        }
+        retryable_payload = {
+            "success": False,
+            "message": "Product Separator failed for order 4607567: CRM app did not become ready.",
+            "target_order_id": "4607567",
+        }
+        live_payload = {
+            "success": True,
+            "message": "Product Separator completed order 4607567.",
+            "target_order_id": "4607567",
+            "order_ids": ["4607567"],
+            "resolution": "split_complete",
+        }
+        mock_run_script.side_effect = [
+            (True, preflight_payload["message"], preflight_payload),
+            (False, retryable_payload["message"], retryable_payload),
+            (True, live_payload["message"], live_payload),
+        ]
+
+        ok, _message, payload = server._execute_crm_product_separator_worker(
+            dry_run=False,
+            list_mode="rush",
+            parallel_workers=4,
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(mock_run_script.call_count, 3)
+        self.assertEqual(payload["live_order_ids"], ["4607567"])
+        rows_by_order = {row["order_id"]: row for row in payload["order_results"]}
+        self.assertEqual(rows_by_order["4607567"]["status"], "Separated")
 
     def test_server_recovers_partial_auto_splitter_order_ids(self):
         payload = {
@@ -1077,6 +1245,54 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         self.assertEqual(mock_persist.call_count, 1)
         self.assertTrue(any("Persisted the override through the CRM modal service" in item for item in warnings))
 
+    def test_free_po_box_override_uses_scope_send_when_ui_state_is_missing(self):
+        driver = object()
+        shipping_modal = object()
+        address = {
+            "recipient": "Alyson Goryl",
+            "address": "P.O. Box 550193",
+            "address_cont": "",
+            "city": "South Lake Tahoe",
+            "state": "California",
+            "zip": "96150",
+        }
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(crm_validate_address, "_open_target_order", return_value="4605090"))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_extract_shipping_panel_address", return_value=dict(address)))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_shipping_panel_has_valid_address", return_value=False))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_read_order_totals_shipping_class", return_value="free"))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_open_shipping_editor", return_value=shipping_modal))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_extract_current_address", return_value=dict(address)))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_address_is_valid", return_value=False))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_ensure_recipient_present", return_value=(True, dict(address))))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_collect_existing_address_options", return_value=[]))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_find_best_existing_address_option", return_value=None))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_rewrite_address_fields_if_needed", return_value=(dict(address), "")))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_apply_override"))
+            mock_ensure = stack.enter_context(mock.patch.object(crm_validate_address, "_ensure_override_ready", return_value=(True, True)))
+            stack.enter_context(
+                mock.patch.object(
+                    crm_validate_address,
+                    "_prepare_shipping_form_for_save",
+                    return_value=(None, dict(address), ""),
+                )
+            )
+            mock_save = stack.enter_context(mock.patch.object(crm_validate_address, "_save_shipping_transaction"))
+
+            result = crm_validate_address._evaluate_and_resolve_order(
+                driver,
+                order_id="4605090",
+                dry_run=False,
+                shipping_filter="all",
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["outcome"], "po_box_free_override_saved")
+        self.assertEqual(result["resolution"], "override")
+        mock_ensure.assert_called_once_with(driver, shipping_modal, mock.ANY, dry_run=False)
+        mock_save.assert_called_once_with(driver, shipping_modal, "4605090", False, use_scope_send=True)
+
     def test_attempt_validation_candidate_selection_accepts_final_save_ready(self):
         warnings = []
         button = object()
@@ -1233,7 +1449,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         _mock_write_result_payload,
     ):
         collect_limits = []
-        mock_clone_profile.side_effect = lambda profile_path, label: (
+        mock_clone_profile.side_effect = lambda profile_path, label, *args, **kwargs: (
             str(ROOT / "tests_tmp" / label),
             str(ROOT / "tests_tmp" / label / "profile"),
         )
@@ -1318,7 +1534,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         _mock_write_result_payload,
     ):
         mock_collect_orders.side_effect = [["2000001"], []]
-        mock_clone_profile.side_effect = lambda profile_path, label: (
+        mock_clone_profile.side_effect = lambda profile_path, label, *args, **kwargs: (
             str(ROOT / "tests_tmp" / label),
             str(ROOT / "tests_tmp" / label / "profile"),
         )
@@ -1376,7 +1592,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         _mock_write_result_payload,
     ):
         mock_collect_orders.side_effect = [["2000001"], []]
-        mock_clone_profile.side_effect = lambda profile_path, label: (
+        mock_clone_profile.side_effect = lambda profile_path, label, *args, **kwargs: (
             str(ROOT / "tests_tmp" / label),
             str(ROOT / "tests_tmp" / label / "profile"),
         )
@@ -1564,7 +1780,7 @@ class CrmAddressServerTests(unittest.TestCase):
 
         control.send_keys.assert_not_called()
 
-    def test_order_goods_top_panel_unlock_script_handles_dropdown_and_types_unlock(self):
+    def test_order_goods_top_panel_unlock_script_handles_dropdown_and_types_full_status(self):
         captured = {}
         driver = mock.Mock()
 
@@ -1579,7 +1795,7 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertIn("chooseNativeSelect", captured["script"])
         self.assertIn("'select'", captured["script"])
-        self.assertIn("setTypedValue(searchInput, 'unlock')", captured["script"])
+        self.assertIn("setTypedValue(searchInput, 'Stock Auto Ordering Unlocked')", captured["script"])
 
     @mock.patch.object(server, "_run_script")
     def test_stock_unlocker_dry_run_uses_visible_terminal(self, mock_run_script):
@@ -1642,17 +1858,39 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertTrue(crm_order_goods._text_indicates_stock_already_ordered("Stock : Ordered"))
 
     @mock.patch.object(crm_order_goods, "_page_indicates_stock_already_ordered", return_value=False)
+    @mock.patch.object(crm_order_goods, "_refresh_order_after_stock_unlock", return_value="orderable")
+    @mock.patch.object(crm_order_goods, "_unlock_current_order_for_auto_ordering")
+    @mock.patch.object(crm_order_goods, "_click_with_fallback")
     @mock.patch.object(crm_order_goods, "_find_sanmar_order_goods_button")
-    def test_order_goods_reports_locked_when_button_disabled(self, mock_button, _mock_ordered):
-        button = mock.Mock()
-        button.is_enabled.return_value = False
-        mock_button.return_value = button
+    def test_order_goods_unlocks_and_retries_when_button_disabled(
+        self,
+        mock_button,
+        mock_click,
+        mock_unlock,
+        mock_refresh,
+        _mock_ordered,
+    ):
+        disabled_button = mock.Mock()
+        disabled_button.is_enabled.return_value = False
+        enabled_button = mock.Mock()
+        enabled_button.is_enabled.return_value = True
+        mock_button.side_effect = [disabled_button, enabled_button]
+        mock_unlock.return_value = {
+            "order_id": "4418860",
+            "success": True,
+            "outcome": "stock_unlocked",
+            "message": "Unlocked first.",
+            "manual_review_required": False,
+        }
 
         result = crm_order_goods._order_goods_for_open_order(mock.Mock(), "4418860", dry_run=False)
 
-        self.assertFalse(result["success"])
-        self.assertEqual(result["outcome"], "order_goods_locked")
-        self.assertIn("disabled", result["message"])
+        self.assertTrue(result["success"])
+        self.assertEqual(result["outcome"], "order_goods_clicked")
+        self.assertTrue(result["stock_unlocked_before_order_goods"])
+        mock_unlock.assert_called_once_with(mock.ANY, "4418860", dry_run=False, force=True)
+        mock_refresh.assert_called_once_with(mock.ANY, "4418860", stock_tab_index=None)
+        mock_click.assert_called_once_with(mock.ANY, enabled_button)
 
     def test_order_goods_button_fallback_finds_visible_input_value(self):
         driver = mock.Mock()
@@ -1676,6 +1914,22 @@ class CrmAddressServerTests(unittest.TestCase):
 
         self.assertIs(result, control)
         driver.find_elements.assert_called_once()
+
+    def test_order_goods_button_finder_prefers_direct_enabled_order_goods_button(self):
+        class FakeButton:
+            pass
+
+        disabled_status_container = FakeButton()
+        enabled_order_goods_button = FakeButton()
+        driver = mock.Mock()
+        driver.execute_script.return_value = enabled_order_goods_button
+
+        result = crm_order_goods._find_sanmar_order_goods_button(driver, timeout=0.1)
+
+        self.assertIs(result, enabled_order_goods_button)
+        script = driver.execute_script.call_args.args[0]
+        self.assertIn("directMatches", script)
+        self.assertIn("!== 'order goods'", script)
 
     @mock.patch.object(crm_order_goods, "_order_goods_for_all_stock_tabs")
     @mock.patch.object(crm_order_goods, "_wait_after_stock_unlock", return_value="orderable")
@@ -1995,7 +2249,7 @@ class CrmAddressServerTests(unittest.TestCase):
 
         self.assertEqual(
             server._crm_processing_selected_steps_from_state(state),
-            ["address_validator_batch", "stock_unlocker", "order_goods"],
+            ["address_validator_batch", "product_separator", "stock_unlocker", "order_goods"],
         )
 
     def test_processing_free_mode_disables_rush_only_steps(self):
@@ -2012,11 +2266,12 @@ class CrmAddressServerTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertTrue(state["address_validator_enabled"])
+        self.assertTrue(state["product_separator_enabled"])
         self.assertFalse(state["stock_unlocker_enabled"])
         self.assertFalse(state["order_goods_enabled"])
-        self.assertEqual(server._crm_processing_selected_steps_from_state(state), ["address_validator_batch"])
+        self.assertEqual(server._crm_processing_selected_steps_from_state(state), ["address_validator_batch", "product_separator"])
 
-    def test_processing_switch_to_rush_defaults_all_steps_on(self):
+    def test_processing_switch_to_rush_preserves_selected_steps(self):
         with tempfile.TemporaryDirectory() as tmp:
             state_path = Path(tmp) / "crm_processing_state.json"
             with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
@@ -2030,18 +2285,128 @@ class CrmAddressServerTests(unittest.TestCase):
                 ok, _message, state = server.update_crm_processing_preferences(
                     stock_unlocker_enabled=False,
                     address_validator_enabled=False,
+                    product_separator_enabled=False,
                     order_goods_enabled=False,
                     processing_filter="rush",
                 )
 
         self.assertTrue(ok)
-        self.assertTrue(state["address_validator_enabled"])
+        self.assertFalse(state["address_validator_enabled"])
+        self.assertFalse(state["product_separator_enabled"])
+        self.assertFalse(state["stock_unlocker_enabled"])
+        self.assertFalse(state["order_goods_enabled"])
+        self.assertEqual(server._crm_processing_selected_steps_from_state(state), [])
+
+    def test_processing_preferences_route_ignores_queue_only_options(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "crm_processing_state.json"
+            with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
+                server.ensure_crm_processing_state_file()
+                response = server.app.test_client().post(
+                    "/crm/process/preferences",
+                    json={
+                        "stock_unlocker_enabled": True,
+                        "address_validator_enabled": False,
+                        "product_separator_enabled": False,
+                        "order_goods_enabled": True,
+                        "processing_filter": "rush",
+                        "advanced_mode": "repeat",
+                        "repeat_interval_minutes": 10,
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["success"])
+        self.assertFalse(payload["state"]["address_validator_enabled"])
+        self.assertFalse(payload["state"]["product_separator_enabled"])
+        self.assertTrue(payload["state"]["stock_unlocker_enabled"])
+        self.assertTrue(payload["state"]["order_goods_enabled"])
+
+    def test_processing_state_load_handles_legacy_history_without_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "crm_processing_state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "run_history": [
+                            {
+                                "timestamp": "2026-05-30T10:00:00",
+                                "processing_filter": "rush",
+                                "selected_steps": ["stock_unlocker"],
+                                "step_results": [],
+                                "duration_seconds": 1.2,
+                                "message": "Legacy row",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
+                state = server.load_crm_processing_state()
+
+        self.assertFalse(state["run_history"][0]["success"])
+        self.assertEqual(state["run_history"][0]["selected_steps"], ["stock_unlocker"])
+
+    def test_processing_rush_can_run_unlocker_and_order_goods_without_validator(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "crm_processing_state.json"
+            with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
+                server.ensure_crm_processing_state_file()
+                ok, _message, state = server.update_crm_processing_preferences(
+                    stock_unlocker_enabled=True,
+                    address_validator_enabled=False,
+                    product_separator_enabled=False,
+                    order_goods_enabled=True,
+                    processing_filter="rush",
+                )
+
+        self.assertTrue(ok)
+        self.assertFalse(state["address_validator_enabled"])
+        self.assertFalse(state["product_separator_enabled"])
         self.assertTrue(state["stock_unlocker_enabled"])
         self.assertTrue(state["order_goods_enabled"])
         self.assertEqual(
             server._crm_processing_selected_steps_from_state(state),
-            ["address_validator_batch", "stock_unlocker", "order_goods"],
+            ["stock_unlocker", "order_goods"],
         )
+
+    def test_processing_bypass_only_still_selects_order_goods_step(self):
+        state = {
+            "processing_filter": "rush",
+            "address_validator_enabled": False,
+            "product_separator_enabled": False,
+            "stock_unlocker_enabled": False,
+            "order_goods_enabled": False,
+            "shipping_bypasser_enabled": True,
+        }
+
+        self.assertEqual(server._crm_processing_selected_steps_from_state(state), ["order_goods"])
+
+    def test_shipping_bypasser_history_keeps_sanmar_confirmation_link(self):
+        payload = {
+            "success": True,
+            "order_ids": ["4609966"],
+            "report": [
+                {
+                    "order_id": "4609966",
+                    "success": True,
+                    "outcome": "shipping_bypass_ordered",
+                    "message": "Ordered.",
+                    "sanmar_confirmation": {
+                        "url": "https://www.sanmar.com/checkout/thank-you",
+                        "web_reference": "12345",
+                        "screenshot": "screenshots/sanmar_shipping_bypass_4609966.png",
+                    },
+                }
+            ],
+        }
+
+        results = server._build_crm_order_goods_order_results(payload)
+
+        self.assertEqual(results[0]["status"], "Bypassed")
+        self.assertEqual(results[0]["sanmar_confirmation"]["url"], "https://www.sanmar.com/checkout/thank-you")
 
     def test_processing_all_mode_forces_validator_only(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2051,12 +2416,14 @@ class CrmAddressServerTests(unittest.TestCase):
                 ok, _message, state = server.update_crm_processing_preferences(
                     stock_unlocker_enabled=True,
                     address_validator_enabled=False,
+                    product_separator_enabled=False,
                     order_goods_enabled=True,
                     processing_filter="all",
                 )
 
         self.assertTrue(ok)
         self.assertTrue(state["address_validator_enabled"])
+        self.assertFalse(state["product_separator_enabled"])
         self.assertFalse(state["stock_unlocker_enabled"])
         self.assertFalse(state["order_goods_enabled"])
         self.assertEqual(server._crm_processing_selected_steps_from_state(state), ["address_validator_batch"])

@@ -115,6 +115,22 @@ PROFILE_CLONE_IGNORE_NAMES = (
     "ZxcvbnData",
 )
 PROFILE_CLONE_IGNORE_LOOKUPS = {name.lower() for name in PROFILE_CLONE_IGNORE_NAMES}
+WORKER_PROFILE_POOL_DIR = os.path.join(SCRIPT_DIR, "chrome_profile_crm_worker_pool")
+WORKER_PROFILE_LOCKS = {}
+WORKER_PROFILE_LOCKS_LOCK = threading.Lock()
+WORKER_PROFILE_LOCK_CLEANUP_NAMES = (
+    "SingletonLock",
+    "SingletonCookie",
+    "SingletonSocket",
+    "DevToolsActivePort",
+)
+WORKER_PROFILE_CACHE_DIR_NAMES = (
+    "Cache",
+    "Code Cache",
+    "GPUCache",
+    "ShaderCache",
+    "GrShaderCache",
+)
 
 
 def _elapsed_seconds(started_at):
@@ -4622,8 +4638,13 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
             return existing_result
         print("Detected a free-ship PO Box with no separate street address. Using override flow...")
         _apply_override(driver, shipping_modal)
-        override_became_valid = _wait_for_address_valid(shipping_modal, timeout=4)
-        if not override_became_valid and not _final_save_ready(driver, shipping_modal, timeout=4):
+        override_ready, use_scope_send = _ensure_override_ready(
+            driver,
+            shipping_modal,
+            warnings,
+            dry_run=dry_run,
+        )
+        if not override_ready:
             warnings.extend(_collect_shipping_blocker_warnings(driver, shipping_modal))
             return _result_for(
                 order_id,
@@ -4639,10 +4660,19 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
         failure_result, final_address, preserved_address_cont = _prepare_shipping_form_for_save(order_id, shipping_modal, original_address, preserved_address_cont, warnings)
         if failure_result:
             return failure_result
-        if not override_became_valid:
-            warnings.append("Override did not render the green valid-address text, but the final Save button became available.")
+        if not _address_is_valid(shipping_modal):
+            if use_scope_send:
+                warnings.append("Override did not render the green valid-address text, but it was persisted through the CRM modal service.")
+            else:
+                warnings.append("Override did not render the green valid-address text, but the final Save button became available.")
         warnings.append("Free-ship PO Box was overridden because no separate street address was provided.")
-        _save_shipping_transaction(driver, shipping_modal, order_id, dry_run)
+        _save_shipping_transaction(
+            driver,
+            shipping_modal,
+            order_id,
+            dry_run,
+            use_scope_send=use_scope_send,
+        )
         return _result_for(
             order_id,
             "po_box_free_override_saved" if not dry_run else "po_box_free_override_ready",
@@ -5431,18 +5461,105 @@ def _profile_clone_ignore(directory, names):
     return ignored
 
 
-def _clone_profile_for_worker(base_profile_path, worker_label):
+def _safe_worker_profile_token(value):
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "").strip())
+    return token.strip("._-") or "worker"
+
+
+def _worker_profile_pool_root(pool_name="batch"):
+    return os.path.join(WORKER_PROFILE_POOL_DIR, _safe_worker_profile_token(pool_name))
+
+
+def _worker_profile_path(pool_name, worker_slot):
+    slot = max(1, int(worker_slot or 1))
+    return os.path.join(_worker_profile_pool_root(pool_name), f"worker_{slot}")
+
+
+def _is_within_worker_profile_pool(path):
+    root = os.path.abspath(WORKER_PROFILE_POOL_DIR)
+    target = os.path.abspath(path)
+    return target == root or target.startswith(root + os.sep)
+
+
+def _worker_profile_lock(profile_path):
+    key = os.path.abspath(profile_path)
+    with WORKER_PROFILE_LOCKS_LOCK:
+        lock = WORKER_PROFILE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            WORKER_PROFILE_LOCKS[key] = lock
+        return lock
+
+
+def _remove_path_quietly(path):
+    try:
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            os.remove(path)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
+
+def _cleanup_reusable_worker_profile(profile_path):
+    if not _is_within_worker_profile_pool(profile_path) or not os.path.isdir(profile_path):
+        return
+
+    for name in WORKER_PROFILE_LOCK_CLEANUP_NAMES:
+        _remove_path_quietly(os.path.join(profile_path, name))
+
+    for parent in (profile_path, os.path.join(profile_path, "Default")):
+        for name in WORKER_PROFILE_CACHE_DIR_NAMES:
+            _remove_path_quietly(os.path.join(parent, name))
+
+
+def _rebuild_worker_profile(base_profile_path, worker_profile_path):
+    base_abs = os.path.abspath(base_profile_path)
+    target_abs = os.path.abspath(worker_profile_path)
+    if not _is_within_worker_profile_pool(target_abs):
+        raise RuntimeError(f"Refusing to rebuild worker profile outside {WORKER_PROFILE_POOL_DIR}.")
+    if not os.path.isdir(base_abs):
+        raise RuntimeError(f"CRM profile path does not exist: {base_abs}")
+
+    kill_stale_chrome(target_abs, profile_label="CRM reusable worker")
+    if os.path.exists(target_abs):
+        shutil.rmtree(target_abs, ignore_errors=True)
+    os.makedirs(os.path.dirname(target_abs), exist_ok=True)
+    shutil.copytree(base_abs, target_abs, ignore=_profile_clone_ignore)
+    _cleanup_reusable_worker_profile(target_abs)
+    return target_abs
+
+
+def rebuild_worker_profile(base_profile_path, worker_profile_path):
+    with _worker_profile_lock(worker_profile_path):
+        return _rebuild_worker_profile(base_profile_path, worker_profile_path)
+
+
+def _clone_profile_for_worker(base_profile_path, worker_label, worker_slot=None, pool_name="batch", rebuild=False):
     if not os.path.isdir(base_profile_path):
         raise RuntimeError(f"CRM profile path does not exist: {base_profile_path}")
-    temp_root = tempfile.mkdtemp(prefix=f"crm_batch_{worker_label}_")
-    cloned_profile_path = os.path.join(temp_root, os.path.basename(os.path.normpath(base_profile_path)) or "chrome_profile_crm")
-    shutil.copytree(base_profile_path, cloned_profile_path, ignore=_profile_clone_ignore)
-    return temp_root, cloned_profile_path
+
+    if worker_slot is None:
+        temp_root = tempfile.mkdtemp(prefix=f"crm_batch_{worker_label}_")
+        cloned_profile_path = os.path.join(temp_root, os.path.basename(os.path.normpath(base_profile_path)) or "chrome_profile_crm")
+        shutil.copytree(base_profile_path, cloned_profile_path, ignore=_profile_clone_ignore)
+        return temp_root, cloned_profile_path
+
+    worker_profile_path = _worker_profile_path(pool_name, worker_slot)
+    with _worker_profile_lock(worker_profile_path):
+        if rebuild or not os.path.isdir(worker_profile_path):
+            _rebuild_worker_profile(base_profile_path, worker_profile_path)
+        else:
+            _cleanup_reusable_worker_profile(worker_profile_path)
+    return None, worker_profile_path
 
 
-def _build_crm_session_driver(profile_path, headless_mode=True, profile_label="CRM address validator"):
+def _build_crm_session_driver(profile_path, headless_mode=True, profile_label="CRM address validator", skip_stale_chrome_check=False):
     resolved_profile_path = os.path.abspath(profile_path or PROFILE_PATH)
-    kill_stale_chrome(resolved_profile_path, profile_label=profile_label)
+    if not skip_stale_chrome_check:
+        kill_stale_chrome(resolved_profile_path, profile_label=profile_label)
     return build_chrome_driver(
         resolved_profile_path,
         headless_mode=bool(headless_mode),
@@ -5561,7 +5678,15 @@ def _batch_collection_failure_payload(
     return payload
 
 
-def _run_single_payload(order_id=None, dry_run=False, shipping_filter=None, profile_path=None, list_url_override=None, visible=False):
+def _run_single_payload(
+    order_id=None,
+    dry_run=False,
+    shipping_filter=None,
+    profile_path=None,
+    list_url_override=None,
+    visible=False,
+    skip_stale_chrome_check=False,
+):
     started_at = time.monotonic()
     normalized_shipping_filter = _normalize_shipping_filter(shipping_filter or CRM_SHIPPING_FILTER_DEFAULT)
     normalized_order_id = _normalize_target_order_id(order_id) if order_id else None
@@ -5580,6 +5705,7 @@ def _run_single_payload(order_id=None, dry_run=False, shipping_filter=None, prof
             shipping_filter=normalized_shipping_filter,
             profile_path=profile_path,
             list_url_override=list_url_override,
+            skip_stale_chrome_check=skip_stale_chrome_check,
         )
         last_payload = payload
         payload["headless"] = bool(headless_mode)
@@ -5843,31 +5969,39 @@ def _run_batch(dry_run=False, shipping_filter=None, batch_size=2, parallel_worke
                             "error_type": type(exc).__name__,
                         }
 
-                    def _run_worker_attempt(label_suffix=""):
+                    worker_slot = (order_index % worker_limit) + 1
+
+                    def _run_worker_attempt(label_suffix="", rebuild_profile=False):
                         temp_root, cloned_profile_path = _clone_profile_for_worker(
                             resolved_profile_path,
                             f"{order_index + 1}_{order_id}{label_suffix}",
+                            worker_slot=worker_slot,
+                            pool_name="address_validator",
+                            rebuild=rebuild_profile,
                         )
-                        temp_result_file = os.path.join(temp_root, f"thread_{order_id}.json")
+                        temp_result_file = os.path.join(temp_root or cloned_profile_path, f"thread_{order_id}.json")
                         try:
-                            payload = _run_single_payload(
-                                order_id=order_id,
-                                dry_run=dry_run,
-                                shipping_filter=normalized_shipping_filter,
-                                profile_path=cloned_profile_path,
-                                list_url_override=None,
-                                visible=visible,
-                            )
+                            with _worker_profile_lock(cloned_profile_path):
+                                payload = _run_single_payload(
+                                    order_id=order_id,
+                                    dry_run=dry_run,
+                                    shipping_filter=normalized_shipping_filter,
+                                    profile_path=cloned_profile_path,
+                                    list_url_override=None,
+                                    visible=visible,
+                                    skip_stale_chrome_check=True,
+                                )
                         except Exception as exc:
                             payload = _exception_payload(exc)
                         finally:
-                            shutil.rmtree(temp_root, ignore_errors=True)
+                            if temp_root:
+                                shutil.rmtree(temp_root, ignore_errors=True)
                         return payload, temp_result_file
 
                     payload, temp_result_file = _run_worker_attempt()
                     if _payload_has_retryable_worker_exception(payload):
                         print(f"Retrying order {order_id} once with a fresh CRM worker profile after a transient browser/UI error...")
-                        payload, temp_result_file = _run_worker_attempt("_retry")
+                        payload, temp_result_file = _run_worker_attempt("_retry", rebuild_profile=True)
                         _mark_transient_retry_attempted(payload)
 
                     _attach_duration(payload, _elapsed_seconds(session_started_at))
@@ -6027,7 +6161,15 @@ def _run_once_with_driver(driver, order_id=None, dry_run=False, headless_mode=Tr
         }
 
 
-def _run_once(order_id=None, dry_run=False, headless_mode=True, shipping_filter=None, profile_path=None, list_url_override=None):
+def _run_once(
+    order_id=None,
+    dry_run=False,
+    headless_mode=True,
+    shipping_filter=None,
+    profile_path=None,
+    list_url_override=None,
+    skip_stale_chrome_check=False,
+):
     driver = None
     resolved_profile_path = os.path.abspath(profile_path or PROFILE_PATH)
     try:
@@ -6035,6 +6177,7 @@ def _run_once(order_id=None, dry_run=False, headless_mode=True, shipping_filter=
             resolved_profile_path,
             headless_mode=headless_mode,
             profile_label="CRM address validator",
+            skip_stale_chrome_check=skip_stale_chrome_check,
         )
         return _run_once_with_driver(
             driver,

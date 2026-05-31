@@ -52,6 +52,7 @@ AUTOMATION_NAME = "crm.auto_splitter"
 SOURCE = "crm_auto_splitter.py"
 DEFAULT_MINIMUM_SPLIT_TABS = 10
 ORDER_SAVE_TIMEOUT_SECONDS = 300
+SPLIT_TOTAL_TOLERANCE = Decimal("0.01")
 
 
 class SplitterError(Exception):
@@ -1405,7 +1406,7 @@ def _visible_design_tab_numbers(driver):
         const nodes = Array.from(document.querySelectorAll('a,button,div,li,span'));
         for (const el of nodes) {
           const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
-          const match = text.match(/(?:^|\\s)(\\d+)\\s*-\\s*QTY\\s*:\\s*\\d+/i);
+          const match = text.match(/(?:^|[^\\d])(\\d{1,3})\\s*-\\s*QTY\\s*:\\s*\\d+/i);
           if (!match) continue;
           const rect = el.getBoundingClientRect();
           if (rect.width < 12 || rect.height < 12) continue;
@@ -1429,7 +1430,7 @@ def _click_design_tab(driver, tab_number):
             const matches = [];
             for (const el of nodes) {
               const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
-              const match = text.match(/(?:^|\\s)(\\d+)\\s*-\\s*QTY\\s*:\\s*\\d+/i);
+              const match = text.match(/(?:^|[^\\d])(\\d{1,3})\\s*-\\s*QTY\\s*:\\s*\\d+/i);
               if (!match || Number(match[1]) !== targetNumber) continue;
               const rect = el.getBoundingClientRect();
               if (rect.width < 12 || rect.height < 12) continue;
@@ -1444,6 +1445,18 @@ def _click_design_tab(driver, tab_number):
             int(tab_number),
         )
     )
+
+
+def _design_total_tab_numbers_from_page_text(driver):
+    body_text = driver.execute_script("return document.body ? document.body.innerText : '';")
+    numbers = []
+    seen = set()
+    for match in re.finditer(r"\bDesign\s+(\d{1,3})\s+Total\s*:", str(body_text or ""), re.IGNORECASE):
+        number = int(match.group(1))
+        if number not in seen:
+            seen.add(number)
+            numbers.append(number)
+    return numbers
 
 
 def _scan_current_design_detail(driver, tab_number):
@@ -1512,6 +1525,18 @@ def _scan_original_order(driver, expected_tab_count=None):
         if tabs:
             break
         time.sleep(1)
+    if not tabs and expected_tab_count is not None:
+        total_numbers = _design_total_tab_numbers_from_page_text(driver)
+        expected_numbers = list(range(1, int(expected_tab_count) + 1))
+        if total_numbers[: len(expected_numbers)] == expected_numbers:
+            tabs = [
+                {
+                    "tab_number": number,
+                    "text": f"Design {number} Total fallback marker",
+                    "fallback": "order_totals",
+                }
+                for number in expected_numbers
+            ]
     detected_count = len(tabs)
     if expected_tab_count is not None and detected_count != int(expected_tab_count):
         body_text = _clean_text(driver.execute_script("return document.body ? document.body.innerText : '';"))
@@ -1943,10 +1968,13 @@ def run_split_order(
             original_grand_total = Decimal(_money_text(original_state.get("grand_total") or scan.get("totals", {}).get("grand_total") or "0"))
             if original_grand_total == Decimal("0.00") and resume_existing_order_ids and split_total > Decimal("0.00"):
                 original_grand_total = split_total.quantize(Decimal("0.01"))
-            if split_total.quantize(Decimal("0.01")) != original_grand_total.quantize(Decimal("0.01")):
+            split_total_delta = (split_total - original_grand_total).quantize(Decimal("0.01"))
+            if split_total_delta.copy_abs() > SPLIT_TOTAL_TOLERANCE:
                 raise SplitterError(
                     f"Split order totals do not match original. Split total {_money_text(split_total)} vs original {_money_text(original_grand_total)}."
                 )
+            if split_total_delta:
+                report["split_total_rounding_delta"] = _money_text(split_total_delta)
 
             transfer_note = f"transferred to {_format_order_list([item['order_id'] for item in split_orders])}"
             refund_amount = Decimal(
