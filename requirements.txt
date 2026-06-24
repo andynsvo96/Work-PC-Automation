@@ -3,3 +3,5 @@ webdriver-manager
 flask
 pystray
 Pillow
+gspread
+google-auth

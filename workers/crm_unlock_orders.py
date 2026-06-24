@@ -160,6 +160,11 @@ SUCCESS_STATUS_TEXT_MARKERS = (
     'updated successfully',
     'update complete',
 )
+APPLY_PROGRESS_TEXT_MARKERS = (
+    'applying "stock auto ordering unlocked"',
+    "applying 'stock auto ordering unlocked'",
+    'applying stock auto ordering unlocked',
+)
 NO_ORDERS_TEXT_MARKERS = (
     'no orders found',
     'no records found',
@@ -500,6 +505,11 @@ def _has_update_success_message(driver):
     return any(marker in body_text for marker in SUCCESS_STATUS_TEXT_MARKERS)
 
 
+def _has_unlock_apply_progress(driver):
+    body_text = _body_text(driver).lower()
+    return any(marker in body_text for marker in APPLY_PROGRESS_TEXT_MARKERS)
+
+
 def is_login_page(driver):
     try:
         current_url = str(driver.current_url or "").strip().lower()
@@ -594,6 +604,22 @@ def wait_for_order_rows(driver, timeout=None, allow_no_orders=False):
     if allow_no_orders:
         return []
     raise TimeoutException("No CRM order rows became available before the timeout expired.")
+
+
+def _open_locked_report_rows(driver):
+    print("Opening CRM report...")
+    safe_get_with_partial_load(driver, CRM_LOCKED_URL, "CRM report page")
+
+    if login_if_needed(driver):
+        safe_get_with_partial_load(driver, CRM_LOCKED_URL, "CRM report page after login")
+
+    try:
+        return wait_for_order_rows(driver, allow_no_orders=True)
+    except TimeoutException as row_error:
+        if login_if_needed(driver, context_message="Order rows were not available on the first pass."):
+            safe_get_with_partial_load(driver, CRM_LOCKED_URL, "CRM report page after login")
+            return wait_for_order_rows(driver, allow_no_orders=True)
+        raise row_error
 
 
 def _selected_row_count(driver):
@@ -755,7 +781,12 @@ def _wait_for_order_count_to_settle(driver, previous_order_count=None, timeout=2
 
 
 def verify_update_complete(driver, previous_order_count=None):
-    deadline = time.time() + max(CRM_ACTION_TIMEOUT, 15)
+    normal_wait_seconds = max(CRM_ACTION_TIMEOUT, 15)
+    progress_wait_seconds = max(CRM_ACTION_TIMEOUT * 6, 90)
+    started_at = time.time()
+    deadline = started_at + normal_wait_seconds
+    progress_deadline = started_at + progress_wait_seconds
+    saw_apply_progress = False
     while time.time() < deadline:
         if _has_update_success_message(driver):
             print("Detected CRM success message after Apply.")
@@ -769,7 +800,12 @@ def verify_update_complete(driver, previous_order_count=None):
                 "remaining_order_count": remaining_order_count,
                 "no_orders_remaining": remaining_order_count == 0,
             }
+        if _has_unlock_apply_progress(driver):
+            saw_apply_progress = True
+            deadline = min(progress_deadline, time.time() + normal_wait_seconds)
         time.sleep(0.25)
+    if saw_apply_progress:
+        raise TimeoutException("The CRM was still applying the unlock update when the extended wait expired.")
     raise TimeoutException("The CRM did not show the unlock success message before the timeout expired.")
 
 
@@ -787,81 +823,98 @@ def _run_once(action, dry_run=False, headless_mode=True):
             script_timeout=CRM_ACTION_TIMEOUT,
         )
 
-        print("Opening CRM report...")
-        safe_get_with_partial_load(driver, CRM_LOCKED_URL, "CRM report page")
+        all_order_ids = []
+        seen_order_ids = set()
+        total_order_count = 0
+        refresh_passes = 0
+        confirmation_reached_any = False
+        last_completion = {}
 
-        if login_if_needed(driver):
-            safe_get_with_partial_load(driver, CRM_LOCKED_URL, "CRM report page after login")
+        while True:
+            refresh_passes += 1
+            rows = _open_locked_report_rows(driver)
 
-        try:
-            rows = wait_for_order_rows(driver, allow_no_orders=True)
-        except TimeoutException as row_error:
-            if login_if_needed(driver, context_message="Order rows were not available on the first pass."):
-                safe_get_with_partial_load(driver, CRM_LOCKED_URL, "CRM report page after login")
-                rows = wait_for_order_rows(driver, allow_no_orders=True)
+            if not rows:
+                print("No CRM orders were detected in the report.")
+                return {
+                    "action": action,
+                    "order_count": total_order_count,
+                    "order_ids": all_order_ids,
+                    "dry_run": dry_run,
+                    "headless": headless_mode,
+                    "no_orders": total_order_count == 0,
+                    "apply_ready": total_order_count > 0,
+                    "apply_clicked": bool(total_order_count and not dry_run),
+                    "confirmation_reached": confirmation_reached_any,
+                    "update_complete": bool(total_order_count and not dry_run),
+                    "success_message_seen": bool(last_completion.get("success_message_seen")) if last_completion else False,
+                    "remaining_order_count": 0,
+                    "no_orders_remaining": True,
+                    "refresh_passes": refresh_passes,
+                }
+
+            order_ids = _collect_order_ids(rows)
+            new_ids = [order_id for order_id in order_ids if order_id not in seen_order_ids]
+            if order_ids:
+                print(f"Captured {len(order_ids)} order ID(s): {_format_order_ids(order_ids)}")
             else:
-                raise row_error
+                print("Warning: no 7-digit order IDs were captured from the visible rows before selection.")
+            if order_ids and not new_ids and not dry_run:
+                print("All visible locked orders were already attempted in this run; ending the refresh loop.")
+                return {
+                    "action": action,
+                    "order_count": total_order_count,
+                    "order_ids": all_order_ids,
+                    "dry_run": False,
+                    "headless": headless_mode,
+                    "no_orders": False,
+                    "apply_ready": total_order_count > 0,
+                    "apply_clicked": total_order_count > 0,
+                    "confirmation_reached": confirmation_reached_any,
+                    "update_complete": total_order_count > 0,
+                    "success_message_seen": bool(last_completion.get("success_message_seen")) if last_completion else False,
+                    "remaining_order_count": len(rows),
+                    "no_orders_remaining": False,
+                    "refresh_passes": refresh_passes,
+                }
 
-        if not rows:
-            print("No CRM orders were detected in the report.")
-            return {
-                "action": action,
-                "order_count": 0,
-                "order_ids": [],
-                "dry_run": dry_run,
-                "headless": headless_mode,
-                "no_orders": True,
-                "apply_ready": False,
-                "apply_clicked": False,
-                "confirmation_reached": False,
-                "update_complete": False,
-            }
+            order_count = select_all_orders(driver, rows=rows)
+            print(f"Selected {order_count} orders.")
 
-        order_ids = _collect_order_ids(rows)
-        if order_ids:
-            print(f"Captured {len(order_ids)} order ID(s): {_format_order_ids(order_ids)}")
-        else:
-            print("Warning: no 7-digit order IDs were captured from the visible rows before selection.")
+            preview_panel = wait_for_order_preview_panel(driver)
+            choose_unlock_status(driver, preview_panel)
+            get_apply_button(preview_panel)
 
-        order_count = select_all_orders(driver, rows=rows)
-        print(f"Selected {order_count} orders.")
+            for order_id in order_ids:
+                if order_id not in seen_order_ids:
+                    seen_order_ids.add(order_id)
+                    all_order_ids.append(order_id)
+            total_order_count += order_count
 
-        preview_panel = wait_for_order_preview_panel(driver)
-        choose_unlock_status(driver, preview_panel)
-        get_apply_button(preview_panel)
+            if dry_run:
+                print("Dry run confirmed the Apply button is clickable; skipping the Apply click.")
+                return {
+                    "action": action,
+                    "order_count": order_count,
+                    "order_ids": order_ids,
+                    "dry_run": True,
+                    "headless": headless_mode,
+                    "apply_ready": True,
+                    "apply_clicked": False,
+                    "confirmation_reached": False,
+                    "refresh_passes": refresh_passes,
+                }
 
-        if dry_run:
-            print("Dry run confirmed the Apply button is clickable; skipping the Apply click.")
-            return {
-                "action": action,
-                "order_count": order_count,
-                "order_ids": order_ids,
-                "dry_run": True,
-                "headless": headless_mode,
-                "apply_ready": True,
-                "apply_clicked": False,
-                "confirmation_reached": False,
-            }
-
-        click_apply(driver, preview_panel)
-        confirmation_reached = maybe_wait_for_confirmation_modal(driver, timeout=2)
-        if confirmation_reached:
-            click_ok_on_modal(driver)
-        completion = verify_update_complete(driver, previous_order_count=order_count)
-        return {
-            "action": action,
-            "order_count": order_count,
-            "order_ids": order_ids,
-            "dry_run": False,
-            "headless": headless_mode,
-            "apply_ready": True,
-            "apply_clicked": True,
-            "confirmation_reached": confirmation_reached,
-            "update_complete": True,
-            "success_message_seen": bool(completion.get("success_message_seen")),
-            "remaining_order_count": int(completion.get("remaining_order_count", 0)),
-            "no_orders_remaining": bool(completion.get("no_orders_remaining")),
-        }
+            click_apply(driver, preview_panel)
+            confirmation_reached = maybe_wait_for_confirmation_modal(driver, timeout=2)
+            confirmation_reached_any = confirmation_reached_any or confirmation_reached
+            if confirmation_reached:
+                click_ok_on_modal(driver)
+            last_completion = verify_update_complete(driver, previous_order_count=order_count)
+            if _looks_like_no_orders_state(driver) or bool(last_completion.get("no_orders_remaining")):
+                print(f"Finished CRM unlock refresh pass {refresh_passes}; reopening the locked-orders list to confirm no more orders remain...")
+            else:
+                print(f"Finished CRM unlock refresh pass {refresh_passes}; reopening the locked-orders list to look for additional orders...")
     except Exception:
         if driver is not None:
             safe_take_screenshot(driver, f"crm_unlock_error_{mode_name}")

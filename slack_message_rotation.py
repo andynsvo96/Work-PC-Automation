@@ -1,8 +1,7 @@
 """
 Slack day-message rotation helpers.
 
-Provides optional alternating day messages that flip between
-primary/alternate text each time that day/action is successfully used.
+Resolves the configured day message for Slack clock-in/clock-out actions.
 """
 
 import json
@@ -124,25 +123,16 @@ def select_slack_day_message(config_obj, action, now=None, state_file_path=None)
 
     action_key = str(action or "").strip().lower()
     day_name = _day_name_for_datetime(now)
-    base_key, alternate_key, enabled_key = _resolve_config_keys(action_key, day_name)
+    base_key, _alternate_key, _enabled_key = _resolve_config_keys(action_key, day_name)
 
     primary_message = _clean_text(getattr(config_obj, base_key, ""))
-    alternate_message = _clean_text(getattr(config_obj, alternate_key, ""))
-    alternating_enabled = bool(getattr(config_obj, enabled_key, False))
-    alternating_active = bool(alternating_enabled and alternate_message)
+    alternate_message = ""
+    alternating_enabled = False
+    alternating_active = False
     date_iso = now.date().isoformat()
     key = _state_key(action_key, day_name)
-
-    with _state_lock:
-        state = _load_state(state_path)
-        entry = _normalize_entry(state.get("entries", {}).get(key))
-    variant = _pick_variant(entry, date_iso, alternating_active)
-
-    message = alternate_message if variant == "alternate" else primary_message
-    if not message and variant == "alternate":
-        # If alternate was selected but now empty, safely fall back.
-        variant = "primary"
-        message = primary_message
+    variant = "primary"
+    message = primary_message
 
     return {
         "action": action_key,

@@ -26,12 +26,16 @@ from selenium.webdriver.common.keys import Keys
 from automation_runtime import (
     SCRIPT_DIR,
     configure_console_utf8,
+    refresh_if_crm_challenge_attempts_exceeded,
     safe_driver_quit,
     safe_take_screenshot,
     write_result_payload,
+    write_status_payload,
 )
-from config import CRM_ACTION_TIMEOUT, CRM_ORDER_GOODS_RUSH_URL, CRM_PROFILE_DIR
+from config import CRM_813_ORDER_GOODS_URL, CRM_ACTION_TIMEOUT, CRM_ORDER_GOODS_RUSH_URL, CRM_PROFILE_DIR
 from crm_validate_address import (
+    ALLOWED_813_ORDER_GOODS_ROW_DESCRIPTION,
+    ALLOWED_813_ORDER_GOODS_ROW_LABELS,
     ALLOWED_SHIPPING_LIST_ROW_DESCRIPTION,
     _batch_collection_limit,
     _batch_limit_reached,
@@ -57,6 +61,45 @@ RUSH_FILTER = "rush"
 CONTINUOUS_ORDER_FETCH_LIMIT = 25
 CRM_STATE_PATH = os.path.join(SCRIPT_DIR, "crm_state.json")
 STOCK_UNLOCK_STATUS = "Stock Auto Ordering Unlocked"
+ORDER_OPEN_REFRESH_ATTEMPTS = 2
+ORDER_OPEN_REFRESH_DELAY_SECONDS = 2.0
+
+
+def _publish_status(message, *, stage=None, current=None, total=None, order_id=None):
+    try:
+        write_status_payload(
+            AUTOMATION_NAME,
+            message,
+            stage=stage,
+            current=current,
+            total=total,
+            order_id=order_id,
+        )
+    except Exception:
+        pass
+
+
+def _normalize_url_for_compare(value):
+    return str(value or "").strip()
+
+
+def _is_813_order_goods_list_url(value):
+    return bool(
+        _normalize_url_for_compare(value)
+        and _normalize_url_for_compare(value) == _normalize_url_for_compare(CRM_813_ORDER_GOODS_URL)
+    )
+
+
+def _order_goods_allowed_row_options(target_url):
+    if _is_813_order_goods_list_url(target_url):
+        return {
+            "allowed_row_labels": ALLOWED_813_ORDER_GOODS_ROW_LABELS,
+            "allowed_row_description": ALLOWED_813_ORDER_GOODS_ROW_DESCRIPTION,
+        }
+    return {
+        "allowed_row_labels": None,
+        "allowed_row_description": None,
+    }
 
 
 def _elapsed_seconds(started_at):
@@ -82,6 +125,8 @@ def _validate_runtime_config(list_url=None):
     target_url = str(list_url or CRM_ORDER_GOODS_RUSH_URL or "").strip()
     if not target_url:
         raise RuntimeError("CRM_ORDER_GOODS_RUSH_URL is empty in config.py.")
+    if str(list_url or "").strip():
+        return target_url
     lowered_url = target_url.lower()
     if "shippingcharges%5blow%5d=1" not in lowered_url and "shippingcharges[low]=1" not in lowered_url:
         raise RuntimeError("Order Goods is Rush-only; the configured list URL must be a Rush CRM list.")
@@ -301,6 +346,39 @@ return false;
     return candidate
 
 
+def _open_target_order_with_refresh(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None):
+    attempts = max(1, int(ORDER_OPEN_REFRESH_ATTEMPTS or 1))
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return _open_target_order(
+                driver,
+                order_id,
+                shipping_filter=shipping_filter,
+                list_url_override=list_url_override,
+            )
+        except TimeoutException as exc:
+            last_exc = exc
+            if attempt >= attempts:
+                break
+            print(
+                f"Order {order_id} did not open on attempt {attempt}/{attempts}; "
+                "refreshing CRM and trying again..."
+            )
+            try:
+                driver.switch_to.default_content()
+            except Exception:
+                pass
+            try:
+                driver.refresh()
+            except Exception:
+                pass
+            time.sleep(ORDER_OPEN_REFRESH_DELAY_SECONDS)
+    if last_exc is not None:
+        raise last_exc
+    return None
+
+
 def _wait_for_order_goods_page_ready(driver, order_id, timeout=None):
     timeout = timeout or max(CRM_ACTION_TIMEOUT, 18)
     deadline = time.time() + timeout
@@ -339,6 +417,10 @@ return {
     last_state = {}
     while time.time() < deadline:
         try:
+            if refresh_if_crm_challenge_attempts_exceeded(driver, "Order Goods CRM order page", top_level=False):
+                last_state = {"challenge_refresh": True}
+                time.sleep(ORDER_OPEN_REFRESH_DELAY_SECONDS)
+                continue
             state = driver.execute_script(script, normalized_order_id)
             if isinstance(state, dict):
                 last_state = state
@@ -349,6 +431,32 @@ return {
         time.sleep(0.3)
     print(f"Warning: CRM order page did not report ready before Order Goods checks for {normalized_order_id}: {last_state}")
     return False
+
+
+def _require_order_goods_page_ready(driver, order_id, timeout=None):
+    normalized_order_id = str(order_id or "").strip()
+    if _wait_for_order_goods_page_ready(driver, normalized_order_id, timeout=timeout):
+        return True
+    try:
+        driver.switch_to.default_content()
+    except Exception:
+        pass
+    try:
+        driver.refresh()
+        time.sleep(ORDER_OPEN_REFRESH_DELAY_SECONDS)
+    except Exception:
+        pass
+    _open_target_order_with_refresh(
+        driver,
+        normalized_order_id,
+        shipping_filter=RUSH_FILTER,
+        list_url_override=None,
+    )
+    if _wait_for_order_goods_page_ready(driver, normalized_order_id, timeout=timeout):
+        return True
+    raise TimeoutException(
+        f"Timed out waiting for CRM order page {normalized_order_id} to render before Order Goods checks."
+    )
 
 
 def _text_indicates_stock_already_ordered(text):
@@ -1294,9 +1402,7 @@ def _refresh_order_after_stock_unlock(driver, order_id, stock_tab_index=None):
         time.sleep(1.0)
     except Exception:
         pass
-    if not _wait_for_order_goods_page_ready(driver, order_id):
-        _open_target_order(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
-        _wait_for_order_goods_page_ready(driver, order_id)
+    _require_order_goods_page_ready(driver, order_id)
     if stock_tab_index is not None:
         try:
             _activate_stock_tab(driver, int(stock_tab_index))
@@ -1317,11 +1423,18 @@ def _page_indicates_non_vendor_stock_tab(driver):
     return "order goods from vendor: manual order" in normalized or "vendor order #" in normalized
 
 
-def _order_goods_for_open_order(driver, order_id, dry_run=False, allow_unlock_retry=True, stock_tab_index=None):
+def _order_goods_for_open_order(
+    driver,
+    order_id,
+    dry_run=False,
+    allow_unlock_retry=True,
+    stock_tab_index=None,
+    ignore_already_ordered=False,
+):
+    if not ignore_already_ordered and _page_indicates_stock_already_ordered(driver):
+        return _stock_already_ordered_result(order_id)
     button = _find_sanmar_order_goods_button(driver)
     if button is None:
-        if _page_indicates_stock_already_ordered(driver):
-            return _stock_already_ordered_result(order_id)
         if allow_unlock_retry and _page_indicates_stock_locked_for_auto_ordering(driver):
             unlock_result = _unlock_current_order_for_auto_ordering(driver, order_id, dry_run=dry_run, force=True)
             if dry_run or not unlock_result or not unlock_result.get("success"):
@@ -1347,6 +1460,7 @@ def _order_goods_for_open_order(driver, order_id, dry_run=False, allow_unlock_re
                 dry_run=dry_run,
                 allow_unlock_retry=False,
                 stock_tab_index=stock_tab_index,
+                ignore_already_ordered=ignore_already_ordered,
             )
             return _mark_result_stock_unlocked(result, unlock_result)
         raise TimeoutException(
@@ -1382,6 +1496,7 @@ def _order_goods_for_open_order(driver, order_id, dry_run=False, allow_unlock_re
                 dry_run=dry_run,
                 allow_unlock_retry=False,
                 stock_tab_index=stock_tab_index,
+                ignore_already_ordered=ignore_already_ordered,
             )
             return _mark_result_stock_unlocked(result, unlock_result)
         return {
@@ -1568,11 +1683,8 @@ def _order_goods_for_all_stock_tabs(driver, order_id, dry_run=False):
             and result.get("success")
             and str(result.get("outcome") or "") == "order_goods_clicked"
         ):
-            try:
-                _open_target_order(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
-                _wait_for_order_goods_page_ready(driver, order_id)
-            except Exception:
-                pass
+            _open_target_order_with_refresh(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
+            _require_order_goods_page_ready(driver, order_id)
     return results
 
 
@@ -1580,8 +1692,11 @@ def _run_order_with_driver(driver, order_id, dry_run=False):
     normalized_order_id = _normalize_target_order_id(order_id)
     if not normalized_order_id:
         raise RuntimeError("Order ID must be a 7-digit value or CRM order URL.")
-    _open_target_order(driver, normalized_order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
-    _wait_for_order_goods_page_ready(driver, normalized_order_id)
+    _publish_status(f"Opening CRM order {normalized_order_id} for Rush Order Goods.", stage="opening_order", order_id=normalized_order_id)
+    _open_target_order_with_refresh(driver, normalized_order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
+    _publish_status(f"Checking Order Goods page for order {normalized_order_id}.", stage="checking_order_goods", order_id=normalized_order_id)
+    _require_order_goods_page_ready(driver, normalized_order_id)
+    _publish_status(f"Checking stock unlock status for order {normalized_order_id}.", stage="checking_stock_status", order_id=normalized_order_id)
     unlock_result = _unlock_current_order_for_auto_ordering(driver, normalized_order_id, dry_run=dry_run)
     if unlock_result:
         if dry_run or not unlock_result.get("success"):
@@ -1591,8 +1706,9 @@ def _run_order_with_driver(driver, order_id, dry_run=False):
             time.sleep(1.0)
         except Exception:
             pass
-        _open_target_order(driver, normalized_order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
-        _wait_for_order_goods_page_ready(driver, normalized_order_id)
+        _publish_status(f"Reloading CRM order {normalized_order_id} after stock unlock.", stage="reloading_order", order_id=normalized_order_id)
+        _open_target_order_with_refresh(driver, normalized_order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
+        _require_order_goods_page_ready(driver, normalized_order_id)
         unlocked_message = unlock_result.get("message") or "Applied Stock Auto Ordering Unlocked before Order Goods."
         post_unlock_state = _wait_after_stock_unlock(driver, normalized_order_id)
         if post_unlock_state == "ordered":
@@ -1603,16 +1719,19 @@ def _run_order_with_driver(driver, order_id, dry_run=False):
             result["stock_unlocked_before_order_goods"] = True
             result["warnings"] = [unlocked_message]
             return [result]
+        _publish_status(f"Ordering stock tabs for order {normalized_order_id}.", stage="ordering_stock", order_id=normalized_order_id)
         results = _order_goods_for_all_stock_tabs(driver, normalized_order_id, dry_run=dry_run)
         for item in results:
             _mark_result_stock_unlocked(item, unlock_result)
         return results
+    _publish_status(f"Ordering stock tabs for order {normalized_order_id}.", stage="ordering_stock", order_id=normalized_order_id)
     results = _order_goods_for_all_stock_tabs(driver, normalized_order_id, dry_run=dry_run)
     return results
 
 
-def _summary_message(report_items, refresh_passes=1, order_count=0):
+def _summary_message(report_items, refresh_passes=1, order_count=0, row_description=None):
     total = len(report_items)
+    row_description = str(row_description or ALLOWED_SHIPPING_LIST_ROW_DESCRIPTION)
     order_groups = {}
     for item in report_items:
         order_id = str(item.get("order_id") or "").strip()
@@ -1622,7 +1741,9 @@ def _summary_message(report_items, refresh_passes=1, order_count=0):
     successful_orders = sum(1 for items in order_groups.values() if all(bool(item.get("success")) for item in items))
     failed_orders = len(order_groups) - successful_orders
     if total == 0:
-        return f"No {ALLOWED_SHIPPING_LIST_ROW_DESCRIPTION} Rush orders were detected in the CRM order-goods list."
+        if row_description == ALLOWED_SHIPPING_LIST_ROW_DESCRIPTION:
+            return f"No {row_description} Rush orders were detected in the CRM order-goods list."
+        return f"No {row_description} orders were detected in the CRM order-goods list."
     parts = [
         f"Order Goods processed {max(1, int(order_count or len(order_groups) or 0))} order(s) and {total} stock tab(s) across {max(1, int(refresh_passes or 1))} CRM list refresh pass(es).",
         f"{successful_orders} order(s) succeeded.",
@@ -1637,6 +1758,7 @@ def _order_goods_worker_payload(order_id, headless_mode, dry_run=False, profile_
     driver = None
     report_items = []
     try:
+        _publish_status(f"Loading CRM session for Rush Order Goods order {order_id}.", stage="loading_crm", order_id=order_id)
         driver = _build_crm_session_driver(
             profile_path,
             headless_mode=headless_mode,
@@ -1740,6 +1862,7 @@ def _mark_order_goods_retry_attempted(payload):
 def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_path=None, list_url=None, parallel_workers=1):
     batch_started_at = time.monotonic()
     target_url = _validate_runtime_config(list_url)
+    row_options = _order_goods_allowed_row_options(target_url)
     requested_batch_size = _normalize_requested_batch_size(batch_size)
     resolved_profile_path = os.path.abspath(profile_path or PROFILE_PATH)
     worker_limit = max(1, int(parallel_workers or 1))
@@ -1751,6 +1874,8 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
     historical_order_id_set = _load_historical_order_goods_order_ids()
     attempted_order_id_set = set(historical_order_id_set)
     refresh_passes = 0
+    completed_order_count = 0
+    total_scanned_count = 0
     if historical_order_id_set:
         print(
             "Skipping "
@@ -1765,6 +1890,12 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
             len(attempted_order_ids),
             worker_limit=worker_limit,
         )
+        _publish_status(
+            f"Loading CRM order-goods list pass {refresh_passes} to scan for eligible orders.",
+            stage="loading_crm_list",
+            current=completed_order_count if total_scanned_count else None,
+            total=total_scanned_count or None,
+        )
         order_ids = _collect_batch_order_ids(
             RUSH_FILTER,
             remaining,
@@ -1772,10 +1903,24 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
             list_url_override=target_url,
             exclude_order_ids=attempted_order_id_set,
             visible=not bool(headless_mode),
+            **row_options,
         )
         if not order_ids:
+            _publish_status(
+                "No more eligible Rush Order Goods orders were found in the CRM list.",
+                stage="scan_complete",
+                current=completed_order_count if total_scanned_count else None,
+                total=total_scanned_count or None,
+            )
             break
         order_ids = order_ids[:remaining]
+        total_scanned_count += len(order_ids)
+        _publish_status(
+            f"Scanned {len(order_ids)} eligible Rush Order Goods order(s) on pass {refresh_passes}; processing with {worker_limit} worker(s).",
+            stage="processing_orders",
+            current=completed_order_count,
+            total=total_scanned_count,
+        )
 
         finished_lock = threading.Lock()
         worker_gate = threading.BoundedSemaphore(worker_limit)
@@ -1783,9 +1928,19 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
         chunk_payloads = []
 
         def _worker(order_index, order_id):
+            nonlocal completed_order_count
             with worker_gate:
                 session_started_at = time.monotonic()
                 print(f"Launching Rush Order Goods worker {order_index + 1}/{len(order_ids)} for order {order_id}...")
+                with finished_lock:
+                    current_done = completed_order_count
+                _publish_status(
+                    f"Processing Rush Order Goods order {order_id} ({current_done}/{total_scanned_count} done).",
+                    stage="processing_order",
+                    current=current_done,
+                    total=total_scanned_count,
+                    order_id=order_id,
+                )
                 payload = None
                 attempt_count = 0
                 retry_allowed = not bool(dry_run)
@@ -1846,6 +2001,15 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
                     payload["attempt_count"] = attempt_count
                 with finished_lock:
                     chunk_payloads.append(payload)
+                    completed_order_count += 1
+                    current_done = completed_order_count
+                _publish_status(
+                    f"Finished Rush Order Goods order {order_id} ({current_done}/{total_scanned_count} done).",
+                    stage="finished_order",
+                    current=current_done,
+                    total=total_scanned_count,
+                    order_id=order_id,
+                )
 
         for order_index, order_id in enumerate(order_ids):
             attempted_order_id_set.add(order_id)
@@ -1870,7 +2034,12 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
 
     success = all(bool(item.get("success")) for item in report_items) if report_items else True
     skipped_historical_count = len(historical_order_id_set)
-    message = _summary_message(report_items, refresh_passes=refresh_passes, order_count=len(attempted_order_ids))
+    message = _summary_message(
+        report_items,
+        refresh_passes=refresh_passes,
+        order_count=len(attempted_order_ids),
+        row_description=row_options.get("allowed_row_description"),
+    )
     if skipped_historical_count:
         message = (
             f"{message} Skipped {skipped_historical_count} previously logged Rush Order Goods order(s); "
@@ -1900,6 +2069,7 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
 def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_path=None, list_url=None, parallel_workers=1):
     batch_started_at = time.monotonic()
     target_url = _validate_runtime_config(list_url)
+    row_options = _order_goods_allowed_row_options(target_url)
     requested_batch_size = _normalize_requested_batch_size(batch_size)
     worker_limit = max(1, int(parallel_workers or 1))
     if requested_batch_size is not None:
@@ -1915,6 +2085,7 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
         )
 
     resolved_profile_path = os.path.abspath(profile_path or PROFILE_PATH)
+    _publish_status("Loading CRM session for Rush Order Goods batch.", stage="loading_crm")
     driver = _build_crm_session_driver(
         resolved_profile_path,
         headless_mode=headless_mode,
@@ -1925,6 +2096,8 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
     historical_order_id_set = _load_historical_order_goods_order_ids()
     attempted_order_id_set = set(historical_order_id_set)
     refresh_passes = 0
+    completed_order_count = 0
+    total_scanned_count = 0
     if historical_order_id_set:
         print(
             "Skipping "
@@ -1939,21 +2112,48 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
                 len(attempted_order_ids),
                 worker_limit=CONTINUOUS_ORDER_FETCH_LIMIT,
             )
+            _publish_status(
+                f"Loading CRM order-goods list pass {refresh_passes} to scan for eligible orders.",
+                stage="loading_crm_list",
+                current=completed_order_count if total_scanned_count else None,
+                total=total_scanned_count or None,
+            )
             order_ids = _collect_batch_order_ids_with_driver(
                 driver,
                 RUSH_FILTER,
                 remaining,
                 list_url_override=target_url,
                 exclude_order_ids=attempted_order_id_set,
+                **row_options,
             )
             if not order_ids:
+                _publish_status(
+                    "No more eligible Rush Order Goods orders were found in the CRM list.",
+                    stage="scan_complete",
+                    current=completed_order_count if total_scanned_count else None,
+                    total=total_scanned_count or None,
+                )
                 break
+            total_scanned_count += len(order_ids)
+            _publish_status(
+                f"Scanned {len(order_ids)} eligible Rush Order Goods order(s) on pass {refresh_passes}; processing orders.",
+                stage="processing_orders",
+                current=completed_order_count,
+                total=total_scanned_count,
+            )
             for order_id in order_ids:
                 if _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
                     break
                 attempted_order_id_set.add(order_id)
                 attempted_order_ids.append(order_id)
                 print(f"Processing Rush Order Goods order {len(attempted_order_ids)}: {order_id}...")
+                _publish_status(
+                    f"Processing Rush Order Goods order {order_id} ({completed_order_count}/{total_scanned_count} done).",
+                    stage="processing_order",
+                    current=completed_order_count,
+                    total=total_scanned_count,
+                    order_id=order_id,
+                )
                 order_started_at = time.monotonic()
                 try:
                     order_report = _run_order_with_driver(driver, order_id, dry_run=dry_run)
@@ -1979,6 +2179,14 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
                             "session_duration_seconds": order_duration,
                         }
                     )
+                completed_order_count += 1
+                _publish_status(
+                    f"Finished Rush Order Goods order {order_id} ({completed_order_count}/{total_scanned_count} done).",
+                    stage="finished_order",
+                    current=completed_order_count,
+                    total=total_scanned_count,
+                    order_id=order_id,
+                )
                 if _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
                     break
             if _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
@@ -1989,7 +2197,12 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
 
     success = all(bool(item.get("success")) for item in report_items) if report_items else True
     skipped_historical_count = len(historical_order_id_set)
-    message = _summary_message(report_items, refresh_passes=refresh_passes, order_count=len(attempted_order_ids))
+    message = _summary_message(
+        report_items,
+        refresh_passes=refresh_passes,
+        order_count=len(attempted_order_ids),
+        row_description=row_options.get("allowed_row_description"),
+    )
     if skipped_historical_count:
         message = (
             f"{message} Skipped {skipped_historical_count} previously logged Rush Order Goods order(s); "
@@ -2072,6 +2285,13 @@ def _run_single_with_mode(headless_mode, order_id, dry_run=False, profile_path=N
     if not normalized_order_id:
         raise RuntimeError("Order ID must be a 7-digit value or CRM order URL.")
     resolved_profile_path = os.path.abspath(profile_path or PROFILE_PATH)
+    _publish_status(
+        f"Loading CRM session for Rush Order Goods order {normalized_order_id}.",
+        stage="loading_crm",
+        current=0,
+        total=1,
+        order_id=normalized_order_id,
+    )
     driver = _build_crm_session_driver(
         resolved_profile_path,
         headless_mode=headless_mode,
@@ -2080,6 +2300,13 @@ def _run_single_with_mode(headless_mode, order_id, dry_run=False, profile_path=N
     report_items = []
     try:
         report_items = _run_order_with_driver(driver, normalized_order_id, dry_run=dry_run)
+        _publish_status(
+            f"Finished Rush Order Goods order {normalized_order_id} (1/1 done).",
+            stage="finished_order",
+            current=1,
+            total=1,
+            order_id=normalized_order_id,
+        )
     finally:
         safe_driver_quit(driver, profile_path=resolved_profile_path)
 

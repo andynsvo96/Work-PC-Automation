@@ -4,6 +4,7 @@ Shared Selenium/runtime helpers for local automation scripts.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,7 @@ from automation_audit import log_automation_result
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULT_FILE = os.path.join(SCRIPT_DIR, "last_result.json")
+STATUS_FILE = os.path.join(SCRIPT_DIR, "automation_status.json")
 
 FAILURE_SCREENSHOT_MARKERS = (
     "error",
@@ -105,6 +107,88 @@ def write_result_payload(
         except Exception:
             pass
 
+    return payload
+
+
+def write_status_payload(
+    automation_name,
+    message,
+    *,
+    stage=None,
+    current=None,
+    total=None,
+    order_id=None,
+    extra_fields=None,
+    status_file=None,
+):
+    """Persist a small live-status payload for the server/UI to poll."""
+    target_file = status_file or os.environ.get("AUTOMATION_STATUS_FILE") or STATUS_FILE
+    parent_dir = os.path.dirname(os.path.abspath(target_file))
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
+    pid = os.getpid()
+    existing = {}
+    try:
+        if os.path.exists(target_file):
+            with open(target_file, "r", encoding="utf-8-sig") as handle:
+                loaded = json.load(handle)
+            if (
+                isinstance(loaded, dict)
+                and str(loaded.get("automation_name") or "") == str(automation_name or "")
+                and str(loaded.get("pid") or "") == str(pid)
+            ):
+                existing = loaded
+    except Exception:
+        existing = {}
+
+    payload = {
+        "automation_name": str(automation_name or ""),
+        "message": str(message or ""),
+        "updated_at": datetime.now().isoformat(),
+        "pid": pid,
+    }
+    if stage:
+        payload["stage"] = str(stage)
+    if order_id:
+        payload["order_id"] = str(order_id)
+    elif existing.get("order_id"):
+        payload["order_id"] = str(existing.get("order_id"))
+
+    progress = existing.get("progress") if isinstance(existing.get("progress"), dict) else {}
+    progress_current = current if current is not None else progress.get("current")
+    progress_total = total if total is not None else progress.get("total")
+    try:
+        progress_current = int(progress_current)
+        progress_total = int(progress_total)
+    except Exception:
+        progress_current = None
+        progress_total = None
+    if progress_total is not None and progress_total > 0 and progress_current is not None:
+        progress_current = max(0, min(progress_current, progress_total))
+        payload["progress"] = {
+            "current": progress_current,
+            "total": progress_total,
+            "label": f"{progress_current}/{progress_total}",
+        }
+
+    if isinstance(extra_fields, dict):
+        for key, value in extra_fields.items():
+            if value is not None:
+                payload[str(key)] = value
+
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".tmp", delete=False, encoding="utf-8", dir=parent_dir or None) as handle:
+            temp_path = handle.name
+            json.dump(payload, handle)
+        os.replace(temp_path, target_file)
+    except Exception:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
     return payload
 
 
@@ -273,9 +357,29 @@ def _collect_chrome_process_entries_with_powershell():
     return entries
 
 
+def _normalize_profile_path_for_match(path):
+    text = str(path or "").strip().strip("\"'")
+    if not text:
+        return ""
+    return os.path.normcase(os.path.normpath(os.path.abspath(text)))
+
+
+def _chrome_cmdline_profile_path(cmdline):
+    text = str(cmdline or "")
+    match = re.search(r"--user-data-dir(?:=|\s+)(\"[^\"]+\"|'[^']+'|[^\s]+)", text, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    return _normalize_profile_path_for_match(match.group(1))
+
+
+def _chrome_cmdline_uses_profile(cmdline, profile_path):
+    expected = _normalize_profile_path_for_match(profile_path)
+    actual = _chrome_cmdline_profile_path(cmdline)
+    return bool(expected and actual and actual == expected)
+
+
 def kill_stale_chrome(profile_path, profile_label="automation"):
     """Kill Chrome processes tied to the given Selenium profile path only."""
-    profile_path_lower = os.path.normpath(profile_path).lower()
     try:
         entries = _collect_chrome_process_entries_with_wmic()
         source_name = "wmic"
@@ -294,7 +398,7 @@ def kill_stale_chrome(profile_path, profile_label="automation"):
     failed = []
     for pid_text, cmdline in entries:
         try:
-            if cmdline and profile_path_lower in cmdline.lower():
+            if cmdline and _chrome_cmdline_uses_profile(cmdline, profile_path):
                 matched += 1
                 ok, detail = _kill_process(pid_text)
                 if ok:
@@ -375,10 +479,78 @@ def _is_renderer_timeout(error):
     return "timed out receiving message from renderer" in str(error).lower()
 
 
+CRM_CHALLENGE_ATTEMPTS_EXCEEDED_TEXT = "max challenge attempts exceeded"
+CRM_CHALLENGE_REFRESH_HINT_TEXT = "please refresh the page to try again"
+
+
+def _page_text(driver, top_level=True):
+    if top_level:
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            pass
+
+    try:
+        return str(
+            driver.execute_script(
+                "return String((document.body && (document.body.innerText || document.body.textContent)) || '');"
+            )
+            or ""
+        )
+    except Exception:
+        pass
+
+    try:
+        return str(driver.find_element(By.TAG_NAME, "body").text or "")
+    except Exception:
+        return ""
+
+
+def crm_challenge_attempts_exceeded(driver, top_level=True):
+    text = " ".join(_page_text(driver, top_level=top_level).lower().split())
+    return (
+        CRM_CHALLENGE_ATTEMPTS_EXCEEDED_TEXT in text
+        and CRM_CHALLENGE_REFRESH_HINT_TEXT in text
+    )
+
+
+def refresh_if_crm_challenge_attempts_exceeded(driver, label="CRM page", cooldown_seconds=5, top_level=True):
+    if not crm_challenge_attempts_exceeded(driver, top_level=top_level):
+        return False
+
+    now = time.monotonic()
+    last_refresh = float(getattr(driver, "_crm_challenge_last_refresh", 0) or 0)
+    if last_refresh and now - last_refresh < max(0, float(cooldown_seconds or 0)):
+        return True
+
+    setattr(driver, "_crm_challenge_last_refresh", now)
+    print(f"CRM challenge attempts exceeded while loading {label}; refreshing page.")
+    try:
+        driver.refresh()
+    except TimeoutException as err:
+        print(f"Warning: timeout while refreshing {label} after CRM challenge page: {err}")
+        try:
+            driver.execute_script("window.stop();")
+        except Exception:
+            pass
+    except Exception as err:
+        if _is_renderer_timeout(err):
+            print(f"Warning: renderer timeout while refreshing {label} after CRM challenge page: {err}")
+            try:
+                driver.execute_script("window.stop();")
+            except Exception:
+                pass
+        else:
+            raise
+    time.sleep(1)
+    return True
+
+
 def safe_get_with_partial_load(driver, url, label):
     """Navigate and continue with a partial load on known renderer/page-load timeouts."""
     try:
         driver.get(url)
+        refresh_if_crm_challenge_attempts_exceeded(driver, label)
         return True
     except TimeoutException as err:
         print(f"Warning: timeout while opening {label}: {err}")
@@ -393,6 +565,7 @@ def safe_get_with_partial_load(driver, url, label):
         print(f"Continuing with partially loaded page for {label}.")
     except Exception:
         pass
+    refresh_if_crm_challenge_attempts_exceeded(driver, label)
     return False
 
 

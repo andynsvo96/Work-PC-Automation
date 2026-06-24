@@ -42,9 +42,11 @@ from automation_runtime import (
     write_result_payload,
 )
 from config import (
+    CRM_813_VALIDATOR_URL,
     CRM_ACTION_TIMEOUT,
     CRM_ALLOW_VISIBLE_FALLBACK,
     CRM_HEADLESS,
+    CRM_SHIPPING_813_URL,
     CRM_SHIPPING_ALL_URL,
     CRM_SHIPPING_FILTER_DEFAULT,
     CRM_SHIPPING_FREE_URL,
@@ -270,6 +272,8 @@ INVALID_FIELD_TEXT = "Please tell a manager"
 MILITARY_STATE_CODES = {"AE", "AP", "AA", "ARMED FORCES EUROPE", "ARMED FORCES PACIFIC", "ARMED FORCES AMERICAS"}
 ALLOWED_SHIPPING_LIST_ROW_LABELS = ("tan", "purple", "lime_green")
 ALLOWED_SHIPPING_LIST_ROW_DESCRIPTION = "tan, natural, purple, or lime green"
+ALLOWED_813_ORDER_GOODS_ROW_LABELS = ("bright_red", "purple")
+ALLOWED_813_ORDER_GOODS_ROW_DESCRIPTION = "bright red or purple"
 
 _STATE_ROWS = """
 AL:ALABAMA
@@ -422,7 +426,7 @@ def _crm_attempt_modes():
 
 def _normalize_shipping_filter(value):
     key = str(value or "").strip().lower()
-    return key if key in {"all", "free", "rush"} else "free"
+    return key if key in {"all", "free", "rush", "813"} else "free"
 
 
 def _normalize_requested_batch_size(batch_size):
@@ -454,6 +458,8 @@ def _batch_collection_limit(requested_batch_size, attempted_count, worker_limit=
 
 def _shipping_filter_label(value):
     key = _normalize_shipping_filter(value)
+    if key == "813":
+        return "813 orders"
     if key == "all":
         return "all invalid-address orders"
     return "rush orders" if key == "rush" else "free ship orders"
@@ -474,6 +480,8 @@ def _shipping_list_url_for_filter(value, list_url_override=None):
     if custom_url:
         return custom_url
     key = _normalize_shipping_filter(value)
+    if key == "813":
+        return str(CRM_813_VALIDATOR_URL or CRM_SHIPPING_813_URL or "").strip()
     if key == "all":
         return str(CRM_SHIPPING_ALL_URL or CRM_SHIPPING_URL or CRM_SHIPPING_FREE_URL or CRM_SHIPPING_RUSH_URL or "").strip()
     if key == "rush":
@@ -535,6 +543,15 @@ def _classify_shipping_list_row_color(rgb):
     if red >= 120 and blue >= 120 and green <= 150 and (red - green) >= 30 and (blue - green) >= 30:
         return "purple"
 
+    if blue >= 110 and red >= 80 and green <= 135 and (blue - green) >= 35 and (red - green) >= 20:
+        return "purple"
+
+    if red >= 180 and green <= 90 and blue <= 90 and (red - green) >= 80 and (red - blue) >= 80:
+        return "bright_red"
+
+    if red >= 90 and green <= 110 and blue <= 110 and (red - green) >= 30 and (red - blue) >= 30:
+        return "dark_red"
+
     if red >= 220 and green >= 170 and blue >= 110 and red >= green >= blue - 15 and (red - blue) >= 25:
         return "tan"
 
@@ -542,6 +559,28 @@ def _classify_shipping_list_row_color(rgb):
         return "lime_green"
 
     return None
+
+
+def _classify_shipping_list_row_candidate(candidate):
+    candidate = candidate if isinstance(candidate, dict) else {}
+    rgb = _parse_css_rgb(candidate.get("backgroundColor"))
+    label = _classify_shipping_list_row_color(rgb)
+    if label:
+        return label, rgb
+
+    marker = " ".join(
+        str(candidate.get(key) or "")
+        for key in ("id", "className", "tag", "backgroundColor")
+    ).lower()
+    if "purple" in marker or "violet" in marker:
+        return "purple", rgb
+    if "lime" in marker or "green" in marker:
+        return "lime_green", rgb
+    if "tan" in marker or "natural" in marker:
+        return "tan", rgb
+    if "bright" in marker and "red" in marker:
+        return "bright_red", rgb
+    return None, rgb
 
 
 def _describe_shipping_list_order_row(driver, link):
@@ -556,7 +595,8 @@ function isTransparent(color){
 const rect = link.getBoundingClientRect();
 const colors = [];
 const seen = new Set();
-for(let node = link; node && colors.length < 10; node = node.parentElement){
+function addNodeColor(node){
+  if(!node || colors.length >= 40){ return; }
   const style = window.getComputedStyle(node);
   const bg = style.backgroundColor;
   if(!isTransparent(bg)){
@@ -568,11 +608,51 @@ for(let node = link; node && colors.length < 10; node = node.parentElement){
         backgroundColor: bg,
         tag: node.tagName,
         id: node.id || '',
-        className: node.className || '',
+        className: String(node.className || ''),
         width: nodeRect.width || 0,
         height: nodeRect.height || 0
       });
     }
+  }
+}
+function addAncestors(node, maxDepth){
+  let depth = 0;
+  for(let current = node; current && colors.length < 40 && depth < maxDepth; current = current.parentElement, depth++){
+    addNodeColor(current);
+  }
+}
+function addPointColors(x, y){
+  if(!Number.isFinite(x) || !Number.isFinite(y)){ return; }
+  if(x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight){ return; }
+  const elements = document.elementsFromPoint(x, y);
+  for(const node of elements){
+    addAncestors(node, 8);
+    if(colors.length >= 40){ return; }
+  }
+}
+function addChildColors(node){
+  for(const child of Array.from((node && node.children) || [])){
+    addNodeColor(child);
+    if(colors.length >= 40){ return; }
+  }
+}
+const row = link.closest ? link.closest('tr,[role="row"],li,.row,.report-row') : null;
+addAncestors(link, 16);
+if(row){
+  const rowRect = row.getBoundingClientRect();
+  addAncestors(row, 8);
+  addChildColors(row);
+  const y = rowRect.top + Math.max(1, rowRect.height || rect.height || 1) / 2;
+  const left = Math.max(0, rowRect.left + 4);
+  const right = Math.min(window.innerWidth - 1, rowRect.right - 4);
+  const middle = rowRect.left + Math.max(1, rowRect.width || rect.width || 1) / 2;
+  for(const x of [rect.left + 2, rect.left + rect.width / 2, left, middle, right]){
+    addPointColors(x, y);
+  }
+} else {
+  const y = rect.top + Math.max(1, rect.height || 1) / 2;
+  for(const x of [rect.left + 2, rect.left + rect.width / 2, rect.right + 24]){
+    addPointColors(x, y);
   }
 }
 return {
@@ -587,8 +667,7 @@ return {
     ) or {}
 
     for candidate in details.get("colors") or []:
-        rgb = _parse_css_rgb(candidate.get("backgroundColor"))
-        label = _classify_shipping_list_row_color(rgb)
+        label, rgb = _classify_shipping_list_row_candidate(candidate)
         if label:
             return {
                 "label": label,
@@ -636,27 +715,68 @@ function isDisplayed(node){
   }
   return true;
 }
+function addNodeColor(colors, seen, node){
+  if(!node || colors.length >= 40){ return; }
+  const style = window.getComputedStyle(node);
+  const bg = style.backgroundColor;
+  if(!isTransparent(bg)){
+    const nodeRect = node.getBoundingClientRect();
+    const key = [bg, node.tagName, Math.round(nodeRect.width), Math.round(nodeRect.height)].join('|');
+    if(!seen.has(key)){
+      seen.add(key);
+      colors.push({
+        backgroundColor: bg,
+        tag: node.tagName,
+        id: node.id || '',
+        className: String(node.className || ''),
+        width: nodeRect.width || 0,
+        height: nodeRect.height || 0
+      });
+    }
+  }
+}
+function addAncestors(colors, seen, node, maxDepth){
+  let depth = 0;
+  for(let current = node; current && colors.length < 40 && depth < maxDepth; current = current.parentElement, depth++){
+    addNodeColor(colors, seen, current);
+  }
+}
+function addPointColors(colors, seen, x, y){
+  if(!Number.isFinite(x) || !Number.isFinite(y)){ return; }
+  if(x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight){ return; }
+  const elements = document.elementsFromPoint(x, y);
+  for(const node of elements){
+    addAncestors(colors, seen, node, 8);
+    if(colors.length >= 40){ return; }
+  }
+}
+function addChildColors(colors, seen, node){
+  for(const child of Array.from((node && node.children) || [])){
+    addNodeColor(colors, seen, child);
+    if(colors.length >= 40){ return; }
+  }
+}
 return links.map((link) => {
   const rect = link.getBoundingClientRect();
   const colors = [];
   const seen = new Set();
-  for(let node = link; node && colors.length < 10; node = node.parentElement){
-    const style = window.getComputedStyle(node);
-    const bg = style.backgroundColor;
-    if(!isTransparent(bg)){
-      const nodeRect = node.getBoundingClientRect();
-      const key = [bg, node.tagName, Math.round(nodeRect.width), Math.round(nodeRect.height)].join('|');
-      if(!seen.has(key)){
-        seen.add(key);
-        colors.push({
-          backgroundColor: bg,
-          tag: node.tagName,
-          id: node.id || '',
-          className: node.className || '',
-          width: nodeRect.width || 0,
-          height: nodeRect.height || 0
-        });
-      }
+  const row = link.closest ? link.closest('tr,[role="row"],li,.row,.report-row') : null;
+  addAncestors(colors, seen, link, 16);
+  if(row){
+    const rowRect = row.getBoundingClientRect();
+    addAncestors(colors, seen, row, 8);
+    addChildColors(colors, seen, row);
+    const y = rowRect.top + Math.max(1, rowRect.height || rect.height || 1) / 2;
+    const left = Math.max(0, rowRect.left + 4);
+    const right = Math.min(window.innerWidth - 1, rowRect.right - 4);
+    const middle = rowRect.left + Math.max(1, rowRect.width || rect.width || 1) / 2;
+    for(const x of [rect.left + 2, rect.left + rect.width / 2, left, middle, right]){
+      addPointColors(colors, seen, x, y);
+    }
+  } else {
+    const y = rect.top + Math.max(1, rect.height || 1) / 2;
+    for(const x of [rect.left + 2, rect.left + rect.width / 2, rect.right + 24]){
+      addPointColors(colors, seen, x, y);
     }
   }
   return {
@@ -687,8 +807,7 @@ return links.map((link) => {
 
 def _describe_shipping_list_order_row_from_details(details):
     for candidate in details.get("colors") or []:
-        rgb = _parse_css_rgb(candidate.get("backgroundColor"))
-        label = _classify_shipping_list_row_color(rgb)
+        label, rgb = _classify_shipping_list_row_candidate(candidate)
         if label:
             return {
                 "label": label,
@@ -715,10 +834,12 @@ def _describe_shipping_list_order_row_from_details(details):
     }
 
 
-def _find_shipping_list_orders_legacy(driver, limit=1, timeout=None, exclude_order_ids=None):
+def _find_shipping_list_orders_legacy(driver, limit=1, timeout=None, exclude_order_ids=None, allowed_row_labels=None, allowed_row_description=None):
     timeout = timeout or max(CRM_ACTION_TIMEOUT, 12)
     deadline = time.time() + timeout
     excluded = {str(order_id).strip() for order_id in (exclude_order_ids or []) if str(order_id).strip()}
+    allowed_labels = tuple(allowed_row_labels or ALLOWED_SHIPPING_LIST_ROW_LABELS)
+    allowed_description = str(allowed_row_description or ALLOWED_SHIPPING_LIST_ROW_DESCRIPTION)
     while time.time() < deadline:
         candidates = {}
         for link in driver.find_elements(By.XPATH, "//a"):
@@ -732,7 +853,7 @@ def _find_shipping_list_orders_legacy(driver, limit=1, timeout=None, exclude_ord
                 if order_id in excluded:
                     continue
                 row_info = _describe_shipping_list_order_row(driver, link)
-                if row_info.get("label") not in ALLOWED_SHIPPING_LIST_ROW_LABELS:
+                if row_info.get("label") not in allowed_labels:
                     continue
                 rect = row_info.get("rect") or (0.0, 0.0, 0.0, 0.0)
                 sort_key = (float(rect[0]), float(rect[1]))
@@ -754,16 +875,18 @@ def _find_shipping_list_orders_legacy(driver, limit=1, timeout=None, exclude_ord
                 color_label = row_info.get("label") or "unknown"
                 color_rgb = row_info.get("rgb") or ()
                 rgb_text = ",".join(str(part) for part in color_rgb) if color_rgb else "?"
-                print(f"Selected shipping-list order {item['order_id']} from an allowed {color_label} row ({rgb_text}).")
+                print(f"Selected shipping-list order {item['order_id']} from an allowed {color_label} row ({rgb_text}); allowed colors: {allowed_description}.")
             return selected
         time.sleep(0.25)
     return []
 
 
-def _find_shipping_list_orders(driver, limit=1, timeout=None, exclude_order_ids=None):
+def _find_shipping_list_orders(driver, limit=1, timeout=None, exclude_order_ids=None, allowed_row_labels=None, allowed_row_description=None):
     timeout = timeout or max(CRM_ACTION_TIMEOUT, 12)
     deadline = time.time() + timeout
     excluded = {str(order_id).strip() for order_id in (exclude_order_ids or []) if str(order_id).strip()}
+    allowed_labels = tuple(allowed_row_labels or ALLOWED_SHIPPING_LIST_ROW_LABELS)
+    allowed_description = str(allowed_row_description or ALLOWED_SHIPPING_LIST_ROW_DESCRIPTION)
     while time.time() < deadline:
         try:
             links = driver.find_elements(By.XPATH, "//a")
@@ -779,6 +902,8 @@ def _find_shipping_list_orders(driver, limit=1, timeout=None, exclude_order_ids=
                 limit=limit,
                 timeout=remaining,
                 exclude_order_ids=excluded,
+                allowed_row_labels=allowed_labels,
+                allowed_row_description=allowed_description,
             )
 
         candidates = {}
@@ -798,7 +923,7 @@ def _find_shipping_list_orders(driver, limit=1, timeout=None, exclude_order_ids=
                     "rect": details.get("rect"),
                     "element": details.get("element"),
                 }
-                if row_info.get("label") not in ALLOWED_SHIPPING_LIST_ROW_LABELS:
+                if row_info.get("label") not in allowed_labels:
                     continue
                 rect = row_info.get("rect") or (0.0, 0.0, 0.0, 0.0)
                 sort_key = (float(rect[0]), float(rect[1]))
@@ -820,7 +945,7 @@ def _find_shipping_list_orders(driver, limit=1, timeout=None, exclude_order_ids=
                 color_label = row_info.get("label") or "unknown"
                 color_rgb = row_info.get("rgb") or ()
                 rgb_text = ",".join(str(part) for part in color_rgb) if color_rgb else "?"
-                print(f"Selected shipping-list order {item['order_id']} from an allowed {color_label} row ({rgb_text}).")
+                print(f"Selected shipping-list order {item['order_id']} from an allowed {color_label} row ({rgb_text}); allowed colors: {allowed_description}.")
             return selected
         time.sleep(0.25)
     return []
@@ -1433,6 +1558,8 @@ def _address_cont_value_preserved(required_cont, actual_cont):
     actual_canonical = _canonical_text(actual_cont)
     if required_canonical and required_canonical in actual_canonical:
         return True
+    if _secondary_address_matches(required_cont, actual_cont):
+        return True
     return _secondary_address_profiles_compatible(required_cont, actual_cont)
 
 
@@ -1840,8 +1967,11 @@ def _is_highway_address(address_line):
             return True
         if token == "STATE" and next_token == "RT" and route_number_pattern.match(third_token):
             return True
+        if token in STATE_CODES and route_number_pattern.match(next_token):
+            if idx == 0 or (idx == 1 and _house_token(tokens[0])):
+                return True
 
-    return bool(tokens and len(tokens) >= 2 and tokens[0] in STATE_CODES and route_number_pattern.match(tokens[1]))
+    return False
 
 
 def _is_military_address(address_fields):
@@ -4570,7 +4700,11 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
                 warnings.append("Used a matching saved address after rewriting the shipping fields into a cleaner format.")
                 return existing_result
 
-    if _is_missing_street_number(current_address.get("address")) and not po_box_profile["po_box_only"]:
+    if (
+        _is_missing_street_number(current_address.get("address"))
+        and not po_box_profile["po_box_only"]
+        and not _is_military_address(current_address)
+    ):
         current_address, recovered_street_number_from_cont = _move_address_cont_number_to_primary_address(
             shipping_modal,
             warnings,
@@ -4582,7 +4716,11 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
             preserved_address_cont = ""
             po_box_profile = _classify_po_box_address(current_address)
 
-    if _is_missing_street_number(current_address.get("address")) and not po_box_profile["po_box_only"]:
+    if (
+        _is_missing_street_number(current_address.get("address"))
+        and not po_box_profile["po_box_only"]
+        and not _is_military_address(current_address)
+    ):
         return _result_for(
             order_id,
             "missing_street_number",
@@ -4715,7 +4853,13 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
             return existing_result
         print("Detected a military/APO-style address. Using override flow...")
         _apply_override(driver, shipping_modal)
-        if not _wait_for_address_valid(shipping_modal, timeout=4):
+        override_ready, use_scope_send = _ensure_override_ready(
+            driver,
+            shipping_modal,
+            warnings,
+            dry_run=dry_run,
+        )
+        if not override_ready:
             warnings.extend(_collect_shipping_blocker_warnings(driver, shipping_modal))
             return _result_for(
                 order_id,
@@ -4731,8 +4875,19 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
         failure_result, final_address, preserved_address_cont = _prepare_shipping_form_for_save(order_id, shipping_modal, original_address, preserved_address_cont, warnings)
         if failure_result:
             return failure_result
+        if not _address_is_valid(shipping_modal):
+            if use_scope_send:
+                warnings.append("Override did not render the green valid-address text, but it was persisted through the CRM modal service.")
+            else:
+                warnings.append("Override did not render the green valid-address text, but the final Save button became available.")
         warnings.append("Military/APO override was used.")
-        _save_shipping_transaction(driver, shipping_modal, order_id, dry_run)
+        _save_shipping_transaction(
+            driver,
+            shipping_modal,
+            order_id,
+            dry_run,
+            use_scope_send=use_scope_send,
+        )
         return _result_for(
             order_id,
             "apo_override_saved" if not dry_run else "apo_override_ready",
@@ -5569,7 +5724,7 @@ def _build_crm_session_driver(profile_path, headless_mode=True, profile_label="C
     )
 
 
-def _collect_batch_order_ids_with_driver(driver, shipping_filter, limit, list_url_override=None, exclude_order_ids=None):
+def _collect_batch_order_ids_with_driver(driver, shipping_filter, limit, list_url_override=None, exclude_order_ids=None, allowed_row_labels=None, allowed_row_description=None):
     normalized_filter = _normalize_shipping_filter(shipping_filter or CRM_SHIPPING_FILTER_DEFAULT)
     target_limit = max(1, int(limit or 1))
     list_url = _shipping_list_url_for_filter(normalized_filter, list_url_override=list_url_override)
@@ -5587,11 +5742,13 @@ def _collect_batch_order_ids_with_driver(driver, shipping_filter, limit, list_ur
         limit=target_limit,
         timeout=max(CRM_ACTION_TIMEOUT, 12),
         exclude_order_ids=exclude_order_ids,
+        allowed_row_labels=allowed_row_labels,
+        allowed_row_description=allowed_row_description,
     )
     return [item["order_id"] for item in matches if item.get("order_id")]
 
 
-def _collect_batch_order_ids(shipping_filter, limit, profile_path, list_url_override=None, exclude_order_ids=None, visible=False):
+def _collect_batch_order_ids(shipping_filter, limit, profile_path, list_url_override=None, exclude_order_ids=None, visible=False, allowed_row_labels=None, allowed_row_description=None):
     resolved_profile_path = os.path.abspath(profile_path or PROFILE_PATH)
     attempt_modes = [False] if visible else _crm_attempt_modes()
     last_error = None
@@ -5610,6 +5767,8 @@ def _collect_batch_order_ids(shipping_filter, limit, profile_path, list_url_over
                 limit,
                 list_url_override=list_url_override,
                 exclude_order_ids=exclude_order_ids,
+                allowed_row_labels=allowed_row_labels,
+                allowed_row_description=allowed_row_description,
             )
         except Exception as exc:
             last_error = exc
@@ -6278,7 +6437,7 @@ def parse_args(argv=None):
     parser.add_argument("--order-id", required=False, help="Optional 7-digit CRM order ID override. If omitted, the first order from CRM_SHIPPING_URL is used.")
     parser.add_argument(
         "--shipping-filter",
-        choices=["free", "rush", "all"],
+        choices=["free", "rush", "all", "813"],
         default=_normalize_shipping_filter(CRM_SHIPPING_FILTER_DEFAULT),
         help="Choose which shipping rules to apply and, unless --list-url is provided, which built-in CRM list to use.",
     )

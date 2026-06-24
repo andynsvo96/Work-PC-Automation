@@ -1,5 +1,6 @@
 # Local secrets and machine-specific settings
 config.py
+keys/
 *.local.py
 .env
 .env.*
@@ -7,17 +8,24 @@ config.py
 # Runtime state and logs
 *.log
 automation_record_log.txt
+automation_status.json
 last_result.json
 work_hours.json
 slack_message_rotation_state.json
 crm_state.json
 crm_processing_state.json
 crm_address_validator_state.json
+crm_mass_emailer_state.json
+email_templates.json
+.crm_state.json.*.tmp
+.last_result.json.*.tmp
+last_result_*.json
 
 # Browser profiles and downloaded drivers
 .wdm/
 workers/.wdm/
 chrome_profile/
+chrome_profile*/
 chrome_profile_crm/
 chrome_profile_crm_worker_pool/
 chrome_profile_crm_auto_splitter_workers/
@@ -26,6 +34,12 @@ slack_chrome_profile/
 # Generated artifacts
 screenshots/
 product_separator_results/
+auto_splitter_*.json
+copyright_cancel_*.json
+product_separator_*.json
+shipping_bypasser_*.json
+*_result.json
+debug_*.png
 crm_state_corrupt_*.json
 exports/
 backups/

@@ -39,6 +39,7 @@ from slack_message_rotation import select_slack_day_message
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.py")
 RESULT_FILE = os.path.join(SCRIPT_DIR, "last_result.json")
+AUTOMATION_STATUS_FILE = os.path.join(SCRIPT_DIR, "automation_status.json")
 UI_TEMPLATE_FILE = os.path.join(SCRIPT_DIR, "ui_panel.html")
 WORKERS_DIR = os.path.join(SCRIPT_DIR, "workers")
 
@@ -58,7 +59,9 @@ CRM_ADDRESS_VALIDATOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_validate_address.p
 CRM_PRODUCT_SEPARATOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_product_separator.py")
 CRM_ORDER_GOODS_SCRIPT = os.path.join(WORKERS_DIR, "crm_order_goods.py")
 CRM_SHIPPING_BYPASSER_SCRIPT = os.path.join(WORKERS_DIR, "crm_shipping_bypasser.py")
+CRM_PUSH_BACK_SCRIPT = os.path.join(WORKERS_DIR, "crm_push_back.py")
 CRM_AUTO_SPLITTER_SCRIPT = os.path.join(WORKERS_DIR, "crm_auto_splitter.py")
+CRM_MASS_EMAILER_SCRIPT = os.path.join(WORKERS_DIR, "crm_copyright_cancel.py")
 SLACK_SCRIPT_TIMEOUT_SECONDS = 150
 
 WORK_CLOCK_CAPPED = True
@@ -77,13 +80,22 @@ CRM_MAX_RETRIES = 2
 CRM_RETRY_DELAY_SECONDS = 3
 CRM_ACTION_TIMEOUT = 15
 CRM_SHIPPING_ALL_URL = str(getattr(config_module, "CRM_SHIPPING_ALL_URL", "") or "").strip()
+CRM_SHIPPING_813_URL = str(getattr(config_module, "CRM_SHIPPING_813_URL", "") or "").strip()
+CRM_813_VALIDATOR_URL = str(getattr(config_module, "CRM_813_VALIDATOR_URL", CRM_SHIPPING_813_URL) or "").strip()
+CRM_813_ORDER_GOODS_URL = str(getattr(config_module, "CRM_813_ORDER_GOODS_URL", "") or "").strip()
+CRM_813_BYPASS_URL = str(getattr(config_module, "CRM_813_BYPASS_URL", "") or "").strip()
+CRM_PUSH_BACK_RUSH_URL = str(getattr(config_module, "CRM_PUSH_BACK_RUSH_URL", "") or "").strip()
+CRM_PUSH_BACK_813_URL = str(getattr(config_module, "CRM_PUSH_BACK_813_URL", "") or "").strip()
 CRM_ADDRESS_CONTINUOUS_BATCH_TIMEOUT_SECONDS = 12 * 60 * 60
 CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS = 10 * 60
 CRM_STATE_FILE = os.path.join(SCRIPT_DIR, "crm_state.json")
 CRM_ADDRESS_STATE_FILE = os.path.join(SCRIPT_DIR, "crm_address_validator_state.json")
 CRM_PROCESSING_STATE_FILE = os.path.join(SCRIPT_DIR, "crm_processing_state.json")
-CRM_ORDER_GOODS_MAX_PARALLEL_WORKERS = 4
+CRM_MASS_EMAILER_STATE_FILE = os.path.join(SCRIPT_DIR, "crm_mass_emailer_state.json")
+CRM_SHARED_MAX_PARALLEL_WORKERS = 8
+CRM_ORDER_GOODS_MAX_PARALLEL_WORKERS = CRM_SHARED_MAX_PARALLEL_WORKERS
 CRM_ADDRESS_REPORT_MAX_ITEMS = 500
+CRM_MASS_EMAILER_TIMEOUT_SECONDS = 2 * 60 * 60
 SERVER_BIND_HOST = "0.0.0.0"
 SERVER_PORT = 5123
 SERVER_STARTED_AT = datetime.now()
@@ -101,8 +113,11 @@ crm_address_runtime_lock = threading.Lock()
 crm_product_separator_runtime_lock = threading.Lock()
 crm_order_goods_runtime_lock = threading.Lock()
 crm_shipping_bypasser_runtime_lock = threading.Lock()
+crm_push_back_runtime_lock = threading.Lock()
 crm_auto_splitter_runtime_lock = threading.Lock()
 crm_processing_runtime_lock = threading.Lock()
+crm_mass_emailer_state_lock = threading.Lock()
+crm_mass_emailer_runtime_lock = threading.Lock()
 automation_process_lock = threading.RLock()
 auto_clock_timer = None
 tray_icon_ref = None
@@ -170,6 +185,9 @@ crm_order_goods_runtime = {
     "parallelWorkers": 1,
     "listUrl": None,
     "orderCount": 0,
+    "currentOrderIndex": 0,
+    "totalOrderCount": 0,
+    "currentStage": None,
     "refreshPasses": 0,
     "lastMessage": "No Order Goods runs yet.",
     "lastSuccess": None,
@@ -186,8 +204,30 @@ crm_shipping_bypasser_runtime = {
     "parallelWorkers": 1,
     "listUrl": None,
     "orderCount": 0,
+    "currentOrderIndex": 0,
+    "totalOrderCount": 0,
+    "currentStage": None,
     "refreshPasses": 0,
     "lastMessage": "No Shipping Bypasser runs yet.",
+    "lastSuccess": None,
+    "dryRun": False,
+    "payload": None,
+}
+crm_push_back_runtime = {
+    "running": False,
+    "startedAt": None,
+    "completedAt": None,
+    "lastAction": None,
+    "targetOrderId": None,
+    "batchSize": None,
+    "parallelWorkers": 1,
+    "listUrl": None,
+    "orderCount": 0,
+    "currentOrderIndex": 0,
+    "totalOrderCount": 0,
+    "currentStage": None,
+    "refreshPasses": 0,
+    "lastMessage": "No Push Back runs yet.",
     "lastSuccess": None,
     "dryRun": False,
     "payload": None,
@@ -202,6 +242,8 @@ crm_product_separator_runtime = {
     "listUrl": None,
     "orderCount": 0,
     "splitOrderCount": 0,
+    "currentOrderIndex": 0,
+    "totalOrderCount": 0,
     "parallelWorkers": 1,
     "lastMessage": "No Product Separator runs yet.",
     "lastSuccess": None,
@@ -223,6 +265,22 @@ crm_auto_splitter_runtime = {
     "dryRun": True,
     "payload": None,
 }
+crm_mass_emailer_runtime = {
+    "running": False,
+    "startedAt": None,
+    "completedAt": None,
+    "lastAction": None,
+    "orderCount": 0,
+    "failureCount": 0,
+    "skippedCount": 0,
+    "currentOrderIndex": 0,
+    "totalOrderCount": 0,
+    "currentStage": None,
+    "lastMessage": "No Mass Emailer runs yet.",
+    "lastSuccess": None,
+    "dryRun": True,
+    "payload": None,
+}
 crm_processing_runtime = {
     "running": False,
     "startedAt": None,
@@ -231,6 +289,7 @@ crm_processing_runtime = {
     "processingFilter": "rush",
     "selectedSteps": [],
     "completedSteps": [],
+    "currentOrderProgress": None,
     "lastMessage": "No automated processing runs yet.",
     "lastSuccess": None,
 }
@@ -1287,7 +1346,9 @@ def _apply_runtime_config_from_module():
     global WORK_CLOCK_RESET_ON_FRIDAY_CLOCK_OUT, WORK_CLOCK_SYNC_FROM_PAYCOM
     global WORK_CLOCK_SYNC_BEFORE_CLOCK_IN, WORK_CLOCK_SYNC_AFTER_CLOCK_OUT
     global WORK_STATE_FILE, CRM_MAX_RETRIES, CRM_RETRY_DELAY_SECONDS, CRM_ACTION_TIMEOUT
-    global CRM_SHIPPING_ALL_URL, CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS
+    global CRM_SHIPPING_ALL_URL, CRM_SHIPPING_813_URL, CRM_813_VALIDATOR_URL, CRM_813_ORDER_GOODS_URL, CRM_813_BYPASS_URL
+    global CRM_PUSH_BACK_RUSH_URL, CRM_PUSH_BACK_813_URL
+    global CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS
 
     WORK_CLOCK_CAPPED = bool(getattr(config_module, "WORK_CLOCK_CAPPED", WORK_CLOCK_CAPPED))
     WORK_CLOCK_CAP_HOURS = _safe_float(getattr(config_module, "WORK_CLOCK_CAP_HOURS", WORK_CLOCK_CAP_HOURS), 40.0)
@@ -1320,6 +1381,12 @@ def _apply_runtime_config_from_module():
     CRM_RETRY_DELAY_SECONDS = max(0, int(getattr(config_module, "CRM_RETRY_DELAY_SECONDS", CRM_RETRY_DELAY_SECONDS)))
     CRM_ACTION_TIMEOUT = max(5, int(getattr(config_module, "CRM_ACTION_TIMEOUT", CRM_ACTION_TIMEOUT)))
     CRM_SHIPPING_ALL_URL = str(getattr(config_module, "CRM_SHIPPING_ALL_URL", CRM_SHIPPING_ALL_URL) or "").strip()
+    CRM_SHIPPING_813_URL = str(getattr(config_module, "CRM_SHIPPING_813_URL", CRM_SHIPPING_813_URL) or "").strip()
+    CRM_813_VALIDATOR_URL = str(getattr(config_module, "CRM_813_VALIDATOR_URL", CRM_SHIPPING_813_URL) or "").strip()
+    CRM_813_ORDER_GOODS_URL = str(getattr(config_module, "CRM_813_ORDER_GOODS_URL", CRM_813_ORDER_GOODS_URL) or "").strip()
+    CRM_813_BYPASS_URL = str(getattr(config_module, "CRM_813_BYPASS_URL", CRM_813_BYPASS_URL) or "").strip()
+    CRM_PUSH_BACK_RUSH_URL = str(getattr(config_module, "CRM_PUSH_BACK_RUSH_URL", CRM_PUSH_BACK_RUSH_URL) or "").strip()
+    CRM_PUSH_BACK_813_URL = str(getattr(config_module, "CRM_PUSH_BACK_813_URL", CRM_PUSH_BACK_813_URL) or "").strip()
     CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS = max(
         0,
         int(getattr(config_module, "CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS", CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS)),
@@ -1391,10 +1458,58 @@ def fmt_queue_time(iso_value):
         return str(iso_value or "").strip()
 
 
+def _automation_queue_progress_from_status_payload(payload):
+    runtime = payload.get("runtime") if isinstance(payload, dict) else {}
+    runtime = runtime if isinstance(runtime, dict) else {}
+    progress = runtime.get("currentOrderProgress")
+    if isinstance(progress, dict):
+        current = progress.get("current")
+        total = progress.get("total")
+        normalized = _crm_processing_order_progress(current, total, source=progress.get("source") or "")
+        if normalized:
+            return normalized
+    return _crm_processing_order_progress_from_runtime(runtime)
+
+
+def _automation_queue_live_status(task):
+    status_fn = task.get("status_fn")
+    if str(task.get("status") or "").lower() != "running" or not callable(status_fn):
+        return None
+    try:
+        payload = status_fn()
+    except Exception as exc:
+        return {"message": f"Status unavailable: {exc}"}
+    if isinstance(payload, dict) and not payload.get("running"):
+        return None
+    runtime = payload.get("runtime") if isinstance(payload, dict) else {}
+    runtime = runtime if isinstance(runtime, dict) else {}
+    message = (
+        runtime.get("lastMessage")
+        or (payload.get("message") if isinstance(payload, dict) else "")
+        or task.get("message")
+        or ""
+    )
+    live = {"message": str(message)}
+    progress = _automation_queue_progress_from_status_payload(payload if isinstance(payload, dict) else {})
+    if progress:
+        live["progress"] = progress
+    stage = runtime.get("currentStage")
+    if stage:
+        live["stage"] = str(stage)
+    target_order_id = runtime.get("targetOrderId")
+    if target_order_id:
+        live["targetOrderId"] = str(target_order_id)
+    return live
+
+
 def _automation_queue_task_payload(task):
     next_run_at = task.get("next_run_at")
     run_history = task.get("run_history") if isinstance(task.get("run_history"), list) else []
-    return {
+    live_status = _automation_queue_live_status(task)
+    message = task.get("message")
+    if live_status and live_status.get("message"):
+        message = live_status.get("message")
+    payload = {
         "id": task.get("id"),
         "label": task.get("label"),
         "category": task.get("category"),
@@ -1414,11 +1529,16 @@ def _automation_queue_task_payload(task):
         "started_at": task.get("started_at"),
         "completed_at": task.get("completed_at"),
         "duration_seconds": task.get("duration_seconds"),
-        "message": task.get("message"),
+        "message": message,
         "success": task.get("success"),
         "cancel_requested": bool(task.get("cancel_requested")),
         "position": task.get("position"),
     }
+    if live_status:
+        payload["live_status"] = live_status
+        if live_status.get("progress"):
+            payload["progress"] = live_status.get("progress")
+    return payload
 
 
 def _automation_queue_duration_seconds(task):
@@ -1569,7 +1689,7 @@ def _automation_queue_worker_loop():
             next_task["started_at"] = _automation_queue_now_iso()
             next_task["completed_at"] = None
             next_task["run_count"] = max(0, int(_safe_float(next_task.get("run_count"), 0))) + 1
-            next_task["message"] = "Running."
+            next_task["message"] = f"Starting {next_task.get('label') or 'queued task'}."
             automation_queue_current_task_id = next_task.get("id")
             fn = next_task.get("fn")
 
@@ -1642,6 +1762,7 @@ def enqueue_automation(
     category,
     fn,
     details=None,
+    status_fn=None,
     queue_mode=None,
     repeat_interval_minutes=None,
     scheduled_for=None,
@@ -1693,6 +1814,7 @@ def enqueue_automation(
         "success": None,
         "cancel_requested": False,
         "fn": fn,
+        "status_fn": status_fn if callable(status_fn) else None,
     }
     if status == "idle":
         task["message"] = _automation_queue_idle_message(task)
@@ -1920,10 +2042,18 @@ def force_stop_automation():
         if crm_shipping_bypasser_runtime.get("running"):
             crm_shipping_bypasser_runtime["lastMessage"] = "Force stop requested by user."
             crm_shipping_bypasser_runtime["lastSuccess"] = False
+    with crm_push_back_runtime_lock:
+        if crm_push_back_runtime.get("running"):
+            crm_push_back_runtime["lastMessage"] = "Force stop requested by user."
+            crm_push_back_runtime["lastSuccess"] = False
     with crm_auto_splitter_runtime_lock:
         if crm_auto_splitter_runtime.get("running"):
             crm_auto_splitter_runtime["lastMessage"] = "Force stop requested by user."
             crm_auto_splitter_runtime["lastSuccess"] = False
+    with crm_mass_emailer_runtime_lock:
+        if crm_mass_emailer_runtime.get("running"):
+            crm_mass_emailer_runtime["lastMessage"] = "Force stop requested by user."
+            crm_mass_emailer_runtime["lastSuccess"] = False
     with crm_processing_runtime_lock:
         if crm_processing_runtime.get("running"):
             crm_processing_runtime["lastMessage"] = "Force stop requested by user."
@@ -1949,15 +2079,23 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False):
                 os.remove(RESULT_FILE)
             except OSError:
                 pass
+        if os.path.exists(AUTOMATION_STATUS_FILE):
+            try:
+                os.remove(AUTOMATION_STATUS_FILE)
+            except OSError:
+                pass
         creation_flags = (
             getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
             if show_terminal
             else getattr(subprocess, "CREATE_NO_WINDOW", 0)
         )
+        env = os.environ.copy()
+        env["AUTOMATION_STATUS_FILE"] = AUTOMATION_STATUS_FILE
         proc = subprocess.Popen(
             [_resolve_console_python(), script_path] + list(args),
             cwd=SCRIPT_DIR,
             creationflags=creation_flags,
+            env=env,
         )
         _register_automation_process(proc, label)
         try:
@@ -3467,7 +3605,7 @@ def _default_crm_state():
         "last_order_goods_parallel_workers": 1,
         "saved_order_goods_parallel_workers": 1,
         "last_product_separator_parallel_workers": 1,
-        "saved_product_separator_parallel_workers": 4,
+        "saved_product_separator_parallel_workers": 1,
         "saved_auto_splitter_parallel_workers": 1,
         "total_runs": 0,
         "total_orders_processed": 0,
@@ -3513,19 +3651,19 @@ def load_crm_state():
         state.get("last_product_separator_parallel_workers"),
         default=1,
         minimum=1,
-        maximum=4,
+        maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
     )
     state["saved_product_separator_parallel_workers"] = _normalize_crm_positive_int(
         state.get("saved_product_separator_parallel_workers"),
-        default=4,
+        default=1,
         minimum=1,
-        maximum=4,
+        maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
     )
     state["saved_auto_splitter_parallel_workers"] = _normalize_crm_positive_int(
         state.get("saved_auto_splitter_parallel_workers"),
         default=1,
         minimum=1,
-        maximum=4,
+        maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
     )
     state["total_runs"] = max(0, int(_safe_float(state.get("total_runs"), 0)))
     state["total_orders_processed"] = max(0, int(_safe_float(state.get("total_orders_processed"), 0)))
@@ -3560,8 +3698,18 @@ def load_crm_state():
             row.get("success", True),
             row.get("message", ""),
         )
+        if row["automation_key"] == "shipping_bypasser":
+            row["message"] = _compact_crm_shipping_bypasser_history_message(row.get("message") or "")
         cleaned_history.append(row)
     state["run_history"] = cleaned_history
+    if cleaned_history:
+        latest = cleaned_history[0]
+        if (
+            latest.get("automation_key") == "shipping_bypasser"
+            and latest.get("timestamp") == state.get("last_run_timestamp")
+            and latest.get("message")
+        ):
+            state["last_run_message"] = latest.get("message")
     state["auto_splitter_run_history"] = _normalize_crm_auto_splitter_history(migrated_auto_history)
     state = _backfill_crm_address_state_from_last_result(state)
     return state
@@ -3623,20 +3771,37 @@ def _normalize_crm_stock_order_results(items, fallback_order_ids=None, fallback_
         if not order_ids:
             continue
         order_id = order_ids[0]
-        if order_id in seen:
+        tab_index = item.get("stock_tab_index")
+        tab_count = item.get("stock_tab_count")
+        tab_label = str(item.get("stock_tab_label") or "").strip()
+        if tab_index is not None or tab_count is not None or tab_label:
+            result_key = (order_id, str(tab_index or ""), str(tab_count or ""), tab_label)
+        else:
+            result_key = (order_id,)
+        if result_key in seen:
             continue
-        seen.add(order_id)
-        cleaned.append(
-            {
-                "order_id": order_id,
-                "success": bool(item.get("success")),
-                "status": str(item.get("status") or ("Success" if item.get("success") else "Needs attention")),
-                "outcome": str(item.get("outcome") or ""),
-                "message": str(item.get("message") or ""),
-                "duration_seconds": _normalize_duration_seconds(item.get("duration_seconds") or item.get("session_duration_seconds")),
-                "sanmar_confirmation": item.get("sanmar_confirmation") if isinstance(item.get("sanmar_confirmation"), dict) else None,
-            }
-        )
+        seen.add(result_key)
+        row = {
+            "order_id": order_id,
+            "success": bool(item.get("success")),
+            "status": str(item.get("status") or ("Success" if item.get("success") else "Needs attention")),
+            "outcome": str(item.get("outcome") or ""),
+            "message": str(item.get("message") or ""),
+            "duration_seconds": _normalize_duration_seconds(item.get("duration_seconds") or item.get("session_duration_seconds")),
+            "sanmar_confirmation": item.get("sanmar_confirmation") if isinstance(item.get("sanmar_confirmation"), dict) else None,
+        }
+        if tab_index is not None:
+            row["stock_tab_index"] = tab_index
+        if tab_count is not None:
+            row["stock_tab_count"] = tab_count
+        if tab_label:
+            row["stock_tab_label"] = tab_label
+        if isinstance(item.get("partial_success_details"), list):
+            row["partial_success_details"] = item.get("partial_success_details")
+        for key in ("warehouse", "warehouses", "eta", "eta_by_warehouse"):
+            if item.get(key) is not None:
+                row[key] = item.get(key)
+        cleaned.append(row)
     if cleaned:
         return cleaned
     fallback_success = bool(fallback_success)
@@ -3655,6 +3820,8 @@ def _normalize_crm_stock_order_results(items, fallback_order_ids=None, fallback_
 
 def _crm_order_goods_outcome_label(outcome, success):
     key = str(outcome or "").strip().lower()
+    if key == "partial_success":
+        return "Partially successful"
     if key == "already_stock_ordered":
         return "Already stock ordered"
     if key == "order_goods_locked":
@@ -3667,9 +3834,58 @@ def _crm_order_goods_outcome_label(outcome, success):
         return "Bypassed"
     if key == "shipping_bypass_ready":
         return "Ready"
+    if key in {"push_back_saved", "push_back_saved_stock_ordered"}:
+        return "Pushed"
+    if key == "push_back_saved_stock_failed":
+        return "Stock needs attention"
+    if key in {"push_back_ready", "push_back_ready_stock_ready"}:
+        return "Ready"
+    if key == "push_back_ready_stock_failed":
+        return "Stock dry run needs attention"
+    if key in {"due_date_guard_skipped", "missing_production_date", "missing_due_date", "missing_order_production_date", "missing_order_due_date"}:
+        return "Skipped"
     if key in {"sanmar_cart_not_empty", "eta_on_or_after_due_date", "no_single_warehouse", "multiple_warehouses", "checkout_warehouse_mismatch", "sanmar_product_mismatch"}:
         return "Skipped"
     return "Success" if success else "Needs attention"
+
+
+def _crm_stock_tab_descriptor(item):
+    if not isinstance(item, dict):
+        return ""
+    tab_index = item.get("stock_tab_index")
+    tab_count = item.get("stock_tab_count")
+    label = str(item.get("stock_tab_label") or "").strip()
+    try:
+        tab_index = int(tab_index)
+    except Exception:
+        tab_index = None
+    try:
+        tab_count = int(tab_count)
+    except Exception:
+        tab_count = None
+    if tab_index and tab_count and tab_count > 1:
+        base = f"tab {tab_index} of {tab_count}"
+    elif tab_index:
+        base = f"tab {tab_index}"
+    else:
+        base = "tab"
+    return f"{base} ({label})" if label else base
+
+
+def _crm_partial_stock_message(failed_items):
+    parts = []
+    for item in failed_items if isinstance(failed_items, list) else []:
+        descriptor = _crm_stock_tab_descriptor(item)
+        message = str(item.get("message") or "").strip()
+        if descriptor and message:
+            parts.append(f"{descriptor}: {message}")
+        elif descriptor:
+            parts.append(descriptor)
+        elif message:
+            parts.append(message)
+    if not parts:
+        return "Partially successful; at least one stock tab needs attention."
+    return "Partially successful; skipped " + "; ".join(parts[:4]) + "."
 
 
 def _build_crm_order_goods_order_results(payload):
@@ -3703,6 +3919,7 @@ def _build_crm_order_goods_order_results(payload):
             continue
         success = all(bool(item.get("success")) for item in items)
         failed_items = [item for item in items if not item.get("success")]
+        partial_success = bool(failed_items) and any(bool(item.get("success")) for item in items)
         already_ordered_items = [item for item in items if str(item.get("outcome") or "") == "already_stock_ordered"]
         primary = failed_items[0] if failed_items else (already_ordered_items[0] if already_ordered_items else items[-1])
         unique_messages = []
@@ -3711,7 +3928,7 @@ def _build_crm_order_goods_order_results(payload):
             if msg and msg not in unique_messages:
                 unique_messages.append(msg)
         tab_count = len(items)
-        base_message = str(primary.get("message") or "").strip()
+        base_message = _crm_partial_stock_message(failed_items) if partial_success else str(primary.get("message") or "").strip()
         message = base_message or "; ".join(unique_messages)
         if tab_count > 1:
             message = f"{message} ({tab_count} stock tab(s) checked.)".strip()
@@ -3724,14 +3941,217 @@ def _build_crm_order_goods_order_results(payload):
             {
                 "order_id": order_id,
                 "success": success,
-                "status": _crm_order_goods_outcome_label(primary.get("outcome"), success),
-                "outcome": str(primary.get("outcome") or ""),
+                "status": "Partially successful" if partial_success else _crm_order_goods_outcome_label(primary.get("outcome"), success),
+                "outcome": "partial_success" if partial_success else str(primary.get("outcome") or ""),
                 "message": message,
                 "duration_seconds": max(duration_values) if duration_values else None,
                 "sanmar_confirmation": primary.get("sanmar_confirmation") if isinstance(primary.get("sanmar_confirmation"), dict) else None,
             }
         )
     return results
+
+
+CRM_SHIPPING_BYPASSER_STOCK_ORDER_SUCCESS_OUTCOMES = {"shipping_bypass_ordered"}
+
+
+def _crm_shipping_bypasser_customer_po(item):
+    if not isinstance(item, dict):
+        return ""
+    confirmation = item.get("sanmar_confirmation") if isinstance(item.get("sanmar_confirmation"), dict) else {}
+    po = str(confirmation.get("po") or "").strip()
+    if po:
+        return po
+    order = item.get("order") if isinstance(item.get("order"), dict) else {}
+    po = str(order.get("po") or item.get("po") or "").strip()
+    if po:
+        return po
+    tab_label = str(item.get("stock_tab_label") or "").strip()
+    match = re.search(r"\b(H-[A-Za-z0-9]+)\b", tab_label, flags=re.I)
+    return match.group(1) if match else ""
+
+
+def _crm_shipping_bypasser_confirmation_url(item):
+    if not isinstance(item, dict):
+        return ""
+    confirmation = item.get("sanmar_confirmation") if isinstance(item.get("sanmar_confirmation"), dict) else {}
+    return str(confirmation.get("url") or "").strip()
+
+
+def _crm_shipping_bypasser_ordered_stock_success_detail(item):
+    if not isinstance(item, dict) or not item.get("success"):
+        return None
+    if str(item.get("outcome") or "") not in CRM_SHIPPING_BYPASSER_STOCK_ORDER_SUCCESS_OUTCOMES:
+        return None
+    descriptor = _crm_stock_tab_descriptor(item)
+    po = _crm_shipping_bypasser_customer_po(item)
+    url = _crm_shipping_bypasser_confirmation_url(item)
+    if not descriptor or not po or not url:
+        return None
+    return {
+        "stock_tab": descriptor,
+        "po": po,
+        "url": url,
+        "sanmar_confirmation": item.get("sanmar_confirmation") if isinstance(item.get("sanmar_confirmation"), dict) else None,
+    }
+
+
+def _crm_shipping_bypasser_success_detail_text(details):
+    parts = []
+    seen = set()
+    for detail in details if isinstance(details, list) else []:
+        if not isinstance(detail, dict):
+            continue
+        text = f"{detail.get('stock_tab')}, customer PO {detail.get('po')}, SanMar confirmation {detail.get('url')}"
+        if text in seen:
+            continue
+        seen.add(text)
+        parts.append(text)
+    return "; ".join(parts[:4])
+
+
+def _crm_shipping_bypasser_ordered_stock_successfully(item):
+    return _crm_shipping_bypasser_ordered_stock_success_detail(item) is not None
+
+
+def _build_crm_shipping_bypasser_order_results(payload):
+    if not isinstance(payload, dict):
+        return []
+    report = payload.get("report") if isinstance(payload.get("report"), list) else []
+    order_success_details = {}
+    has_non_cleanup_row = {}
+    for item in report:
+        if not isinstance(item, dict):
+            continue
+        order_ids = _extract_crm_order_ids({"order_ids": [item.get("order_id")]})
+        if not order_ids:
+            continue
+        order_id = order_ids[0]
+        success_detail = _crm_shipping_bypasser_ordered_stock_success_detail(item)
+        if success_detail is not None:
+            order_success_details.setdefault(order_id, []).append(success_detail)
+        if str(item.get("outcome") or "") != "sanmar_cart_cleanup_failed":
+            has_non_cleanup_row[order_id] = True
+
+    results = []
+    for item in report[:100]:
+        if not isinstance(item, dict):
+            continue
+        order_ids = _extract_crm_order_ids({"order_ids": [item.get("order_id")]})
+        if not order_ids:
+            continue
+        order_id = order_ids[0]
+        if (
+            str(item.get("outcome") or "") == "sanmar_cart_cleanup_failed"
+            and has_non_cleanup_row.get(order_id)
+        ):
+            continue
+        item_success = bool(item.get("success"))
+        partial_details = order_success_details.get(order_id) or []
+        partial_success = bool((not item_success) and partial_details)
+        effective_success = bool(item_success or partial_success)
+        status = (
+            _crm_order_goods_outcome_label(item.get("outcome"), item_success)
+            if item_success
+            else ("Partially successful" if partial_success else "Needs attention")
+        )
+        message = str(item.get("message") or "")
+        if partial_success:
+            detail_text = _crm_shipping_bypasser_success_detail_text(partial_details)
+            if detail_text:
+                message = f"{message} Successful stock tab(s): {detail_text}.".strip()
+        sanmar_confirmation = item.get("sanmar_confirmation") if isinstance(item.get("sanmar_confirmation"), dict) else None
+        if partial_success and sanmar_confirmation is None:
+            for detail in partial_details:
+                candidate = detail.get("sanmar_confirmation") if isinstance(detail, dict) else None
+                if isinstance(candidate, dict):
+                    sanmar_confirmation = candidate
+                    break
+        results.append(
+            {
+                "order_id": order_id,
+                "success": effective_success,
+                "status": status,
+                "outcome": str(item.get("outcome") or ""),
+                "message": message,
+                "duration_seconds": _normalize_duration_seconds(item.get("duration_seconds") or item.get("session_duration_seconds")),
+                "sanmar_confirmation": sanmar_confirmation,
+                "partial_success_details": partial_details if partial_success else [],
+                "stock_tab_index": item.get("stock_tab_index"),
+                "stock_tab_count": item.get("stock_tab_count"),
+                "stock_tab_label": str(item.get("stock_tab_label") or ""),
+            }
+        )
+    if results:
+        return results
+    return _normalize_crm_stock_order_results(
+        [],
+        _extract_crm_order_ids(payload),
+        bool(payload.get("success")),
+        str(payload.get("message") or ""),
+    )
+
+
+CRM_SHIPPING_BYPASSER_PARTIAL_DETAIL_RE = re.compile(
+    r"(\b\d+\s+order\(s\)\s+partially succeeded)(?::\s*.*?)(?=(?:\s+\d+\s+order\(s\)\s+need attention:)|$)",
+    flags=re.I | re.S,
+)
+
+
+def _compact_crm_shipping_bypasser_history_message(message):
+    text = str(message or "").strip()
+    if not text:
+        return text
+    text = re.split(r"\s+Stock tabs:\s*", text, maxsplit=1, flags=re.I)[0].strip()
+    text = CRM_SHIPPING_BYPASSER_PARTIAL_DETAIL_RE.sub(r"\1.", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return re.sub(r"\.\s*\.", ".", text)
+
+
+def _crm_shipping_bypasser_order_results_success(order_results):
+    rows = order_results if isinstance(order_results, list) else []
+    return bool(rows) and all(bool(item.get("success")) for item in rows if isinstance(item, dict))
+
+
+def _crm_shipping_bypasser_history_tab_summary(order_results):
+    rows = [row for row in (order_results if isinstance(order_results, list) else []) if isinstance(row, dict)]
+    grouped = {}
+    for row in rows:
+        order_id = str(row.get("order_id") or "").strip()
+        if order_id:
+            grouped.setdefault(order_id, []).append(row)
+    order_parts = []
+    for order_id, items in grouped.items():
+        has_multi_tab_context = len(items) > 1 or any(
+            int(_safe_float(item.get("stock_tab_count"), 0)) > 1
+            for item in items
+            if isinstance(item, dict)
+        )
+        if not has_multi_tab_context:
+            continue
+        tab_parts = []
+        for item in items:
+            descriptor = _crm_stock_tab_descriptor(item)
+            outcome = str(item.get("outcome") or "").strip().lower()
+            if outcome == "shipping_bypass_ordered":
+                po = _crm_shipping_bypasser_customer_po(item)
+                url = _crm_shipping_bypasser_confirmation_url(item)
+                detail = f"{descriptor} ordered stock" if descriptor else "ordered stock"
+                if po:
+                    detail = f"{detail}, customer PO {po}"
+                if url:
+                    detail = f"{detail}, SanMar confirmation {url}"
+            elif outcome == "already_stock_ordered":
+                detail = f"{descriptor} skipped because stock is already ordered" if descriptor else "skipped because stock is already ordered"
+            else:
+                status = str(item.get("status") or ("success" if item.get("success") else "needs attention")).strip()
+                detail = f"{descriptor} {status}" if descriptor else status
+            if detail and detail not in tab_parts:
+                tab_parts.append(detail)
+        if tab_parts:
+            order_parts.append(f"{order_id}: " + "; ".join(tab_parts))
+    if not order_parts:
+        return ""
+    return " Stock tabs: " + " | ".join(order_parts[:8]) + (" ..." if len(order_parts) > 8 else "") + "."
 
 
 def _normalize_crm_single_order_id(raw):
@@ -3749,9 +4169,24 @@ def _normalize_crm_single_order_id(raw):
     return matches[-1]
 
 
+CRM_PROCESSING_FILTERS = ("rush", "free", "all", "813")
+CRM_PROCESSING_GLOBAL_PREF_KEYS = (
+    "mass_emailer_enabled",
+)
+CRM_PROCESSING_MODE_PREF_KEYS = (
+    "stock_unlocker_enabled",
+    "address_validator_enabled",
+    "product_separator_enabled",
+    "order_goods_enabled",
+    "shipping_bypasser_enabled",
+    "push_back_enabled",
+)
+CRM_PROCESSING_PREF_KEYS = CRM_PROCESSING_GLOBAL_PREF_KEYS + CRM_PROCESSING_MODE_PREF_KEYS
+
+
 def _normalize_crm_shipping_filter(value):
     key = str(value or "").strip().lower()
-    return key if key in {"all", "free", "rush"} else "free"
+    return key if key in set(CRM_PROCESSING_FILTERS) else "free"
 
 
 def _normalize_crm_address_action(value):
@@ -3818,55 +4253,195 @@ def _normalize_crm_processing_enabled(value, default=False):
     return bool(default)
 
 
+def _default_crm_processing_mode_preferences(processing_filter):
+    key = _normalize_crm_shipping_filter(processing_filter or "rush")
+    defaults = {
+        "stock_unlocker_enabled": key == "rush",
+        "address_validator_enabled": True,
+        "product_separator_enabled": key != "813",
+        "order_goods_enabled": key in {"rush", "813"},
+        "shipping_bypasser_enabled": key == "813",
+        "push_back_enabled": False,
+    }
+    if key == "all":
+        defaults.update(
+            {
+                "stock_unlocker_enabled": False,
+                "order_goods_enabled": False,
+                "shipping_bypasser_enabled": False,
+                "push_back_enabled": False,
+            }
+        )
+    elif key == "free":
+        defaults.update(
+            {
+                "stock_unlocker_enabled": False,
+                "order_goods_enabled": False,
+                "shipping_bypasser_enabled": False,
+                "push_back_enabled": False,
+            }
+        )
+    elif key == "813":
+        defaults.update(
+            {
+                "stock_unlocker_enabled": False,
+                "product_separator_enabled": False,
+            }
+        )
+    return defaults
+
+
+def _sanitize_crm_processing_mode_preferences(processing_filter, values=None):
+    key = _normalize_crm_shipping_filter(processing_filter or "rush")
+    source = values if isinstance(values, dict) else {}
+    prefs = _default_crm_processing_mode_preferences(key)
+    for pref_key in CRM_PROCESSING_MODE_PREF_KEYS:
+        if pref_key in source:
+            prefs[pref_key] = _normalize_crm_processing_enabled(source.get(pref_key), default=prefs.get(pref_key))
+    if key == "all":
+        prefs["address_validator_enabled"] = True
+        prefs["stock_unlocker_enabled"] = False
+        prefs["order_goods_enabled"] = False
+        prefs["shipping_bypasser_enabled"] = False
+        prefs["push_back_enabled"] = False
+    elif key == "813":
+        prefs["stock_unlocker_enabled"] = False
+        prefs["product_separator_enabled"] = False
+    elif key != "rush":
+        prefs["stock_unlocker_enabled"] = False
+        prefs["order_goods_enabled"] = False
+        prefs["shipping_bypasser_enabled"] = False
+        prefs["push_back_enabled"] = False
+    return prefs
+
+
+def _normalize_crm_processing_mode_preferences(raw_preferences, migrated_filter=None, migrated_values=None):
+    raw_preferences = raw_preferences if isinstance(raw_preferences, dict) else {}
+    mode_preferences = {}
+    for processing_filter in CRM_PROCESSING_FILTERS:
+        mode_preferences[processing_filter] = _sanitize_crm_processing_mode_preferences(
+            processing_filter,
+            raw_preferences.get(processing_filter),
+        )
+    if migrated_filter:
+        normalized_filter = _normalize_crm_shipping_filter(migrated_filter)
+        mode_preferences[normalized_filter] = _sanitize_crm_processing_mode_preferences(
+            normalized_filter,
+            migrated_values,
+        )
+    return mode_preferences
+
+
+def _apply_crm_processing_mode_preferences_to_state(state, processing_filter=None):
+    normalized_filter = _normalize_crm_shipping_filter(processing_filter or state.get("processing_filter") or "rush")
+    preferences = state.get("mode_preferences") if isinstance(state.get("mode_preferences"), dict) else {}
+    mode_preferences = _normalize_crm_processing_mode_preferences(preferences)
+    state["mode_preferences"] = mode_preferences
+    state["processing_filter"] = normalized_filter
+    active_preferences = mode_preferences.get(normalized_filter) or _default_crm_processing_mode_preferences(normalized_filter)
+    for pref_key in CRM_PROCESSING_MODE_PREF_KEYS:
+        state[pref_key] = bool(active_preferences.get(pref_key))
+    return state
+
+
 def _crm_processing_step_label(step_key):
+    if step_key == "mass_emailer":
+        return "Mass Emailer"
     if step_key == "address_validator_batch":
         return "Address Validator (Batch)"
     if step_key == "product_separator":
         return "Product Separator"
     if step_key == "order_goods":
-        return "Rush Order Goods"
+        return "Order Goods"
     if step_key == "shipping_bypasser":
         return "Shipping Bypasser"
+    if step_key == "push_back":
+        return "Push Back"
     return "Stock Unlocker"
 
 
 def _crm_processing_selected_steps_from_state(state):
     steps = []
     processing_filter = _normalize_crm_shipping_filter(state.get("processing_filter"))
+    if _normalize_crm_processing_enabled(state.get("mass_emailer_enabled"), default=False):
+        steps.append("mass_emailer")
     if processing_filter == "all" or _normalize_crm_processing_enabled(state.get("address_validator_enabled"), default=True):
         steps.append("address_validator_batch")
-    if _normalize_crm_processing_enabled(state.get("product_separator_enabled"), default=True):
+    if processing_filter != "813" and _normalize_crm_processing_enabled(state.get("product_separator_enabled"), default=True):
         steps.append("product_separator")
     if processing_filter == "rush" and _normalize_crm_processing_enabled(state.get("stock_unlocker_enabled"), default=True):
         steps.append("stock_unlocker")
-    if processing_filter == "rush" and (
-        _normalize_crm_processing_enabled(state.get("order_goods_enabled"), default=True)
-        or _normalize_crm_processing_enabled(state.get("shipping_bypasser_enabled"), default=True)
-    ):
+    if processing_filter in {"rush", "813"} and _normalize_crm_processing_enabled(state.get("order_goods_enabled"), default=True):
         steps.append("order_goods")
+    if processing_filter in {"rush", "813"} and _normalize_crm_processing_enabled(state.get("shipping_bypasser_enabled"), default=False):
+        steps.append("shipping_bypasser")
+    if processing_filter in {"rush", "813"} and _normalize_crm_processing_enabled(state.get("push_back_enabled"), default=False):
+        steps.append("push_back")
     return steps
 
 
 def _crm_processing_address_list_url_for_filter(processing_filter):
-    if _normalize_crm_shipping_filter(processing_filter) != "all":
-        return None
-    return str(CRM_SHIPPING_ALL_URL or "").strip() or None
+    normalized_filter = _normalize_crm_shipping_filter(processing_filter)
+    if normalized_filter == "813":
+        return str(CRM_813_VALIDATOR_URL or CRM_SHIPPING_813_URL or "").strip() or None
+    if normalized_filter == "all":
+        return str(CRM_SHIPPING_ALL_URL or "").strip() or None
+    return None
+
+
+def _crm_processing_813_list_url_for_step(step_key):
+    if step_key == "address_validator_batch":
+        return str(CRM_813_VALIDATOR_URL or CRM_SHIPPING_813_URL or "").strip() or None
+    if step_key == "order_goods":
+        return str(CRM_813_ORDER_GOODS_URL or "").strip() or None
+    if step_key == "shipping_bypasser":
+        return str(CRM_813_BYPASS_URL or "").strip() or None
+    if step_key == "push_back":
+        return str(CRM_PUSH_BACK_813_URL or "").strip() or None
+    return None
+
+
+def _crm_processing_push_back_list_url_for_filter(processing_filter):
+    normalized_filter = _normalize_crm_shipping_filter(processing_filter)
+    if normalized_filter == "813":
+        return str(CRM_PUSH_BACK_813_URL or "").strip() or None
+    if normalized_filter == "rush":
+        return str(CRM_PUSH_BACK_RUSH_URL or "").strip() or None
+    return None
+
+
+def _crm_processing_813_url_config_key_for_step(step_key):
+    if step_key == "address_validator_batch":
+        return "CRM_813_VALIDATOR_URL"
+    if step_key == "order_goods":
+        return "CRM_813_ORDER_GOODS_URL"
+    if step_key == "shipping_bypasser":
+        return "CRM_813_BYPASS_URL"
+    if step_key == "push_back":
+        return "CRM_PUSH_BACK_813_URL"
+    return "CRM_813_VALIDATOR_URL"
 
 
 def _default_crm_processing_state():
     return {
+        "mass_emailer_enabled": True,
         "stock_unlocker_enabled": True,
         "address_validator_enabled": True,
         "product_separator_enabled": True,
         "order_goods_enabled": True,
-        "shipping_bypasser_enabled": True,
+        "shipping_bypasser_enabled": False,
+        "push_back_enabled": False,
         "processing_filter": "rush",
+        "mode_preferences": {
+            processing_filter: _default_crm_processing_mode_preferences(processing_filter)
+            for processing_filter in CRM_PROCESSING_FILTERS
+        },
         "last_run_timestamp": None,
         "last_run_success": None,
         "last_run_message": None,
         "last_run_duration_seconds": None,
         "last_filter_used": "rush",
-        "last_selected_steps": ["address_validator_batch", "product_separator", "stock_unlocker", "order_goods"],
+        "last_selected_steps": ["mass_emailer", "address_validator_batch", "product_separator", "stock_unlocker", "order_goods"],
         "last_step_results": [],
         "total_runs": 0,
         "run_history": [],
@@ -3887,7 +4462,7 @@ def _normalize_crm_processing_step_results(items):
         if not isinstance(item, dict):
             continue
         step_key = str(item.get("key") or "").strip()
-        if step_key not in {"address_validator_batch", "product_separator", "stock_unlocker", "order_goods", "shipping_bypasser"}:
+        if step_key not in {"mass_emailer", "address_validator_batch", "product_separator", "stock_unlocker", "order_goods", "shipping_bypasser", "push_back"}:
             continue
         cleaned.append(
             {
@@ -3903,31 +4478,33 @@ def _normalize_crm_processing_step_results(items):
 
 def load_crm_processing_state():
     state = _default_crm_processing_state()
+    loaded_has_mode_preferences = False
     if os.path.exists(CRM_PROCESSING_STATE_FILE):
         try:
             with open(CRM_PROCESSING_STATE_FILE, "r", encoding="utf-8-sig") as f:
                 loaded = json.load(f)
             if isinstance(loaded, dict):
+                loaded_has_mode_preferences = isinstance(loaded.get("mode_preferences"), dict)
                 state.update(loaded)
         except Exception as e:
             logger.warning("Could not read %s: %s", CRM_PROCESSING_STATE_FILE, e)
 
+    state["mass_emailer_enabled"] = _normalize_crm_processing_enabled(state.get("mass_emailer_enabled"), default=True)
     state["stock_unlocker_enabled"] = _normalize_crm_processing_enabled(state.get("stock_unlocker_enabled"), default=True)
     state["address_validator_enabled"] = _normalize_crm_processing_enabled(state.get("address_validator_enabled"), default=True)
     state["product_separator_enabled"] = _normalize_crm_processing_enabled(state.get("product_separator_enabled"), default=True)
     state["order_goods_enabled"] = _normalize_crm_processing_enabled(state.get("order_goods_enabled"), default=True)
-    state["shipping_bypasser_enabled"] = _normalize_crm_processing_enabled(state.get("shipping_bypasser_enabled"), default=True)
+    state["shipping_bypasser_enabled"] = _normalize_crm_processing_enabled(state.get("shipping_bypasser_enabled"), default=False)
+    state["push_back_enabled"] = _normalize_crm_processing_enabled(state.get("push_back_enabled"), default=False)
     state["processing_filter"] = _normalize_crm_shipping_filter(state.get("processing_filter") or "rush")
     state["last_filter_used"] = _normalize_crm_shipping_filter(state.get("last_filter_used") or state.get("processing_filter") or "rush")
-    if state["processing_filter"] == "all":
-        state["address_validator_enabled"] = True
-        state["stock_unlocker_enabled"] = False
-        state["order_goods_enabled"] = False
-        state["shipping_bypasser_enabled"] = False
-    elif state["processing_filter"] != "rush":
-        state["stock_unlocker_enabled"] = False
-        state["order_goods_enabled"] = False
-        state["shipping_bypasser_enabled"] = False
+    migrated_values = {pref_key: state.get(pref_key) for pref_key in CRM_PROCESSING_MODE_PREF_KEYS}
+    state["mode_preferences"] = _normalize_crm_processing_mode_preferences(
+        state.get("mode_preferences"),
+        migrated_filter=state["processing_filter"] if not loaded_has_mode_preferences else None,
+        migrated_values=migrated_values if not loaded_has_mode_preferences else None,
+    )
+    _apply_crm_processing_mode_preferences_to_state(state)
     state["last_selected_steps"] = _normalize_crm_processing_step_results(
         [{"key": step} for step in (state.get("last_selected_steps") if isinstance(state.get("last_selected_steps"), list) else [])]
     )
@@ -3965,6 +4542,105 @@ def _crm_processing_runtime_snapshot():
         return dict(crm_processing_runtime)
 
 
+def _crm_processing_order_progress(current, total, source=""):
+    current_int = max(0, int(_safe_float(current, 0)))
+    total_int = max(0, int(_safe_float(total, 0)))
+    if total_int <= 0:
+        return None
+    current_int = min(current_int, total_int)
+    payload = {
+        "current": current_int,
+        "total": total_int,
+        "label": f"{current_int}/{total_int}",
+    }
+    if source:
+        payload["source"] = str(source)
+    return payload
+
+
+def _crm_processing_order_progress_from_runtime(runtime, source=""):
+    if not isinstance(runtime, dict) or not runtime.get("running"):
+        return None
+
+    progress = _crm_processing_order_progress(
+        runtime.get("currentOrderIndex"),
+        runtime.get("totalOrderCount") or runtime.get("orderCount"),
+        source=source,
+    )
+    if progress:
+        return progress
+
+    match = re.search(r"\((\d+)\s*/\s*(\d+)\)", str(runtime.get("lastMessage") or ""))
+    if match:
+        return _crm_processing_order_progress(match.group(1), match.group(2), source=source)
+    return None
+
+
+def _crm_processing_current_order_progress(current_step):
+    step = str(current_step or "").strip()
+    if step == "mass_emailer":
+        return _crm_processing_order_progress_from_runtime(_crm_mass_emailer_runtime_snapshot(), source=step)
+    if step == "product_separator":
+        return _crm_processing_order_progress_from_runtime(_crm_product_separator_runtime_snapshot(), source=step)
+    if step == "order_goods":
+        return _crm_processing_order_progress_from_runtime(_crm_order_goods_runtime_snapshot(), source=step)
+    if step == "shipping_bypasser":
+        return _crm_processing_order_progress_from_runtime(_crm_shipping_bypasser_runtime_snapshot(), source=step)
+    if step == "push_back":
+        return _crm_processing_order_progress_from_runtime(_crm_push_back_runtime_snapshot(), source=step)
+    if step == "address_validator_batch":
+        return _crm_processing_order_progress_from_runtime(_crm_address_runtime_snapshot(), source=step)
+    return None
+
+
+def _read_automation_status_file():
+    if not os.path.exists(AUTOMATION_STATUS_FILE):
+        return {}
+    try:
+        with open(AUTOMATION_STATUS_FILE, "r", encoding="utf-8-sig") as handle:
+            payload = json.load(handle)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _automation_status_name_matches(payload, expected_names):
+    expected = {
+        str(name or "").strip().lower()
+        for name in (expected_names if isinstance(expected_names, (list, tuple, set)) else [expected_names])
+        if str(name or "").strip()
+    }
+    actual = str((payload or {}).get("automation_name") or "").strip().lower()
+    return bool(actual and actual in expected)
+
+
+def _merge_live_automation_status(runtime, expected_names):
+    runtime = dict(runtime or {})
+    if not runtime.get("running"):
+        return runtime
+    status = _read_automation_status_file()
+    if not _automation_status_name_matches(status, expected_names):
+        return runtime
+
+    message = str(status.get("message") or "").strip()
+    if message:
+        runtime["lastMessage"] = message
+    stage = str(status.get("stage") or "").strip()
+    if stage:
+        runtime["currentStage"] = stage
+    target_order_id = _normalize_crm_single_order_id(status.get("order_id"))
+    if target_order_id:
+        runtime["targetOrderId"] = target_order_id
+
+    progress = status.get("progress") if isinstance(status.get("progress"), dict) else {}
+    normalized_progress = _crm_processing_order_progress(progress.get("current"), progress.get("total"))
+    if normalized_progress:
+        runtime["currentOrderIndex"] = normalized_progress["current"]
+        runtime["totalOrderCount"] = normalized_progress["total"]
+        runtime["currentOrderProgress"] = normalized_progress
+    return runtime
+
+
 def _build_crm_processing_summary(step_results):
     results = _normalize_crm_processing_step_results(step_results)
     if not results:
@@ -3983,7 +4659,11 @@ def _build_crm_processing_summary(step_results):
 def _persist_crm_processing_run_result(success, message, selected_steps, step_results, processing_filter="rush"):
     ensure_crm_processing_state_file()
     timestamp = datetime.now().isoformat()
-    normalized_steps = [step for step in selected_steps if step in {"stock_unlocker", "address_validator_batch", "product_separator", "order_goods"}]
+    normalized_steps = [
+        step
+        for step in selected_steps
+        if step in {"mass_emailer", "stock_unlocker", "address_validator_batch", "product_separator", "order_goods", "shipping_bypasser", "push_back"}
+    ]
     normalized_results = _normalize_crm_processing_step_results(step_results)
     normalized_filter = _normalize_crm_shipping_filter(processing_filter)
     duration_seconds = _runtime_duration_seconds(_crm_processing_runtime_snapshot())
@@ -4058,7 +4738,7 @@ def _start_crm_address_runtime(
         crm_address_runtime["activeFilter"] = _normalize_crm_shipping_filter(active_filter)
         crm_address_runtime["listUrl"] = _normalize_crm_list_url(list_url)
         crm_address_runtime["batchSize"] = _normalize_crm_batch_size(batch_size, default=0, minimum=1, maximum=25, allow_unlimited=True)
-        crm_address_runtime["parallelWorkers"] = _normalize_crm_positive_int(parallel_workers, default=1, minimum=1, maximum=8)
+        crm_address_runtime["parallelWorkers"] = _normalize_crm_positive_int(parallel_workers, default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
         if crm_address_runtime["batchSize"] is not None:
             crm_address_runtime["parallelWorkers"] = min(crm_address_runtime["parallelWorkers"], crm_address_runtime["batchSize"])
         crm_address_runtime["orderCount"] = 0
@@ -4099,7 +4779,7 @@ def _crm_address_worker_timeout(action="validate_order", batch_size=1, parallel_
         return base_timeout
 
     normalized_batch_size = _normalize_crm_batch_size(batch_size, default=1, minimum=1, maximum=25, allow_unlimited=True)
-    normalized_parallel_workers = _normalize_crm_positive_int(parallel_workers, default=1, minimum=1, maximum=8)
+    normalized_parallel_workers = _normalize_crm_positive_int(parallel_workers, default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
     if normalized_batch_size is None:
         return max(base_timeout, CRM_ADDRESS_CONTINUOUS_BATCH_TIMEOUT_SECONDS)
     normalized_parallel_workers = min(normalized_parallel_workers, normalized_batch_size)
@@ -4110,6 +4790,8 @@ def _crm_address_worker_timeout(action="validate_order", batch_size=1, parallel_
 
 def _crm_shipping_filter_label(value):
     key = _normalize_crm_shipping_filter(value)
+    if key == "813":
+        return "813 Orders"
     if key == "all":
         return "All Invalid-Address Orders"
     return "Rush Orders" if key == "rush" else "Free Ship Orders"
@@ -4503,13 +5185,11 @@ def load_crm_address_state():
     state["last_order_ids"] = _extract_crm_order_ids({"order_ids": state.get("last_order_ids")})
     state["last_run_duration_seconds"] = _normalize_duration_seconds(state.get("last_run_duration_seconds"))
     state["last_batch_size"] = _normalize_crm_batch_size(state.get("last_batch_size"), default=0, minimum=1, maximum=25, allow_unlimited=True)
-    state["last_parallel_workers"] = _normalize_crm_positive_int(state.get("last_parallel_workers"), default=1, minimum=1, maximum=8)
+    state["last_parallel_workers"] = _normalize_crm_positive_int(state.get("last_parallel_workers"), default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
     state["saved_batch_size"] = _normalize_crm_batch_size(state.get("saved_batch_size"), default=0, minimum=1, maximum=25, allow_unlimited=True)
-    state["saved_parallel_workers"] = _normalize_crm_positive_int(state.get("saved_parallel_workers"), default=1, minimum=1, maximum=8)
+    state["saved_parallel_workers"] = _normalize_crm_positive_int(state.get("saved_parallel_workers"), default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
     if state["last_batch_size"] is not None:
         state["last_parallel_workers"] = min(state["last_parallel_workers"], state["last_batch_size"])
-    if state["saved_batch_size"] is not None:
-        state["saved_parallel_workers"] = min(state["saved_parallel_workers"], state["saved_batch_size"])
     state["last_refresh_passes"] = max(0, int(_safe_float(state.get("last_refresh_passes"), 0)))
     state["last_list_url"] = _normalize_crm_list_url(state.get("last_list_url"))
     state["last_resolution"] = str(state.get("last_resolution") or "")
@@ -4528,7 +5208,7 @@ def load_crm_address_state():
         row["order_ids"] = _extract_crm_order_ids({"order_ids": row.get("order_ids")})
         row["duration_seconds"] = _normalize_duration_seconds(row.get("duration_seconds"))
         row["batch_size"] = _normalize_crm_batch_size(row.get("batch_size"), default=1, minimum=1, maximum=25, allow_unlimited=True)
-        row["parallel_workers"] = _normalize_crm_positive_int(row.get("parallel_workers"), default=1, minimum=1, maximum=8)
+        row["parallel_workers"] = _normalize_crm_positive_int(row.get("parallel_workers"), default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
         row["refresh_passes"] = max(0, int(_safe_float(row.get("refresh_passes"), 0)))
         row["list_url"] = _normalize_crm_list_url(row.get("list_url"))
         row["filter"] = _normalize_crm_shipping_filter(row.get("filter") or state.get("active_filter"))
@@ -4544,6 +5224,35 @@ def save_crm_address_state(state):
         json.dump(state, f, indent=2)
 
 
+def _sync_crm_stock_parallel_worker_preferences(parallel_workers):
+    normalized_workers = _normalize_crm_positive_int(
+        parallel_workers,
+        default=1,
+        minimum=1,
+        maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
+    )
+    ensure_crm_state_file()
+    with crm_state_lock:
+        state = load_crm_state()
+        state["saved_product_separator_parallel_workers"] = normalized_workers
+        state["saved_order_goods_parallel_workers"] = normalized_workers
+        state["saved_auto_splitter_parallel_workers"] = normalized_workers
+        save_crm_state(state)
+    return state
+
+
+def _saved_crm_automation_parallel_workers(default=1):
+    ensure_crm_address_state_file()
+    with crm_address_state_lock:
+        state = load_crm_address_state()
+    return _normalize_crm_positive_int(
+        state.get("saved_parallel_workers"),
+        default=default,
+        minimum=1,
+        maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
+    )
+
+
 def _crm_address_runtime_snapshot():
     with crm_address_runtime_lock:
         return dict(crm_address_runtime)
@@ -4552,7 +5261,12 @@ def _crm_address_runtime_snapshot():
 def _execute_crm_address_worker(order_id=None, dry_run=False, shipping_filter=None, action="validate_order", batch_size=1, parallel_workers=1, list_url=None):
     normalized_action = _normalize_crm_address_action(action)
     normalized_batch_size = _normalize_crm_batch_size(batch_size, default=1, minimum=1, maximum=25, allow_unlimited=True)
-    normalized_parallel_workers = _normalize_crm_positive_int(parallel_workers, default=1, minimum=1, maximum=8)
+    normalized_parallel_workers = _normalize_crm_positive_int(
+        parallel_workers,
+        default=1,
+        minimum=1,
+        maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
+    )
     if normalized_batch_size is not None:
         normalized_parallel_workers = min(normalized_parallel_workers, normalized_batch_size)
     normalized_list_url = _normalize_crm_list_url(list_url)
@@ -4604,7 +5318,7 @@ def _persist_crm_address_run_result(ok, message, payload, order_id, shipping_fil
         maximum=25,
         allow_unlimited=True,
     )
-    normalized_parallel_workers = _normalize_crm_positive_int(payload.get("parallel_workers") if isinstance(payload, dict) and payload.get("parallel_workers") is not None else parallel_workers, default=1, minimum=1, maximum=8)
+    normalized_parallel_workers = _normalize_crm_positive_int(payload.get("parallel_workers") if isinstance(payload, dict) and payload.get("parallel_workers") is not None else parallel_workers, default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
     if normalized_batch_size is not None:
         normalized_parallel_workers = min(normalized_parallel_workers, normalized_batch_size)
     refresh_passes = max(0, int(_safe_float(payload.get("refresh_passes") if isinstance(payload, dict) else 0, 0)))
@@ -4750,7 +5464,7 @@ def update_crm_address_preferences(batch_size=None, parallel_workers=None):
     batch_size_supplied = _crm_address_value_supplied(batch_size)
     parallel_workers_supplied = _crm_address_value_supplied(parallel_workers)
     normalized_batch_size = _normalize_crm_batch_size(batch_size, default=0, minimum=1, maximum=25, allow_unlimited=True)
-    normalized_parallel_workers = _normalize_crm_positive_int(parallel_workers, default=1, minimum=1, maximum=8)
+    normalized_parallel_workers = _normalize_crm_positive_int(parallel_workers, default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
 
     with crm_address_state_lock:
         state = load_crm_address_state()
@@ -4758,12 +5472,10 @@ def update_crm_address_preferences(batch_size=None, parallel_workers=None):
             state["saved_batch_size"] = normalized_batch_size
         if parallel_workers_supplied:
             state["saved_parallel_workers"] = normalized_parallel_workers
-        if state.get("saved_batch_size") is not None:
-            state["saved_parallel_workers"] = min(
-                _normalize_crm_positive_int(state.get("saved_parallel_workers"), default=1, minimum=1, maximum=8),
-                state["saved_batch_size"],
-            )
         save_crm_address_state(state)
+
+    if parallel_workers_supplied:
+        _sync_crm_stock_parallel_worker_preferences(state.get("saved_parallel_workers"))
 
     with crm_address_runtime_lock:
         crm_address_runtime["stateSnapshot"] = state
@@ -4775,19 +5487,15 @@ def update_crm_address_preferences(batch_size=None, parallel_workers=None):
 
 def update_crm_order_goods_preferences(parallel_workers=None):
     ensure_crm_state_file()
-    parallel_supplied = _crm_address_value_supplied(parallel_workers)
-    normalized_parallel_workers = _normalize_crm_positive_int(
-        parallel_workers,
-        default=1,
-        minimum=1,
-        maximum=CRM_ORDER_GOODS_MAX_PARALLEL_WORKERS,
-    )
+    if _crm_address_value_supplied(parallel_workers):
+        ok, _message, address_state = update_crm_address_preferences(parallel_workers=parallel_workers)
+        worker_label = int(_safe_float(address_state.get("saved_parallel_workers"), 1))
+        with crm_state_lock:
+            state = load_crm_state()
+        return ok, f"CRM worker settings saved. Automation Workers {worker_label}.", state
     with crm_state_lock:
         state = load_crm_state()
-        if parallel_supplied:
-            state["saved_order_goods_parallel_workers"] = normalized_parallel_workers
-        save_crm_state(state)
-    return True, f"Rush Order Goods settings saved. Parallel Workers {state.get('saved_order_goods_parallel_workers')}.", state
+    return True, "CRM worker settings unchanged.", state
 
 
 def start_crm_address_run(order_id=None, dry_run=False, action="validate_order", batch_size=None, parallel_workers=None, list_url=None):
@@ -4798,7 +5506,7 @@ def start_crm_address_run(order_id=None, dry_run=False, action="validate_order",
     batch_size_supplied = _crm_address_value_supplied(batch_size)
     parallel_workers_supplied = _crm_address_value_supplied(parallel_workers)
     requested_batch_size = _normalize_crm_batch_size(batch_size, default=0, minimum=1, maximum=25, allow_unlimited=True)
-    requested_parallel_workers = _normalize_crm_positive_int(parallel_workers, default=1, minimum=1, maximum=8)
+    requested_parallel_workers = _normalize_crm_positive_int(parallel_workers, default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
     if order_id and not normalized_order_id:
         return False, "Order ID must be a 7-digit value."
     if normalized_action == "validate_batch" and normalized_order_id:
@@ -4807,7 +5515,7 @@ def start_crm_address_run(order_id=None, dry_run=False, action="validate_order",
         state = load_crm_address_state()
     active_filter = _normalize_crm_shipping_filter(state.get("active_filter"))
     saved_batch_size = _normalize_crm_batch_size(state.get("saved_batch_size"), default=0, minimum=1, maximum=25, allow_unlimited=True)
-    saved_parallel_workers = _normalize_crm_positive_int(state.get("saved_parallel_workers"), default=1, minimum=1, maximum=8)
+    saved_parallel_workers = _normalize_crm_positive_int(state.get("saved_parallel_workers"), default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
     normalized_batch_size = requested_batch_size if batch_size_supplied else saved_batch_size
     normalized_parallel_workers = requested_parallel_workers if parallel_workers_supplied else saved_parallel_workers
     if normalized_batch_size is not None:
@@ -4894,7 +5602,8 @@ def set_crm_address_filter(filter_key):
 
 def _crm_order_goods_runtime_snapshot():
     with crm_order_goods_runtime_lock:
-        return dict(crm_order_goods_runtime)
+        runtime = dict(crm_order_goods_runtime)
+    return _merge_live_automation_status(runtime, "crm.order_goods")
 
 
 def _crm_product_separator_runtime_snapshot():
@@ -4904,6 +5613,8 @@ def _crm_product_separator_runtime_snapshot():
 
 def _product_separator_mode_label(value):
     key = _normalize_crm_shipping_filter(value)
+    if key == "813":
+        return "813"
     if key == "all":
         return "All"
     return "Rush" if key == "rush" else "Free Ship"
@@ -4942,6 +5653,10 @@ def _build_crm_product_separator_order_results(payload):
     source_rows = payload.get("order_results") if isinstance(payload.get("order_results"), list) else []
     if not source_rows and isinstance(payload.get("report"), list):
         source_rows = payload.get("report")
+    if not source_rows:
+        single_order_id = _normalize_crm_single_order_id(payload.get("target_order_id") or payload.get("order_id"))
+        if single_order_id:
+            source_rows = [payload]
     for item in source_rows[:100]:
         if not isinstance(item, dict):
             continue
@@ -4958,18 +5673,23 @@ def _build_crm_product_separator_order_results(payload):
         elif resolution == "dry_run_ready" or needs_split:
             status = "Ready"
         elif resolution == "skipped_no_split_needed":
-            status = "No split needed"
+            status = "Skipped"
         else:
             status = "Success" if item.get("success") else "Needs attention"
+        row = {
+            "order_id": order_id,
+            "success": bool(item.get("success")),
+            "status": status,
+            "outcome": resolution,
+            "message": str(item.get("message") or ""),
+            "duration_seconds": _normalize_duration_seconds(item.get("duration_seconds") or item.get("session_duration_seconds")),
+            "manual_review_required": manual_review,
+        }
+        stock_ordered_status = _product_separator_stock_ordered_status(item)
+        if stock_ordered_status:
+            row["stock_ordered_status"] = stock_ordered_status
         rows.append(
-            {
-                "order_id": order_id,
-                "success": bool(item.get("success")),
-                "status": status,
-                "outcome": resolution,
-                "message": str(item.get("message") or ""),
-                "duration_seconds": _normalize_duration_seconds(item.get("duration_seconds") or item.get("session_duration_seconds")),
-            }
+            row
         )
     if rows:
         return rows
@@ -4981,6 +5701,56 @@ def _build_crm_product_separator_order_results(payload):
     )
 
 
+def _product_separator_stock_ordered_status(item):
+    if not isinstance(item, dict):
+        return {}
+    existing = item.get("stock_ordered_status") if isinstance(item.get("stock_ordered_status"), dict) else {}
+    if existing.get("label"):
+        return {
+            "applied": bool(existing.get("applied")),
+            "skipped": bool(existing.get("skipped")),
+            "label": str(existing.get("label") or "").strip(),
+            "reason": str(existing.get("reason") or "").strip(),
+            "order_stock_status_before_split": str(existing.get("order_stock_status_before_split") or "").strip(),
+        }
+    report = item.get("report") if isinstance(item.get("report"), dict) else item
+    if not isinstance(report, dict):
+        return {}
+    apply_state = report.get("stock_status_apply") if isinstance(report.get("stock_status_apply"), dict) else {}
+    plan = report.get("plan") if isinstance(report.get("plan"), dict) else {}
+    if not apply_state and not plan:
+        return {}
+    already_applied = bool(apply_state.get("already_applied"))
+    applied = bool(apply_state.get("status_applied") or already_applied)
+    skipped = bool(apply_state.get("skipped"))
+    reason = str(apply_state.get("reason") or plan.get("stock_ordered_apply_skip_reason") or "").strip()
+    if already_applied:
+        label = "Stock Ordered already applied"
+    elif applied:
+        label = "Stock Ordered applied"
+    elif skipped or reason:
+        label = "Stock Ordered not applied"
+    elif plan.get("apply_stock_ordered_after_split") is False:
+        label = "Stock Ordered not applied"
+    elif plan.get("apply_stock_ordered_after_split") is True:
+        label = "Stock Ordered planned"
+    else:
+        label = ""
+    if not label:
+        return {}
+    return {
+        "applied": applied,
+        "skipped": bool(skipped or (not applied and bool(reason))),
+        "label": label,
+        "reason": reason,
+        "order_stock_status_before_split": str(
+            apply_state.get("order_stock_status_before_split")
+            or plan.get("order_stock_status_before_split")
+            or ""
+        ).strip(),
+    }
+
+
 def _product_separator_attention_rows(rows):
     attention = []
     for row in rows if isinstance(rows, list) else []:
@@ -4989,6 +5759,14 @@ def _product_separator_attention_rows(rows):
         if not row.get("success") or row.get("status") in {"Needs attention", "Manual review", "Stopped"}:
             attention.append(row)
     return attention
+
+
+def _product_separator_attention_row_is_manual_review(row):
+    if not isinstance(row, dict):
+        return False
+    status = str(row.get("status") or "").strip().lower()
+    outcome = str(row.get("outcome") or "").strip().lower()
+    return bool(row.get("manual_review_required")) or status == "manual review" or "manual_review" in outcome
 
 
 def _format_product_separator_order_ids(order_ids, limit=8):
@@ -5007,22 +5785,32 @@ def _format_product_separator_attention_summary(rows):
     attention = _product_separator_attention_rows(rows)
     if not attention:
         return ""
+    manual_review_ids = [
+        row.get("order_id")
+        for row in attention
+        if _product_separator_attention_row_is_manual_review(row)
+    ]
     preflight_ids = [
         row.get("order_id")
         for row in attention
         if str(row.get("phase") or "").lower() == "preflight"
+        and not _product_separator_attention_row_is_manual_review(row)
     ]
     live_ids = [
         row.get("order_id")
         for row in attention
         if str(row.get("phase") or "").lower() == "live"
+        and not _product_separator_attention_row_is_manual_review(row)
     ]
     other_ids = [
         row.get("order_id")
         for row in attention
         if str(row.get("phase") or "").lower() not in {"preflight", "live"}
+        and not _product_separator_attention_row_is_manual_review(row)
     ]
     parts = []
+    if manual_review_ids:
+        parts.append(f"manual review {_format_product_separator_order_ids(manual_review_ids)}")
     if preflight_ids:
         parts.append(f"preflight {_format_product_separator_order_ids(preflight_ids)}")
     if live_ids:
@@ -5035,7 +5823,7 @@ def _format_product_separator_attention_summary(rows):
 def _crm_product_separator_worker_timeout(order_count=1, workers=1, live_order_count=0):
     base_timeout = max(240, CRM_ACTION_TIMEOUT * 16)
     count = max(1, int(_safe_float(order_count, 1)))
-    worker_count = _normalize_crm_positive_int(workers, default=1, minimum=1, maximum=4)
+    worker_count = _normalize_crm_positive_int(workers, default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
     waves = max(1, math.ceil(count / max(1, worker_count)))
     live_count = max(0, int(_safe_float(live_order_count, 0)))
     return base_timeout + (waves * max(120, CRM_ACTION_TIMEOUT * 8)) + (live_count * max(300, CRM_ACTION_TIMEOUT * 20))
@@ -5083,7 +5871,7 @@ def _crm_product_separator_payload_retryable(ok, message, payload):
     )
 
 
-def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_url=None, parallel_workers=4, order_id=None, visible=None, show_terminal=None):
+def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_url=None, parallel_workers=1, order_id=None, visible=None, show_terminal=None):
     normalized_order_id = _normalize_crm_single_order_id(order_id)
     if _crm_address_value_supplied(order_id) and not normalized_order_id:
         return False, "Order ID must be a 7-digit value or CRM order URL.", {
@@ -5095,7 +5883,7 @@ def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_
             "resolution": "invalid_order_id",
         }
     normalized_mode = _normalize_crm_shipping_filter(list_mode)
-    normalized_workers = _normalize_crm_positive_int(parallel_workers, default=4, minimum=1, maximum=4)
+    normalized_workers = _normalize_crm_positive_int(parallel_workers, default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
     normalized_list_url = _normalize_crm_list_url(list_url)
     visible = bool(dry_run) if visible is None else bool(visible)
     show_terminal = bool(dry_run) if show_terminal is None else bool(show_terminal)
@@ -5153,12 +5941,21 @@ def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_
         return preflight_ok, preflight_message, preflight_payload
 
     split_order_ids = _extract_crm_order_ids({"order_ids": preflight_payload.get("split_order_ids")})
+    skipped_order_ids = _extract_crm_order_ids({"order_ids": preflight_payload.get("skipped_order_ids")})
+    preflight_order_results = _build_crm_product_separator_order_results(preflight_payload)
     preflight_attention_results = [
         row
-        for row in _build_crm_product_separator_order_results(preflight_payload)
+        for row in preflight_order_results
         if not row.get("success") or row.get("status") == "Manual review"
     ]
     for row in preflight_attention_results:
+        row["phase"] = "preflight"
+    preflight_skipped_results = [
+        row
+        for row in preflight_order_results
+        if row.get("order_id") in skipped_order_ids
+    ]
+    for row in preflight_skipped_results:
         row["phase"] = "preflight"
     if not preflight_ok and not split_order_ids:
         preflight_payload.setdefault("action", "product_separator_list")
@@ -5169,11 +5966,16 @@ def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_
             preflight_payload.setdefault("list_url", normalized_list_url)
         return preflight_ok, preflight_message, preflight_payload
     if not split_order_ids:
+        no_orders_detected = not _product_separator_payload_order_ids(preflight_payload)
         payload = dict(preflight_payload)
         payload.update(
             {
                 "success": True,
-                "message": f"Product Separator found no orders needing separation for {_product_separator_mode_label(normalized_mode)} mode.",
+                "message": (
+                    "No orders detected"
+                    if no_orders_detected
+                    else f"Product Separator found no orders needing separation for {_product_separator_mode_label(normalized_mode)} mode."
+                ),
                 "action": "product_separator_batch",
                 "dry_run": False,
                 "preflight": preflight_payload,
@@ -5188,7 +5990,10 @@ def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_
     live_success_count = 0
     attempted_live_order_ids = []
     with crm_product_separator_runtime_lock:
+        crm_product_separator_runtime["orderCount"] = len(split_order_ids)
         crm_product_separator_runtime["splitOrderCount"] = len(split_order_ids)
+        crm_product_separator_runtime["currentOrderIndex"] = 0
+        crm_product_separator_runtime["totalOrderCount"] = len(split_order_ids)
     for index, split_order_id in enumerate(split_order_ids, start=1):
         if _automation_stop_is_blocking():
             msg = _force_stop_message("CRMProductSeparator")
@@ -5207,6 +6012,8 @@ def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_
         with crm_product_separator_runtime_lock:
             crm_product_separator_runtime["lastMessage"] = f"Separating order {split_order_id} ({index}/{len(split_order_ids)})."
             crm_product_separator_runtime["targetOrderId"] = split_order_id
+            crm_product_separator_runtime["currentOrderIndex"] = index
+            crm_product_separator_runtime["totalOrderCount"] = len(split_order_ids)
         live_args = ["--action", "product_separator_order", "--order-id", split_order_id, "--real"]
         attempted_live_order_ids.append(split_order_id)
         live_step_ok, live_message, live_payload = _execute_crm_product_separator_script(
@@ -5249,13 +6056,36 @@ def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_
     success = bool(preflight_ok and live_ok)
     attention_results = _product_separator_attention_rows(live_results)
     attention_count = len(attention_results)
+    manual_review_count = len(
+        [row for row in attention_results if _product_separator_attention_row_is_manual_review(row)]
+    )
+    non_manual_attention_count = max(0, attention_count - manual_review_count)
     attention_summary = _format_product_separator_attention_summary(attention_results)
+    attention_order_ids = _extract_crm_order_ids({"order_ids": [row.get("order_id") for row in attention_results]})
+    live_result_order_ids = _extract_crm_order_ids({"order_ids": [row.get("order_id") for row in live_results]})
+    all_result_order_ids = _extract_crm_order_ids(
+        {"order_ids": attempted_live_order_ids + attention_order_ids + live_result_order_ids + skipped_order_ids}
+    )
+    all_order_results = live_results + [
+        row
+        for row in preflight_skipped_results
+        if row.get("order_id") not in live_result_order_ids
+    ]
+    result_order_index = {order_id: index for index, order_id in enumerate(all_result_order_ids)}
+    all_order_results.sort(key=lambda row: result_order_index.get(row.get("order_id"), 999999))
     if success:
         message = f"Product Separator completed {live_success_count}/{len(split_order_ids)} order(s)."
     else:
+        attention_phrases = []
+        if manual_review_count:
+            attention_phrases.append(f"{manual_review_count} order(s) require manual review")
+        if non_manual_attention_count:
+            attention_phrases.append(f"{non_manual_attention_count} order(s) need attention")
+        if not attention_phrases:
+            attention_phrases.append(f"{attention_count} order(s) need attention")
         message = (
             f"Product Separator completed {live_success_count}/{len(split_order_ids)} live order(s); "
-            f"{attention_count} order(s) need attention"
+            + " and ".join(attention_phrases)
         )
         if attention_summary:
             message += f": {attention_summary}"
@@ -5268,12 +6098,13 @@ def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_
         "list_mode": normalized_mode,
         "list_url": normalized_list_url,
         "parallel_workers": normalized_workers,
-        "order_count": len(split_order_ids),
-        "order_ids": split_order_ids,
+        "order_count": len(all_result_order_ids),
+        "order_ids": all_result_order_ids,
         "split_order_ids": split_order_ids,
+        "skipped_order_ids": skipped_order_ids,
         "live_order_ids": attempted_live_order_ids,
-        "attention_order_ids": _extract_crm_order_ids({"order_ids": [row.get("order_id") for row in attention_results]}),
-        "order_results": live_results,
+        "attention_order_ids": attention_order_ids,
+        "order_results": all_order_results,
         "preflight": preflight_payload,
         "duration_seconds": _normalize_duration_seconds(
             _safe_float(preflight_payload.get("duration_seconds"), 0)
@@ -5296,7 +6127,7 @@ def _persist_crm_product_separator_run_result(ok, message, payload, dry_run=Fals
     duration_seconds = _normalize_duration_seconds(payload.get("duration_seconds"))
     if duration_seconds is None:
         duration_seconds = _runtime_duration_seconds(_crm_product_separator_runtime_snapshot())
-    parallel_workers = _normalize_crm_positive_int(payload.get("parallel_workers"), default=1, minimum=1, maximum=4)
+    parallel_workers = _normalize_crm_positive_int(payload.get("parallel_workers"), default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
 
     with crm_state_lock:
         state = load_crm_state()
@@ -5333,10 +6164,10 @@ def _persist_crm_product_separator_run_result(ok, message, payload, dry_run=Fals
     return state
 
 
-def _start_crm_product_separator_runtime(dry_run=False, list_mode="rush", list_url=None, parallel_workers=4, order_id=None):
+def _start_crm_product_separator_runtime(dry_run=False, list_mode="rush", list_url=None, parallel_workers=1, order_id=None):
     normalized_order_id = _normalize_crm_single_order_id(order_id)
     normalized_mode = _normalize_crm_shipping_filter(list_mode)
-    normalized_workers = _normalize_crm_positive_int(parallel_workers, default=4, minimum=1, maximum=4)
+    normalized_workers = _normalize_crm_positive_int(parallel_workers, default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
     with crm_product_separator_runtime_lock:
         crm_product_separator_runtime["running"] = True
         crm_product_separator_runtime["startedAt"] = datetime.now().isoformat()
@@ -5347,6 +6178,8 @@ def _start_crm_product_separator_runtime(dry_run=False, list_mode="rush", list_u
         crm_product_separator_runtime["listUrl"] = None if normalized_order_id else _normalize_crm_list_url(list_url)
         crm_product_separator_runtime["orderCount"] = 1 if normalized_order_id else 0
         crm_product_separator_runtime["splitOrderCount"] = 0
+        crm_product_separator_runtime["currentOrderIndex"] = 0
+        crm_product_separator_runtime["totalOrderCount"] = 1 if normalized_order_id else 0
         crm_product_separator_runtime["parallelWorkers"] = normalized_workers
         crm_product_separator_runtime["lastMessage"] = (
             f"Single Product Separator queued for order {normalized_order_id}."
@@ -5368,18 +6201,20 @@ def _finish_crm_product_separator_runtime(ok, message, payload, release_lock=Tru
         crm_product_separator_runtime["targetOrderId"] = _normalize_crm_single_order_id(payload.get("target_order_id"))
         crm_product_separator_runtime["orderCount"] = len(_product_separator_payload_order_ids(payload))
         crm_product_separator_runtime["splitOrderCount"] = len(_extract_crm_order_ids({"order_ids": payload.get("split_order_ids")}))
+        crm_product_separator_runtime["currentOrderIndex"] = crm_product_separator_runtime["orderCount"]
+        crm_product_separator_runtime["totalOrderCount"] = crm_product_separator_runtime["orderCount"]
         crm_product_separator_runtime["parallelWorkers"] = _normalize_crm_positive_int(
             payload.get("parallel_workers") or crm_product_separator_runtime.get("parallelWorkers"),
             default=1,
             minimum=1,
-            maximum=4,
+            maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
         )
         crm_product_separator_runtime["payload"] = payload
     if release_lock and crm_lock.locked():
         crm_lock.release()
 
 
-def _crm_product_separator_run_thread(dry_run=False, list_mode="rush", list_url=None, parallel_workers=4, order_id=None):
+def _crm_product_separator_run_thread(dry_run=False, list_mode="rush", list_url=None, parallel_workers=1, order_id=None):
     ok = False
     message = "Product Separator did not run."
     payload = {"success": False, "message": message}
@@ -5414,16 +6249,9 @@ def start_crm_product_separator_run(dry_run=False, list_mode="rush", list_url=No
     if _crm_address_value_supplied(order_id) and not normalized_order_id:
         return False, "Order ID must be a 7-digit value or CRM order URL."
     normalized_mode = _normalize_crm_shipping_filter(list_mode)
-    with crm_state_lock:
-        state = load_crm_state()
-    saved_workers = _normalize_crm_positive_int(
-        state.get("saved_product_separator_parallel_workers"),
-        default=4,
-        minimum=1,
-        maximum=4,
-    )
+    saved_workers = _saved_crm_automation_parallel_workers(default=1)
     normalized_workers = (
-        _normalize_crm_positive_int(parallel_workers, default=saved_workers, minimum=1, maximum=4)
+        _normalize_crm_positive_int(parallel_workers, default=saved_workers, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
         if _crm_address_value_supplied(parallel_workers)
         else saved_workers
     )
@@ -5540,6 +6368,11 @@ def _execute_crm_order_goods_worker(dry_run=False, batch_size=None, parallel_wor
         payload.setdefault("order_ids", [normalized_order_id])
     if normalized_list_url and not normalized_order_id:
         payload.setdefault("list_url", normalized_list_url)
+    if not ok:
+        order_results = _build_crm_shipping_bypasser_order_results(payload)
+        if _crm_shipping_bypasser_order_results_success(order_results):
+            ok = True
+            payload["success"] = True
     return ok, message, payload
 
 
@@ -5573,6 +6406,9 @@ def _start_crm_order_goods_runtime(dry_run=False, batch_size=None, parallel_work
         crm_order_goods_runtime["parallelWorkers"] = normalized_parallel_workers
         crm_order_goods_runtime["listUrl"] = None if normalized_order_id else _normalize_crm_list_url(list_url)
         crm_order_goods_runtime["orderCount"] = 0
+        crm_order_goods_runtime["currentOrderIndex"] = 0
+        crm_order_goods_runtime["totalOrderCount"] = 1 if normalized_order_id else 0
+        crm_order_goods_runtime["currentStage"] = "queued"
         crm_order_goods_runtime["refreshPasses"] = 0
         crm_order_goods_runtime["lastMessage"] = f"Single Stock queued for order {normalized_order_id}." if normalized_order_id else "Rush Order Goods queued."
         crm_order_goods_runtime["lastSuccess"] = None
@@ -5589,6 +6425,9 @@ def _finish_crm_order_goods_runtime(ok, message, payload, release_lock=True):
         crm_order_goods_runtime["lastSuccess"] = bool(ok)
         crm_order_goods_runtime["targetOrderId"] = _normalize_crm_single_order_id(payload.get("target_order_id"))
         crm_order_goods_runtime["orderCount"] = _extract_crm_order_count(payload)
+        crm_order_goods_runtime["currentOrderIndex"] = crm_order_goods_runtime["orderCount"]
+        crm_order_goods_runtime["totalOrderCount"] = crm_order_goods_runtime["orderCount"]
+        crm_order_goods_runtime["currentStage"] = None
         crm_order_goods_runtime["parallelWorkers"] = _normalize_crm_positive_int(
             payload.get("parallel_workers"),
             default=crm_order_goods_runtime.get("parallelWorkers") or 1,
@@ -5644,14 +6483,7 @@ def start_crm_order_goods_run(dry_run=False, batch_size=None, parallel_workers=N
         minimum=1,
         maximum=CRM_ORDER_GOODS_MAX_PARALLEL_WORKERS,
     )
-    with crm_state_lock:
-        state = load_crm_state()
-    saved_parallel_workers = _normalize_crm_positive_int(
-        state.get("saved_order_goods_parallel_workers"),
-        default=1,
-        minimum=1,
-        maximum=CRM_ORDER_GOODS_MAX_PARALLEL_WORKERS,
-    )
+    saved_parallel_workers = _saved_crm_automation_parallel_workers(default=1)
     normalized_parallel_workers = (
         requested_parallel_workers
         if _crm_address_value_supplied(parallel_workers)
@@ -5696,7 +6528,8 @@ def get_crm_order_goods_status_payload():
 
 def _crm_shipping_bypasser_runtime_snapshot():
     with crm_shipping_bypasser_runtime_lock:
-        return dict(crm_shipping_bypasser_runtime)
+        runtime = dict(crm_shipping_bypasser_runtime)
+    return _merge_live_automation_status(runtime, "crm.shipping_bypasser")
 
 
 def _shipping_bypasser_worker_timeout(batch_size=None):
@@ -5759,6 +6592,73 @@ def _execute_crm_shipping_bypasser_worker(dry_run=False, batch_size=None, list_u
     return ok, message, payload
 
 
+def _shipping_bypasser_failed_order_ids(payload):
+    if not isinstance(payload, dict):
+        return []
+    candidates = []
+    report = payload.get("report") if isinstance(payload.get("report"), list) else []
+    for item in report:
+        if not isinstance(item, dict) or item.get("success"):
+            continue
+        candidates.append(item.get("order_id"))
+    if not candidates:
+        for item in _build_crm_order_goods_order_results(payload):
+            if isinstance(item, dict) and not item.get("success"):
+                candidates.append(item.get("order_id"))
+    cleaned = []
+    seen = set()
+    for raw in candidates:
+        order_ids = _extract_crm_order_ids({"order_ids": [raw]})
+        if not order_ids:
+            continue
+        order_id = order_ids[0]
+        if order_id in seen:
+            continue
+        seen.add(order_id)
+        cleaned.append(order_id)
+    return cleaned
+
+
+def _shipping_bypasser_problem_details(payload):
+    if not isinstance(payload, dict):
+        return []
+    report = payload.get("report") if isinstance(payload.get("report"), list) else []
+    details = []
+    seen = set()
+    for item in report:
+        if not isinstance(item, dict) or item.get("success"):
+            continue
+        order_ids = _extract_crm_order_ids({"order_ids": [item.get("order_id")]})
+        if not order_ids:
+            continue
+        order_id = order_ids[0]
+        descriptor = _crm_stock_tab_descriptor(item)
+        key = (order_id, descriptor, str(item.get("outcome") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        if descriptor and descriptor != "tab":
+            details.append(f"{order_id} {descriptor}")
+        else:
+            details.append(order_id)
+    return details
+
+
+def _notify_shipping_bypasser_problem_orders(payload, message=None):
+    if not isinstance(payload, dict) or bool(payload.get("success")):
+        return
+    details = _shipping_bypasser_problem_details(payload)
+    if details:
+        notify_user("Shipping Bypasser Needs Attention", f"Skipped/failed stock tab(s): {', '.join(details[:10])}.")
+        return
+    order_ids = _shipping_bypasser_failed_order_ids(payload)
+    if order_ids:
+        notify_user("Shipping Bypasser Needs Attention", f"Order(s) need attention: {', '.join(order_ids)}.")
+        return
+    text = str(message or payload.get("message") or "Shipping Bypasser needs attention.").strip()
+    notify_user("Shipping Bypasser Needs Attention", text)
+
+
 def _start_crm_shipping_bypasser_runtime(dry_run=False, batch_size=None, list_url=None, order_id=None):
     normalized_order_id = _normalize_crm_single_order_id(order_id)
     normalized_batch_size = _normalize_crm_batch_size(
@@ -5780,6 +6680,9 @@ def _start_crm_shipping_bypasser_runtime(dry_run=False, batch_size=None, list_ur
         crm_shipping_bypasser_runtime["parallelWorkers"] = 1
         crm_shipping_bypasser_runtime["listUrl"] = None if normalized_order_id else _normalize_crm_list_url(list_url)
         crm_shipping_bypasser_runtime["orderCount"] = 0
+        crm_shipping_bypasser_runtime["currentOrderIndex"] = 0
+        crm_shipping_bypasser_runtime["totalOrderCount"] = 1 if normalized_order_id else 0
+        crm_shipping_bypasser_runtime["currentStage"] = "queued"
         crm_shipping_bypasser_runtime["refreshPasses"] = 0
         crm_shipping_bypasser_runtime["lastMessage"] = f"Single Shipping Bypasser queued for order {normalized_order_id}." if normalized_order_id else "Shipping Bypasser queued."
         crm_shipping_bypasser_runtime["lastSuccess"] = None
@@ -5796,6 +6699,9 @@ def _finish_crm_shipping_bypasser_runtime(ok, message, payload, release_lock=Tru
         crm_shipping_bypasser_runtime["lastSuccess"] = bool(ok)
         crm_shipping_bypasser_runtime["targetOrderId"] = _normalize_crm_single_order_id(payload.get("target_order_id"))
         crm_shipping_bypasser_runtime["orderCount"] = _extract_crm_order_count(payload)
+        crm_shipping_bypasser_runtime["currentOrderIndex"] = crm_shipping_bypasser_runtime["orderCount"]
+        crm_shipping_bypasser_runtime["totalOrderCount"] = crm_shipping_bypasser_runtime["orderCount"]
+        crm_shipping_bypasser_runtime["currentStage"] = None
         crm_shipping_bypasser_runtime["parallelWorkers"] = 1
         crm_shipping_bypasser_runtime["refreshPasses"] = max(0, int(_safe_float(payload.get("refresh_passes"), 0)))
         crm_shipping_bypasser_runtime["payload"] = payload
@@ -5808,20 +6714,22 @@ def _persist_crm_shipping_bypasser_run_result(ok, message, payload, dry_run=Fals
     timestamp = datetime.now().isoformat()
     order_count = _extract_crm_order_count(payload)
     order_ids = _extract_crm_order_ids(payload)
-    order_results = _build_crm_order_goods_order_results(payload)
+    order_results = _build_crm_shipping_bypasser_order_results(payload)
+    effective_ok = bool(ok or _crm_shipping_bypasser_order_results_success(order_results))
+    history_message = _compact_crm_shipping_bypasser_history_message(message)
     duration_seconds = _normalize_duration_seconds(payload.get("duration_seconds") if isinstance(payload, dict) else None)
     if duration_seconds is None:
         duration_seconds = _runtime_duration_seconds(_crm_shipping_bypasser_runtime_snapshot())
     with crm_state_lock:
         state = load_crm_state()
         state["last_run_timestamp"] = timestamp
-        state["last_run_success"] = bool(ok)
-        state["last_run_message"] = str(message)
+        state["last_run_success"] = effective_ok
+        state["last_run_message"] = history_message
         state["last_run_duration_seconds"] = duration_seconds
         state["last_order_count"] = order_count
         state["last_order_ids"] = order_ids
         state["total_runs"] = max(0, int(_safe_float(state.get("total_runs"), 0))) + 1
-        if ok and not dry_run:
+        if effective_ok and not dry_run:
             state["total_orders_processed"] = (
                 max(0, int(_safe_float(state.get("total_orders_processed"), 0))) + order_count
             )
@@ -5829,13 +6737,13 @@ def _persist_crm_shipping_bypasser_run_result(ok, message, payload, dry_run=Fals
             "timestamp": timestamp,
             "automation_key": "shipping_bypasser",
             "automation_label": "Shipping Bypasser",
-            "success": bool(ok),
+            "success": effective_ok,
             "order_count": order_count,
             "order_ids": order_ids,
             "parallel_workers": 1,
             "order_results": order_results,
             "duration_seconds": duration_seconds,
-            "message": str(message),
+            "message": history_message,
             "dry_run": bool(dry_run),
         }
         history = state.get("run_history") if isinstance(state.get("run_history"), list) else []
@@ -5872,6 +6780,7 @@ def _crm_shipping_bypasser_run_thread(dry_run=False, batch_size=None, list_url=N
         _audit_result("crm.shipping_bypasser", ok, message)
         payload = payload if isinstance(payload, dict) else {"success": bool(ok), "message": str(message)}
         payload["state"] = state
+        _notify_shipping_bypasser_problem_orders(payload, message)
         _finish_crm_shipping_bypasser_runtime(ok, message, payload, release_lock=True)
 
 
@@ -5906,6 +6815,301 @@ def start_crm_shipping_bypasser_run(dry_run=False, batch_size=None, list_url=Non
 
 def get_crm_shipping_bypasser_status_payload():
     runtime = _crm_shipping_bypasser_runtime_snapshot()
+    ensure_crm_state_file()
+    with crm_state_lock:
+        state = load_crm_state()
+    return {
+        "success": True,
+        "running": bool(runtime.get("running")),
+        "runtime": runtime,
+        "state": state,
+    }
+
+
+def _crm_push_back_runtime_snapshot():
+    with crm_push_back_runtime_lock:
+        runtime = dict(crm_push_back_runtime)
+    return _merge_live_automation_status(runtime, "crm.push_back")
+
+
+def _push_back_worker_timeout(batch_size=None):
+    base_timeout = max(600, CRM_ACTION_TIMEOUT * 40)
+    normalized_batch_size = _normalize_crm_batch_size(batch_size, default=0, minimum=1, maximum=25, allow_unlimited=True)
+    if normalized_batch_size is None:
+        return CRM_ADDRESS_CONTINUOUS_BATCH_TIMEOUT_SECONDS
+    return base_timeout + max(0, normalized_batch_size - 1) * max(180, CRM_ACTION_TIMEOUT * 12)
+
+
+def _build_crm_push_back_order_results(payload):
+    if not isinstance(payload, dict):
+        return []
+    report = payload.get("report") if isinstance(payload.get("report"), list) else []
+    rows = []
+    seen = set()
+    for item in report[:100]:
+        if not isinstance(item, dict):
+            continue
+        order_ids = _extract_crm_order_ids({"order_ids": [item.get("order_id")]})
+        if not order_ids:
+            continue
+        order_id = order_ids[0]
+        if order_id in seen:
+            continue
+        seen.add(order_id)
+        success = bool(item.get("success"))
+        outcome = str(item.get("outcome") or "")
+        rows.append(
+            {
+                "order_id": order_id,
+                "success": success,
+                "status": _crm_order_goods_outcome_label(outcome, success),
+                "outcome": outcome,
+                "message": str(item.get("message") or ""),
+                "duration_seconds": _normalize_duration_seconds(item.get("duration_seconds") or item.get("session_duration_seconds")),
+                "production_date": item.get("production_date"),
+                "target_production_date": item.get("target_production_date"),
+                "saved_production_date": item.get("saved_production_date"),
+                "due_date": item.get("due_date"),
+                "stock_order_attempted": bool(item.get("stock_order_attempted")),
+                "stock_order_success": item.get("stock_order_success") if item.get("stock_order_attempted") else None,
+                "stock_order_results": item.get("stock_order_results") if isinstance(item.get("stock_order_results"), list) else None,
+            }
+        )
+    if rows:
+        return rows
+    return _normalize_crm_stock_order_results(
+        [],
+        fallback_order_ids=_extract_crm_order_ids(payload),
+        fallback_success=bool(payload.get("success")),
+        fallback_message=str(payload.get("message") or ""),
+    )
+
+
+def _execute_crm_push_back_worker(dry_run=False, batch_size=None, processing_filter="rush", list_url=None, visible=None, show_terminal=None, order_id=None):
+    normalized_filter = _normalize_crm_shipping_filter(processing_filter)
+    if normalized_filter not in {"rush", "813"}:
+        message = "Push Back is only available for Rush and 813 modes."
+        return False, message, {
+            "success": False,
+            "message": message,
+            "action": "push_back_batch",
+            "dry_run": bool(dry_run),
+            "shipping_filter": normalized_filter,
+            "manual_review_required": False,
+            "resolution": "unsupported_filter",
+        }
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    if _crm_address_value_supplied(order_id) and not normalized_order_id:
+        message = "Order ID must be a 7-digit value or CRM order URL."
+        return False, message, {
+            "success": False,
+            "message": message,
+            "action": "push_back_single",
+            "dry_run": bool(dry_run),
+            "shipping_filter": normalized_filter,
+            "manual_review_required": True,
+            "resolution": "invalid_order_id",
+        }
+    normalized_batch_size = _normalize_crm_batch_size(batch_size, default=0, minimum=1, maximum=25, allow_unlimited=True)
+    if normalized_order_id:
+        normalized_batch_size = 1
+    normalized_list_url = _normalize_crm_list_url(list_url)
+    action = "push_back_single" if normalized_order_id else "push_back_batch"
+    args = ["--action", action, "--processing-filter", normalized_filter]
+    visible = bool(dry_run) if visible is None else bool(visible)
+    show_terminal = bool(dry_run) if show_terminal is None else bool(show_terminal)
+    if visible:
+        args.append("--visible")
+    if normalized_order_id:
+        args.extend(["--order-id", normalized_order_id])
+    elif normalized_batch_size is not None:
+        args.extend(["--batch-size", str(normalized_batch_size)])
+    if normalized_list_url and not normalized_order_id:
+        args.extend(["--list-url", normalized_list_url])
+    if dry_run:
+        args.append("--dry-run")
+    ok, message, payload = _run_script(
+        CRM_PUSH_BACK_SCRIPT,
+        args,
+        "CRMPushBack",
+        timeout=_push_back_worker_timeout(normalized_batch_size),
+        show_terminal=show_terminal,
+    )
+    if not isinstance(payload, dict):
+        payload = {"success": bool(ok), "message": str(message)}
+    payload.setdefault("action", action)
+    payload.setdefault("dry_run", bool(dry_run))
+    payload.setdefault("shipping_filter", normalized_filter)
+    payload.setdefault("batch_size", normalized_batch_size)
+    payload.setdefault("parallel_workers", 1)
+    if normalized_order_id:
+        payload.setdefault("target_order_id", normalized_order_id)
+        payload.setdefault("order_ids", [normalized_order_id])
+    if normalized_list_url and not normalized_order_id:
+        payload.setdefault("list_url", normalized_list_url)
+    return ok, message, payload
+
+
+def _start_crm_push_back_runtime(dry_run=False, batch_size=None, processing_filter="rush", list_url=None, order_id=None):
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    normalized_batch_size = _normalize_crm_batch_size(
+        batch_size,
+        default=0,
+        minimum=1,
+        maximum=25,
+        allow_unlimited=True,
+    )
+    if normalized_order_id:
+        normalized_batch_size = 1
+    with crm_push_back_runtime_lock:
+        crm_push_back_runtime["running"] = True
+        crm_push_back_runtime["startedAt"] = datetime.now().isoformat()
+        crm_push_back_runtime["completedAt"] = None
+        crm_push_back_runtime["lastAction"] = "push_back_single" if normalized_order_id else "push_back_batch"
+        crm_push_back_runtime["targetOrderId"] = normalized_order_id
+        crm_push_back_runtime["processingFilter"] = _normalize_crm_shipping_filter(processing_filter)
+        crm_push_back_runtime["batchSize"] = normalized_batch_size
+        crm_push_back_runtime["parallelWorkers"] = 1
+        crm_push_back_runtime["listUrl"] = None if normalized_order_id else _normalize_crm_list_url(list_url)
+        crm_push_back_runtime["orderCount"] = 0
+        crm_push_back_runtime["currentOrderIndex"] = 0
+        crm_push_back_runtime["totalOrderCount"] = 1 if normalized_order_id else 0
+        crm_push_back_runtime["currentStage"] = "queued"
+        crm_push_back_runtime["refreshPasses"] = 0
+        crm_push_back_runtime["lastMessage"] = f"Single Push Back queued for order {normalized_order_id}." if normalized_order_id else "Push Back queued."
+        crm_push_back_runtime["lastSuccess"] = None
+        crm_push_back_runtime["dryRun"] = bool(dry_run)
+        crm_push_back_runtime["payload"] = None
+
+
+def _finish_crm_push_back_runtime(ok, message, payload, release_lock=True):
+    payload = payload if isinstance(payload, dict) else {}
+    with crm_push_back_runtime_lock:
+        crm_push_back_runtime["running"] = False
+        crm_push_back_runtime["completedAt"] = datetime.now().isoformat()
+        crm_push_back_runtime["lastMessage"] = str(message)
+        crm_push_back_runtime["lastSuccess"] = bool(ok)
+        crm_push_back_runtime["targetOrderId"] = _normalize_crm_single_order_id(payload.get("target_order_id"))
+        crm_push_back_runtime["orderCount"] = _extract_crm_order_count(payload)
+        crm_push_back_runtime["currentOrderIndex"] = crm_push_back_runtime["orderCount"]
+        crm_push_back_runtime["totalOrderCount"] = crm_push_back_runtime["orderCount"]
+        crm_push_back_runtime["currentStage"] = None
+        crm_push_back_runtime["parallelWorkers"] = 1
+        crm_push_back_runtime["refreshPasses"] = max(0, int(_safe_float(payload.get("refresh_passes"), 0)))
+        crm_push_back_runtime["payload"] = payload
+    if release_lock and crm_lock.locked():
+        crm_lock.release()
+
+
+def _persist_crm_push_back_run_result(ok, message, payload, dry_run=False):
+    ensure_crm_state_file()
+    timestamp = datetime.now().isoformat()
+    order_count = _extract_crm_order_count(payload)
+    order_ids = _extract_crm_order_ids(payload)
+    order_results = _build_crm_push_back_order_results(payload)
+    duration_seconds = _normalize_duration_seconds(payload.get("duration_seconds") if isinstance(payload, dict) else None)
+    if duration_seconds is None:
+        duration_seconds = _runtime_duration_seconds(_crm_push_back_runtime_snapshot())
+    with crm_state_lock:
+        state = load_crm_state()
+        state["last_run_timestamp"] = timestamp
+        state["last_run_success"] = bool(ok)
+        state["last_run_message"] = str(message)
+        state["last_run_duration_seconds"] = duration_seconds
+        state["last_order_count"] = order_count
+        state["last_order_ids"] = order_ids
+        state["total_runs"] = max(0, int(_safe_float(state.get("total_runs"), 0))) + 1
+        if ok and not dry_run:
+            state["total_orders_processed"] = (
+                max(0, int(_safe_float(state.get("total_orders_processed"), 0))) + order_count
+            )
+        entry = {
+            "timestamp": timestamp,
+            "automation_key": "push_back",
+            "automation_label": "Push Back",
+            "success": bool(ok),
+            "order_count": order_count,
+            "order_ids": order_ids,
+            "parallel_workers": 1,
+            "order_results": order_results,
+            "duration_seconds": duration_seconds,
+            "message": str(message),
+            "dry_run": bool(dry_run),
+        }
+        history = state.get("run_history") if isinstance(state.get("run_history"), list) else []
+        state["run_history"] = [entry] + history[:19]
+        save_crm_state(state)
+    return state
+
+
+def _crm_push_back_run_thread(dry_run=False, batch_size=None, processing_filter="rush", list_url=None, order_id=None):
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    normalized_filter = _normalize_crm_shipping_filter(processing_filter)
+    ok = False
+    message = "Push Back did not run."
+    payload = {"success": False, "message": message}
+    try:
+        log_automation_event(
+            "crm.push_back",
+            "STARTED",
+            f"Run started. dry_run={bool(dry_run)} action={'push_back_single' if normalized_order_id else 'push_back_batch'} order_id={normalized_order_id or ''} filter={normalized_filter} batch_size={_crm_batch_size_display(batch_size)} list_url={_normalize_crm_list_url(list_url)}",
+            source="server.py",
+        )
+        ok, message, payload = _execute_crm_push_back_worker(
+            dry_run=dry_run,
+            batch_size=batch_size,
+            processing_filter=normalized_filter,
+            list_url=list_url,
+            order_id=normalized_order_id,
+        )
+    except Exception as e:
+        logger.exception("CRM Push Back background run failed unexpectedly")
+        ok = False
+        message = str(e)
+        payload = {"success": False, "message": message, "error_type": type(e).__name__}
+    finally:
+        state = _persist_crm_push_back_run_result(ok, message, payload, dry_run=dry_run)
+        _audit_result("crm.push_back", ok, message)
+        payload = payload if isinstance(payload, dict) else {"success": bool(ok), "message": str(message)}
+        payload["state"] = state
+        _finish_crm_push_back_runtime(ok, message, payload, release_lock=True)
+
+
+def start_crm_push_back_run(dry_run=False, batch_size=None, processing_filter="rush", list_url=None, order_id=None):
+    normalized_filter = _normalize_crm_shipping_filter(processing_filter)
+    if normalized_filter not in {"rush", "813"}:
+        return False, "Push Back is only available for Rush and 813 modes."
+    normalized_order_id = _normalize_crm_single_order_id(order_id) if _crm_address_value_supplied(order_id) else None
+    if _crm_address_value_supplied(order_id) and not normalized_order_id:
+        return False, "Order ID must be a 7-digit value or CRM order URL."
+    normalized_batch_size = None
+    if normalized_order_id:
+        normalized_batch_size = 1
+    if not crm_lock.acquire(blocking=False):
+        return False, "A CRM automation run is already in progress."
+    _start_crm_push_back_runtime(
+        dry_run=dry_run,
+        batch_size=normalized_batch_size,
+        processing_filter=normalized_filter,
+        list_url=list_url,
+        order_id=normalized_order_id,
+    )
+    threading.Thread(
+        target=_crm_push_back_run_thread,
+        args=(bool(dry_run), normalized_batch_size, normalized_filter, _normalize_crm_list_url(list_url), normalized_order_id),
+        daemon=True,
+    ).start()
+    if normalized_order_id:
+        if dry_run:
+            return True, f"Single Push Back dry run started for order {normalized_order_id}."
+        return True, f"Single Push Back run started for order {normalized_order_id}."
+    if dry_run:
+        return True, "Push Back dry run started."
+    return True, "Push Back started."
+
+
+def get_crm_push_back_status_payload():
+    runtime = _crm_push_back_runtime_snapshot()
     ensure_crm_state_file()
     with crm_state_lock:
         state = load_crm_state()
@@ -5988,7 +7192,7 @@ def _finish_crm_auto_splitter_runtime(ok, message, payload, release_lock=True):
             payload.get("parallel_workers") or payload.get("parallelWorkers") or crm_auto_splitter_runtime.get("parallelWorkers"),
             default=1,
             minimum=1,
-            maximum=4,
+            maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
         )
         crm_auto_splitter_runtime["payload"] = payload
     if release_lock and crm_lock.locked():
@@ -6108,7 +7312,7 @@ def _normalize_crm_auto_splitter_history(rows):
         row["order_count"] = len(row["order_ids"])
         row["expected_tab_count"] = int(_safe_float(row.get("expected_tab_count") or payload.get("expected_tab_count") or report.get("expected_tab_count"), 0))
         row["divisions"] = int(_safe_float(row.get("divisions") or payload.get("divisions") or report.get("divisions"), 0))
-        row["parallel_workers"] = _normalize_crm_positive_int(row.get("parallel_workers") or payload.get("parallel_workers") or report.get("parallel_workers"), default=1, minimum=1, maximum=4)
+        row["parallel_workers"] = _normalize_crm_positive_int(row.get("parallel_workers") or payload.get("parallel_workers") or report.get("parallel_workers"), default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
         row["report"] = report
         key = (
             str(row.get("timestamp") or ""),
@@ -6148,7 +7352,7 @@ def _crm_auto_splitter_history_entry(timestamp, ok, message, payload, duration_s
 
 def _execute_crm_auto_splitter_worker(order_target, tab_count, divisions, minimum_tabs=10, dry_run=True, parallel_workers=1, show_terminal=None):
     order_id, order_url = _normalize_crm_auto_split_target(order_target)
-    normalized_parallel_workers = _normalize_crm_positive_int(parallel_workers, default=1, minimum=1, maximum=4)
+    normalized_parallel_workers = _normalize_crm_positive_int(parallel_workers, default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
     normalized_parallel_workers = min(normalized_parallel_workers, max(1, int(divisions or 1)))
     if dry_run:
         normalized_parallel_workers = 1
@@ -6333,19 +7537,12 @@ def start_crm_auto_splitter_run(order_target=None, tab_count=None, divisions=Non
         normalized_divisions = _normalize_crm_auto_split_count(divisions, field_label="Divisions", minimum=2, maximum=100)
         normalized_minimum_tabs = _normalize_crm_auto_split_count(minimum_tabs, field_label="Minimum tabs", minimum=1, maximum=1000)
         parallel_workers_supplied = _crm_address_value_supplied(parallel_workers)
-        with crm_state_lock:
-            state = load_crm_state()
-        saved_parallel_workers = _normalize_crm_positive_int(
-            state.get("saved_auto_splitter_parallel_workers"),
-            default=1,
-            minimum=1,
-            maximum=4,
-        )
+        saved_parallel_workers = _saved_crm_automation_parallel_workers(default=1)
         normalized_parallel_workers = _normalize_crm_positive_int(
             parallel_workers,
             default=saved_parallel_workers,
             minimum=1,
-            maximum=4,
+            maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
         )
         normalized_parallel_workers = min(normalized_parallel_workers, normalized_divisions)
         if dry_run:
@@ -6361,15 +7558,7 @@ def start_crm_auto_splitter_run(order_target=None, tab_count=None, divisions=Non
         return False, "A CRM automation run is already in progress."
 
     if parallel_workers_supplied and not dry_run:
-        with crm_state_lock:
-            state = load_crm_state()
-            state["saved_auto_splitter_parallel_workers"] = _normalize_crm_positive_int(
-                parallel_workers,
-                default=saved_parallel_workers,
-                minimum=1,
-                maximum=4,
-            )
-            save_crm_state(state)
+        update_crm_address_preferences(parallel_workers=parallel_workers)
 
     _start_crm_auto_splitter_runtime(
         order_target,
@@ -6402,38 +7591,386 @@ def get_crm_auto_splitter_status_payload():
     }
 
 
-def update_crm_processing_preferences(stock_unlocker_enabled=None, address_validator_enabled=None, product_separator_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, processing_filter=None):
+def _default_crm_mass_emailer_state():
+    return {
+        "last_run_timestamp": None,
+        "last_run_success": None,
+        "last_run_message": None,
+        "last_run_duration_seconds": None,
+        "last_action": "process_queue",
+        "last_order_count": 0,
+        "last_failure_count": 0,
+        "last_skipped_count": 0,
+        "last_order_ids": [],
+        "last_payload": None,
+        "total_runs": 0,
+        "total_orders_processed": 0,
+        "run_history": [],
+    }
+
+
+def ensure_crm_mass_emailer_state_file():
+    if os.path.exists(CRM_MASS_EMAILER_STATE_FILE):
+        return
+    _write_json_file_atomic(CRM_MASS_EMAILER_STATE_FILE, _default_crm_mass_emailer_state())
+
+
+def _normalize_crm_mass_emailer_action(value):
+    key = str(value or "").strip().lower()
+    if key in {"scan", "scan_sheet"}:
+        return "scan_sheet"
+    if key in {"process_order", "order"}:
+        return "process_order"
+    return "process_queue"
+
+
+def _crm_mass_emailer_order_ids_from_payload(payload):
+    if not isinstance(payload, dict):
+        return []
+    rows = []
+    for key in ("processed", "failures", "eligible_rows"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            rows.extend(value)
+    rows.extend(payload.get("order_ids") if isinstance(payload.get("order_ids"), list) else [])
+    if payload.get("order_id"):
+        rows.append(payload.get("order_id"))
+    cleaned = []
+    seen = set()
+    for item in rows:
+        raw = item.get("order_id") if isinstance(item, dict) else item
+        text = "".join(ch for ch in str(raw or "") if ch.isdigit())
+        if len(text) != 7 or text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+    return cleaned
+
+
+def _crm_mass_emailer_counts(payload):
+    payload = payload if isinstance(payload, dict) else {}
+    processed = payload.get("processed") if isinstance(payload.get("processed"), list) else []
+    failures = payload.get("failures") if isinstance(payload.get("failures"), list) else []
+    eligible = payload.get("eligible_rows") if isinstance(payload.get("eligible_rows"), list) else []
+    skipped = payload.get("skipped_rows") if isinstance(payload.get("skipped_rows"), list) else []
+    action = _normalize_crm_mass_emailer_action(payload.get("action"))
+    if action == "scan_sheet":
+        order_count = len(eligible)
+    elif action == "process_order":
+        order_count = 1 if payload.get("success") else 0
+    else:
+        order_count = len(processed)
+    return {
+        "order_count": max(0, int(_safe_float(payload.get("order_count"), order_count))),
+        "failure_count": len(failures),
+        "skipped_count": len(skipped),
+        "eligible_count": len(eligible) if eligible else len(processed) + len(failures),
+        "order_ids": _crm_mass_emailer_order_ids_from_payload(payload),
+    }
+
+
+def _crm_mass_emailer_payload_snapshot(payload):
+    payload = payload if isinstance(payload, dict) else {}
+    clean = dict(payload)
+    clean.pop("state", None)
+    try:
+        return json.loads(json.dumps(clean))
+    except Exception:
+        return {
+            "success": bool(clean.get("success")),
+            "message": str(clean.get("message") or ""),
+            "action": _normalize_crm_mass_emailer_action(clean.get("action")),
+        }
+
+
+def _normalize_crm_mass_emailer_history(rows):
+    cleaned = []
+    source = rows if isinstance(rows, list) else []
+    for item in source[:20]:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        row["action"] = _normalize_crm_mass_emailer_action(row.get("action"))
+        row["duration_seconds"] = _normalize_duration_seconds(row.get("duration_seconds"))
+        row["order_count"] = max(0, int(_safe_float(row.get("order_count"), 0)))
+        row["failure_count"] = max(0, int(_safe_float(row.get("failure_count"), 0)))
+        row["skipped_count"] = max(0, int(_safe_float(row.get("skipped_count"), 0)))
+        row["order_ids"] = _crm_mass_emailer_order_ids_from_payload(row)
+        row["success"] = bool(row.get("success"))
+        row["message"] = str(row.get("message") or "")
+        cleaned.append(row)
+    return cleaned
+
+
+def load_crm_mass_emailer_state():
+    state = _default_crm_mass_emailer_state()
+    if os.path.exists(CRM_MASS_EMAILER_STATE_FILE):
+        try:
+            with open(CRM_MASS_EMAILER_STATE_FILE, "r", encoding="utf-8-sig") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                state.update(loaded)
+        except Exception as e:
+            logger.warning("Could not read %s: %s", CRM_MASS_EMAILER_STATE_FILE, e)
+    state["last_run_duration_seconds"] = _normalize_duration_seconds(state.get("last_run_duration_seconds"))
+    state["last_action"] = _normalize_crm_mass_emailer_action(state.get("last_action"))
+    state["last_order_count"] = max(0, int(_safe_float(state.get("last_order_count"), 0)))
+    state["last_failure_count"] = max(0, int(_safe_float(state.get("last_failure_count"), 0)))
+    state["last_skipped_count"] = max(0, int(_safe_float(state.get("last_skipped_count"), 0)))
+    state["last_order_ids"] = _extract_crm_order_ids({"order_ids": state.get("last_order_ids")})
+    state["total_runs"] = max(0, int(_safe_float(state.get("total_runs"), 0)))
+    state["total_orders_processed"] = max(0, int(_safe_float(state.get("total_orders_processed"), 0)))
+    state["run_history"] = _normalize_crm_mass_emailer_history(state.get("run_history"))
+    return state
+
+
+def save_crm_mass_emailer_state(state):
+    _write_json_file_atomic(CRM_MASS_EMAILER_STATE_FILE, state)
+
+
+def _crm_mass_emailer_runtime_snapshot():
+    with crm_mass_emailer_runtime_lock:
+        return dict(crm_mass_emailer_runtime)
+
+
+def _start_crm_mass_emailer_runtime(action="process_queue", dry_run=True, limit=None, retry_errors=False):
+    normalized_action = _normalize_crm_mass_emailer_action(action)
+    with crm_mass_emailer_runtime_lock:
+        crm_mass_emailer_runtime["running"] = True
+        crm_mass_emailer_runtime["startedAt"] = datetime.now().isoformat()
+        crm_mass_emailer_runtime["completedAt"] = None
+        crm_mass_emailer_runtime["lastAction"] = normalized_action
+        crm_mass_emailer_runtime["orderCount"] = 0
+        crm_mass_emailer_runtime["failureCount"] = 0
+        crm_mass_emailer_runtime["skippedCount"] = 0
+        crm_mass_emailer_runtime["currentOrderIndex"] = 0
+        crm_mass_emailer_runtime["totalOrderCount"] = 0
+        crm_mass_emailer_runtime["currentStage"] = "queued"
+        if normalized_action == "scan_sheet":
+            message = "Mass Emailer sheet scan queued."
+        else:
+            mode = "dry run" if dry_run else "live run"
+            suffix = f" | Limit {int(limit)}" if int(_safe_float(limit, 0)) > 0 else ""
+            retry = " | Retry errors" if retry_errors else ""
+            message = f"Mass Emailer {mode} queued{suffix}{retry}."
+        crm_mass_emailer_runtime["lastMessage"] = message
+        crm_mass_emailer_runtime["lastSuccess"] = None
+        crm_mass_emailer_runtime["dryRun"] = bool(dry_run)
+        crm_mass_emailer_runtime["payload"] = None
+
+
+def _finish_crm_mass_emailer_runtime(ok, message, payload, release_lock=True):
+    payload = payload if isinstance(payload, dict) else {"success": bool(ok), "message": str(message)}
+    counts = _crm_mass_emailer_counts(payload)
+    runtime_payload = _crm_mass_emailer_payload_snapshot(payload)
+    with crm_mass_emailer_runtime_lock:
+        crm_mass_emailer_runtime["running"] = False
+        crm_mass_emailer_runtime["completedAt"] = datetime.now().isoformat()
+        crm_mass_emailer_runtime["lastMessage"] = str(message)
+        crm_mass_emailer_runtime["lastSuccess"] = bool(ok)
+        crm_mass_emailer_runtime["lastAction"] = _normalize_crm_mass_emailer_action(payload.get("action") or crm_mass_emailer_runtime.get("lastAction"))
+        crm_mass_emailer_runtime["orderCount"] = counts["order_count"]
+        crm_mass_emailer_runtime["failureCount"] = counts["failure_count"]
+        crm_mass_emailer_runtime["skippedCount"] = counts["skipped_count"]
+        crm_mass_emailer_runtime["currentOrderIndex"] = counts["order_count"]
+        crm_mass_emailer_runtime["totalOrderCount"] = counts["eligible_count"]
+        crm_mass_emailer_runtime["currentStage"] = None
+        crm_mass_emailer_runtime["payload"] = runtime_payload
+    if release_lock and crm_lock.locked():
+        crm_lock.release()
+
+
+def _execute_crm_mass_emailer_worker(action="process_queue", dry_run=True, limit=None, retry_errors=False, show_terminal=None):
+    normalized_action = _normalize_crm_mass_emailer_action(action)
+    args = ["--action", normalized_action]
+    if int(_safe_float(limit, 0)) > 0:
+        args.extend(["--limit", str(int(_safe_float(limit, 0)))])
+    if retry_errors:
+        args.append("--retry-errors")
+    if normalized_action != "scan_sheet":
+        if dry_run:
+            args.append("--dry-run")
+        else:
+            args.append("--real")
+    ok, message, payload = _run_script(
+        CRM_MASS_EMAILER_SCRIPT,
+        args,
+        "CRMMassEmailer",
+        timeout=CRM_MASS_EMAILER_TIMEOUT_SECONDS,
+        show_terminal=bool(show_terminal),
+    )
+    if not isinstance(payload, dict):
+        payload = {"success": bool(ok), "message": str(message)}
+    payload.setdefault("action", normalized_action)
+    payload.setdefault("dry_run", bool(dry_run))
+    return ok, message, payload
+
+
+def _persist_crm_mass_emailer_run_result(ok, message, payload, dry_run=True):
+    ensure_crm_mass_emailer_state_file()
+    payload = payload if isinstance(payload, dict) else {"success": bool(ok), "message": str(message)}
+    counts = _crm_mass_emailer_counts(payload)
+    timestamp = datetime.now().isoformat()
+    duration_seconds = payload.get("duration_seconds")
+    if duration_seconds is None:
+        duration_seconds = _runtime_duration_seconds(_crm_mass_emailer_runtime_snapshot())
+    duration_seconds = _normalize_duration_seconds(duration_seconds)
+    action = _normalize_crm_mass_emailer_action(payload.get("action"))
+    entry = {
+        "timestamp": timestamp,
+        "success": bool(ok),
+        "action": action,
+        "dry_run": bool(dry_run),
+        "order_count": counts["order_count"],
+        "failure_count": counts["failure_count"],
+        "skipped_count": counts["skipped_count"],
+        "order_ids": counts["order_ids"],
+        "duration_seconds": duration_seconds,
+        "message": str(message),
+    }
+    with crm_mass_emailer_state_lock:
+        state = load_crm_mass_emailer_state()
+        state["last_run_timestamp"] = timestamp
+        state["last_run_success"] = bool(ok)
+        state["last_run_message"] = str(message)
+        state["last_run_duration_seconds"] = duration_seconds
+        state["last_action"] = action
+        state["last_order_count"] = counts["order_count"]
+        state["last_failure_count"] = counts["failure_count"]
+        state["last_skipped_count"] = counts["skipped_count"]
+        state["last_order_ids"] = counts["order_ids"]
+        state["last_payload"] = _crm_mass_emailer_payload_snapshot(payload)
+        state["total_runs"] = max(0, int(_safe_float(state.get("total_runs"), 0))) + 1
+        if action != "scan_sheet" and not dry_run:
+            state["total_orders_processed"] = max(0, int(_safe_float(state.get("total_orders_processed"), 0))) + counts["order_count"]
+        history = state.get("run_history") if isinstance(state.get("run_history"), list) else []
+        state["run_history"] = _normalize_crm_mass_emailer_history([entry] + history[:19])
+        save_crm_mass_emailer_state(state)
+    _audit_result("crm.mass_emailer", ok, message)
+    return state
+
+
+def _crm_mass_emailer_run_thread(action="process_queue", dry_run=True, limit=None, retry_errors=False):
+    ok = False
+    message = "Mass Emailer did not run."
+    payload = {"success": False, "message": message}
+    try:
+        ok, message, payload = _execute_crm_mass_emailer_worker(
+            action=action,
+            dry_run=dry_run,
+            limit=limit,
+            retry_errors=retry_errors,
+            show_terminal=False,
+        )
+    except Exception as e:
+        logger.exception("Mass Emailer run failed unexpectedly")
+        ok = False
+        message = str(e)
+        payload = {"success": False, "message": message, "error_type": type(e).__name__, "action": action}
+    finally:
+        state = _persist_crm_mass_emailer_run_result(ok, message, payload, dry_run=dry_run)
+        payload = payload if isinstance(payload, dict) else {"success": bool(ok), "message": str(message)}
+        payload["state"] = state
+        _finish_crm_mass_emailer_runtime(ok, message, payload, release_lock=True)
+
+
+def start_crm_mass_emailer_run(action="process_queue", dry_run=True, limit=None, retry_errors=False):
+    normalized_action = _normalize_crm_mass_emailer_action(action)
+    if not crm_lock.acquire(blocking=False):
+        return False, "A CRM automation run is already in progress."
+    _start_crm_mass_emailer_runtime(normalized_action, dry_run=dry_run, limit=limit, retry_errors=retry_errors)
+    threading.Thread(
+        target=_crm_mass_emailer_run_thread,
+        args=(normalized_action, bool(dry_run), limit, bool(retry_errors)),
+        daemon=True,
+    ).start()
+    if normalized_action == "scan_sheet":
+        return True, "Mass Emailer sheet scan started."
+    mode = "dry run" if dry_run else "live run"
+    return True, f"Mass Emailer {mode} started."
+
+
+def get_crm_mass_emailer_status_payload():
+    ensure_crm_mass_emailer_state_file()
+    runtime = _crm_mass_emailer_runtime_snapshot()
+    with crm_mass_emailer_state_lock:
+        state = load_crm_mass_emailer_state()
+    return {
+        "success": True,
+        "running": bool(runtime.get("running")),
+        "runtime": runtime,
+        "state": state,
+    }
+
+
+def clear_crm_mass_emailer_history():
+    ensure_crm_mass_emailer_state_file()
+    with crm_mass_emailer_state_lock:
+        state = load_crm_mass_emailer_state()
+        state["run_history"] = []
+        state["total_runs"] = 0
+        state["total_orders_processed"] = 0
+        save_crm_mass_emailer_state(state)
+    return True, "Mass Emailer history cleared."
+
+
+def update_crm_processing_preferences(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None):
     ensure_crm_processing_state_file()
+    mass_emailer_supplied = _crm_processing_value_supplied(mass_emailer_enabled)
     unlock_supplied = _crm_processing_value_supplied(stock_unlocker_enabled)
     address_supplied = _crm_processing_value_supplied(address_validator_enabled)
     separator_supplied = _crm_processing_value_supplied(product_separator_enabled)
     order_goods_supplied = _crm_processing_value_supplied(order_goods_enabled)
     shipping_bypasser_supplied = _crm_processing_value_supplied(shipping_bypasser_enabled)
+    push_back_supplied = _crm_processing_value_supplied(push_back_enabled)
     filter_supplied = _crm_processing_value_supplied(processing_filter)
 
     with crm_processing_state_lock:
         state = load_crm_processing_state()
-        if filter_supplied:
-            state["processing_filter"] = _normalize_crm_shipping_filter(processing_filter)
+        target_filter = _normalize_crm_shipping_filter(processing_filter) if filter_supplied else state.get("processing_filter")
+        mode_preferences = state.get("mode_preferences") if isinstance(state.get("mode_preferences"), dict) else {}
+        target_preferences = dict(
+            mode_preferences.get(target_filter)
+            or _default_crm_processing_mode_preferences(target_filter)
+        )
+        if mass_emailer_supplied:
+            state["mass_emailer_enabled"] = _normalize_crm_processing_enabled(
+                mass_emailer_enabled,
+                default=state.get("mass_emailer_enabled"),
+            )
         if unlock_supplied:
-            state["stock_unlocker_enabled"] = _normalize_crm_processing_enabled(stock_unlocker_enabled, default=state.get("stock_unlocker_enabled"))
+            target_preferences["stock_unlocker_enabled"] = _normalize_crm_processing_enabled(
+                stock_unlocker_enabled,
+                default=target_preferences.get("stock_unlocker_enabled"),
+            )
         if address_supplied:
-            state["address_validator_enabled"] = _normalize_crm_processing_enabled(address_validator_enabled, default=state.get("address_validator_enabled"))
+            target_preferences["address_validator_enabled"] = _normalize_crm_processing_enabled(
+                address_validator_enabled,
+                default=target_preferences.get("address_validator_enabled"),
+            )
         if separator_supplied:
-            state["product_separator_enabled"] = _normalize_crm_processing_enabled(product_separator_enabled, default=state.get("product_separator_enabled"))
+            target_preferences["product_separator_enabled"] = _normalize_crm_processing_enabled(
+                product_separator_enabled,
+                default=target_preferences.get("product_separator_enabled"),
+            )
         if order_goods_supplied:
-            state["order_goods_enabled"] = _normalize_crm_processing_enabled(order_goods_enabled, default=state.get("order_goods_enabled"))
+            target_preferences["order_goods_enabled"] = _normalize_crm_processing_enabled(
+                order_goods_enabled,
+                default=target_preferences.get("order_goods_enabled"),
+            )
         if shipping_bypasser_supplied:
-            state["shipping_bypasser_enabled"] = _normalize_crm_processing_enabled(shipping_bypasser_enabled, default=state.get("shipping_bypasser_enabled"))
-        if state.get("processing_filter") == "all":
-            state["address_validator_enabled"] = True
-            state["stock_unlocker_enabled"] = False
-            state["order_goods_enabled"] = False
-            state["shipping_bypasser_enabled"] = False
-        elif state.get("processing_filter") != "rush":
-            state["stock_unlocker_enabled"] = False
-            state["order_goods_enabled"] = False
-            state["shipping_bypasser_enabled"] = False
+            target_preferences["shipping_bypasser_enabled"] = _normalize_crm_processing_enabled(
+                shipping_bypasser_enabled,
+                default=target_preferences.get("shipping_bypasser_enabled"),
+            )
+        if push_back_supplied:
+            target_preferences["push_back_enabled"] = _normalize_crm_processing_enabled(
+                push_back_enabled,
+                default=target_preferences.get("push_back_enabled"),
+            )
+        mode_preferences[target_filter] = _sanitize_crm_processing_mode_preferences(target_filter, target_preferences)
+        state["mode_preferences"] = _normalize_crm_processing_mode_preferences(mode_preferences)
+        _apply_crm_processing_mode_preferences_to_state(state, target_filter)
         save_crm_processing_state(state)
 
     with crm_processing_runtime_lock:
@@ -6445,20 +7982,46 @@ def update_crm_processing_preferences(stock_unlocker_enabled=None, address_valid
 
 
 def _run_crm_processing_step(step_key, processing_filter, processing_state=None):
+    if step_key == "mass_emailer":
+        if _automation_stop_is_blocking():
+            ok = False
+            message = _force_stop_message("Mass Emailer")
+            payload = {"success": False, "message": message, "stopped": True, "action": "process_queue"}
+        else:
+            _start_crm_mass_emailer_runtime("process_queue", dry_run=False)
+            ok = False
+            message = "Mass Emailer did not run."
+            payload = {"success": False, "message": message, "action": "process_queue"}
+            try:
+                ok, message, payload = _execute_crm_mass_emailer_worker(
+                    action="process_queue",
+                    dry_run=False,
+                    show_terminal=False,
+                )
+            except Exception as e:
+                logger.exception("Automate Processing Mass Emailer step failed unexpectedly")
+                ok = False
+                message = str(e)
+                payload = {"success": False, "message": message, "error_type": type(e).__name__, "action": "process_queue"}
+            mass_state = _persist_crm_mass_emailer_run_result(ok, message, payload, dry_run=False)
+            payload = payload if isinstance(payload, dict) else {"success": bool(ok), "message": str(message)}
+            payload["state"] = mass_state
+            _finish_crm_mass_emailer_runtime(ok, message, payload, release_lock=False)
+        return {
+            "key": step_key,
+            "label": _crm_processing_step_label(step_key),
+            "success": bool(ok),
+            "message": str(message),
+        }
+
     if step_key == "product_separator":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-        with crm_state_lock:
-            stock_state = load_crm_state()
-        parallel_workers = _normalize_crm_positive_int(
-            stock_state.get("saved_product_separator_parallel_workers"),
-            default=4,
-            minimum=1,
-            maximum=4,
-        )
+        list_url = _crm_processing_address_list_url_for_filter(normalized_filter) if normalized_filter == "813" else None
+        parallel_workers = _saved_crm_automation_parallel_workers(default=1)
         _start_crm_product_separator_runtime(
             dry_run=False,
             list_mode=normalized_filter,
-            list_url=None,
+            list_url=list_url,
             parallel_workers=parallel_workers,
         )
         ok = False
@@ -6468,7 +8031,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
             ok, message, payload = _execute_crm_product_separator_worker(
                 dry_run=False,
                 list_mode=normalized_filter,
-                list_url=None,
+                list_url=list_url,
                 parallel_workers=parallel_workers,
                 visible=False,
                 show_terminal=False,
@@ -6490,99 +8053,157 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
         }
 
     if step_key == "order_goods":
-        with crm_state_lock:
-            stock_state = load_crm_state()
-        processing_state = processing_state if isinstance(processing_state, dict) else {}
-        run_stock_order = _normalize_crm_processing_enabled(processing_state.get("order_goods_enabled"), default=True)
-        run_bypasser = _normalize_crm_processing_enabled(processing_state.get("shipping_bypasser_enabled"), default=False)
-        parallel_workers = _normalize_crm_positive_int(
-            stock_state.get("saved_order_goods_parallel_workers"),
-            default=1,
-            minimum=1,
-            maximum=CRM_ORDER_GOODS_MAX_PARALLEL_WORKERS,
+        normalized_filter = _normalize_crm_shipping_filter(processing_filter)
+        list_url = _crm_processing_813_list_url_for_step(step_key) if normalized_filter == "813" else None
+        if normalized_filter == "813" and not list_url:
+            message = f"{_crm_processing_813_url_config_key_for_step(step_key)} is empty in config.py."
+            return {
+                "key": step_key,
+                "label": _crm_processing_step_label(step_key),
+                "success": False,
+                "message": message,
+            }
+        parallel_workers = _saved_crm_automation_parallel_workers(default=1)
+        _start_crm_order_goods_runtime(
+            dry_run=False,
+            batch_size=None,
+            parallel_workers=parallel_workers,
+            list_url=list_url,
         )
-        ok = True
-        message = "Rush Order Goods skipped by Order Goods mode."
+        ok = False
+        message = "Rush Order Goods did not run."
         payload = {"success": False, "message": message}
-        if run_stock_order:
-            _start_crm_order_goods_runtime(
+        try:
+            ok, message, payload = _execute_crm_order_goods_worker(
                 dry_run=False,
                 batch_size=None,
                 parallel_workers=parallel_workers,
-                list_url=None,
+                list_url=list_url,
+                visible=False,
+                show_terminal=False,
             )
+        except Exception as e:
+            logger.exception("Automate Processing Rush Order Goods step failed unexpectedly")
             ok = False
-            message = "Rush Order Goods did not run."
-            payload = {"success": False, "message": message}
-            try:
-                ok, message, payload = _execute_crm_order_goods_worker(
-                    dry_run=False,
-                    batch_size=None,
-                    parallel_workers=parallel_workers,
-                    list_url=None,
-                    visible=False,
-                    show_terminal=False,
-                )
-            except Exception as e:
-                logger.exception("Automate Processing Rush Order Goods step failed unexpectedly")
-                ok = False
-                message = str(e)
-                payload = {"success": False, "message": message, "error_type": type(e).__name__}
-            state = _persist_crm_order_goods_run_result(ok, message, payload, dry_run=False)
-            payload = payload if isinstance(payload, dict) else {"success": bool(ok), "message": str(message)}
-            payload["state"] = state
-            _finish_crm_order_goods_runtime(ok, message, payload, release_lock=False)
+            message = str(e)
+            payload = {"success": False, "message": message, "error_type": type(e).__name__}
+        state = _persist_crm_order_goods_run_result(ok, message, payload, dry_run=False)
+        payload = payload if isinstance(payload, dict) else {"success": bool(ok), "message": str(message)}
+        payload["state"] = state
+        _finish_crm_order_goods_runtime(ok, message, payload, release_lock=False)
+        return {
+            "key": step_key,
+            "label": _crm_processing_step_label(step_key),
+            "success": bool(ok),
+            "message": str(message),
+        }
 
-        bypass_ok = True
-        bypass_message = "Shipping Bypasser did not run."
-        bypass_payload = {"success": False, "message": bypass_message}
-        if not run_bypasser:
-            bypass_message = "Shipping Bypasser skipped by Order Goods mode."
-        elif _automation_stop_is_blocking():
-            bypass_ok = False
-            bypass_message = _force_stop_message("Shipping Bypasser")
+    if step_key == "shipping_bypasser":
+        normalized_filter = _normalize_crm_shipping_filter(processing_filter)
+        list_url = _crm_processing_813_list_url_for_step(step_key) if normalized_filter == "813" else None
+        if normalized_filter == "813" and not list_url:
+            message = f"{_crm_processing_813_url_config_key_for_step(step_key)} is empty in config.py."
+            return {
+                "key": step_key,
+                "label": _crm_processing_step_label(step_key),
+                "success": False,
+                "message": message,
+            }
+        if _automation_stop_is_blocking():
+            ok = False
+            message = _force_stop_message("Shipping Bypasser")
+            payload = {"success": False, "message": message, "stopped": True}
         else:
-            with crm_processing_runtime_lock:
-                crm_processing_runtime["lastMessage"] = (
-                    "Rush Order Goods complete. Running Shipping Bypasser as part of Order Goods."
-                    if run_stock_order
-                    else "Running Shipping Bypasser in Bypass Only mode."
-                )
             _start_crm_shipping_bypasser_runtime(
                 dry_run=False,
                 batch_size=None,
-                list_url=None,
+                list_url=list_url,
             )
+            ok = False
+            message = "Shipping Bypasser did not run."
+            payload = {"success": False, "message": message}
             try:
-                bypass_ok, bypass_message, bypass_payload = _execute_crm_shipping_bypasser_worker(
+                ok, message, payload = _execute_crm_shipping_bypasser_worker(
                     dry_run=False,
                     batch_size=None,
-                    list_url=None,
+                    list_url=list_url,
                     visible=False,
                     show_terminal=False,
                 )
             except Exception as e:
                 logger.exception("Automate Processing Shipping Bypasser step failed unexpectedly")
-                bypass_ok = False
-                bypass_message = str(e)
-                bypass_payload = {"success": False, "message": bypass_message, "error_type": type(e).__name__}
-            bypass_state = _persist_crm_shipping_bypasser_run_result(bypass_ok, bypass_message, bypass_payload, dry_run=False)
-            bypass_payload = bypass_payload if isinstance(bypass_payload, dict) else {"success": bool(bypass_ok), "message": str(bypass_message)}
-            bypass_payload["state"] = bypass_state
-            _finish_crm_shipping_bypasser_runtime(bypass_ok, bypass_message, bypass_payload, release_lock=False)
-
-        combined_ok = (not run_stock_order or bool(ok)) and (not run_bypasser or bool(bypass_ok))
-        parts = []
-        if run_stock_order:
-            parts.append(str(message))
-        if run_bypasser:
-            parts.append(f"Shipping Bypasser: {bypass_message}")
-        combined_message = " ".join(parts) if parts else "Order Goods mode is disabled."
+                ok = False
+                message = str(e)
+                payload = {"success": False, "message": message, "error_type": type(e).__name__}
+            bypass_state = _persist_crm_shipping_bypasser_run_result(ok, message, payload, dry_run=False)
+            payload = payload if isinstance(payload, dict) else {"success": bool(ok), "message": str(message)}
+            payload["state"] = bypass_state
+            _notify_shipping_bypasser_problem_orders(payload, message)
+            _finish_crm_shipping_bypasser_runtime(ok, message, payload, release_lock=False)
         return {
             "key": step_key,
             "label": _crm_processing_step_label(step_key),
-            "success": combined_ok,
-            "message": str(combined_message),
+            "success": bool(ok),
+            "message": str(message),
+        }
+
+    if step_key == "push_back":
+        normalized_filter = _normalize_crm_shipping_filter(processing_filter)
+        list_url = _crm_processing_push_back_list_url_for_filter(normalized_filter)
+        if normalized_filter not in {"rush", "813"}:
+            message = "Push Back is only available for Rush and 813 modes."
+            return {
+                "key": step_key,
+                "label": _crm_processing_step_label(step_key),
+                "success": False,
+                "message": message,
+            }
+        if not list_url:
+            config_key = "CRM_PUSH_BACK_813_URL" if normalized_filter == "813" else "CRM_PUSH_BACK_RUSH_URL"
+            message = f"{config_key} is empty in config.py."
+            return {
+                "key": step_key,
+                "label": _crm_processing_step_label(step_key),
+                "success": False,
+                "message": message,
+            }
+        if _automation_stop_is_blocking():
+            ok = False
+            message = _force_stop_message("Push Back")
+            payload = {"success": False, "message": message, "stopped": True}
+        else:
+            _start_crm_push_back_runtime(
+                dry_run=False,
+                batch_size=None,
+                processing_filter=normalized_filter,
+                list_url=list_url,
+            )
+            ok = False
+            message = "Push Back did not run."
+            payload = {"success": False, "message": message}
+            try:
+                ok, message, payload = _execute_crm_push_back_worker(
+                    dry_run=False,
+                    batch_size=None,
+                    processing_filter=normalized_filter,
+                    list_url=list_url,
+                    visible=False,
+                    show_terminal=False,
+                )
+            except Exception as e:
+                logger.exception("Automate Processing Push Back step failed unexpectedly")
+                ok = False
+                message = str(e)
+                payload = {"success": False, "message": message, "error_type": type(e).__name__}
+            push_back_state = _persist_crm_push_back_run_result(ok, message, payload, dry_run=False)
+            payload = payload if isinstance(payload, dict) else {"success": bool(ok), "message": str(message)}
+            payload["state"] = push_back_state
+            _finish_crm_push_back_runtime(ok, message, payload, release_lock=False)
+        return {
+            "key": step_key,
+            "label": _crm_processing_step_label(step_key),
+            "success": bool(ok),
+            "message": str(message),
         }
 
     if step_key == "stock_unlocker":
@@ -6610,10 +8231,18 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
     with crm_address_state_lock:
         address_state = load_crm_address_state()
     batch_size = _normalize_crm_batch_size(address_state.get("saved_batch_size"), default=0, minimum=1, maximum=25, allow_unlimited=True)
-    parallel_workers = _normalize_crm_positive_int(address_state.get("saved_parallel_workers"), default=1, minimum=1, maximum=8)
+    parallel_workers = _normalize_crm_positive_int(address_state.get("saved_parallel_workers"), default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
     if batch_size is not None:
         parallel_workers = min(parallel_workers, batch_size)
     list_url = _crm_processing_address_list_url_for_filter(normalized_filter)
+    if normalized_filter == "813" and not list_url:
+        message = f"{_crm_processing_813_url_config_key_for_step('address_validator_batch')} is empty in config.py."
+        return {
+            "key": step_key,
+            "label": _crm_processing_step_label(step_key),
+            "success": False,
+            "message": message,
+        }
 
     _start_crm_address_runtime(
         dry_run=False,
@@ -6625,7 +8254,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
         parallel_workers=parallel_workers,
         last_message=(
             f"Address Validator batch queued {_crm_batch_scope_phrase(batch_size)} from "
-            f"{_crm_shipping_filter_label(normalized_filter)}{' via configured ALL list' if list_url else ''}."
+            f"{_crm_shipping_filter_label(normalized_filter)}{' via configured mode list' if list_url else ''}."
         ),
     )
     ok = False
@@ -6675,7 +8304,7 @@ def _crm_processing_run_thread(selected_steps, processing_filter):
     try:
         with crm_processing_state_lock:
             processing_state = load_crm_processing_state()
-        for index, step_key in enumerate(selected_steps, start=1):
+        for step_key in selected_steps:
             if _automation_stop_is_blocking():
                 summary = _force_stop_message("Automate Processing")
                 step_results.append(
@@ -6690,13 +8319,15 @@ def _crm_processing_run_thread(selected_steps, processing_filter):
             step_label = _crm_processing_step_label(step_key)
             with crm_processing_runtime_lock:
                 crm_processing_runtime["currentStep"] = step_key
-                crm_processing_runtime["lastMessage"] = f"Running {step_label} ({index}/{len(selected_steps)})."
+                crm_processing_runtime["currentOrderProgress"] = None
+                crm_processing_runtime["lastMessage"] = f"Running {step_label}."
             step_started_at = time.monotonic()
             result = _run_crm_processing_step(step_key, normalized_filter, processing_state=processing_state)
             result["duration_seconds"] = _normalize_duration_seconds(time.monotonic() - step_started_at)
             step_results.append(result)
             with crm_processing_runtime_lock:
                 crm_processing_runtime["completedSteps"] = list(step_results)
+                crm_processing_runtime["currentOrderProgress"] = None
                 crm_processing_runtime["lastMessage"] = result["message"]
         overall_success, summary = _build_crm_processing_summary(step_results)
     except Exception as e:
@@ -6720,6 +8351,7 @@ def _crm_processing_run_thread(selected_steps, processing_filter):
             crm_processing_runtime["completedAt"] = datetime.now().isoformat()
             crm_processing_runtime["currentStep"] = None
             crm_processing_runtime["completedSteps"] = list(step_results)
+            crm_processing_runtime["currentOrderProgress"] = None
             crm_processing_runtime["lastMessage"] = str(summary)
             crm_processing_runtime["lastSuccess"] = bool(overall_success)
             crm_processing_runtime["stateSnapshot"] = state
@@ -6729,44 +8361,71 @@ def _crm_processing_run_thread(selected_steps, processing_filter):
 
 def start_crm_processing_run(
     stock_unlocker_enabled=None,
+    mass_emailer_enabled=None,
     address_validator_enabled=None,
     product_separator_enabled=None,
     order_goods_enabled=None,
     shipping_bypasser_enabled=None,
+    push_back_enabled=None,
     processing_filter=None,
     persist_preferences=True,
 ):
     ensure_crm_processing_state_file()
+    mass_emailer_supplied = _crm_processing_value_supplied(mass_emailer_enabled)
     unlock_supplied = _crm_processing_value_supplied(stock_unlocker_enabled)
     address_supplied = _crm_processing_value_supplied(address_validator_enabled)
     separator_supplied = _crm_processing_value_supplied(product_separator_enabled)
     order_goods_supplied = _crm_processing_value_supplied(order_goods_enabled)
     shipping_bypasser_supplied = _crm_processing_value_supplied(shipping_bypasser_enabled)
+    push_back_supplied = _crm_processing_value_supplied(push_back_enabled)
     filter_supplied = _crm_processing_value_supplied(processing_filter)
 
     with crm_processing_state_lock:
         state = load_crm_processing_state()
-        if filter_supplied:
-            state["processing_filter"] = _normalize_crm_shipping_filter(processing_filter)
+        target_filter = _normalize_crm_shipping_filter(processing_filter) if filter_supplied else state.get("processing_filter")
+        mode_preferences = state.get("mode_preferences") if isinstance(state.get("mode_preferences"), dict) else {}
+        target_preferences = dict(
+            mode_preferences.get(target_filter)
+            or _default_crm_processing_mode_preferences(target_filter)
+        )
+        if mass_emailer_supplied:
+            state["mass_emailer_enabled"] = _normalize_crm_processing_enabled(
+                mass_emailer_enabled,
+                default=state.get("mass_emailer_enabled"),
+            )
         if unlock_supplied:
-            state["stock_unlocker_enabled"] = _normalize_crm_processing_enabled(stock_unlocker_enabled, default=state.get("stock_unlocker_enabled"))
+            target_preferences["stock_unlocker_enabled"] = _normalize_crm_processing_enabled(
+                stock_unlocker_enabled,
+                default=target_preferences.get("stock_unlocker_enabled"),
+            )
         if address_supplied:
-            state["address_validator_enabled"] = _normalize_crm_processing_enabled(address_validator_enabled, default=state.get("address_validator_enabled"))
+            target_preferences["address_validator_enabled"] = _normalize_crm_processing_enabled(
+                address_validator_enabled,
+                default=target_preferences.get("address_validator_enabled"),
+            )
         if separator_supplied:
-            state["product_separator_enabled"] = _normalize_crm_processing_enabled(product_separator_enabled, default=state.get("product_separator_enabled"))
+            target_preferences["product_separator_enabled"] = _normalize_crm_processing_enabled(
+                product_separator_enabled,
+                default=target_preferences.get("product_separator_enabled"),
+            )
         if order_goods_supplied:
-            state["order_goods_enabled"] = _normalize_crm_processing_enabled(order_goods_enabled, default=state.get("order_goods_enabled"))
+            target_preferences["order_goods_enabled"] = _normalize_crm_processing_enabled(
+                order_goods_enabled,
+                default=target_preferences.get("order_goods_enabled"),
+            )
         if shipping_bypasser_supplied:
-            state["shipping_bypasser_enabled"] = _normalize_crm_processing_enabled(shipping_bypasser_enabled, default=state.get("shipping_bypasser_enabled"))
-        if state.get("processing_filter") == "all":
-            state["address_validator_enabled"] = True
-            state["stock_unlocker_enabled"] = False
-            state["order_goods_enabled"] = False
-            state["shipping_bypasser_enabled"] = False
-        elif state.get("processing_filter") != "rush":
-            state["stock_unlocker_enabled"] = False
-            state["order_goods_enabled"] = False
-            state["shipping_bypasser_enabled"] = False
+            target_preferences["shipping_bypasser_enabled"] = _normalize_crm_processing_enabled(
+                shipping_bypasser_enabled,
+                default=target_preferences.get("shipping_bypasser_enabled"),
+            )
+        if push_back_supplied:
+            target_preferences["push_back_enabled"] = _normalize_crm_processing_enabled(
+                push_back_enabled,
+                default=target_preferences.get("push_back_enabled"),
+            )
+        mode_preferences[target_filter] = _sanitize_crm_processing_mode_preferences(target_filter, target_preferences)
+        state["mode_preferences"] = _normalize_crm_processing_mode_preferences(mode_preferences)
+        _apply_crm_processing_mode_preferences_to_state(state, target_filter)
         if persist_preferences:
             save_crm_processing_state(state)
 
@@ -6791,6 +8450,7 @@ def start_crm_processing_run(
         crm_processing_runtime["processingFilter"] = normalized_filter
         crm_processing_runtime["selectedSteps"] = list(selected_steps)
         crm_processing_runtime["completedSteps"] = []
+        crm_processing_runtime["currentOrderProgress"] = None
         crm_processing_runtime["lastMessage"] = "Automate Processing queued."
         crm_processing_runtime["lastSuccess"] = None
 
@@ -6806,6 +8466,9 @@ def get_crm_processing_status_payload():
     runtime = _crm_processing_runtime_snapshot()
     if not runtime.get("running"):
         runtime["processingFilter"] = _normalize_crm_shipping_filter(state.get("processing_filter"))
+        runtime["currentOrderProgress"] = None
+    else:
+        runtime["currentOrderProgress"] = _crm_processing_current_order_progress(runtime.get("currentStep"))
     return {
         "success": True,
         "running": bool(runtime.get("running")),
@@ -7441,6 +9104,19 @@ def run_crm_shipping_bypasser_run_queued(dry_run=False, batch_size=None, list_ur
     return _wait_for_status_completion(get_crm_shipping_bypasser_status_payload, msg)
 
 
+def run_crm_push_back_run_queued(dry_run=False, batch_size=None, processing_filter="rush", list_url=None, order_id=None):
+    ok, msg = start_crm_push_back_run(
+        dry_run=dry_run,
+        batch_size=batch_size,
+        processing_filter=processing_filter,
+        list_url=list_url,
+        order_id=order_id,
+    )
+    if not ok:
+        return ok, msg
+    return _wait_for_status_completion(get_crm_push_back_status_payload, msg)
+
+
 def run_crm_product_separator_run_queued(dry_run=False, list_mode="rush", list_url=None, parallel_workers=None, order_id=None):
     ok, msg = start_crm_product_separator_run(
         dry_run=dry_run,
@@ -7468,13 +9144,27 @@ def run_crm_auto_splitter_run_queued(order_target=None, tab_count=None, division
     return _wait_for_status_completion(get_crm_auto_splitter_status_payload, msg)
 
 
-def run_crm_processing_run_queued(stock_unlocker_enabled=None, address_validator_enabled=None, product_separator_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, processing_filter=None):
+def run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, limit=None, retry_errors=False):
+    ok, msg = start_crm_mass_emailer_run(
+        action=action,
+        dry_run=dry_run,
+        limit=limit,
+        retry_errors=retry_errors,
+    )
+    if not ok:
+        return ok, msg
+    return _wait_for_status_completion(get_crm_mass_emailer_status_payload, msg)
+
+
+def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None):
     ok, msg = start_crm_processing_run(
         stock_unlocker_enabled=stock_unlocker_enabled,
+        mass_emailer_enabled=mass_emailer_enabled,
         address_validator_enabled=address_validator_enabled,
         product_separator_enabled=product_separator_enabled,
         order_goods_enabled=order_goods_enabled,
         shipping_bypasser_enabled=shipping_bypasser_enabled,
+        push_back_enabled=push_back_enabled,
         processing_filter=processing_filter,
         persist_preferences=False,
     )
@@ -7802,6 +9492,27 @@ def _chrome_profile_setup_targets():
     }
 
 
+def open_sanmar_cart_browser():
+    try:
+        importlib.reload(config_module)
+        profile_dir = getattr(config_module, "SANMAR_PROFILE_DIR", "chrome_profile")
+        cart_url = str(getattr(config_module, "SANMAR_CART_URL", "") or "https://www.sanmar.com/cart").strip()
+        profile_path = _resolve_profile_path(profile_dir)
+        chrome = _resolve_chrome_executable()
+        if chrome:
+            subprocess.Popen(
+                [chrome, f"--user-data-dir={profile_path}", cart_url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            webbrowser.open(cart_url)
+        return True, "Opened SanMar cart.", {"profile_path": profile_path, "url": cart_url}
+    except Exception as e:
+        logger.warning("Could not open SanMar cart: %s", e)
+        return False, f"Could not open SanMar cart: {e}", {}
+
+
 @app.route("/automation/chrome-profile-setup", methods=["POST"])
 def automation_chrome_profile_setup():
     data = request.get_json(silent=True) or {}
@@ -7907,6 +9618,7 @@ register_work_routes(
     start_crm_shipping_bypasser_run=start_crm_shipping_bypasser_run,
     run_crm_shipping_bypasser_run_queued=run_crm_shipping_bypasser_run_queued,
     get_crm_shipping_bypasser_status_payload=get_crm_shipping_bypasser_status_payload,
+    open_sanmar_cart_browser=open_sanmar_cart_browser,
     start_crm_product_separator_run=start_crm_product_separator_run,
     run_crm_product_separator_run_queued=run_crm_product_separator_run_queued,
     get_crm_product_separator_status_payload=get_crm_product_separator_status_payload,
@@ -7914,6 +9626,10 @@ register_work_routes(
     run_crm_auto_splitter_run_queued=run_crm_auto_splitter_run_queued,
     get_crm_auto_splitter_status_payload=get_crm_auto_splitter_status_payload,
     clear_crm_auto_splitter_history=clear_crm_auto_splitter_history,
+    start_crm_mass_emailer_run=start_crm_mass_emailer_run,
+    run_crm_mass_emailer_run_queued=run_crm_mass_emailer_run_queued,
+    get_crm_mass_emailer_status_payload=get_crm_mass_emailer_status_payload,
+    clear_crm_mass_emailer_history=clear_crm_mass_emailer_history,
     start_crm_processing_run=start_crm_processing_run,
     run_crm_processing_run_queued=run_crm_processing_run_queued,
     get_crm_processing_status_payload=get_crm_processing_status_payload,
@@ -8095,6 +9811,7 @@ if __name__ == "__main__":
     logger.info("  POST/GET http://<your-pc-ip>:%s/crm/process/rush", SERVER_PORT)
     logger.info("  POST/GET http://<your-pc-ip>:%s/crm/process/free-ship", SERVER_PORT)
     logger.info("  POST/GET http://<your-pc-ip>:%s/crm/process/all", SERVER_PORT)
+    logger.info("  POST/GET http://<your-pc-ip>:%s/crm/process/813", SERVER_PORT)
     logger.info("  GET      http://<your-pc-ip>:%s/crm/process/status", SERVER_PORT)
     logger.info("  POST     http://<your-pc-ip>:%s/crm/process/preferences", SERVER_PORT)
     logger.info("  POST/GET http://<your-pc-ip>:%s/crm/order-goods", SERVER_PORT)
@@ -8103,6 +9820,7 @@ if __name__ == "__main__":
     logger.info("  POST/GET http://<your-pc-ip>:%s/crm/shipping-bypasser", SERVER_PORT)
     logger.info("  POST/GET http://<your-pc-ip>:%s/crm/shipping-bypasser/dry-run", SERVER_PORT)
     logger.info("  GET      http://<your-pc-ip>:%s/crm/shipping-bypasser/status", SERVER_PORT)
+    logger.info("  POST/GET http://<your-pc-ip>:%s/crm/shipping-bypasser/sanmar-cart/open", SERVER_PORT)
     logger.info("  POST/GET http://<your-pc-ip>:%s/crm/auto-splitter", SERVER_PORT)
     logger.info("  POST/GET http://<your-pc-ip>:%s/crm/auto-splitter/dry-run", SERVER_PORT)
     logger.info("  GET      http://<your-pc-ip>:%s/crm/auto-splitter/status", SERVER_PORT)

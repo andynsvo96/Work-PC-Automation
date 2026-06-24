@@ -1,6 +1,6 @@
 # Work PC Automation
 
-Local Windows automation dashboard for work-day routines: Paycom clock actions, Slack status messages, weekly hour tracking, CRM order workflows, desktop power timers, and optional system metrics.
+Local Windows automation dashboard for coordinating work-day routines, CRM order workflows, Slack status updates, Paycom time tracking, desktop power timers, and optional system metrics from one private control panel.
 
 The app runs as a local Flask server with a browser control panel and a tray icon. Worker scripts handle the actual browser automation through Selenium, while the server coordinates scheduling, locks, retries, state updates, and audit logging.
 

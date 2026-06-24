@@ -44,6 +44,7 @@ def register_work_routes(
     start_crm_shipping_bypasser_run,
     run_crm_shipping_bypasser_run_queued,
     get_crm_shipping_bypasser_status_payload,
+    open_sanmar_cart_browser,
     start_crm_product_separator_run,
     run_crm_product_separator_run_queued,
     get_crm_product_separator_status_payload,
@@ -51,6 +52,10 @@ def register_work_routes(
     run_crm_auto_splitter_run_queued,
     get_crm_auto_splitter_status_payload,
     clear_crm_auto_splitter_history,
+    start_crm_mass_emailer_run,
+    run_crm_mass_emailer_run_queued,
+    get_crm_mass_emailer_status_payload,
+    clear_crm_mass_emailer_history,
     start_crm_processing_run,
     run_crm_processing_run_queued,
     get_crm_processing_status_payload,
@@ -65,7 +70,14 @@ def register_work_routes(
 
     def _queue_response(label, category, fn, status_payload_fn=None, queue_details=None, queue_options=None):
         queue_options = queue_options if isinstance(queue_options, dict) else {}
-        ok, msg, task = enqueue_automation(label, category, fn, details=queue_details, **queue_options)
+        ok, msg, task = enqueue_automation(
+            label,
+            category,
+            fn,
+            details=queue_details,
+            status_fn=status_payload_fn if callable(status_payload_fn) else None,
+            **queue_options,
+        )
         payload = status_payload_fn() if callable(status_payload_fn) else {"success": True}
         payload.update({"success": ok, "message": msg, "queued": ok, "queue_task": task})
         return jsonify(payload), (202 if ok else 500)
@@ -186,6 +198,12 @@ def register_work_routes(
         data = request.get_json(silent=True) if request.method == "POST" else None
         data = data if isinstance(data, dict) else {}
         return {
+            "mass_emailer_enabled": _first_present(
+                data.get("mass_emailer_enabled"),
+                data.get("massEmailerEnabled"),
+                request.args.get("mass_emailer_enabled"),
+                request.args.get("massEmailerEnabled"),
+            ),
             "stock_unlocker_enabled": _first_present(
                 data.get("stock_unlocker_enabled"),
                 data.get("stockUnlockerEnabled"),
@@ -209,6 +227,12 @@ def register_work_routes(
                 data.get("shippingBypasserEnabled"),
                 request.args.get("shipping_bypasser_enabled"),
                 request.args.get("shippingBypasserEnabled"),
+            ),
+            "push_back_enabled": _first_present(
+                data.get("push_back_enabled"),
+                data.get("pushBackEnabled"),
+                request.args.get("push_back_enabled"),
+                request.args.get("pushBackEnabled"),
             ),
             "product_separator_enabled": _first_present(
                 data.get("product_separator_enabled"),
@@ -258,6 +282,8 @@ def register_work_routes(
 
     def _crm_processing_filter_label(processing_filter):
         key = str(processing_filter or "").strip().lower()
+        if key == "813":
+            return "813"
         if key == "all":
             return "All"
         if key == "free":
@@ -278,29 +304,40 @@ def register_work_routes(
         state = state if isinstance(state, dict) else {}
         raw_filter = options.get("processing_filter")
         processing_filter = str(raw_filter if raw_filter is not None else state.get("processing_filter") or "rush").strip().lower()
-        if processing_filter not in {"rush", "free", "all"}:
+        if processing_filter not in {"rush", "free", "all", "813"}:
             processing_filter = "rush"
+        mode_preferences = state.get("mode_preferences") if isinstance(state.get("mode_preferences"), dict) else {}
+        mode_state = mode_preferences.get(processing_filter) if isinstance(mode_preferences.get(processing_filter), dict) else {}
+        fallback_state = {**state, **mode_state}
 
         effective = {
+            "mass_emailer_enabled": _crm_processing_bool(
+                options.get("mass_emailer_enabled"),
+                fallback_state.get("mass_emailer_enabled", True),
+            ),
             "stock_unlocker_enabled": _crm_processing_bool(
                 options.get("stock_unlocker_enabled"),
-                state.get("stock_unlocker_enabled", True),
+                fallback_state.get("stock_unlocker_enabled", True),
             ),
             "address_validator_enabled": _crm_processing_bool(
                 options.get("address_validator_enabled"),
-                state.get("address_validator_enabled", True),
+                fallback_state.get("address_validator_enabled", True),
             ),
             "product_separator_enabled": _crm_processing_bool(
                 options.get("product_separator_enabled"),
-                state.get("product_separator_enabled", True),
+                fallback_state.get("product_separator_enabled", True),
             ),
             "order_goods_enabled": _crm_processing_bool(
                 options.get("order_goods_enabled"),
-                state.get("order_goods_enabled", True),
+                fallback_state.get("order_goods_enabled", True),
             ),
             "shipping_bypasser_enabled": _crm_processing_bool(
                 options.get("shipping_bypasser_enabled"),
-                state.get("shipping_bypasser_enabled", True),
+                fallback_state.get("shipping_bypasser_enabled", False),
+            ),
+            "push_back_enabled": _crm_processing_bool(
+                options.get("push_back_enabled"),
+                fallback_state.get("push_back_enabled", False),
             ),
             "processing_filter": processing_filter,
         }
@@ -309,10 +346,15 @@ def register_work_routes(
             effective["stock_unlocker_enabled"] = False
             effective["order_goods_enabled"] = False
             effective["shipping_bypasser_enabled"] = False
+            effective["push_back_enabled"] = False
+        elif processing_filter == "813":
+            effective["stock_unlocker_enabled"] = False
+            effective["product_separator_enabled"] = False
         elif processing_filter != "rush":
             effective["stock_unlocker_enabled"] = False
             effective["order_goods_enabled"] = False
             effective["shipping_bypasser_enabled"] = False
+            effective["push_back_enabled"] = False
         return effective
 
     def _crm_processing_advanced_mode(options):
@@ -323,17 +365,23 @@ def register_work_routes(
 
     def _crm_processing_step_signature(effective):
         steps = []
+        if effective.get("mass_emailer_enabled"):
+            steps.append("mass_emailer")
         if effective.get("address_validator_enabled"):
             steps.append("validator")
-        if effective.get("product_separator_enabled"):
+        if effective.get("product_separator_enabled") and effective.get("processing_filter") != "813":
             steps.append("separator")
         if effective.get("stock_unlocker_enabled") and effective.get("processing_filter") == "rush":
             steps.append("unlocker")
         if (
-            (effective.get("order_goods_enabled") or effective.get("shipping_bypasser_enabled"))
-            and effective.get("processing_filter") == "rush"
+            effective.get("order_goods_enabled")
+            and effective.get("processing_filter") in {"rush", "813"}
         ):
             steps.append("order_goods")
+        if effective.get("shipping_bypasser_enabled") and effective.get("processing_filter") in {"rush", "813"}:
+            steps.append("shipping_bypasser")
+        if effective.get("push_back_enabled") and effective.get("processing_filter") in {"rush", "813"}:
+            steps.append("push_back")
         return steps
 
     def _crm_processing_queue_options(options):
@@ -373,22 +421,23 @@ def register_work_routes(
         effective = _crm_processing_effective_options(options)
         advanced_mode = _crm_processing_advanced_mode(options)
         steps = []
+        if effective.get("mass_emailer_enabled"):
+            steps.append("Mass Emailer")
         if effective.get("address_validator_enabled"):
             steps.append("Validator")
-        if effective.get("product_separator_enabled"):
+        if effective.get("product_separator_enabled") and effective.get("processing_filter") != "813":
             steps.append("Separator")
         if effective.get("stock_unlocker_enabled") and effective.get("processing_filter") == "rush":
             steps.append("Unlocker")
         if (
-            (effective.get("order_goods_enabled") or effective.get("shipping_bypasser_enabled"))
-            and effective.get("processing_filter") == "rush"
+            effective.get("order_goods_enabled")
+            and effective.get("processing_filter") in {"rush", "813"}
         ):
-            if effective.get("order_goods_enabled") and effective.get("shipping_bypasser_enabled"):
-                steps.append("Order Goods: Stock + Bypass")
-            elif effective.get("order_goods_enabled"):
-                steps.append("Order Goods: Stock Only")
-            else:
-                steps.append("Order Goods: Bypass Only")
+            steps.append("Order Goods")
+        if effective.get("shipping_bypasser_enabled") and effective.get("processing_filter") in {"rush", "813"}:
+            steps.append("Shipping Bypasser")
+        if effective.get("push_back_enabled") and effective.get("processing_filter") in {"rush", "813"}:
+            steps.append("Push Back")
         step_text = ", ".join(steps) if steps else "none selected"
         prefix = "Processing"
         if advanced_mode == "repeat":
@@ -413,22 +462,6 @@ def register_work_routes(
     def _crm_processing_mode_options(processing_filter):
         options = _crm_processing_request_options()
         options["processing_filter"] = processing_filter
-        if processing_filter == "rush":
-            if options.get("stock_unlocker_enabled") is None:
-                options["stock_unlocker_enabled"] = True
-            if options.get("address_validator_enabled") is None:
-                options["address_validator_enabled"] = True
-            if options.get("product_separator_enabled") is None:
-                options["product_separator_enabled"] = True
-            if options.get("order_goods_enabled") is None:
-                options["order_goods_enabled"] = True
-            if options.get("shipping_bypasser_enabled") is None:
-                options["shipping_bypasser_enabled"] = True
-        else:
-            options["stock_unlocker_enabled"] = False
-            options["address_validator_enabled"] = True
-            options["order_goods_enabled"] = False
-            options["shipping_bypasser_enabled"] = False
         return options
 
     def _start_crm_processing_mode(processing_filter):
@@ -458,6 +491,10 @@ def register_work_routes(
     def crm_process_all():
         return _start_crm_processing_mode("all")
 
+    @app.route("/crm/process/813", methods=["POST", "GET"])
+    def crm_process_813():
+        return _start_crm_processing_mode("813")
+
     @app.route("/crm/process/status", methods=["GET"])
     def crm_process_status():
         return jsonify(get_crm_processing_status_payload()), 200
@@ -472,11 +509,13 @@ def register_work_routes(
         preference_options = {
             key: options.get(key)
             for key in (
+                "mass_emailer_enabled",
                 "stock_unlocker_enabled",
                 "address_validator_enabled",
                 "product_separator_enabled",
                 "order_goods_enabled",
                 "shipping_bypasser_enabled",
+                "push_back_enabled",
                 "processing_filter",
             )
         }
@@ -587,6 +626,15 @@ def register_work_routes(
         match = re.search(r"(?:^|/order/|[?&]order_id=)(\d{5,})", text, flags=re.I) or re.search(r"\b(\d{5,})\b", text)
         return match.group(1) if match else text
 
+    def _crm_stock_order_label(order_id):
+        text = str(order_id or "").strip()
+        match = re.search(r"(?:^|/order/|[?&]order_id=)(\d{5,})", text, flags=re.I) or re.search(r"\b(\d{5,})\b", text)
+        return match.group(1) if match else ""
+
+    def _crm_stock_queue_label(base_label, options):
+        order = _crm_stock_order_label((options or {}).get("order_id"))
+        return f"{base_label} - Order {order}" if order else base_label
+
     def _crm_auto_splitter_queue_label(options, dry_run=False):
         order = _crm_auto_splitter_order_label(options.get("order_target"))
         prefix = "Auto Splitter Dry Run" if dry_run else "Auto Splitter"
@@ -604,6 +652,79 @@ def register_work_routes(
         if workers not in (None, ""):
             parts.append(f"Workers {workers}")
         return " | ".join(parts)
+
+    def _crm_mass_emailer_request_options():
+        data = request.get_json(silent=True) if request.method == "POST" else None
+        data = data if isinstance(data, dict) else {}
+        return {
+            "limit": _first_present(data.get("limit"), data.get("row_limit"), data.get("rowLimit"), request.args.get("limit"), request.args.get("row_limit"), request.args.get("rowLimit")),
+            "retry_errors": is_trueish(
+                _first_present(
+                    data.get("retry_errors"),
+                    data.get("retryErrors"),
+                    request.args.get("retry_errors"),
+                    request.args.get("retryErrors"),
+                )
+            ),
+        }
+
+    def _crm_mass_emailer_queue_details(options):
+        parts = []
+        limit = options.get("limit")
+        if limit not in (None, ""):
+            parts.append(f"Limit {limit}")
+        if options.get("retry_errors"):
+            parts.append("Retry errors")
+        return " | ".join(parts)
+
+    @app.route("/crm/mass-emailer", methods=["POST", "GET"])
+    @app.route("/crm/mass-email", methods=["POST", "GET"])
+    def crm_mass_emailer():
+        options = _crm_mass_emailer_request_options()
+        return _queue_response(
+            "Mass Emailer",
+            "Processing",
+            lambda: run_crm_mass_emailer_run_queued(action="process_queue", dry_run=False, **options),
+            get_crm_mass_emailer_status_payload,
+            queue_details=_crm_mass_emailer_queue_details(options),
+        )
+
+    @app.route("/crm/mass-emailer/dry-run", methods=["POST", "GET"])
+    @app.route("/crm/mass-email/dry-run", methods=["POST", "GET"])
+    def crm_mass_emailer_dry_run():
+        options = _crm_mass_emailer_request_options()
+        return _queue_response(
+            "Mass Emailer Dry Run",
+            "Processing",
+            lambda: run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, **options),
+            get_crm_mass_emailer_status_payload,
+            queue_details=_crm_mass_emailer_queue_details(options),
+        )
+
+    @app.route("/crm/mass-emailer/scan", methods=["POST", "GET"])
+    @app.route("/crm/mass-email/scan", methods=["POST", "GET"])
+    def crm_mass_emailer_scan():
+        options = _crm_mass_emailer_request_options()
+        return _queue_response(
+            "Mass Emailer Sheet Scan",
+            "Processing",
+            lambda: run_crm_mass_emailer_run_queued(action="scan_sheet", dry_run=True, **options),
+            get_crm_mass_emailer_status_payload,
+            queue_details=_crm_mass_emailer_queue_details(options),
+        )
+
+    @app.route("/crm/mass-emailer/status", methods=["GET"])
+    @app.route("/crm/mass-email/status", methods=["GET"])
+    def crm_mass_emailer_status():
+        return jsonify(get_crm_mass_emailer_status_payload()), 200
+
+    @app.route("/crm/mass-emailer/history/clear", methods=["POST"])
+    @app.route("/crm/mass-email/history/clear", methods=["POST"])
+    def crm_mass_emailer_history_clear():
+        ok, msg = clear_crm_mass_emailer_history()
+        payload = get_crm_mass_emailer_status_payload()
+        payload.update({"success": ok, "message": msg})
+        return jsonify(payload), 200
 
     @app.route("/crm/address-validator", methods=["POST", "GET"])
     def crm_address_validator():
@@ -665,7 +786,7 @@ def register_work_routes(
     def crm_order_goods():
         options = _crm_order_goods_request_options()
         return _queue_response(
-            "Rush Order Goods",
+            _crm_stock_queue_label("Rush Order Goods", options),
             "Processing",
             lambda: run_crm_order_goods_run_queued(dry_run=False, **options),
             get_crm_order_goods_status_payload,
@@ -675,7 +796,7 @@ def register_work_routes(
     def crm_order_goods_dry_run():
         options = _crm_order_goods_request_options()
         return _queue_response(
-            "Rush Order Goods Dry Run",
+            _crm_stock_queue_label("Rush Order Goods Dry Run", options),
             "Processing",
             lambda: run_crm_order_goods_run_queued(dry_run=True, **options),
             get_crm_order_goods_status_payload,
@@ -690,7 +811,7 @@ def register_work_routes(
     def crm_shipping_bypasser():
         options = _crm_shipping_bypasser_request_options()
         return _queue_response(
-            "Shipping Bypasser",
+            _crm_stock_queue_label("Shipping Bypasser", options),
             "Processing",
             lambda: run_crm_shipping_bypasser_run_queued(dry_run=False, **options),
             get_crm_shipping_bypasser_status_payload,
@@ -701,7 +822,7 @@ def register_work_routes(
     def crm_shipping_bypasser_dry_run():
         options = _crm_shipping_bypasser_request_options()
         return _queue_response(
-            "Shipping Bypasser Dry Run",
+            _crm_stock_queue_label("Shipping Bypasser Dry Run", options),
             "Processing",
             lambda: run_crm_shipping_bypasser_run_queued(dry_run=True, **options),
             get_crm_shipping_bypasser_status_payload,
@@ -711,6 +832,14 @@ def register_work_routes(
     @app.route("/crm/shipping-bypass/status", methods=["GET"])
     def crm_shipping_bypasser_status():
         return jsonify(get_crm_shipping_bypasser_status_payload()), 200
+
+    @app.route("/crm/shipping-bypasser/sanmar-cart/open", methods=["POST", "GET"])
+    @app.route("/crm/shipping-bypass/sanmar-cart/open", methods=["POST", "GET"])
+    def crm_shipping_bypasser_open_sanmar_cart():
+        ok, msg, details = open_sanmar_cart_browser()
+        payload = get_crm_shipping_bypasser_status_payload()
+        payload.update({"success": ok, "message": msg, "sanmar_cart": details})
+        return jsonify(payload), (200 if ok else 500)
 
     @app.route("/crm/order-goods/preferences", methods=["POST"])
     def crm_order_goods_preferences():
@@ -729,7 +858,7 @@ def register_work_routes(
     def crm_product_separator():
         options = _crm_product_separator_request_options()
         return _queue_response(
-            "Product Separator",
+            _crm_stock_queue_label("Product Separator", options),
             "Processing",
             lambda: run_crm_product_separator_run_queued(dry_run=False, **options),
             get_crm_product_separator_status_payload,
@@ -742,7 +871,7 @@ def register_work_routes(
     def crm_product_separator_dry_run():
         options = _crm_product_separator_request_options()
         return _queue_response(
-            "Product Separator Dry Run",
+            _crm_stock_queue_label("Product Separator Dry Run", options),
             "Processing",
             lambda: run_crm_product_separator_run_queued(dry_run=True, **options),
             get_crm_product_separator_status_payload,

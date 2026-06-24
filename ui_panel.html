@@ -17,6 +17,24 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .field label{font-weight:600;font-size:13px;display:block;margin-bottom:4px}
 .field input[type=text],.field input[type=number],.field input[type=time],.field textarea,.field select,select.select{width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;background:#fff}
 .field textarea{min-height:70px}
+.crm-link-panel{border-top:1px solid #eef2f7;padding-top:8px;margin-top:8px}
+.crm-link-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
+.crm-link-btn{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:42px;background:#fff;color:#0f172a;border-color:#cbd5e1;text-align:left}
+.crm-link-btn:hover{border-color:#2563eb;background:#eff6ff}
+.crm-link-btn.configured{border-color:#93c5fd}
+.crm-link-btn .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
+.crm-link-btn .state{flex:0 0 auto;font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase}
+.crm-link-btn.configured .state{color:#166534}
+.modal-backdrop{position:fixed;inset:0;z-index:40;display:none;align-items:center;justify-content:center;background:rgba(15,23,42,.48);padding:18px}
+.modal-backdrop.active{display:flex}
+.modal{width:min(720px,100%);background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 24px 70px rgba(15,23,42,.32);padding:14px}
+.modal-title-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.modal-title-row h2{margin:0;font-size:18px}
+.modal-close-btn{width:32px;height:32px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+.modal textarea{width:100%;min-height:150px;resize:vertical;padding:9px;border:1px solid #cbd5e1;border-radius:6px;font:13px/1.4 Consolas,'Courier New',monospace}
+.modal-actions{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px}
+.modal-actions .row{margin-bottom:0}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 button{border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:6px;padding:7px 10px;cursor:pointer}
 button.secondary{background:#fff;color:#2563eb}
 button.warn{border-color:#b45309;background:#b45309}
@@ -26,6 +44,11 @@ button.toggle-btn{min-width:108px;font-weight:600}
 button.toggle-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 button.processing-primary-btn{padding:10px 18px;font-size:15px;font-weight:800;letter-spacing:.08em;min-width:170px}
 button.toggle-btn.processing-filter-btn{min-width:84px}
+select.processing-mode-select{width:auto;min-width:132px;padding:9px 10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+select.history-filter-select{width:auto;min-width:170px;padding:7px 8px}
+.history-pager{display:flex;gap:6px;align-items:center;margin-bottom:0}
+.history-page-text{min-width:78px;text-align:center}
+button.secondary:disabled{border-color:#cbd5e1;color:#94a3b8;cursor:not-allowed}
 button.toggle-btn.processing-disabled{background:#f8fafc;border-color:#cbd5e1;color:#94a3b8}
 button.icon-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:#fff;color:#0f172a;border-color:#cbd5e1;padding:8px 10px}
 button.icon-btn svg{width:18px;height:18px}
@@ -53,6 +76,8 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .crm-address-failure-message{color:#b91c1c}
 .section-title{margin:12px 0 6px;font-size:14px;font-weight:700}
 .subgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.slack-day-message-panel{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.worker-ram-note{grid-column:1 / -1;color:#64748b;font-size:12px}
 .checklist{display:grid;grid-template-columns:repeat(2,minmax(180px,1fr));gap:6px 12px;margin:8px 0}
 .check{display:flex;align-items:center;gap:6px;font-size:13px}
 .suite-output{white-space:pre-wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px;font-size:12px}
@@ -122,13 +147,14 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .queue-runs table{width:100%;border-collapse:collapse}
 .queue-runs td,.queue-runs th{padding:4px 6px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}
 .queue-empty{color:#64748b;font-size:13px;padding:10px}
+.history-latest-when{font-weight:700}
 .desktop-metrics-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:8px;margin:10px 0}
 .desktop-metric-value{font-size:20px;font-weight:700}
 .metrics-title-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
 .temp-unit-group{display:flex;align-items:center;gap:6px}
 .temp-btn.active{background:#2563eb;color:#fff;border-color:#2563eb}
 .metrics-path{margin:0 0 10px;word-break:break-all}
-@media (max-width:980px){.grid,.subgrid{grid-template-columns:1fr}}
+@media (max-width:980px){.grid,.subgrid,.slack-day-message-panel{grid-template-columns:1fr}}
 @media (max-width:760px){.metrics,.desktop-metrics-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}}
 </style>
 </head>
@@ -255,20 +281,29 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       <details class='section-note'>
         <summary>Read More</summary>
         <div class='section-note-body'>
-          <p>The Rush/Free/All toggle here only affects Automate Processing. Rush mode defaults to Validator, Separator, Unlocker, and Order Goods. The Order Goods button cycles Stock/Bypass, Order Only, Bypass Only, and Disabled. Free Ship and All run Validator and Separator.</p>
-          <p>Home Assistant / Alexa endpoints: /crm/process/rush, /crm/process/free-ship, and /crm/process/all. The original /crm/process endpoint still runs whatever is currently selected above.</p>
+          <p>The mode dropdown here only affects the mode-specific Automate Processing steps. Mass Emailer is an independent toggle that can run alongside the selected mode. Rush mode can run Validator, Separator, Unlocker, Order Goods, and Bypasser. 813 mode uses its own CRM list and can run Validator, Order Goods, and Bypasser without Unlocker or Separator. Free Ship and All run Validator and Separator.</p>
+          <p>Home Assistant / Alexa endpoints: /crm/process/rush, /crm/process/free-ship, /crm/process/all, and /crm/process/813. The original /crm/process endpoint still runs whatever is currently selected above.</p>
         </div>
       </details>
     </div>
     <div class='row' style='align-items:center;margin-bottom:6px'>
       <button class='processing-primary-btn' id='crmProcessingRunBtn' onclick='startCrmProcessingRun(this)'>AUTOMATE</button>
-      <button class='secondary tiny filter-toggle rush toggle-btn processing-filter-btn' id='crmProcessingFilterToggleBtn' onclick='toggleCrmProcessingFilter()'>RUSH</button>
+      <select class='select processing-mode-select' id='crmProcessingFilterSelect' onchange='setCrmProcessingFilter(this.value)' title='Automate Processing mode'>
+        <option value='rush'>RUSH</option>
+        <option value='free'>FREE</option>
+        <option value='all'>ALL</option>
+        <option value='813'>813</option>
+      </select>
+      <button class='secondary tiny' id='crmProcessingBulkToggleBtn' onclick='toggleCrmProcessingBulkSelection()'>Clear All</button>
+      <button class='secondary toggle-btn active' id='crmProcessingMassEmailerToggleBtn' onclick='toggleCrmProcessingSelection("mass_emailer")'>Mass Emailer</button>
     </div>
     <div class='row' style='align-items:center'>
       <button class='secondary toggle-btn active' id='crmProcessingAddressToggleBtn' onclick='toggleCrmProcessingSelection("address_validator_batch")'>Validator</button>
       <button class='secondary toggle-btn active' id='crmProcessingSeparatorToggleBtn' onclick='toggleCrmProcessingSelection("product_separator")'>Separator</button>
       <button class='secondary toggle-btn active' id='crmProcessingUnlockToggleBtn' onclick='toggleCrmProcessingSelection("stock_unlocker")'>Unlocker</button>
       <button class='secondary toggle-btn active' id='crmProcessingOrderGoodsToggleBtn' onclick='toggleCrmProcessingSelection("order_goods")'>Order Goods</button>
+      <button class='secondary toggle-btn' id='crmProcessingShippingBypasserToggleBtn' onclick='toggleCrmProcessingSelection("shipping_bypasser")'>Bypasser</button>
+      <button class='secondary toggle-btn' id='crmProcessingPushBackToggleBtn' onclick='toggleCrmProcessingSelection("push_back")'>Push Back</button>
     </div>
     <details class='section-note' style='margin-top:8px'>
       <summary>Advanced Controls</summary>
@@ -292,36 +327,27 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 
   <div class='card' style='margin-top:14px'>
     <h2>Stock Automation</h2>
-    <h3 style='margin:0 0 6px'>Product Separator</h3>
+    <h3 style='margin:0 0 6px'>Single Order Test</h3>
     <div class='row' style='margin-top:8px;align-items:end;flex-wrap:wrap'>
       <div class='field' style='min-width:320px;flex:1 1 360px'>
-        <label for='crmProductSeparatorOrderInput'>Single Order ID Or URL</label>
-        <input id='crmProductSeparatorOrderInput' placeholder='1234567 or https://crm2.legacy.printfly.com/order/1234567'>
+        <label for='crmStockAutomationOrderInput'>Order ID Or URL</label>
+        <input id='crmStockAutomationOrderInput' placeholder='1234567 or https://crm2.legacy.printfly.com/order/1234567'>
       </div>
-      <button class='secondary' id='crmProductSeparatorSingleDryRunBtn' onclick="startCrmProductSeparatorRun(true, this, true)">Single Separator Dry Run</button>
-      <button class='secondary' id='crmProductSeparatorSingleRunBtn' onclick="startCrmProductSeparatorRun(false, this, true)">Single Separator Run</button>
-    </div>
-    <div class='notice' id='crmProductSeparatorStatusText'>Product Separator status loading...</div>
-    <div class='muted' id='crmProductSeparatorRuntimeText'>No Product Separator runs yet.</div>
-    <h3 style='margin:14px 0 6px'>Stock Unlocker</h3>
-    <div class='row'>
-      <button class='secondary' id='crmDryRunBtn' onclick="startCrmRun(true, this)">Stock Unlocker Dry Run</button>
-    </div>
-    <div class='notice' id='crmStatusText'>Stock Unlocker status loading...</div>
-    <div class='muted' id='crmRuntimeText'>No Stock Unlocker runs yet.</div>
-    <h3 style='margin:14px 0 6px'>Rush Order Goods</h3>
-    <div class='row' style='margin-top:8px;align-items:end;flex-wrap:wrap'>
-      <div class='field' style='min-width:320px;flex:1 1 360px'>
-        <label for='crmOrderGoodsOrderInput'>Optional Single Order ID Or URL</label>
-        <input id='crmOrderGoodsOrderInput' placeholder='1234567 or https://crm2.legacy.printfly.com/order/1234567'>
+      <div class='field' style='min-width:220px;flex:0 1 260px'>
+        <label for='crmStockAutomationTestSelect'>Test</label>
+        <select id='crmStockAutomationTestSelect' onchange='renderCrmStockAutomationSelectedStatus()'>
+          <option value='product_separator_dry_run'>Product Separator Dry Run</option>
+          <option value='product_separator_run'>Product Separator Run</option>
+          <option value='order_goods_single_run'>Order Goods Single Run</option>
+          <option value='shipping_bypasser_dry_run'>Shipping Bypasser Dry Run</option>
+          <option value='shipping_bypasser_run'>Shipping Bypasser Run</option>
+        </select>
       </div>
-      <button class='secondary' id='crmOrderGoodsSingleRunBtn' onclick="startCrmOrderGoodsRun(false, this, true)">Single Stock Run</button>
-      <button class='secondary' id='crmShippingBypasserSingleDryRunBtn' onclick="startCrmShippingBypasserRun(true, this, true)">Single Bypasser Dry Run</button>
+      <button class='secondary' id='crmStockAutomationTestRunBtn' onclick="startCrmStockAutomationSelectedTest(this)">Run Selected Test</button>
+      <button class='secondary' id='crmShippingBypasserOpenCartBtn' onclick="openCrmShippingBypasserSanmarCart(this)">Open SanMar Cart</button>
     </div>
-    <div class='notice' id='crmOrderGoodsStatusText'>Order Goods status loading...</div>
-    <div class='muted' id='crmOrderGoodsRuntimeText'>No Order Goods runs yet.</div>
-    <div class='notice' id='crmShippingBypasserStatusText'>Shipping Bypasser status loading...</div>
-    <div class='muted' id='crmShippingBypasserRuntimeText'>No Shipping Bypasser runs yet.</div>
+    <div class='notice' id='crmStockAutomationTestStatusText'>No single-order test running.</div>
+    <div class='muted' id='crmStockAutomationTestRuntimeText'>Enter an order ID or URL, choose a test, then run it.</div>
     <div class='metrics' style='margin-top:10px'>
       <div class='metric'>
         <div class='k'>Last Stock Tool Run</div>
@@ -343,7 +369,26 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
     <div class='row' style='justify-content:space-between;align-items:center;margin-top:12px'>
       <h3 style='margin:0'>Stock Tools History</h3>
       <div class='row'>
-        <button class='secondary' id='crmHistoryMoreBtn' onclick='toggleCrmHistory()' style='display:none'>View More</button>
+        <label class='muted' for='crmHistoryFilterSelect'>Tool</label>
+        <select class='select history-filter-select' id='crmHistoryFilterSelect' onchange='setCrmHistoryFilter(this.value)' title='Filter Stock Tools history'>
+          <option value='all'>All Stock Tools</option>
+          <option value='product_separator'>Product Separator</option>
+          <option value='order_goods'>Rush Order Goods</option>
+          <option value='shipping_bypasser'>Shipping Bypasser</option>
+          <option value='stock_unlocker'>Stock Unlocker</option>
+          <option value='push_back'>Push Back</option>
+        </select>
+        <label class='muted' for='crmHistoryStatusFilterSelect'>Status</label>
+        <select class='select history-filter-select' id='crmHistoryStatusFilterSelect' onchange='setCrmHistoryStatusFilter(this.value)' title='Filter Stock Tools history by status'>
+          <option value='both'>Both</option>
+          <option value='successful'>Successful</option>
+          <option value='failed'>Failed</option>
+        </select>
+        <div class='history-pager' id='crmHistoryPager' style='display:none'>
+          <button class='secondary tiny' id='crmHistoryPrevPageBtn' onclick='changeCrmHistoryPage(-1)'>Previous</button>
+          <span class='muted history-page-text' id='crmHistoryPageText'>Page 1 of 1</span>
+          <button class='secondary tiny' id='crmHistoryNextPageBtn' onclick='changeCrmHistoryPage(1)'>Next</button>
+        </div>
         <button class='secondary' id='crmClearHistoryBtn' onclick='clearCrmHistory()'>Clear History</button>
       </div>
     </div>
@@ -412,7 +457,11 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
     <div class='row' style='justify-content:space-between;align-items:center;margin-top:12px'>
       <h3 style='margin:0'>Address Validator History</h3>
       <div class='row'>
-        <button class='secondary' id='crmAddressHistoryMoreBtn' onclick='toggleCrmAddressHistory()' style='display:none'>View More</button>
+        <div class='history-pager' id='crmAddressHistoryPager' style='display:none'>
+          <button class='secondary tiny' id='crmAddressHistoryPrevPageBtn' onclick='changeCrmAddressHistoryPage(-1)'>Previous</button>
+          <span class='muted history-page-text' id='crmAddressHistoryPageText'>Page 1 of 1</span>
+          <button class='secondary tiny' id='crmAddressHistoryNextPageBtn' onclick='changeCrmAddressHistoryPage(1)'>Next</button>
+        </div>
         <button class='secondary' id='crmAddressHistoryValueToggleBtn' onclick='toggleCrmAddressHistoryValueMode()'>Show Address Difference</button>
         <button class='secondary' id='crmAddressClearHistoryBtn' onclick='clearCrmAddressHistory()'>Clear History</button>
       </div>
@@ -422,6 +471,62 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       <table class='tbl'>
         <thead><tr><th>When</th><th>Order ID</th><th>Duration</th><th>Details</th><th>Mode</th><th>Filter</th><th>Status</th><th>Resolution</th><th id='crmAddressHistoryValueHeader'>Message</th></tr></thead>
         <tbody id='crmAddressHistoryRows'><tr><td colspan='9' class='muted'>No Address Validator runs yet.</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class='card' style='margin-top:14px'>
+    <div class='card-title-row'>
+      <h2>Mass Emailer</h2>
+      <details class='section-note'>
+        <summary>Read More</summary>
+        <div class='section-note-body'>
+          <p>Mass Emailer reads the Google Sheet queue for Copyright - Cancel rows, prepares the Salesforce email, then cancels and refunds the CRM order during live runs. Scan and dry run modes do not send, cancel, refund, or delete sheet rows.</p>
+        </div>
+      </details>
+    </div>
+    <div class='row' style='margin-top:10px;align-items:end;flex-wrap:wrap'>
+      <div class='field' style='width:150px'>
+        <label for='crmMassEmailerLimitInput'>Row Limit</label>
+        <input id='crmMassEmailerLimitInput' type='number' min='0' step='1' placeholder='All'>
+      </div>
+      <label class='check' style='align-self:center;margin-top:20px'><input type='checkbox' id='crmMassEmailerRetryErrorsInput'> Retry Error Rows</label>
+      <button class='secondary' id='crmMassEmailerScanBtn' onclick="startCrmMassEmailerRun('scan', this)">Scan Sheet</button>
+      <button class='secondary' id='crmMassEmailerDryRunBtn' onclick="startCrmMassEmailerRun('dry-run', this)">Dry Run</button>
+      <button class='secondary' id='crmMassEmailerRunBtn' onclick="startCrmMassEmailerRun('live', this)">Add to Queue</button>
+    </div>
+    <div class='notice' id='crmMassEmailerStatusText'>Mass Emailer status loading...</div>
+    <div class='muted' id='crmMassEmailerRuntimeText'>No Mass Emailer runs yet.</div>
+    <div class='metrics' style='margin-top:10px'>
+      <div class='metric'>
+        <div class='k'>Last Mass Emailer Run</div>
+        <div class='v' id='crmMassEmailerLastRunText'>-</div>
+      </div>
+      <div class='metric'>
+        <div class='k'>Last Orders</div>
+        <div class='v' id='crmMassEmailerLastOrderCountText'>0</div>
+      </div>
+      <div class='metric'>
+        <div class='k'>Last Failures</div>
+        <div class='v' id='crmMassEmailerLastFailureCountText'>0</div>
+      </div>
+      <div class='metric'>
+        <div class='k'>Total Live Processed</div>
+        <div class='v' id='crmMassEmailerTotalOrdersText'>0</div>
+      </div>
+    </div>
+    <div class='row' style='justify-content:space-between;align-items:center;margin-top:12px'>
+      <h3 style='margin:0'>Mass Emailer History</h3>
+      <div class='row'>
+        <button class='secondary' id='crmMassEmailerHistoryMoreBtn' onclick='toggleCrmMassEmailerHistory()' style='display:none'>View More</button>
+        <button class='secondary' id='crmMassEmailerClearHistoryBtn' onclick='clearCrmMassEmailerHistory()'>Clear History</button>
+      </div>
+    </div>
+    <div class='muted' id='crmMassEmailerHistoryMetaText'>Showing recent Mass Emailer runs.</div>
+    <div class='tbl-wrap'>
+      <table class='tbl'>
+        <thead><tr><th>When</th><th>Action</th><th>Orders</th><th>Failures</th><th>Skipped</th><th>Duration</th><th>Mode</th><th>Status</th><th>Message</th></tr></thead>
+        <tbody id='crmMassEmailerHistoryRows'><tr><td colspan='9' class='muted'>No Mass Emailer runs yet.</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -449,10 +554,6 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       <div class='field' style='width:150px'>
         <label for='crmAutoSplitterDivisionsInput'>Divisions</label>
         <input id='crmAutoSplitterDivisionsInput' type='number' min='2' step='1' placeholder='2'>
-      </div>
-      <div class='field' style='width:150px'>
-        <label for='crmAutoSplitterParallelWorkersInput'>Workers</label>
-        <input id='crmAutoSplitterParallelWorkersInput' type='number' min='1' max='4' step='1' value='1' placeholder='1-4'>
       </div>
       <button class='secondary' id='crmAutoSplitterRunBtn' onclick='startCrmAutoSplitterRun(this)'>Add to Queue</button>
     </div>
@@ -779,7 +880,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       <details class='section-note'>
         <summary>Read More</summary>
         <div class='section-note-body'>
-          <p>Stock Unlocker settings plus Address Validator and Rush Order Goods batch preferences.</p>
+          <p>CRM LINKS keeps the CRM report URLs together. Automate 813 uses separate links for Validator, Order Goods, and Bypasser; Separator and Unlocker stay disabled for 813.</p>
         </div>
       </details>
     </div>
@@ -812,7 +913,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       <details class='section-note'>
         <summary>Read More</summary>
         <div class='section-note-body'>
-          <p>Day messages are consolidated into one table.</p>
+          <p>Pick a day to edit the Slack clock-in and clock-out messages.</p>
         </div>
       </details>
     </div>
@@ -874,7 +975,10 @@ let crmProcessingPollTimer = null;
 let crmProcessingPollIntervalMs = 0;
 let crmStatusPayload = null;
 let crmPollTimer = null;
-let crmHistoryExpanded = false;
+const CRM_HISTORY_PAGE_SIZE = 6;
+let crmHistoryPage = 1;
+let crmHistoryFilter = 'all';
+let crmHistoryStatusFilter = 'both';
 let crmProductSeparatorStatusPayload = null;
 let crmProductSeparatorPollTimer = null;
 let crmOrderGoodsStatusPayload = null;
@@ -884,20 +988,86 @@ let crmShippingBypasserPollTimer = null;
 let crmAutoSplitterStatusPayload = null;
 let crmAutoSplitterPollTimer = null;
 let crmAutoSplitterHistoryExpanded = false;
+let crmMassEmailerStatusPayload = null;
+let crmMassEmailerPollTimer = null;
+let crmMassEmailerHistoryExpanded = false;
 let crmAddressStatusPayload = null;
 let crmAddressPollTimer = null;
-let crmAddressHistoryExpanded = false;
+let crmAddressHistoryPage = 1;
 let crmAddressHistoryShowDiff = false;
 let crmAddressMode = 'single';
 let crmAddressModeDirty = false;
 const CRM_PROCESSING_STEP_LABELS = {
+  mass_emailer: 'Mass Emailer',
   address_validator_batch: 'Address Validator (Batch)',
   product_separator: 'Product Separator',
   stock_unlocker: 'Stock Unlocker',
-  order_goods: 'Rush Order Goods',
+  order_goods: 'Order Goods',
+  shipping_bypasser: 'Shipping Bypasser',
+  push_back: 'Push Back',
 };
-const CRM_PROCESSING_FILTER_SEQUENCE = ['rush', 'free', 'all'];
-const CRM_PROCESSING_ORDER_GOODS_MODE_SEQUENCE = ['stock_bypass', 'stock_only', 'bypass_only', 'disabled'];
+const CRM_HISTORY_FILTER_LABELS = {
+  all: 'All Stock Tools',
+  product_separator: 'Product Separator',
+  order_goods: 'Rush Order Goods',
+  shipping_bypasser: 'Shipping Bypasser',
+  stock_unlocker: 'Stock Unlocker',
+  push_back: 'Push Back',
+};
+const CRM_HISTORY_STATUS_FILTER_LABELS = {
+  both: 'Both',
+  successful: 'Successful',
+  failed: 'Failed',
+};
+const CRM_PROCESSING_FILTER_SEQUENCE = ['rush', 'free', 'all', '813'];
+const HIDDEN_CONFIG_KEYS = new Set([
+  'CRM_SHIPPING_813_URL',
+  'PRODUCT_SEPARATOR_LIST_URL_813',
+]);
+const CRM_LINK_SETTING_KEYS = [
+  'CRM_LOGIN_URL',
+  'CRM_LOCKED_URL',
+  'CRM_SHIPPING_FREE_URL',
+  'CRM_SHIPPING_RUSH_URL',
+  'CRM_SHIPPING_ALL_URL',
+  'CRM_813_VALIDATOR_URL',
+  'CRM_813_ORDER_GOODS_URL',
+  'CRM_813_BYPASS_URL',
+  'CRM_ORDER_GOODS_RUSH_URL',
+  'CRM_SHIPPING_BYPASS_URL',
+  'CRM_PUSH_BACK_RUSH_URL',
+  'CRM_PUSH_BACK_813_URL',
+  'CRM_SHIPPING_URL',
+  'PROCESSOR_LOGIN_URL',
+  'PROCESSOR_LIST_URL',
+  'PROCESSOR_ORDER_URL_TEMPLATE',
+  'PRODUCT_SEPARATOR_LIST_URL_FREE',
+  'PRODUCT_SEPARATOR_LIST_URL_RUSH',
+  'PRODUCT_SEPARATOR_LIST_URL_ALL',
+  'PRODUCT_SEPARATOR_LIST_URL',
+];
+const CRM_LINK_LABEL_OVERRIDES = {
+  CRM_LOGIN_URL: 'CRM Login',
+  CRM_LOCKED_URL: 'Unlocker List',
+  CRM_SHIPPING_FREE_URL: 'Validator Free List',
+  CRM_SHIPPING_RUSH_URL: 'Validator Rush List',
+  CRM_SHIPPING_ALL_URL: 'Validator All List',
+  CRM_813_VALIDATOR_URL: '813 Validator List',
+  CRM_813_ORDER_GOODS_URL: '813 Order Goods List',
+  CRM_813_BYPASS_URL: '813 Bypasser List',
+  CRM_ORDER_GOODS_RUSH_URL: 'Order Goods Rush List',
+  CRM_SHIPPING_BYPASS_URL: 'Bypasser Rush List',
+  CRM_PUSH_BACK_RUSH_URL: 'Push Back Rush List',
+  CRM_PUSH_BACK_813_URL: 'Push Back 813 List',
+  CRM_SHIPPING_URL: 'Legacy Default Shipping List',
+  PROCESSOR_LOGIN_URL: 'Processor Login',
+  PROCESSOR_LIST_URL: 'Processor List',
+  PROCESSOR_ORDER_URL_TEMPLATE: 'CRM Order URL Template',
+  PRODUCT_SEPARATOR_LIST_URL_FREE: 'Separator Free List',
+  PRODUCT_SEPARATOR_LIST_URL_RUSH: 'Separator Rush List',
+  PRODUCT_SEPARATOR_LIST_URL_ALL: 'Separator All List',
+  PRODUCT_SEPARATOR_LIST_URL: 'Separator Default List',
+};
 
 function normalizeCrmProcessingFilter(value) {
   const key = String(value || '').trim().toLowerCase();
@@ -908,53 +1078,101 @@ function formatCrmProcessingStepLabel(stepKey) {
   return CRM_PROCESSING_STEP_LABELS[stepKey] || 'Unknown';
 }
 
-function normalizeCrmProcessingOrderGoodsMode(state = {}) {
-  const stock = Boolean(state && state.order_goods_enabled);
-  const bypass = Boolean(state && state.shipping_bypasser_enabled);
-  if (stock && bypass) return 'stock_bypass';
-  if (stock) return 'stock_only';
-  if (bypass) return 'bypass_only';
-  return 'disabled';
-}
-
-function crmProcessingOrderGoodsModeFlags(mode) {
-  const key = CRM_PROCESSING_ORDER_GOODS_MODE_SEQUENCE.includes(mode) ? mode : 'stock_bypass';
-  return {
-    order_goods_enabled: key === 'stock_bypass' || key === 'stock_only',
-    shipping_bypasser_enabled: key === 'stock_bypass' || key === 'bypass_only',
-  };
-}
-
-function formatCrmProcessingOrderGoodsMode(mode) {
-  const key = CRM_PROCESSING_ORDER_GOODS_MODE_SEQUENCE.includes(mode) ? mode : 'stock_bypass';
-  if (key === 'stock_only') return 'Order Only';
-  if (key === 'bypass_only') return 'Bypass Only';
-  if (key === 'disabled') return 'Disabled';
-  return 'Stock/Bypass';
+function formatCrmProcessingStepShortLabel(stepKey) {
+  const key = String(stepKey || '').trim();
+  if (key === 'mass_emailer') return 'Mass Emailer';
+  if (key === 'address_validator_batch') return 'Validator';
+  if (key === 'product_separator') return 'Separator';
+  if (key === 'stock_unlocker') return 'Unlocker';
+  if (key === 'shipping_bypasser') return 'Bypasser';
+  if (key === 'push_back') return 'Push Back';
+  return formatCrmProcessingStepLabel(key);
 }
 
 function formatCrmProcessingStepLabelForState(stepKey, state = {}) {
-  if (stepKey === 'order_goods') return `Order Goods: ${formatCrmProcessingOrderGoodsMode(normalizeCrmProcessingOrderGoodsMode(state))}`;
   return formatCrmProcessingStepLabel(stepKey);
 }
 
 function normalizeCrmProcessingStepList(stepList, state = {}) {
   const steps = [];
   const processingFilter = normalizeCrmProcessingFilter(state && state.processing_filter);
-  const orderGoodsEnabled = state && processingFilter === 'rush' && (state.order_goods_enabled || state.shipping_bypasser_enabled);
+  const canRunRushGoods = processingFilter === 'rush' || processingFilter === '813';
+  const massEmailerEnabled = state && state.mass_emailer_enabled !== false;
+  const orderGoodsEnabled = state && canRunRushGoods && state.order_goods_enabled;
+  const shippingBypasserEnabled = state && canRunRushGoods && state.shipping_bypasser_enabled;
+  const pushBackEnabled = state && canRunRushGoods && state.push_back_enabled;
   const source = Array.isArray(stepList) && stepList.length > 0
     ? stepList
     : [
+      massEmailerEnabled ? 'mass_emailer' : '',
       processingFilter === 'all' || (state && state.address_validator_enabled) ? 'address_validator_batch' : '',
-      state && state.product_separator_enabled !== false ? 'product_separator' : '',
+      state && processingFilter !== '813' && state.product_separator_enabled !== false ? 'product_separator' : '',
       state && state.stock_unlocker_enabled && processingFilter === 'rush' ? 'stock_unlocker' : '',
       orderGoodsEnabled ? 'order_goods' : '',
+      shippingBypasserEnabled ? 'shipping_bypasser' : '',
+      pushBackEnabled ? 'push_back' : '',
     ];
   for (const raw of source) {
     const key = String(raw || '').trim();
-    if ((key === 'address_validator_batch' || key === 'product_separator' || key === 'stock_unlocker' || key === 'order_goods') && !steps.includes(key)) steps.push(key);
+    if ((key === 'mass_emailer' || key === 'address_validator_batch' || key === 'product_separator' || key === 'stock_unlocker' || key === 'order_goods' || key === 'shipping_bypasser' || key === 'push_back') && !steps.includes(key)) steps.push(key);
   }
   return steps;
+}
+
+function crmProcessingAvailableStepsForFilter(processingFilter) {
+  const filter = normalizeCrmProcessingFilter(processingFilter);
+  const steps = ['address_validator_batch'];
+  if (filter !== '813') steps.push('product_separator');
+  if (filter === 'rush') steps.push('stock_unlocker');
+  if (filter === 'rush' || filter === '813') {
+    steps.push('order_goods');
+    steps.push('shipping_bypasser');
+    steps.push('push_back');
+  }
+  return steps;
+}
+
+function crmProcessingBulkPayload(processingFilter, enabled) {
+  const filter = normalizeCrmProcessingFilter(processingFilter);
+  const canRunOrderSupport = filter === 'rush' || filter === '813';
+  return {
+    stock_unlocker_enabled: enabled && filter === 'rush',
+    address_validator_enabled: enabled || filter === 'all',
+    product_separator_enabled: enabled && filter !== '813',
+    order_goods_enabled: enabled && canRunOrderSupport,
+    shipping_bypasser_enabled: enabled && canRunOrderSupport,
+    push_back_enabled: enabled && canRunOrderSupport,
+    processing_filter: filter,
+  };
+}
+
+function currentCrmProcessingTaskLabel() {
+  const runtime = crmProcessingStatusPayload && crmProcessingStatusPayload.runtime ? crmProcessingStatusPayload.runtime : {};
+  return runtime.currentStep ? formatCrmProcessingStepShortLabel(runtime.currentStep) : '';
+}
+
+function currentCrmProcessingOrderProgressLabel() {
+  const runtime = crmProcessingStatusPayload && crmProcessingStatusPayload.runtime ? crmProcessingStatusPayload.runtime : {};
+  const progress = runtime.currentOrderProgress;
+  if (!progress || typeof progress !== 'object') return '';
+  const current = Number(progress.current);
+  const total = Number(progress.total);
+  if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
+    const normalizedTotal = Math.trunc(total);
+    const normalizedCurrent = Math.max(0, Math.min(Math.trunc(current), normalizedTotal));
+    return `${normalizedCurrent}/${normalizedTotal}`;
+  }
+  const label = String(progress.label || '').trim();
+  return /^\d+\s*\/\s*\d+$/.test(label) ? label.replace(/\s+/g, '') : '';
+}
+
+function stripDuplicateCrmProcessingProgress(message, progressLabel) {
+  const text = String(message || '');
+  const label = String(progressLabel || '').replace(/\s+/g, '');
+  const parts = label.split('/');
+  if (parts.length !== 2 || !/^\d+$/.test(parts[0]) || !/^\d+$/.test(parts[1])) return text;
+  const donePattern = new RegExp(`\\s*\\(${parts[0]}\\s*\\/\\s*${parts[1]}\\s+done\\)`, 'gi');
+  return text.replace(donePattern, '').replace(/\s+\./g, '.').trim();
 }
 
 function normalizeCrmAddressFilter(value) {
@@ -964,6 +1182,7 @@ function normalizeCrmAddressFilter(value) {
 
 function formatCrmAddressFilterLabel(value) {
   const key = String(value || '').trim().toLowerCase();
+  if (key === '813') return '813 Orders';
   if (key === 'all') return 'All Invalid-Address Orders';
   return normalizeCrmAddressFilter(value) === 'rush' ? 'Rush Orders' : 'Free Ship Orders';
 }
@@ -1008,12 +1227,16 @@ function normalizeCrmParallelWorkers(value) {
   if (!Number.isFinite(number) || number <= 0) return 1;
   return Math.max(1, Math.min(Math.trunc(number), 8));
 }
-function normalizeCrmOrderGoodsParallelWorkers(value) {
-  const text = String(value ?? '').trim();
-  if (!text) return 1;
-  const number = Number(text);
-  if (!Number.isFinite(number) || number <= 0) return 1;
-  return Math.max(1, Math.min(Math.trunc(number), 4));
+function getSavedCrmWorkerPreference() {
+  const addressState = crmAddressStatusPayload && crmAddressStatusPayload.state ? crmAddressStatusPayload.state : {};
+  const stockState = crmOrderGoodsStatusPayload && crmOrderGoodsStatusPayload.state ? crmOrderGoodsStatusPayload.state : {};
+  return normalizeCrmParallelWorkers(
+    addressState.saved_parallel_workers
+    || stockState.saved_order_goods_parallel_workers
+    || stockState.saved_product_separator_parallel_workers
+    || stockState.saved_auto_splitter_parallel_workers
+    || 1
+  );
 }
 let crmAddressActiveFilter = 'free';
 let crmAddressReportCache = Object.create(null);
@@ -1049,6 +1272,8 @@ const CRM_ADDRESS_RULES = [
   { issue: 'Shipping form already shows Address is valid', actions: { validated: true }, notes: 'No extra selection is needed; the validator can save from that ready state.' },
 ];
 const WEEK_DAYS = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+const CRM_WORKER_RAM_GB = 1.25;
+let slackSettingsSelectedDay = WEEK_DAYS[new Date().getDay()] || 'SUNDAY';
 const SLACK_DAY_KEYS = new Set();
 for (const day of WEEK_DAYS) {
   SLACK_DAY_KEYS.add('SLACK_MESSAGE_IN_' + day);
@@ -1059,6 +1284,25 @@ for (const day of WEEK_DAYS) {
   SLACK_DAY_KEYS.add('SLACK_MESSAGE_OUT_' + day + '_ALTERNATE_ENABLED');
   SLACK_DAY_KEYS.add('SLACK_MESSAGE_LUNCH_' + day);
   SLACK_DAY_KEYS.add('SLACK_MESSAGE_BACK_' + day);
+}
+
+function formatSlackDayLabel(day) {
+  const text = String(day || '').trim().toLowerCase();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+}
+
+function normalizeSlackSettingsDay(day) {
+  const key = String(day || '').trim().toUpperCase();
+  return WEEK_DAYS.includes(key) ? key : (WEEK_DAYS[new Date().getDay()] || 'SUNDAY');
+}
+
+function syncSlackDayMessagePanels(day) {
+  slackSettingsSelectedDay = normalizeSlackSettingsDay(day);
+  const select = document.getElementById('slackMessageDaySelect');
+  if (select && select.value !== slackSettingsSelectedDay) select.value = slackSettingsSelectedDay;
+  document.querySelectorAll('[data-slack-day-panel]').forEach((panel) => {
+    panel.style.display = panel.dataset.slackDayPanel === slackSettingsSelectedDay ? 'grid' : 'none';
+  });
 }
 
 async function api(path, opts = {}) {
@@ -1115,7 +1359,13 @@ function queueNextRunSeconds(task) {
 
 function queueTimeText(task) {
   if (!task) return '';
-  if (task.status === 'running' && task.started_at) return `Started ${fmtTime(task.started_at)}`;
+  if (task.status === 'running' && task.started_at) {
+    const taskLabel = String(task.label || '').toLowerCase();
+    const liveTask = taskLabel.includes('processing') ? currentCrmProcessingTaskLabel() : '';
+    const progressLabel = liveTask ? currentCrmProcessingOrderProgressLabel() : '';
+    const progressText = progressLabel ? ` | ${progressLabel}` : '';
+    return liveTask ? `Started ${fmtTime(task.started_at)} | Current Task: ${liveTask}${progressText}` : `Started ${fmtTime(task.started_at)}`;
+  }
   if (task.status === 'queued' && task.activated_at) return `Queued ${fmtTime(task.activated_at)}`;
   if (task.status === 'idle') {
     const seconds = queueNextRunSeconds(task);
@@ -1138,12 +1388,13 @@ function queueTimeText(task) {
 function queueRunHistoryHtml(task) {
   const rows = Array.isArray(task && task.run_history) ? task.run_history : [];
   if (!rows.length) return "<div class='muted'>No repeat runs recorded yet.</div>";
+  const latestRows = latestHistoryRows(rows, 'started_at');
   return `
     <table>
       <thead><tr><th>Run</th><th>Started</th><th>Duration</th><th>Status</th><th>Message</th></tr></thead>
       <tbody>${rows.map((row) => {
         const ok = row && row.success;
-        return `<tr><td>${esc(row.run_number || '-')}</td><td>${esc(fmtDateTime(row.started_at))}</td><td>${esc(fmtDuration(row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${esc(ok ? 'Success' : 'Failed')}</td><td>${esc(row.message || '')}</td></tr>`;
+        return `<tr><td>${esc(row.run_number || '-')}</td>${historyWhenCellHtml(fmtDateTime(row.started_at), latestRows.has(row))}<td>${esc(fmtDuration(row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${esc(ok ? 'Success' : 'Failed')}</td><td>${esc(row.message || '')}</td></tr>`;
       }).join('')}</tbody>
     </table>`;
 }
@@ -1151,6 +1402,16 @@ function queueRunHistoryHtml(task) {
 function toggleQueueRunHistory(taskId) {
   queueExpandedTaskId = queueExpandedTaskId === taskId ? null : taskId;
   renderQueue(queuePayload || {});
+}
+
+function queueTaskProgressLabel(task) {
+  const progress = task && task.progress ? task.progress : (task && task.live_status && task.live_status.progress ? task.live_status.progress : null);
+  if (!progress) return '';
+  const label = String(progress.label || '').trim();
+  if (label) return label;
+  const current = Number(progress.current || 0);
+  const total = Number(progress.total || 0);
+  return total > 0 ? `${current}/${total}` : '';
 }
 
 function renderQueue(payload) {
@@ -1171,8 +1432,12 @@ function renderQueue(payload) {
     const queuedCount = Number(queuePayload.queued_count || 0);
     const idleCount = Number(queuePayload.idle_count || 0);
     const running = queuePayload.running;
+    const runningIsProcessing = running && String(running.label || '').toLowerCase().includes('processing');
+    const runningProgress = runningIsProcessing ? '' : queueTaskProgressLabel(running);
+    const runningMessage = running && running.message ? String(running.message) : '';
+    const runningDetail = [runningProgress, runningMessage].filter(Boolean).join(' | ');
     summary.textContent = running
-      ? `Running: ${running.label || 'Automation'} | ${queuedCount} waiting | ${idleCount} idle`
+      ? `Running: ${running.label || 'Automation'}${runningDetail ? ` | ${runningDetail}` : ''} | ${queuedCount} waiting | ${idleCount} idle`
       : (queuedCount || idleCount ? `${queuedCount} waiting | ${idleCount} idle` : 'No waiting tasks');
   }
 
@@ -1192,7 +1457,13 @@ function renderQueue(payload) {
     const pos = status === 'queued' && task.position ? `#${task.position} ` : '';
     const details = task.details ? ` | ${task.details}` : '';
     const advanced = task.advanced_summary ? ` | ${task.advanced_summary}` : '';
-    const messageText = status === 'idle' ? '' : (task.message || '');
+    const isProcessingTask = String(task.label || '').toLowerCase().includes('processing');
+    const orderProgressLabel = isProcessingTask ? currentCrmProcessingOrderProgressLabel() : '';
+    const messageText = isProcessingTask
+      ? stripDuplicateCrmProcessingProgress(status === 'idle' ? '' : (task.message || ''), orderProgressLabel)
+      : (status === 'idle' ? '' : (task.message || ''));
+    const progressLabel = isProcessingTask ? '' : queueTaskProgressLabel(task);
+    const progressText = progressLabel && !String(messageText).includes(progressLabel) ? ` | ${progressLabel}` : '';
     const msg = messageText ? ` | ${messageText}` : '';
     const canExpand = task.queue_mode === 'repeat';
     const expanded = canExpand && queueExpandedTaskId === task.id;
@@ -1202,7 +1473,7 @@ function renderQueue(payload) {
         <div class='queue-drag'>${dragGlyph}</div>
         <div ${canExpand ? `onclick="toggleQueueRunHistory('${esc(task.id || '')}')" style='cursor:pointer' title='Open repeat run history'` : ''}>
           <div class='queue-title'>${esc(pos)}${esc(task.label || 'Automation Task')}</div>
-          <div class='queue-meta'>${esc(task.category || 'Automation')}${esc(details)}${esc(advanced)} | ${esc(queueTimeText(task))}${esc(msg)}</div>
+          <div class='queue-meta'>${esc(task.category || 'Automation')}${esc(details)}${esc(advanced)} | ${esc(queueTimeText(task))}${esc(progressText)}${esc(msg)}</div>
         </div>
         <div class='queue-status ${esc(status)}'>${esc(queueStatusLabel(status))}</div>
         ${canCancel ? `<button class='danger queue-cancel-btn' title='Cancel task' aria-label='Cancel task' onclick="cancelQueueTask('${esc(task.id || '')}')">X</button>` : (canDelete ? `<button class='secondary tiny' title='Delete queue entry' onclick="deleteQueueTask('${esc(task.id || '')}')">Delete</button>` : "<span></span>")}
@@ -1370,6 +1641,7 @@ async function refreshAutomationStatusesAfterStop() {
     loadCrmStatus(false),
     loadCrmProductSeparatorStatus(false),
     loadCrmOrderGoodsStatus(false),
+    loadCrmMassEmailerStatus(false),
     loadCrmAutoSplitterStatus(false),
     loadCrmAddressStatus(false),
     loadSlackLunchStatus(false),
@@ -1458,6 +1730,29 @@ function fmtTime(v) {
   if (Number.isNaN(d.getTime())) return String(v);
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
+function historyTimestampMs(row, key = 'timestamp') {
+  const value = row && row[key];
+  if (!value) return NaN;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : NaN;
+}
+function latestHistoryRowsByGroup(rows, groupFn = () => 'latest', timestampKey = 'timestamp') {
+  const latestByGroup = new Map();
+  (Array.isArray(rows) ? rows : []).forEach((row, index) => {
+    const groupKey = String(groupFn(row) || 'latest');
+    const timestamp = historyTimestampMs(row, timestampKey);
+    const rank = Number.isFinite(timestamp) ? timestamp : -index;
+    const current = latestByGroup.get(groupKey);
+    if (!current || rank > current.rank) latestByGroup.set(groupKey, { row, rank });
+  });
+  return new Set(Array.from(latestByGroup.values()).map((item) => item.row));
+}
+function latestHistoryRows(rows, timestampKey = 'timestamp') {
+  return latestHistoryRowsByGroup(rows, () => 'latest', timestampKey);
+}
+function historyWhenCellHtml(when, isLatest) {
+  return `<td${isLatest ? " class='history-latest-when'" : ''}>${esc(when)}</td>`;
+}
 function toTimeInputValue(v) {
   if (!v) return '';
   const d = new Date(v);
@@ -1475,12 +1770,18 @@ function ensureManualAutoOutInputWiring() {
   });
   input.dataset.bound = '1';
 }
-function appendCell(row, val) { const td = document.createElement('td'); td.textContent = val; row.appendChild(td); }
+function appendCell(row, val, className = '') { const td = document.createElement('td'); if (className) td.className = className; td.textContent = val; row.appendChild(td); return td; }
 function clearFieldMap() { for (const k of Object.keys(fieldMap)) delete fieldMap[k]; }
 function setMetricsStatus(msg) { document.getElementById('metricsStatusBox').textContent = msg; }
 function setPowerStatus(msg) { const el = document.getElementById('powerStatusBox'); if (el) el.textContent = msg; }
 function setCrmStatusText(msg) { const el = document.getElementById('crmStatusText'); if (el) el.textContent = msg; }
 function setCrmOrderGoodsStatusText(msg) { const el = document.getElementById('crmOrderGoodsStatusText'); if (el) el.textContent = msg; }
+function setCrmStockAutomationTestStatus(headline, details) {
+  const statusEl = document.getElementById('crmStockAutomationTestStatusText');
+  const detailsEl = document.getElementById('crmStockAutomationTestRuntimeText');
+  if (statusEl) statusEl.textContent = headline;
+  if (detailsEl) detailsEl.textContent = details;
+}
 function setCrmAutoSplitterStatusText(msg) { const el = document.getElementById('crmAutoSplitterStatusText'); if (el) el.textContent = msg; }
 function setCrmAutoSplitterLocalMessage(headline, detail = '') {
   setCrmAutoSplitterStatusText(headline);
@@ -1749,6 +2050,7 @@ function setActiveTab(tabName) {
     loadCrmProductSeparatorStatus(false);
     loadCrmOrderGoodsStatus(false);
     loadCrmShippingBypasserStatus(false);
+    loadCrmMassEmailerStatus(false);
     loadCrmAutoSplitterStatus(false);
     loadCrmAddressStatus(false);
   }
@@ -2376,6 +2678,42 @@ function createFieldNode(field, overrideLabel = null) {
   return wrap;
 }
 
+function createHiddenConfigInput(field) {
+  const input = document.createElement('input');
+  input.type = 'hidden';
+  input.value = field.value == null ? '' : String(field.value);
+  input.dataset.key = field.key;
+  input.dataset.type = field.type || 'string';
+  fieldMap[field.key] = input;
+  return input;
+}
+
+function renderCrmLinkButtonPanel(fields) {
+  const panel = document.createElement('div');
+  panel.className = 'crm-link-panel';
+
+  const grid = document.createElement('div');
+  grid.className = 'crm-link-grid';
+
+  for (const field of fields) {
+    panel.appendChild(createHiddenConfigInput(field));
+
+    const label = CRM_LINK_LABEL_OVERRIDES[field.key] || keyLabel(field.key);
+    const currentValue = field.value == null ? '' : String(field.value).trim();
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'crm-link-btn' + (currentValue ? ' configured' : '');
+    btn.dataset.key = field.key;
+    btn.title = label;
+    btn.innerHTML = "<span class='name'>" + esc(label) + "</span><span class='state'>" + (currentValue ? 'Set' : 'Empty') + "</span>";
+    btn.addEventListener('click', () => openCrmLinkEditor(field.key));
+    grid.appendChild(btn);
+  }
+
+  panel.appendChild(grid);
+  return panel;
+}
+
 function renderSyncHistory(state) {
   const body = document.getElementById('syncRows');
   body.innerHTML = '';
@@ -2385,9 +2723,10 @@ function renderSyncHistory(state) {
     return;
   }
   const rows = hist.slice().sort((a, b) => ((a && a.at) || '') > ((b && b.at) || '') ? -1 : 1);
+  const latestRows = latestHistoryRows(rows, 'at');
   for (const row of rows) {
     const tr = document.createElement('tr');
-    appendCell(tr, row && row.at ? fmtDateTime(row.at) : '-');
+    appendCell(tr, row && row.at ? fmtDateTime(row.at) : '-', latestRows.has(row) ? 'history-latest-when' : '');
     appendCell(tr, row && row.week_hours != null ? fmtHours(row.week_hours) : '-');
     appendCell(tr, row && row.success ? 'OK' : 'Failed');
     appendCell(tr, row && row.message ? String(row.message) : '-');
@@ -2569,11 +2908,7 @@ function renderSlackSettings(fields) {
   const hasDayRows = WEEK_DAYS.some((day) => {
     const keys = [
       'SLACK_MESSAGE_IN_' + day,
-      'SLACK_MESSAGE_IN_' + day + '_ALTERNATE',
-      'SLACK_MESSAGE_IN_' + day + '_ALTERNATE_ENABLED',
       'SLACK_MESSAGE_OUT_' + day,
-      'SLACK_MESSAGE_OUT_' + day + '_ALTERNATE',
-      'SLACK_MESSAGE_OUT_' + day + '_ALTERNATE_ENABLED',
       'SLACK_MESSAGE_LUNCH_' + day,
       'SLACK_MESSAGE_BACK_' + day,
     ];
@@ -2585,111 +2920,74 @@ function renderSlackSettings(fields) {
     t.textContent = 'Day Messages';
     root.appendChild(t);
 
-    const createDayCellInput = (key, placeholder = '') => {
-      const td = document.createElement('td');
+    slackSettingsSelectedDay = normalizeSlackSettingsDay(slackSettingsSelectedDay);
+
+    const selectorWrap = document.createElement('div');
+    selectorWrap.className = 'subgrid';
+    const selectorField = document.createElement('div');
+    selectorField.className = 'field';
+    const selectorLabel = document.createElement('label');
+    selectorLabel.setAttribute('for', 'slackMessageDaySelect');
+    selectorLabel.textContent = 'Message Day';
+    const selector = document.createElement('select');
+    selector.id = 'slackMessageDaySelect';
+    selector.className = 'select';
+    for (const day of WEEK_DAYS) {
+      const option = document.createElement('option');
+      option.value = day;
+      option.textContent = formatSlackDayLabel(day);
+      selector.appendChild(option);
+    }
+    selector.value = slackSettingsSelectedDay;
+    selector.addEventListener('change', () => syncSlackDayMessagePanels(selector.value));
+    selectorField.appendChild(selectorLabel);
+    selectorField.appendChild(selector);
+    selectorWrap.appendChild(selectorField);
+    root.appendChild(selectorWrap);
+
+    const createDayField = (key, label, placeholder = '') => {
       if (!by[key]) {
-        td.textContent = '-';
-        return td;
+        return null;
       }
+      const field = document.createElement('div');
+      field.className = 'field';
+      const labelEl = document.createElement('label');
+      labelEl.textContent = label;
+      labelEl.setAttribute('for', key);
       const inp = document.createElement('input');
+      inp.id = key;
       inp.type = 'text';
       inp.value = by[key].value == null ? '' : String(by[key].value);
       if (placeholder) inp.placeholder = placeholder;
       inp.dataset.key = key;
       inp.dataset.type = by[key].type || 'string';
       fieldMap[key] = inp;
-      td.appendChild(inp);
-      return td;
+      field.appendChild(labelEl);
+      field.appendChild(inp);
+      return field;
     };
 
-    const createAlternatingCell = (baseKey) => {
-      const td = document.createElement('td');
-      const enabledKey = baseKey + '_ALTERNATE_ENABLED';
-      const altKey = baseKey + '_ALTERNATE';
-      if (!by[enabledKey] && !by[altKey]) {
-        td.textContent = '-';
-        return td;
-      }
-
-      const holder = document.createElement('div');
-      holder.style.display = 'grid';
-      holder.style.gap = '6px';
-
-      let toggle = null;
-      if (by[enabledKey]) {
-        const row = document.createElement('label');
-        row.className = 'check';
-        toggle = document.createElement('input');
-        toggle.type = 'checkbox';
-        toggle.checked = Boolean(by[enabledKey].value);
-        toggle.dataset.key = enabledKey;
-        toggle.dataset.type = by[enabledKey].type || 'bool';
-        fieldMap[enabledKey] = toggle;
-        row.appendChild(toggle);
-        row.appendChild(document.createTextNode('Enable alternating'));
-        holder.appendChild(row);
-      }
-
-      let altInput = null;
-      if (by[altKey]) {
-        altInput = document.createElement('input');
-        altInput.type = 'text';
-        altInput.value = by[altKey].value == null ? '' : String(by[altKey].value);
-        altInput.placeholder = 'Secondary message';
-        altInput.dataset.key = altKey;
-        altInput.dataset.type = by[altKey].type || 'string';
-        fieldMap[altKey] = altInput;
-        holder.appendChild(altInput);
-      }
-
-      const syncState = () => {
-        if (!toggle || !altInput) return;
-        const enabled = Boolean(toggle.checked);
-        altInput.disabled = !enabled;
-        altInput.style.opacity = enabled ? '1' : '0.65';
-      };
-      if (toggle && altInput) {
-        toggle.addEventListener('change', syncState);
-        syncState();
-      }
-
-      td.appendChild(holder);
-      return td;
-    };
-
-    const wrap = document.createElement('div');
-    wrap.className = 'tbl-wrap';
-    const tbl = document.createElement('table');
-    tbl.className = 'tbl';
-    tbl.innerHTML = "<thead><tr><th>Day</th><th>Clock In Message</th><th>Clock In Alternating</th><th>Clock Out Message</th><th>Clock Out Alternating</th><th>Lunch Start Message</th><th>Lunch Return Message</th></tr></thead>";
-    const body = document.createElement('tbody');
+    const panels = document.createElement('div');
     for (const day of WEEK_DAYS) {
       const inKey = 'SLACK_MESSAGE_IN_' + day;
       const outKey = 'SLACK_MESSAGE_OUT_' + day;
       const lunchKey = 'SLACK_MESSAGE_LUNCH_' + day;
       const backKey = 'SLACK_MESSAGE_BACK_' + day;
-      const inAltKey = inKey + '_ALTERNATE';
-      const inAltEnabledKey = inKey + '_ALTERNATE_ENABLED';
-      const outAltKey = outKey + '_ALTERNATE';
-      const outAltEnabledKey = outKey + '_ALTERNATE_ENABLED';
-      if (
-        !by[inKey] && !by[inAltKey] && !by[inAltEnabledKey] &&
-        !by[outKey] && !by[outAltKey] && !by[outAltEnabledKey] &&
-        !by[lunchKey] && !by[backKey]
-      ) continue;
-      const tr = document.createElement('tr');
-      appendCell(tr, day.charAt(0) + day.slice(1).toLowerCase());
-      tr.appendChild(createDayCellInput(inKey));
-      tr.appendChild(createAlternatingCell(inKey));
-      tr.appendChild(createDayCellInput(outKey));
-      tr.appendChild(createAlternatingCell(outKey));
-      tr.appendChild(createDayCellInput(lunchKey));
-      tr.appendChild(createDayCellInput(backKey));
-      body.appendChild(tr);
+      if (!by[inKey] && !by[outKey] && !by[lunchKey] && !by[backKey]) continue;
+      const panel = document.createElement('div');
+      panel.className = 'slack-day-message-panel';
+      panel.dataset.slackDayPanel = day;
+      const fieldsForDay = [
+        createDayField(inKey, 'Clock In Message', 'Message sent on Work In'),
+        createDayField(outKey, 'Clock Out Message', 'Message sent on Work Out'),
+        createDayField(lunchKey, 'Lunch Start Message', 'Message sent when lunch starts'),
+        createDayField(backKey, 'Lunch Return Message', 'Message sent when lunch ends'),
+      ].filter(Boolean);
+      for (const field of fieldsForDay) panel.appendChild(field);
+      panels.appendChild(panel);
     }
-    tbl.appendChild(body);
-    wrap.appendChild(tbl);
-    root.appendChild(wrap);
+    root.appendChild(panels);
+    syncSlackDayMessagePanels(slackSettingsSelectedDay);
   }
 
   const leftovers = fields.filter(f => !channelKeys.includes(f.key) && !SLACK_DAY_KEYS.has(f.key));
@@ -2749,11 +3047,14 @@ function renderCRMSettings(fields) {
   const root = document.getElementById('crmFields');
   root.innerHTML = '';
   const by = {};
-  for (const f of fields) by[f.key] = f;
+  for (const f of fields) {
+    if (!HIDDEN_CONFIG_KEYS.has(f.key)) by[f.key] = f;
+  }
 
   const groups = [
     { title: 'Credentials', keys: ['CRM_USERNAME', 'CRM_PASSWORD'] },
-    { title: 'URLs', keys: ['CRM_LOGIN_URL', 'CRM_LOCKED_URL', 'CRM_SHIPPING_FREE_URL', 'CRM_SHIPPING_RUSH_URL', 'CRM_SHIPPING_ALL_URL', 'CRM_SHIPPING_FILTER_DEFAULT'] },
+    { title: 'CRM LINKS', keys: CRM_LINK_SETTING_KEYS },
+    { title: 'Mode Defaults', keys: ['CRM_SHIPPING_FILTER_DEFAULT', 'PRODUCT_SEPARATOR_DEFAULT_LIST_MODE'] },
     {
       title: 'Browser and Retry',
       keys: [
@@ -2776,13 +3077,18 @@ function renderCRMSettings(fields) {
     title.className = 'section-title';
     title.textContent = group.title;
     root.appendChild(title);
-    const holder = document.createElement('div');
-    holder.className = 'subgrid';
-    for (const key of found) {
-      holder.appendChild(createFieldNode(by[key]));
-      rendered.add(key);
+    if (group.title === 'CRM LINKS') {
+      root.appendChild(renderCrmLinkButtonPanel(found.map((key) => by[key])));
+      for (const key of found) rendered.add(key);
+    } else {
+      const holder = document.createElement('div');
+      holder.className = 'subgrid';
+      for (const key of found) {
+        holder.appendChild(createFieldNode(by[key], CRM_LINK_LABEL_OVERRIDES[key] || null));
+        rendered.add(key);
+      }
+      root.appendChild(holder);
     }
-    root.appendChild(holder);
   }
 
   const note = document.createElement('div');
@@ -2791,7 +3097,7 @@ function renderCRMSettings(fields) {
   root.appendChild(note);
 
   for (const f of fields) {
-    if (!rendered.has(f.key)) root.appendChild(createFieldNode(f));
+    if (!rendered.has(f.key) && !HIDDEN_CONFIG_KEYS.has(f.key)) root.appendChild(createFieldNode(f));
   }
 }
 
@@ -2810,26 +3116,30 @@ function crmBatchPreferenceInputValue(batchSize) {
 
 function formatCrmBatchPreferenceSummary(batchSize, parallelWorkers) {
   const workers = normalizeCrmParallelWorkers(parallelWorkers);
-  return `Saved batch settings: ${formatCrmBatchSizeLabel(batchSize)} | Parallel Workers ${workers}`;
+  return `Saved batch settings: ${formatCrmBatchSizeLabel(batchSize)} | Automation Workers ${workers}`;
 }
 
-function getSavedCrmOrderGoodsPreferences(state) {
-  const source = state || {};
-  return {
-    parallelWorkers: normalizeCrmOrderGoodsParallelWorkers(source.saved_order_goods_parallel_workers),
-  };
+function formatCrmWorkerRamEstimate(parallelWorkers) {
+  const workers = normalizeCrmParallelWorkers(parallelWorkers);
+  const ram = (workers * CRM_WORKER_RAM_GB).toFixed(1);
+  return `RAM estimate: ${workers} worker${workers === 1 ? '' : 's'} x ~${CRM_WORKER_RAM_GB.toFixed(2)} GB = ~${ram} GB for worker browser sessions.`;
 }
 
 function renderCrmPreferenceSettings(addressState = {}, stockState = {}) {
   const root = document.getElementById('crmPreferenceFields');
   if (!root) return;
   const prefs = getSavedCrmBatchPreferences(addressState);
-  const orderGoodsPrefs = getSavedCrmOrderGoodsPreferences(stockState);
+  const stock = stockState || {};
+  const fallbackWorkers = stock.saved_order_goods_parallel_workers
+    || stock.saved_product_separator_parallel_workers
+    || stock.saved_auto_splitter_parallel_workers
+    || 1;
+  const savedWorkers = normalizeCrmParallelWorkers(prefs.parallelWorkers || fallbackWorkers);
   root.innerHTML = '';
 
   const title = document.createElement('div');
   title.className = 'section-title';
-  title.textContent = 'Address Validator Preferences';
+  title.textContent = 'Workers Settings';
   root.appendChild(title);
 
   const holder = document.createElement('div');
@@ -2863,40 +3173,23 @@ function renderCrmPreferenceSettings(addressState = {}, stockState = {}) {
   parallelInput.min = '1';
   parallelInput.max = '8';
   parallelInput.step = '1';
-  parallelInput.value = String(prefs.parallelWorkers);
+  parallelInput.value = String(savedWorkers);
   parallelInput.placeholder = '1-8';
   parallelField.appendChild(parallelLabel);
   parallelField.appendChild(parallelInput);
   holder.appendChild(parallelField);
 
+  const note = document.createElement('div');
+  note.className = 'worker-ram-note';
+  note.id = 'crmSettingsWorkerRamText';
+  note.textContent = formatCrmWorkerRamEstimate(savedWorkers);
+  holder.appendChild(note);
+
+  parallelInput.addEventListener('input', () => {
+    note.textContent = formatCrmWorkerRamEstimate(parallelInput.value);
+  });
+
   root.appendChild(holder);
-
-  const orderGoodsTitle = document.createElement('div');
-  orderGoodsTitle.className = 'section-title';
-  orderGoodsTitle.textContent = 'Rush Order Goods Preferences';
-  root.appendChild(orderGoodsTitle);
-
-  const orderGoodsHolder = document.createElement('div');
-  orderGoodsHolder.className = 'subgrid';
-
-  const orderGoodsParallelField = document.createElement('div');
-  orderGoodsParallelField.className = 'field';
-  const orderGoodsParallelLabel = document.createElement('label');
-  orderGoodsParallelLabel.setAttribute('for', 'crmSettingsOrderGoodsParallelWorkersInput');
-  orderGoodsParallelLabel.textContent = 'Parallel Workers';
-  const orderGoodsParallelInput = document.createElement('input');
-  orderGoodsParallelInput.id = 'crmSettingsOrderGoodsParallelWorkersInput';
-  orderGoodsParallelInput.type = 'number';
-  orderGoodsParallelInput.min = '1';
-  orderGoodsParallelInput.max = '4';
-  orderGoodsParallelInput.step = '1';
-  orderGoodsParallelInput.value = String(orderGoodsPrefs.parallelWorkers);
-  orderGoodsParallelInput.placeholder = '1-4';
-  orderGoodsParallelField.appendChild(orderGoodsParallelLabel);
-  orderGoodsParallelField.appendChild(orderGoodsParallelInput);
-  orderGoodsHolder.appendChild(orderGoodsParallelField);
-
-  root.appendChild(orderGoodsHolder);
 }
 
 function bindSettingsAutoSaveInput(input) {
@@ -2909,7 +3202,6 @@ function bindSettingsAutoSaveHandlers() {
   for (const input of Object.values(fieldMap)) bindSettingsAutoSaveInput(input);
   bindSettingsAutoSaveInput(document.getElementById('crmSettingsBatchSizeInput'));
   bindSettingsAutoSaveInput(document.getElementById('crmSettingsParallelWorkersInput'));
-  bindSettingsAutoSaveInput(document.getElementById('crmSettingsOrderGoodsParallelWorkersInput'));
 }
 
 function collectConfigValues() {
@@ -2927,14 +3219,10 @@ function collectConfigValues() {
 function collectCrmPreferenceValues() {
   const batchInput = document.getElementById('crmSettingsBatchSizeInput');
   const parallelInput = document.getElementById('crmSettingsParallelWorkersInput');
-  const orderGoodsParallelInput = document.getElementById('crmSettingsOrderGoodsParallelWorkersInput');
   return {
     address: {
       batch_size: normalizeCrmBatchPreferenceInput(batchInput ? batchInput.value : 0),
       parallel_workers: normalizeCrmParallelWorkers(parallelInput ? parallelInput.value : 1),
-    },
-    orderGoods: {
-      parallel_workers: normalizeCrmOrderGoodsParallelWorkers(orderGoodsParallelInput ? orderGoodsParallelInput.value : 1),
     },
   };
 }
@@ -2950,6 +3238,106 @@ function syncLastConfigGroupsFromValues(values) {
     }
   }
 }
+
+function ensureCrmLinkModal() {
+  let backdrop = document.getElementById('crmLinkModalBackdrop');
+  if (backdrop) return backdrop;
+
+  backdrop = document.createElement('div');
+  backdrop.id = 'crmLinkModalBackdrop';
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = [
+    "<div class='modal' role='dialog' aria-modal='true' aria-labelledby='crmLinkModalTitle'>",
+    "  <div class='modal-title-row'>",
+    "    <h2 id='crmLinkModalTitle'>CRM Link</h2>",
+    "    <button class='secondary modal-close-btn' type='button' id='crmLinkModalCloseBtn' aria-label='Close CRM link editor'>X</button>",
+    "  </div>",
+    "  <label class='sr-only' for='crmLinkModalInput'>CRM link URL</label>",
+    "  <textarea id='crmLinkModalInput' spellcheck='false'></textarea>",
+    "  <div class='muted' id='crmLinkModalKeyText'></div>",
+    "  <div class='modal-actions'>",
+    "    <button class='secondary' type='button' id='crmLinkModalOpenBtn'>Open Link</button>",
+    "    <div class='row'>",
+    "      <button class='secondary' type='button' id='crmLinkModalCancelBtn'>Cancel</button>",
+    "      <button type='button' id='crmLinkModalSaveBtn'>Save Link</button>",
+    "    </div>",
+    "  </div>",
+    "</div>",
+  ].join('');
+  document.body.appendChild(backdrop);
+
+  const close = () => closeCrmLinkEditor();
+  backdrop.addEventListener('click', (event) => {
+    if (event.target === backdrop) close();
+  });
+  document.getElementById('crmLinkModalCloseBtn').addEventListener('click', close);
+  document.getElementById('crmLinkModalCancelBtn').addEventListener('click', close);
+  document.getElementById('crmLinkModalSaveBtn').addEventListener('click', saveCrmLinkEditor);
+  document.getElementById('crmLinkModalOpenBtn').addEventListener('click', openCurrentCrmLinkValue);
+  document.getElementById('crmLinkModalInput').addEventListener('input', (event) => {
+    document.getElementById('crmLinkModalOpenBtn').disabled = !String(event.target.value || '').trim();
+  });
+
+  return backdrop;
+}
+
+function openCrmLinkEditor(key) {
+  const input = fieldMap[key];
+  if (!input) return;
+
+  const backdrop = ensureCrmLinkModal();
+  const label = CRM_LINK_LABEL_OVERRIDES[key] || keyLabel(key);
+  const textarea = document.getElementById('crmLinkModalInput');
+  const openBtn = document.getElementById('crmLinkModalOpenBtn');
+
+  backdrop.dataset.key = key;
+  document.getElementById('crmLinkModalTitle').textContent = label;
+  document.getElementById('crmLinkModalKeyText').textContent = key;
+  textarea.value = input.value || '';
+  openBtn.disabled = !(textarea.value || '').trim();
+  backdrop.classList.add('active');
+  textarea.focus();
+  textarea.select();
+}
+
+function closeCrmLinkEditor() {
+  const backdrop = document.getElementById('crmLinkModalBackdrop');
+  if (!backdrop) return;
+  backdrop.classList.remove('active');
+  backdrop.dataset.key = '';
+}
+
+function updateCrmLinkButtonState(key, value) {
+  const btn = document.querySelector(".crm-link-btn[data-key='" + key + "']");
+  if (!btn) return;
+  const configured = Boolean(String(value || '').trim());
+  btn.classList.toggle('configured', configured);
+  const state = btn.querySelector('.state');
+  if (state) state.textContent = configured ? 'Set' : 'Empty';
+}
+
+function saveCrmLinkEditor() {
+  const backdrop = document.getElementById('crmLinkModalBackdrop');
+  const key = backdrop && backdrop.dataset.key ? backdrop.dataset.key : '';
+  const input = key ? fieldMap[key] : null;
+  const textarea = document.getElementById('crmLinkModalInput');
+  if (!input || !textarea) return;
+
+  input.value = textarea.value.trim();
+  updateCrmLinkButtonState(key, input.value);
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  closeCrmLinkEditor();
+}
+
+function openCurrentCrmLinkValue() {
+  const value = (document.getElementById('crmLinkModalInput').value || '').trim();
+  if (!value) return;
+  window.open(value, '_blank', 'noopener');
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeCrmLinkEditor();
+});
 
 function scheduleSettingsAutoSave() {
   if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
@@ -2970,7 +3358,6 @@ async function saveSettings(options = {}) {
   const requests = [];
   const hasConfigValues = Object.keys(configValues).length > 0;
   const hasCrmPreferenceInputs = Boolean(document.getElementById('crmSettingsBatchSizeInput') && document.getElementById('crmSettingsParallelWorkersInput'));
-  const hasOrderGoodsPreferenceInputs = Boolean(document.getElementById('crmSettingsOrderGoodsParallelWorkersInput'));
 
   settingsSavePromise = settingsSavePromise
     .catch(() => null)
@@ -2987,13 +3374,6 @@ async function saveSettings(options = {}) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(crmPreferences.address),
-        }));
-      }
-      if (hasOrderGoodsPreferenceInputs) {
-        requests.push(api('/crm/order-goods/preferences', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(crmPreferences.orderGoods),
         }));
       }
       const results = await Promise.allSettled(requests);
@@ -3027,21 +3407,6 @@ async function saveSettings(options = {}) {
         }
       }
 
-      if (hasOrderGoodsPreferenceInputs) {
-        const orderGoodsResult = results[resultIndex++];
-        if (orderGoodsResult.status === 'fulfilled') {
-          if (orderGoodsResult.value) {
-            renderCrmOrderGoodsStatus(orderGoodsResult.value);
-            const addressState = crmAddressStatusPayload && crmAddressStatusPayload.state ? crmAddressStatusPayload.state : {};
-            renderCrmPreferenceSettings(addressState, orderGoodsResult.value.state || {});
-            bindSettingsAutoSaveHandlers();
-            if (orderGoodsResult.value.message) messages.push(orderGoodsResult.value.message);
-          }
-        } else {
-          errors.push('Rush Order Goods preference save failed: ' + orderGoodsResult.reason.message);
-        }
-      }
-
       if (errors.length > 0) {
         throw new Error(errors.join(' | '));
       }
@@ -3063,12 +3428,16 @@ function renderOtherSettings(fields) {
   const card = document.getElementById('otherCard');
   const root = document.getElementById('otherFields');
   root.innerHTML = '';
-  if (!fields || fields.length === 0) {
+  const visibleFields = (fields || []).filter((field) => {
+    const key = field && field.key;
+    return key && !HIDDEN_CONFIG_KEYS.has(key) && !CRM_LINK_SETTING_KEYS.includes(key);
+  });
+  if (visibleFields.length === 0) {
     card.style.display = 'none';
     return;
   }
   card.style.display = 'block';
-  for (const f of fields) root.appendChild(createFieldNode(f));
+  for (const f of visibleFields) root.appendChild(createFieldNode(f));
 }
 
 function stopCrmProcessingPolling() {
@@ -3088,6 +3457,7 @@ async function pollCrmProcessingStatus() {
     loadCrmProductSeparatorStatus(false);
     loadCrmOrderGoodsStatus(false);
     loadCrmShippingBypasserStatus(false);
+    loadCrmMassEmailerStatus(false);
     loadCrmAddressStatus(false);
   }
 }
@@ -3112,16 +3482,32 @@ function syncCrmProcessingPolling() {
 function renderCrmProcessingSelectionButtons(state = {}) {
   const selectedSteps = normalizeCrmProcessingStepList([], state);
   const processingFilter = normalizeCrmProcessingFilter(state && state.processing_filter);
+  const massEmailerBtn = document.getElementById('crmProcessingMassEmailerToggleBtn');
   const unlockBtn = document.getElementById('crmProcessingUnlockToggleBtn');
   const addressBtn = document.getElementById('crmProcessingAddressToggleBtn');
   const separatorBtn = document.getElementById('crmProcessingSeparatorToggleBtn');
   const orderGoodsBtn = document.getElementById('crmProcessingOrderGoodsToggleBtn');
+  const shippingBypasserBtn = document.getElementById('crmProcessingShippingBypasserToggleBtn');
+  const pushBackBtn = document.getElementById('crmProcessingPushBackToggleBtn');
+  const bulkBtn = document.getElementById('crmProcessingBulkToggleBtn');
   const filterBtn = document.getElementById('crmProcessingFilterToggleBtn');
+  const filterSelect = document.getElementById('crmProcessingFilterSelect');
   const filterBtns = {
     rush: document.getElementById('crmProcessingRushFilterBtn'),
     free: document.getElementById('crmProcessingFreeFilterBtn'),
     all: document.getElementById('crmProcessingAllFilterBtn'),
+    813: document.getElementById('crmProcessing813FilterBtn'),
   };
+  const canRunOrderSupport = processingFilter === 'rush' || processingFilter === '813';
+  const canRunSeparator = processingFilter !== '813';
+  if (massEmailerBtn) {
+    const enabled = selectedSteps.includes('mass_emailer');
+    massEmailerBtn.classList.toggle('active', enabled);
+    massEmailerBtn.classList.remove('processing-disabled');
+    massEmailerBtn.disabled = false;
+    massEmailerBtn.textContent = 'Mass Emailer';
+    massEmailerBtn.title = 'Toggle Mass Emailer in Automate Processing.';
+  }
   if (addressBtn) {
     const enabled = selectedSteps.includes('address_validator_batch');
     addressBtn.classList.toggle('active', enabled);
@@ -3135,10 +3521,12 @@ function renderCrmProcessingSelectionButtons(state = {}) {
   if (separatorBtn) {
     const enabled = selectedSteps.includes('product_separator');
     separatorBtn.classList.toggle('active', enabled);
-    separatorBtn.classList.remove('processing-disabled');
-    separatorBtn.disabled = false;
+    separatorBtn.classList.toggle('processing-disabled', !canRunSeparator);
+    separatorBtn.disabled = !canRunSeparator;
     separatorBtn.textContent = 'Separator';
-    separatorBtn.title = 'Toggle Product Separator in Automate Processing.';
+    separatorBtn.title = canRunSeparator
+      ? 'Toggle Product Separator in Automate Processing.'
+      : 'Separator is disabled in 813 mode.';
   }
   if (unlockBtn) {
     const enabled = selectedSteps.includes('stock_unlocker');
@@ -3151,21 +3539,45 @@ function renderCrmProcessingSelectionButtons(state = {}) {
       : 'Toggle Stock Unlocker in Automate Processing.';
   }
   if (orderGoodsBtn) {
-    const mode = normalizeCrmProcessingOrderGoodsMode(state);
     const enabled = selectedSteps.includes('order_goods');
     orderGoodsBtn.classList.toggle('active', enabled);
-    orderGoodsBtn.classList.toggle('processing-disabled', processingFilter !== 'rush');
-    orderGoodsBtn.disabled = processingFilter !== 'rush';
-    orderGoodsBtn.textContent = `Order Goods: ${formatCrmProcessingOrderGoodsMode(mode)}`;
-    orderGoodsBtn.title = processingFilter !== 'rush'
-      ? `Rush Order Goods is rush-only and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
-      : 'Click to switch Order Goods mode: Stock/Bypass, Order Only, Bypass Only, Disabled.';
+    orderGoodsBtn.classList.toggle('processing-disabled', !canRunOrderSupport);
+    orderGoodsBtn.disabled = !canRunOrderSupport;
+    orderGoodsBtn.textContent = 'Order Goods';
+    orderGoodsBtn.title = !canRunOrderSupport
+      ? `Order Goods is available in Rush and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
+      : 'Toggle Order Goods in Automate Processing.';
+  }
+  if (shippingBypasserBtn) {
+    const enabled = selectedSteps.includes('shipping_bypasser');
+    shippingBypasserBtn.classList.toggle('active', enabled);
+    shippingBypasserBtn.classList.toggle('processing-disabled', !canRunOrderSupport);
+    shippingBypasserBtn.disabled = !canRunOrderSupport;
+    shippingBypasserBtn.textContent = 'Bypasser';
+    shippingBypasserBtn.title = !canRunOrderSupport
+      ? `Shipping Bypasser is available in Rush and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
+      : 'Toggle Shipping Bypasser in Automate Processing.';
+  }
+  if (pushBackBtn) {
+    const enabled = selectedSteps.includes('push_back');
+    pushBackBtn.classList.toggle('active', enabled);
+    pushBackBtn.classList.toggle('processing-disabled', !canRunOrderSupport);
+    pushBackBtn.disabled = !canRunOrderSupport;
+    pushBackBtn.textContent = 'Push Back';
+    pushBackBtn.title = !canRunOrderSupport
+      ? `Push Back is available in Rush and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
+      : 'Toggle Push Back in Automate Processing.';
+  }
+  if (filterSelect) {
+    filterSelect.disabled = false;
+    filterSelect.value = processingFilter;
+    filterSelect.title = `Automate Processing is set to ${formatCrmAddressFilterLabel(processingFilter)}.`;
   }
   if (filterBtn) {
     filterBtn.disabled = false;
     filterBtn.textContent = processingFilter.toUpperCase();
     filterBtn.title = `Automate Processing is set to ${formatCrmAddressFilterLabel(processingFilter)}. Click to switch.`;
-    filterBtn.classList.remove('all', 'free', 'rush');
+    filterBtn.classList.remove('all', 'free', 'rush', '813');
     filterBtn.classList.add(processingFilter);
     filterBtn.classList.toggle('active', true);
   }
@@ -3176,6 +3588,14 @@ function renderCrmProcessingSelectionButtons(state = {}) {
     filterBtn.title = processingFilter === filterKey
       ? `Automate Processing is set to ${formatCrmAddressFilterLabel(filterKey)}.`
       : `Switch Automate Processing to ${formatCrmAddressFilterLabel(filterKey)}.`;
+  }
+  if (bulkBtn) {
+    const availableSteps = crmProcessingAvailableStepsForFilter(processingFilter);
+    const allAvailableSelected = availableSteps.every((step) => selectedSteps.includes(step));
+    bulkBtn.textContent = allAvailableSelected ? 'Clear All' : 'Enable All';
+    bulkBtn.title = allAvailableSelected
+      ? `Clear mode-specific Automate Processing selections for ${formatCrmAddressFilterLabel(processingFilter)}.`
+      : `Enable every available mode-specific Automate Processing selection for ${formatCrmAddressFilterLabel(processingFilter)}.`;
   }
 }
 
@@ -3188,16 +3608,23 @@ function renderCrmProcessingStatus(payload) {
   const processingFilter = normalizeCrmProcessingFilter(state.processing_filter || 'rush');
   const runningSteps = normalizeCrmProcessingStepList(runtime.selectedSteps, { ...state, processing_filter: runningFilter });
   const selectedSteps = normalizeCrmProcessingStepList([], { ...state, processing_filter: processingFilter });
-  const completedSteps = Array.isArray(runtime.completedSteps) ? runtime.completedSteps : [];
   const currentStepLabel = runtime.currentStep ? formatCrmProcessingStepLabelForState(runtime.currentStep, state) : '';
+  const currentTaskLabel = currentCrmProcessingTaskLabel();
+  const currentOrderProgressLabel = currentCrmProcessingOrderProgressLabel();
   const lastSuccess = state.last_run_success;
   let headline = 'Automate Processing is idle.';
+  let processingBannerText = headline;
   if (running) {
     headline = currentStepLabel ? `Automate Processing is running ${currentStepLabel}.` : 'Automate Processing is running.';
+    const startedText = runtime.startedAt ? `Started ${fmtTime(runtime.startedAt)}` : 'Started -';
+    const progressText = currentOrderProgressLabel ? ` | ${currentOrderProgressLabel}` : '';
+    processingBannerText = `Processing | ${startedText} | Current Task: ${currentTaskLabel || 'Starting'}${progressText} | Running.`;
   } else if (lastSuccess === true) {
     headline = 'Last Automate Processing run completed successfully.';
+    processingBannerText = headline;
   } else if (lastSuccess === false) {
     headline = 'Last Automate Processing run needs attention.';
+    processingBannerText = headline;
   }
 
   const selectionText = selectedSteps.length > 0
@@ -3207,11 +3634,11 @@ function renderCrmProcessingStatus(payload) {
     ? `${formatCrmAddressFilterLabel(runningFilter)} | ${runningSteps.map((step) => formatCrmProcessingStepLabelForState(step, state)).join(' + ')}.`
     : `${formatCrmAddressFilterLabel(runningFilter)} | none selected.`;
   const runtimeText = running
-    ? `${runningSelectionText} Completed ${completedSteps.length}/${runningSteps.length}. ${runtime.lastMessage || ''}`.trim()
+    ? `${runningSelectionText} ${runtime.lastMessage || ''}`.trim()
     : (state.last_run_message || 'No automated processing runs yet.');
   const runBtn = document.getElementById('crmProcessingRunBtn');
 
-  setProcessingStatus(headline);
+  setProcessingStatus(processingBannerText);
   document.getElementById('crmProcessingStatusText').textContent = headline;
   document.getElementById('crmProcessingRuntimeText').textContent = runtimeText;
   document.getElementById('crmProcessingSelectionText').textContent = `Automate selection: ${selectionText}`;
@@ -3220,6 +3647,7 @@ function renderCrmProcessingStatus(payload) {
     restoreStoppableButton(runBtn);
     runBtn.disabled = selectedSteps.length === 0;
   }
+  if (queueVisible && queuePayload) renderQueue(queuePayload);
   syncCrmProcessingPolling();
 }
 
@@ -3241,14 +3669,26 @@ async function toggleCrmProcessingSelection(stepKey) {
     setStatus('All mode always includes Address Validator.');
     return;
   }
-  if ((stepKey === 'stock_unlocker' || stepKey === 'order_goods') && processingFilter !== 'rush') {
-    const label = stepKey === 'order_goods' ? 'Rush Order Goods' : 'Unlocker';
-    setStatus(`${label} is rush-only. Switch Automate Processing back to Rush to enable it.`);
+  const canRunOrderSupport = processingFilter === 'rush' || processingFilter === '813';
+  if (stepKey === 'stock_unlocker' && processingFilter !== 'rush') {
+    setStatus('Unlocker is rush-only. Switch Automate Processing back to Rush to enable it.');
+    return;
+  }
+  if (stepKey === 'product_separator' && processingFilter === '813') {
+    setStatus('Separator is disabled in 813 mode.');
+    return;
+  }
+  if ((stepKey === 'order_goods' || stepKey === 'shipping_bypasser' || stepKey === 'push_back') && !canRunOrderSupport) {
+    const label = stepKey === 'order_goods' ? 'Order Goods' : (stepKey === 'shipping_bypasser' ? 'Shipping Bypasser' : 'Push Back');
+    setStatus(`${label} is available in Rush and 813 modes.`);
     return;
   }
   const nextUnlock = stepKey === 'stock_unlocker'
     ? !Boolean(state.stock_unlocker_enabled)
     : Boolean(state.stock_unlocker_enabled);
+  const nextMassEmailer = stepKey === 'mass_emailer'
+    ? !(state.mass_emailer_enabled !== false)
+    : state.mass_emailer_enabled !== false;
   const nextAddress = stepKey === 'address_validator_batch'
     ? !Boolean(state.address_validator_enabled)
     : Boolean(state.address_validator_enabled);
@@ -3257,27 +3697,58 @@ async function toggleCrmProcessingSelection(stepKey) {
     : state.product_separator_enabled !== false;
   let nextOrderGoods = Boolean(state.order_goods_enabled);
   let nextShippingBypasser = Boolean(state.shipping_bypasser_enabled);
+  let nextPushBack = Boolean(state.push_back_enabled);
   if (stepKey === 'order_goods') {
-    const currentMode = normalizeCrmProcessingOrderGoodsMode(state);
-    const currentIndex = CRM_PROCESSING_ORDER_GOODS_MODE_SEQUENCE.indexOf(currentMode);
-    const nextMode = CRM_PROCESSING_ORDER_GOODS_MODE_SEQUENCE[(currentIndex + 1) % CRM_PROCESSING_ORDER_GOODS_MODE_SEQUENCE.length];
-    const flags = crmProcessingOrderGoodsModeFlags(nextMode);
-    nextOrderGoods = flags.order_goods_enabled;
-    nextShippingBypasser = flags.shipping_bypasser_enabled;
+    nextOrderGoods = !nextOrderGoods;
+  }
+  if (stepKey === 'shipping_bypasser') {
+    nextShippingBypasser = !nextShippingBypasser;
+  }
+  if (stepKey === 'push_back') {
+    nextPushBack = !nextPushBack;
   }
   const selectionPayload = {
+    mass_emailer_enabled: nextMassEmailer,
     stock_unlocker_enabled: nextUnlock,
     address_validator_enabled: nextAddress,
-    product_separator_enabled: nextSeparator,
+    product_separator_enabled: processingFilter === '813' ? false : nextSeparator,
     order_goods_enabled: nextOrderGoods,
     shipping_bypasser_enabled: nextShippingBypasser,
+    push_back_enabled: nextPushBack,
     processing_filter: processingFilter,
   };
-  const label = stepKey === 'stock_unlocker' ? 'Unlocker' : (stepKey === 'order_goods' ? 'Order Goods mode' : (stepKey === 'product_separator' ? 'Product Separator' : 'Validator'));
+  const label = stepKey === 'stock_unlocker'
+    ? 'Unlocker'
+    : (stepKey === 'mass_emailer'
+      ? 'Mass Emailer'
+      : (stepKey === 'order_goods'
+      ? 'Order Goods'
+      : (stepKey === 'shipping_bypasser'
+        ? 'Shipping Bypasser'
+        : (stepKey === 'push_back'
+          ? 'Push Back'
+          : (stepKey === 'product_separator' ? 'Product Separator' : 'Validator')))));
   try {
     await persistCrmProcessingSelection(selectionPayload, `${label} selection updated.`);
   } catch (e) {
     setStatus(`Automate Processing selection update failed: ${e.message}`);
+  }
+}
+
+async function toggleCrmProcessingBulkSelection() {
+  const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
+  const processingFilter = normalizeCrmProcessingFilter(state.processing_filter);
+  const selectedSteps = normalizeCrmProcessingStepList([], { ...state, processing_filter: processingFilter });
+  const availableSteps = crmProcessingAvailableStepsForFilter(processingFilter);
+  const allAvailableSelected = availableSteps.every((step) => selectedSteps.includes(step));
+  const enableAll = !allAvailableSelected;
+  try {
+    await persistCrmProcessingSelection(
+      crmProcessingBulkPayload(processingFilter, enableAll),
+      enableAll ? 'All available mode-specific Automate Processing selections enabled.' : 'Mode-specific Automate Processing selections cleared.'
+    );
+  } catch (e) {
+    setStatus(`Automate Processing bulk selection failed: ${e.message}`);
   }
 }
 
@@ -3290,14 +3761,8 @@ async function toggleCrmProcessingFilter() {
 }
 
 async function setCrmProcessingFilter(nextFilter) {
-  const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
   nextFilter = normalizeCrmProcessingFilter(nextFilter);
   const payload = {
-    stock_unlocker_enabled: nextFilter === 'rush' ? Boolean(state.stock_unlocker_enabled) : false,
-    address_validator_enabled: nextFilter === 'all' ? true : Boolean(state.address_validator_enabled),
-    product_separator_enabled: state.product_separator_enabled !== false,
-    order_goods_enabled: nextFilter === 'rush' ? Boolean(state.order_goods_enabled) : false,
-    shipping_bypasser_enabled: nextFilter === 'rush' ? Boolean(state.shipping_bypasser_enabled) : false,
     processing_filter: nextFilter,
   };
   try {
@@ -3389,12 +3854,15 @@ async function startCrmProcessingRun(button = null) {
   return withButtonBusy(button, 'QUEUING...', async () => {
   const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
   const processingFilter = normalizeCrmProcessingFilter(state.processing_filter);
+  const canRunOrderSupport = processingFilter === 'rush' || processingFilter === '813';
   const payload = {
+    mass_emailer_enabled: state.mass_emailer_enabled !== false,
     stock_unlocker_enabled: processingFilter === 'rush' ? Boolean(state.stock_unlocker_enabled) : false,
     address_validator_enabled: processingFilter === 'all' ? true : Boolean(state.address_validator_enabled),
-    product_separator_enabled: state.product_separator_enabled !== false,
-    order_goods_enabled: processingFilter === 'rush' ? Boolean(state.order_goods_enabled) : false,
-    shipping_bypasser_enabled: processingFilter === 'rush' ? Boolean(state.shipping_bypasser_enabled) : false,
+    product_separator_enabled: processingFilter === '813' ? false : state.product_separator_enabled !== false,
+    order_goods_enabled: canRunOrderSupport ? Boolean(state.order_goods_enabled) : false,
+    shipping_bypasser_enabled: canRunOrderSupport ? Boolean(state.shipping_bypasser_enabled) : false,
+    push_back_enabled: canRunOrderSupport ? Boolean(state.push_back_enabled) : false,
     processing_filter: processingFilter,
   };
   try {
@@ -3409,7 +3877,7 @@ async function startCrmProcessingRun(button = null) {
     return;
   }
   if (processingFilter === 'all') {
-    const confirmed = window.confirm('ALL mode will run Address Validator and Product Separator against the configured ALL CRM lists. Stock Unlocker and Rush Order Goods will not run. Continue?');
+    const confirmed = window.confirm('ALL mode will run the selected Mass Emailer, Address Validator, and Product Separator steps against their configured queues/lists. Stock Unlocker, Order Goods, Bypasser, and Push Back will not run. Continue?');
     if (!confirmed) {
       setStatus('ALL mode Automate Processing canceled.');
       return;
@@ -3434,6 +3902,7 @@ async function startCrmProcessingRun(button = null) {
   await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
   await loadCrmShippingBypasserStatus(false);
+  await loadCrmMassEmailerStatus(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmAddressStatus(false);
   setStatus(resultMsg);
@@ -3484,11 +3953,12 @@ function buildCrmOrderLinksHtml(orderIds) {
 
 function normalizeCrmOrderDetails(details, orderIds = [], fallbackDetail = null) {
   const rows = Array.isArray(details) ? details.filter((row) => row && typeof row === 'object') : [];
-  const byId = Object.create(null);
-  rows.forEach((row) => {
+  const covered = Object.create(null);
+  const normalizedRows = rows.map((row) => {
     const ids = normalizeCrmOrderIds([row.order_id]);
-    if (!ids.length) return;
-    byId[ids[0]] = {
+    if (!ids.length) return null;
+    covered[ids[0]] = true;
+    return {
       order_id: ids[0],
       success: Boolean(row.success),
       status: String(row.status || (row.success ? 'Success' : 'Needs attention')),
@@ -3496,18 +3966,61 @@ function normalizeCrmOrderDetails(details, orderIds = [], fallbackDetail = null)
       message: String(row.message || ''),
       duration_seconds: row.duration_seconds != null ? Number(row.duration_seconds) : null,
       sanmar_confirmation: row.sanmar_confirmation && typeof row.sanmar_confirmation === 'object' ? row.sanmar_confirmation : null,
+      stock_tab_index: row.stock_tab_index != null ? Number(row.stock_tab_index) : null,
+      stock_tab_count: row.stock_tab_count != null ? Number(row.stock_tab_count) : null,
+      stock_tab_label: String(row.stock_tab_label || ''),
+      stock_ordered_status: row.stock_ordered_status && typeof row.stock_ordered_status === 'object' ? row.stock_ordered_status : null,
     };
-  });
+  }).filter(Boolean);
   const fallback = fallbackDetail && typeof fallbackDetail === 'object' ? fallbackDetail : {};
-  return normalizeCrmOrderIds(orderIds).map((id) => byId[id] || {
-    order_id: id,
-    success: fallback.success != null ? Boolean(fallback.success) : true,
-    status: String(fallback.status || (fallback.success === false ? 'Needs attention' : 'Success')),
-    outcome: String(fallback.outcome || ''),
-    message: String(fallback.message || ''),
-    duration_seconds: fallback.duration_seconds != null ? Number(fallback.duration_seconds) : null,
-    sanmar_confirmation: fallback.sanmar_confirmation && typeof fallback.sanmar_confirmation === 'object' ? fallback.sanmar_confirmation : null,
+  normalizeCrmOrderIds(orderIds).forEach((id) => {
+    if (covered[id]) return;
+    normalizedRows.push({
+      order_id: id,
+      success: fallback.success != null ? Boolean(fallback.success) : true,
+      status: String(fallback.status || (fallback.success === false ? 'Needs attention' : 'Success')),
+      outcome: String(fallback.outcome || ''),
+      message: String(fallback.message || ''),
+      duration_seconds: fallback.duration_seconds != null ? Number(fallback.duration_seconds) : null,
+      sanmar_confirmation: fallback.sanmar_confirmation && typeof fallback.sanmar_confirmation === 'object' ? fallback.sanmar_confirmation : null,
+      stock_tab_index: null,
+      stock_tab_count: null,
+      stock_tab_label: '',
+      stock_ordered_status: fallback.stock_ordered_status && typeof fallback.stock_ordered_status === 'object' ? fallback.stock_ordered_status : null,
+    });
   });
+  return normalizedRows;
+}
+
+function crmStockTabDetailText(row) {
+  const index = Number(row && row.stock_tab_index);
+  const count = Number(row && row.stock_tab_count);
+  const label = String(row && row.stock_tab_label || '').trim();
+  let text = '';
+  if (index && count && count > 1) text = `tab ${index} of ${count}`;
+  else if (index) text = `tab ${index}`;
+  if (text && label) return `${text} (${label})`;
+  return text || label;
+}
+
+function crmStockOrderedDetailHtml(row) {
+  const status = row && row.stock_ordered_status && typeof row.stock_ordered_status === 'object' ? row.stock_ordered_status : null;
+  if (!status || !status.label) return '';
+  const applied = Boolean(status.applied);
+  const cls = applied ? 'ok' : 'bad';
+  const reason = String(status.reason || '').trim();
+  const before = String(status.order_stock_status_before_split || '').trim();
+  const details = [before ? `before: ${before}` : '', reason].filter(Boolean).join(' | ');
+  return ` <span class='${cls}'>${esc(status.label)}</span>${details ? ` <span class='muted'>${esc(details)}</span>` : ''}`;
+}
+
+function crmStockOrderedDetailText(row) {
+  const status = row && row.stock_ordered_status && typeof row.stock_ordered_status === 'object' ? row.stock_ordered_status : null;
+  if (!status || !status.label) return '';
+  const reason = String(status.reason || '').trim();
+  const before = String(status.order_stock_status_before_split || '').trim();
+  const details = [before ? `before: ${before}` : '', reason].filter(Boolean).join(' | ');
+  return ` | ${status.label}${details ? ` (${details})` : ''}`;
 }
 
 function buildCrmOrderDetailsHtml(details, orderIds = []) {
@@ -3519,12 +4032,16 @@ function buildCrmOrderDetailsHtml(details, orderIds = []) {
     const duration = row.duration_seconds != null ? ` <span class='muted'>${esc(fmtDuration(row.duration_seconds))}</span>` : '';
     const confirmation = row.sanmar_confirmation && typeof row.sanmar_confirmation === 'object' ? row.sanmar_confirmation : null;
     const sanmarUrl = confirmation && confirmation.url ? String(confirmation.url) : '';
-    const webReference = confirmation && confirmation.web_reference ? ` ${esc(confirmation.web_reference)}` : '';
+    const po = confirmation && confirmation.po ? String(confirmation.po) : '';
+    const webReference = confirmation && confirmation.web_reference ? String(confirmation.web_reference) : '';
+    const sanmarLabel = po ? `PO: ${esc(po)}` : (webReference ? `SanMar ${esc(webReference)}` : 'SanMar');
     const sanmarLink = sanmarUrl
-      ? ` <a href="${esc(sanmarUrl)}" target="_blank" rel="noopener noreferrer">SanMar${webReference}</a>`
+      ? ` <a href="${esc(sanmarUrl)}" target="_blank" rel="noopener noreferrer">${sanmarLabel}</a>`
       : '';
-    const screenshot = confirmation && confirmation.screenshot ? ` <span class='muted'>Screenshot: ${esc(confirmation.screenshot)}</span>` : '';
-    return `${crmOrderLinkHtml(row.order_id)} <span class='${statusClass}'>${esc(row.status)}</span>${duration}${sanmarLink}${message}${screenshot}`;
+    const tabText = crmStockTabDetailText(row);
+    const tabInfo = tabText ? ` <span class='muted'>${esc(tabText)}</span>` : '';
+    const stockOrdered = crmStockOrderedDetailHtml(row);
+    return `${crmOrderLinkHtml(row.order_id)}${tabInfo} <span class='${statusClass}'>${esc(row.status)}</span>${duration}${stockOrdered}${sanmarLink}${message}`;
   }).join('<br>');
 }
 
@@ -3536,7 +4053,11 @@ function buildCrmOrderDetailsText(details, orderIds = []) {
     const duration = row.duration_seconds != null ? ` (${fmtDuration(row.duration_seconds)})` : '';
     const confirmation = row.sanmar_confirmation && typeof row.sanmar_confirmation === 'object' ? row.sanmar_confirmation : null;
     const sanmarUrl = confirmation && confirmation.url ? ` | SanMar: ${confirmation.url}` : '';
-    return `${row.order_id}: ${row.status}${duration}${sanmarUrl}${message}`;
+    const po = confirmation && confirmation.po ? ` | PO: ${confirmation.po}` : '';
+    const tabText = crmStockTabDetailText(row);
+    const tabInfo = tabText ? ` ${tabText}` : '';
+    const stockOrdered = crmStockOrderedDetailText(row);
+    return `${row.order_id}${tabInfo}: ${row.status}${duration}${stockOrdered}${po}${sanmarUrl}${message}`;
   }).join('\n');
 }
 
@@ -3593,36 +4114,121 @@ function closeCrmOrderIdsDialog() {
   if (dialog && dialog.open && typeof dialog.close === 'function') dialog.close();
 }
 
+function normalizeCrmHistoryAutomationKey(row) {
+  const key = String(row && row.automation_key || '').trim();
+  return key || 'stock_unlocker';
+}
+
+function normalizeCrmHistoryFilter(value) {
+  const key = String(value || '').trim();
+  return Object.prototype.hasOwnProperty.call(CRM_HISTORY_FILTER_LABELS, key) ? key : 'all';
+}
+
+function normalizeCrmHistoryStatusFilter(value) {
+  const key = String(value || '').trim();
+  return Object.prototype.hasOwnProperty.call(CRM_HISTORY_STATUS_FILTER_LABELS, key) ? key : 'both';
+}
+
+function crmHistoryStatusMatches(row, statusFilter) {
+  if (statusFilter === 'successful') return Boolean(row && row.success);
+  if (statusFilter === 'failed') return !Boolean(row && row.success);
+  return true;
+}
+
+function getHistoryPage(items, requestedPage, pageSize = CRM_HISTORY_PAGE_SIZE) {
+  const allItems = Array.isArray(items) ? items : [];
+  const totalPages = Math.max(1, Math.ceil(allItems.length / pageSize));
+  const normalizedPage = Number.isFinite(Number(requestedPage)) ? Number(requestedPage) : 1;
+  const page = Math.min(Math.max(1, Math.floor(normalizedPage)), totalPages);
+  const startIndex = (page - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, allItems.length);
+  return {
+    page,
+    totalPages,
+    startIndex,
+    endIndex,
+    items: allItems.slice(startIndex, endIndex),
+  };
+}
+
+function renderHistoryPager({ pagerId, prevId, nextId, textId, pageInfo, totalItems }) {
+  const pager = document.getElementById(pagerId);
+  const prevBtn = document.getElementById(prevId);
+  const nextBtn = document.getElementById(nextId);
+  const text = document.getElementById(textId);
+  const hasPages = totalItems > CRM_HISTORY_PAGE_SIZE;
+  if (pager) pager.style.display = hasPages ? '' : 'none';
+  if (prevBtn) prevBtn.disabled = !hasPages || pageInfo.page <= 1;
+  if (nextBtn) nextBtn.disabled = !hasPages || pageInfo.page >= pageInfo.totalPages;
+  if (text) text.textContent = `Page ${pageInfo.page} of ${pageInfo.totalPages}`;
+}
+
+function setCrmHistoryFilter(value) {
+  crmHistoryFilter = normalizeCrmHistoryFilter(value);
+  crmHistoryPage = 1;
+  const rows = crmStatusPayload && crmStatusPayload.state ? crmStatusPayload.state.run_history || [] : [];
+  renderCrmHistory(rows);
+}
+
+function setCrmHistoryStatusFilter(value) {
+  crmHistoryStatusFilter = normalizeCrmHistoryStatusFilter(value);
+  crmHistoryPage = 1;
+  const rows = crmStatusPayload && crmStatusPayload.state ? crmStatusPayload.state.run_history || [] : [];
+  renderCrmHistory(rows);
+}
+
 function renderCrmHistory(rows) {
   const root = document.getElementById('crmHistoryRows');
-  const moreBtn = document.getElementById('crmHistoryMoreBtn');
   const meta = document.getElementById('crmHistoryMetaText');
-  const allItems = Array.isArray(rows) ? rows : [];
-  const collapsedCount = 5;
-  const visibleCount = crmHistoryExpanded ? allItems.length : Math.min(allItems.length, collapsedCount);
-  const items = allItems.slice(0, visibleCount);
+  const filterSelect = document.getElementById('crmHistoryFilterSelect');
+  const statusSelect = document.getElementById('crmHistoryStatusFilterSelect');
+  const activeFilter = normalizeCrmHistoryFilter(crmHistoryFilter);
+  const activeStatusFilter = normalizeCrmHistoryStatusFilter(crmHistoryStatusFilter);
+  if (filterSelect && filterSelect.value !== activeFilter) filterSelect.value = activeFilter;
+  if (statusSelect && statusSelect.value !== activeStatusFilter) statusSelect.value = activeStatusFilter;
+  const sourceItems = Array.isArray(rows) ? rows : [];
+  const toolItems = activeFilter === 'all'
+    ? sourceItems
+    : sourceItems.filter((row) => normalizeCrmHistoryAutomationKey(row) === activeFilter);
+  const allItems = toolItems.filter((row) => crmHistoryStatusMatches(row, activeStatusFilter));
+  const latestRows = latestHistoryRowsByGroup(allItems, normalizeCrmHistoryAutomationKey);
+  const pageInfo = getHistoryPage(allItems, crmHistoryPage);
+  crmHistoryPage = pageInfo.page;
+  const items = pageInfo.items;
+  const filterLabel = CRM_HISTORY_FILTER_LABELS[activeFilter] || CRM_HISTORY_FILTER_LABELS.all;
+  const statusLabel = CRM_HISTORY_STATUS_FILTER_LABELS[activeStatusFilter] || CRM_HISTORY_STATUS_FILTER_LABELS.both;
+  const descriptorParts = [];
+  if (activeStatusFilter !== 'both') descriptorParts.push(statusLabel.toLowerCase());
+  if (activeFilter !== 'all') descriptorParts.push(filterLabel);
+  const runLabel = descriptorParts.length ? `${descriptorParts.join(' ')} run` : 'run';
 
-  if (moreBtn) {
-    if (allItems.length > collapsedCount) {
-      moreBtn.style.display = '';
-      moreBtn.textContent = crmHistoryExpanded ? 'Show Less' : `View More (${allItems.length - collapsedCount} more)`;
-    } else {
-      moreBtn.style.display = 'none';
-    }
-  }
+  renderHistoryPager({
+    pagerId: 'crmHistoryPager',
+    prevId: 'crmHistoryPrevPageBtn',
+    nextId: 'crmHistoryNextPageBtn',
+    textId: 'crmHistoryPageText',
+    pageInfo,
+    totalItems: allItems.length,
+  });
 
   if (meta) {
-    if (allItems.length === 0) {
+    if (sourceItems.length === 0) {
       meta.textContent = 'No stock tool runs yet.';
-    } else if (allItems.length > collapsedCount && !crmHistoryExpanded) {
-      meta.textContent = `Showing ${items.length} of ${allItems.length} runs.`;
+    } else if (allItems.length === 0) {
+      const filterSummary = activeFilter === 'all' ? 'Stock Tools' : filterLabel;
+      meta.textContent = activeStatusFilter === 'both'
+        ? `No runs match ${filterSummary}.`
+        : `No ${statusLabel.toLowerCase()} runs match ${filterSummary}.`;
     } else {
-      meta.textContent = `Showing ${items.length} run${items.length === 1 ? '' : 's'}.`;
+      const range = `${pageInfo.startIndex + 1}-${pageInfo.endIndex}`;
+      meta.textContent = `Showing ${range} of ${allItems.length} ${runLabel}${allItems.length === 1 ? '' : 's'}.`;
     }
   }
 
   if (items.length === 0) {
-    root.innerHTML = "<tr><td colspan='8' class='muted'>No stock tool runs yet.</td></tr>";
+    root.innerHTML = sourceItems.length === 0
+      ? "<tr><td colspan='8' class='muted'>No stock tool runs yet.</td></tr>"
+      : `<tr><td colspan='8' class='muted'>No stock tool runs match the current filters.</td></tr>`;
     return;
   }
 
@@ -3645,7 +4251,7 @@ function renderCrmHistory(rows) {
     const details = orderIds.length > 0
       ? `<button class='secondary' data-order-ids="${esc(orderIds.join(','))}" data-order-details="${esc(orderDetailsJson)}" data-order-label="${esc(orderLabel)}" onclick='openCrmOrderIdsDialogFromButton(this)'>View Order IDs</button>`
       : "<span class='muted'>-</span>";
-    return `<tr><td>${esc(when)}</td><td>${esc(automation)}</td><td>${esc(orders)}</td><td>${esc(duration)}</td><td>${details}</td><td>${esc(mode)}</td><td>${esc(status)}</td><td>${esc(message)}</td></tr>`;
+    return `<tr>${historyWhenCellHtml(when, latestRows.has(row))}<td>${esc(automation)}</td><td>${esc(orders)}</td><td>${esc(duration)}</td><td>${details}</td><td>${esc(mode)}</td><td>${esc(status)}</td><td>${esc(message)}</td></tr>`;
   }).join('');
 }
 
@@ -3672,7 +4278,8 @@ function renderCrmStatus(payload) {
     : (state.last_run_message || 'No Stock Unlocker runs yet.');
 
   setCrmStatusText(headline);
-  document.getElementById('crmRuntimeText').textContent = runtimeText;
+  const unlockerRuntimeEl = document.getElementById('crmRuntimeText');
+  if (unlockerRuntimeEl) unlockerRuntimeEl.textContent = runtimeText;
   document.getElementById('crmLastRunText').textContent = state.last_run_timestamp ? fmtDateTime(state.last_run_timestamp) : '-';
   document.getElementById('crmLastOrderCountText').textContent = state.last_order_count != null ? String(state.last_order_count) : '0';
   document.getElementById('crmTotalOrdersText').textContent = state.total_orders_processed != null ? String(state.total_orders_processed) : '0';
@@ -3690,10 +4297,146 @@ function renderCrmStatus(payload) {
   syncCrmPolling();
 }
 
-function toggleCrmHistory() {
-  crmHistoryExpanded = !crmHistoryExpanded;
+function changeCrmHistoryPage(delta) {
+  crmHistoryPage += Number(delta) || 0;
   const rows = crmStatusPayload && crmStatusPayload.state ? crmStatusPayload.state.run_history || [] : [];
   renderCrmHistory(rows);
+}
+
+function getCrmStockAutomationOrderTarget() {
+  const shared = document.getElementById('crmStockAutomationOrderInput');
+  if (shared) return String(shared.value || '').trim();
+  const legacyProduct = document.getElementById('crmProductSeparatorOrderInput');
+  const legacyOrderGoods = document.getElementById('crmOrderGoodsOrderInput');
+  return String((legacyProduct || legacyOrderGoods || {}).value || '').trim();
+}
+
+function getCrmStockAutomationSelectedSource() {
+  const action = String((document.getElementById('crmStockAutomationTestSelect') || {}).value || 'product_separator_dry_run');
+  if (action.indexOf('product_separator') === 0) return 'product_separator';
+  if (action.indexOf('order_goods') === 0) return 'order_goods';
+  if (action.indexOf('shipping_bypasser') === 0) return 'shipping_bypasser';
+  return '';
+}
+
+function getCrmStockAutomationSelectedLabel() {
+  const select = document.getElementById('crmStockAutomationTestSelect');
+  if (!select) return 'Selected test';
+  const option = select.options[select.selectedIndex];
+  return option ? String(option.textContent || 'Selected test').trim() : 'Selected test';
+}
+
+function crmStockAutomationPayloadForSource(source) {
+  if (source === 'product_separator') return crmProductSeparatorStatusPayload;
+  if (source === 'order_goods') return crmOrderGoodsStatusPayload;
+  if (source === 'shipping_bypasser') return crmShippingBypasserStatusPayload;
+  return null;
+}
+
+function crmStockAutomationSingleTestDetails(source, payload) {
+  const runtime = payload && payload.runtime ? payload.runtime : {};
+  const resultPayload = runtime && runtime.payload ? runtime.payload : {};
+  const running = Boolean(payload && payload.running);
+  const targetOrderId = runtime.targetOrderId || resultPayload.target_order_id || '';
+  const action = String(runtime.lastAction || resultPayload.action || '');
+  const isSingle = (
+    (source === 'product_separator' && action === 'product_separator_order')
+    || (source === 'order_goods' && action === 'order_goods_single')
+    || (source === 'shipping_bypasser' && action === 'shipping_bypass_single')
+    || Boolean(targetOrderId)
+  );
+  if (!isSingle) return null;
+
+  let tool = 'Stock automation test';
+  let activity = 'test';
+  if (source === 'product_separator') {
+    tool = 'Product Separator';
+    activity = runtime.dryRun ? 'dry run' : 'run';
+  } else if (source === 'order_goods') {
+    tool = 'Order Goods';
+    activity = runtime.dryRun ? 'dry run' : 'single run';
+  } else if (source === 'shipping_bypasser') {
+    tool = 'Shipping Bypasser';
+    activity = runtime.dryRun ? 'dry run' : 'run';
+  }
+
+  let headline = `${tool} test is idle.`;
+  if (running) {
+    headline = `${tool} ${activity} in progress${targetOrderId ? ` for order ${targetOrderId}` : ''}.`;
+  } else if (runtime.lastSuccess === true) {
+    headline = `Last ${tool} test completed successfully.`;
+  } else if (runtime.lastSuccess === false) {
+    headline = `Last ${tool} test needs attention.`;
+  }
+  const message = runtime.lastMessage || resultPayload.message || 'No single-order test result yet.';
+  const details = targetOrderId ? `Order ${targetOrderId} | ${message}` : message;
+  return { headline, details, running };
+}
+
+function renderCrmStockAutomationSelectedStatus() {
+  const selectedSource = getCrmStockAutomationSelectedSource();
+  const selectedDetails = crmStockAutomationSingleTestDetails(
+    selectedSource,
+    crmStockAutomationPayloadForSource(selectedSource)
+  );
+  if (selectedDetails) {
+    setCrmStockAutomationTestStatus(selectedDetails.headline, selectedDetails.details);
+    return;
+  }
+  setCrmStockAutomationTestStatus(
+    'No single-order test running.',
+    'Enter an order ID or URL, choose a test, then run it.'
+  );
+}
+
+function maybeRenderCrmStockAutomationStatus(source, payload) {
+  const details = crmStockAutomationSingleTestDetails(source, payload);
+  if (details && (details.running || getCrmStockAutomationSelectedSource() === source)) {
+    setCrmStockAutomationTestStatus(details.headline, details.details);
+    return;
+  }
+  if (getCrmStockAutomationSelectedSource() === source) {
+    renderCrmStockAutomationSelectedStatus();
+  }
+}
+
+function updateCrmStockAutomationTestControls() {
+  const btn = document.getElementById('crmStockAutomationTestRunBtn');
+  const select = document.getElementById('crmStockAutomationTestSelect');
+  if (select) select.disabled = false;
+  if (!btn) return;
+  restoreStoppableButton(btn);
+  btn.disabled = false;
+}
+
+async function startCrmStockAutomationSelectedTest(button = null) {
+  restoreStoppableButton(button);
+  const action = String((document.getElementById('crmStockAutomationTestSelect') || {}).value || 'product_separator_dry_run');
+  const orderTarget = getCrmStockAutomationOrderTarget();
+  const label = getCrmStockAutomationSelectedLabel();
+  if (!orderTarget) {
+    const msg = 'Enter a single order ID or CRM order URL before running a stock automation test.';
+    setCrmStockAutomationTestStatus(`${label} needs an order.`, msg);
+    setStatus(msg);
+    return;
+  }
+  setCrmStockAutomationTestStatus(`Adding ${label} to queue.`, `Order ${orderTarget} | Waiting for queue confirmation.`);
+  if (action === 'product_separator_dry_run') {
+    return startCrmProductSeparatorRun(true, button, true);
+  }
+  if (action === 'product_separator_run') {
+    return startCrmProductSeparatorRun(false, button, true);
+  }
+  if (action === 'order_goods_single_run') {
+    return startCrmOrderGoodsRun(false, button, true);
+  }
+  if (action === 'shipping_bypasser_dry_run') {
+    return startCrmShippingBypasserRun(true, button, true);
+  }
+  if (action === 'shipping_bypasser_run') {
+    return startCrmShippingBypasserRun(false, button, true);
+  }
+  setStatus('Choose a stock automation test before running.');
 }
 
 async function clearCrmHistory() {
@@ -3701,7 +4444,7 @@ async function clearCrmHistory() {
   setStatus('Clearing Stock Tools history...');
   try {
     const d = await api('/crm/history/clear', { method: 'POST' });
-    crmHistoryExpanded = false;
+    crmHistoryPage = 1;
     renderCrmStatus(d);
     setStatus(d.message || 'Stock Tools history cleared.');
   } catch (e) {
@@ -3721,7 +4464,8 @@ async function loadCrmStatus(setStatusText = false) {
   } catch (e) {
     if (setStatusText) setStatus('Stock Unlocker status load failed: ' + e.message);
     setCrmStatusText('Stock Unlocker status load failed.');
-    document.getElementById('crmRuntimeText').textContent = e.message;
+    const unlockerRuntimeEl = document.getElementById('crmRuntimeText');
+    if (unlockerRuntimeEl) unlockerRuntimeEl.textContent = e.message;
     stopCrmPolling();
     return null;
   }
@@ -3745,6 +4489,7 @@ async function startCrmRun(dryRun, button = null) {
   await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
   await loadCrmShippingBypasserStatus(false);
+  await loadCrmMassEmailerStatus(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmProcessingStatus(false);
   setStatus(resultMsg);
@@ -3797,20 +4542,8 @@ function renderCrmProductSeparatorStatus(payload) {
     ? (isSingle ? `Order ${targetOrderId || '-'} | ${runtime.lastMessage || headline}` : `Mode ${listMode.toUpperCase()} | Workers ${runtime.parallelWorkers || 1} | ${runtime.lastMessage || headline}`)
     : (runtime.lastMessage || resultPayload.message || 'No Product Separator runs yet.');
 
-  const statusEl = document.getElementById('crmProductSeparatorStatusText');
-  if (statusEl) statusEl.textContent = headline;
-  const runtimeEl = document.getElementById('crmProductSeparatorRuntimeText');
-  if (runtimeEl) runtimeEl.textContent = runtimeText;
-  ['crmProductSeparatorSingleDryRunBtn', 'crmProductSeparatorSingleRunBtn'].forEach((id) => {
-    const btn = document.getElementById(id);
-    if (!btn) return;
-    if (running && !processingRunning) {
-      markButtonStoppable(btn);
-    } else {
-      restoreStoppableButton(btn);
-      btn.disabled = processingRunning;
-    }
-  });
+  maybeRenderCrmStockAutomationStatus('product_separator', payload);
+  updateCrmStockAutomationTestControls();
   if (state && Array.isArray(state.run_history)) renderCrmHistory(state.run_history);
   syncCrmProductSeparatorPolling();
 }
@@ -3827,18 +4560,17 @@ async function loadCrmProductSeparatorStatus(setStatusText = false) {
     return d;
   } catch (e) {
     if (setStatusText) setStatus('Product Separator status load failed: ' + e.message);
-    const statusEl = document.getElementById('crmProductSeparatorStatusText');
-    if (statusEl) statusEl.textContent = 'Product Separator status load failed.';
-    const runtimeEl = document.getElementById('crmProductSeparatorRuntimeText');
-    if (runtimeEl) runtimeEl.textContent = e.message;
+    if (getCrmStockAutomationSelectedSource() === 'product_separator') {
+      setCrmStockAutomationTestStatus('Product Separator test status load failed.', e.message);
+    }
     stopCrmProductSeparatorPolling();
     return null;
   }
 }
 
 async function startCrmProductSeparatorRun(dryRun, button = null, singleOrder = false) {
-  if (await maybeForceStopFromButton(button)) return;
-  const rawOrderTarget = String((document.getElementById('crmProductSeparatorOrderInput') || {}).value || '').trim();
+  if (!singleOrder && await maybeForceStopFromButton(button)) return;
+  const rawOrderTarget = getCrmStockAutomationOrderTarget();
   if (singleOrder && !rawOrderTarget) {
     setStatus('Enter a single order ID or CRM order URL before starting Single Separator.');
     return;
@@ -3848,7 +4580,7 @@ async function startCrmProductSeparatorRun(dryRun, button = null, singleOrder = 
     ? (dryRun ? `Starting Single Separator dry run for order ${rawOrderTarget}...` : `Starting Single Separator run for order ${rawOrderTarget}...`)
     : (dryRun ? 'Starting Product Separator dry run...' : 'Starting Product Separator...');
   setStatus(resultMsg);
-  markButtonStoppable(button);
+  if (!singleOrder) markButtonStoppable(button);
   try {
     const payload = {};
     if (singleOrder) payload.order_id = rawOrderTarget;
@@ -3861,6 +4593,12 @@ async function startCrmProductSeparatorRun(dryRun, button = null, singleOrder = 
     resultMsg = d.message || (singleOrder
       ? (dryRun ? `Single Separator dry run started for order ${rawOrderTarget}.` : `Single Separator run started for order ${rawOrderTarget}.`)
       : (dryRun ? 'Product Separator dry run started.' : 'Product Separator started.'));
+    if (singleOrder && d.queue_task) {
+      setCrmStockAutomationTestStatus(
+        `Queued ${dryRun ? 'Product Separator Dry Run' : 'Product Separator Run'}.`,
+        `Order ${rawOrderTarget} | ${resultMsg}`
+      );
+    }
   } catch (e) {
     resultMsg = 'Product Separator request failed: ' + e.message;
   }
@@ -3868,9 +4606,11 @@ async function startCrmProductSeparatorRun(dryRun, button = null, singleOrder = 
   await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
   await loadCrmShippingBypasserStatus(false);
+  await loadCrmMassEmailerStatus(false);
   await loadCrmProcessingStatus(false);
   setStatus(resultMsg);
-  if (!(crmProductSeparatorStatusPayload && crmProductSeparatorStatusPayload.running)) restoreStoppableButton(button);
+  if (!singleOrder && !(crmProductSeparatorStatusPayload && crmProductSeparatorStatusPayload.running)) restoreStoppableButton(button);
+  if (singleOrder) restoreStoppableButton(button);
 }
 
 function stopCrmOrderGoodsPolling() {
@@ -3899,7 +4639,7 @@ function renderCrmOrderGoodsStatus(payload) {
   const state = payload && payload.state ? payload.state : (resultPayload && resultPayload.state ? resultPayload.state : null);
   const running = Boolean(payload && payload.running);
   const processingRunning = Boolean(crmProcessingStatusPayload && crmProcessingStatusPayload.running);
-  const parallelWorkers = normalizeCrmOrderGoodsParallelWorkers(running ? runtime.parallelWorkers : (state && state.last_order_goods_parallel_workers));
+  const parallelWorkers = normalizeCrmParallelWorkers(running ? runtime.parallelWorkers : (state && state.last_order_goods_parallel_workers));
   const targetOrderId = runtime.targetOrderId || resultPayload.target_order_id || '';
   const isSingle = String(runtime.lastAction || resultPayload.action || '') === 'order_goods_single' || Boolean(targetOrderId);
   let headline = 'Rush Order Goods is idle.';
@@ -3920,22 +4660,8 @@ function renderCrmOrderGoodsStatus(payload) {
     : (runtime.lastMessage || resultPayload.message || 'No Order Goods runs yet.');
 
   setCrmOrderGoodsStatusText(headline);
-  const runtimeEl = document.getElementById('crmOrderGoodsRuntimeText');
-  if (runtimeEl) runtimeEl.textContent = runtimeText;
-  const orderGoodsParallelPrefInput = document.getElementById('crmSettingsOrderGoodsParallelWorkersInput');
-  if (orderGoodsParallelPrefInput && document.activeElement !== orderGoodsParallelPrefInput && state) {
-    orderGoodsParallelPrefInput.value = String(normalizeCrmOrderGoodsParallelWorkers(state.saved_order_goods_parallel_workers));
-  }
-  ['crmOrderGoodsSingleRunBtn'].forEach((id) => {
-    const btn = document.getElementById(id);
-    if (!btn) return;
-    if (running && !processingRunning) {
-      markButtonStoppable(btn);
-    } else {
-      restoreStoppableButton(btn);
-      btn.disabled = processingRunning;
-    }
-  });
+  maybeRenderCrmStockAutomationStatus('order_goods', payload);
+  updateCrmStockAutomationTestControls();
   if (state && Array.isArray(state.run_history)) renderCrmHistory(state.run_history);
   syncCrmOrderGoodsPolling();
 }
@@ -3946,23 +4672,24 @@ async function loadCrmOrderGoodsStatus(setStatusText = false) {
     renderCrmOrderGoodsStatus(d);
     if (setStatusText) {
       const runtime = d && d.runtime ? d.runtime : {};
-      const statusMsg = d.running ? 'Rush Order Goods is running.' : (runtime.lastMessage || 'Rush Order Goods status refreshed.');
+      const statusMsg = d.running ? (runtime.lastMessage || 'Rush Order Goods is starting.') : (runtime.lastMessage || 'Rush Order Goods status refreshed.');
       setStatus(statusMsg);
     }
     return d;
   } catch (e) {
     if (setStatusText) setStatus('Rush Order Goods status load failed: ' + e.message);
     setCrmOrderGoodsStatusText('Rush Order Goods status load failed.');
-    const runtimeEl = document.getElementById('crmOrderGoodsRuntimeText');
-    if (runtimeEl) runtimeEl.textContent = e.message;
+    if (getCrmStockAutomationSelectedSource() === 'order_goods') {
+      setCrmStockAutomationTestStatus('Order Goods test status load failed.', e.message);
+    }
     stopCrmOrderGoodsPolling();
     return null;
   }
 }
 
 async function startCrmOrderGoodsRun(dryRun, button = null, singleOrder = false) {
-  if (await maybeForceStopFromButton(button)) return;
-  const rawOrderTarget = String((document.getElementById('crmOrderGoodsOrderInput') || {}).value || '').trim();
+  if (!singleOrder && await maybeForceStopFromButton(button)) return;
+  const rawOrderTarget = getCrmStockAutomationOrderTarget();
   if (singleOrder && !rawOrderTarget) {
     setStatus('Enter a single order ID or CRM order URL before starting Single Stock.');
     return;
@@ -3972,7 +4699,7 @@ async function startCrmOrderGoodsRun(dryRun, button = null, singleOrder = false)
     ? (dryRun ? `Starting Single Stock dry run for order ${rawOrderTarget}...` : `Starting Single Stock run for order ${rawOrderTarget}...`)
     : (dryRun ? 'Starting Rush Order Goods dry run...' : 'Starting Rush Order Goods...');
   setStatus(resultMsg);
-  markButtonStoppable(button);
+  if (!singleOrder) markButtonStoppable(button);
   try {
     const payload = {};
     if (singleOrder) payload.order_id = rawOrderTarget;
@@ -3985,6 +4712,12 @@ async function startCrmOrderGoodsRun(dryRun, button = null, singleOrder = false)
     resultMsg = d.message || (singleOrder
       ? (dryRun ? `Single Stock dry run started for order ${rawOrderTarget}.` : `Single Stock run started for order ${rawOrderTarget}.`)
       : (dryRun ? 'Rush Order Goods dry run started.' : 'Rush Order Goods started.'));
+    if (singleOrder && d.queue_task) {
+      setCrmStockAutomationTestStatus(
+        `Queued Order Goods Single Run.`,
+        `Order ${rawOrderTarget} | ${resultMsg}`
+      );
+    }
   } catch (e) {
     resultMsg = 'Rush Order Goods request failed: ' + e.message;
   }
@@ -3992,10 +4725,12 @@ async function startCrmOrderGoodsRun(dryRun, button = null, singleOrder = false)
   await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
   await loadCrmShippingBypasserStatus(false);
+  await loadCrmMassEmailerStatus(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmProcessingStatus(false);
   setStatus(resultMsg);
-  if (!(crmOrderGoodsStatusPayload && crmOrderGoodsStatusPayload.running)) restoreStoppableButton(button);
+  if (!singleOrder && !(crmOrderGoodsStatusPayload && crmOrderGoodsStatusPayload.running)) restoreStoppableButton(button);
+  if (singleOrder) restoreStoppableButton(button);
 }
 
 function setCrmShippingBypasserStatusText(message) {
@@ -4028,20 +4763,32 @@ function renderCrmShippingBypasserStatus(payload) {
     ? (isSingle ? `Order ${targetOrderId || '-'} | ${runtime.lastMessage || headline}` : (runtime.lastMessage || headline))
     : (runtime.lastMessage || resultPayload.message || 'No Shipping Bypasser runs yet.');
   setCrmShippingBypasserStatusText(headline);
-  const runtimeEl = document.getElementById('crmShippingBypasserRuntimeText');
-  if (runtimeEl) runtimeEl.textContent = runtimeText;
-  ['crmShippingBypasserSingleDryRunBtn'].forEach((id) => {
-    const btn = document.getElementById(id);
-    if (!btn) return;
-    if (running && !processingRunning) {
-      markButtonStoppable(btn);
-    } else {
-      restoreStoppableButton(btn);
-      btn.disabled = processingRunning;
-    }
-  });
+  maybeRenderCrmStockAutomationStatus('shipping_bypasser', payload);
+  updateCrmStockAutomationTestControls();
   if (state && Array.isArray(state.run_history)) renderCrmHistory(state.run_history);
   syncCrmShippingBypasserPolling();
+}
+
+async function openCrmShippingBypasserSanmarCart(button = null) {
+  const originalText = button ? button.textContent : '';
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Opening...';
+  }
+  let resultMsg = 'Opening SanMar cart...';
+  setStatus(resultMsg);
+  try {
+    const d = await api('/crm/shipping-bypasser/sanmar-cart/open', { method: 'POST' });
+    renderCrmShippingBypasserStatus(d);
+    resultMsg = d.message || 'Opened SanMar cart.';
+  } catch (e) {
+    resultMsg = 'Could not open SanMar cart: ' + e.message;
+  }
+  setStatus(resultMsg);
+  if (button) {
+    button.disabled = false;
+    button.textContent = originalText || 'Open SanMar Cart';
+  }
 }
 
 async function loadCrmShippingBypasserStatus(setStatusText = false) {
@@ -4050,22 +4797,23 @@ async function loadCrmShippingBypasserStatus(setStatusText = false) {
     renderCrmShippingBypasserStatus(d);
     if (setStatusText) {
       const runtime = d && d.runtime ? d.runtime : {};
-      setStatus(d.running ? 'Shipping Bypasser is running.' : (runtime.lastMessage || 'Shipping Bypasser status refreshed.'));
+      setStatus(d.running ? (runtime.lastMessage || 'Shipping Bypasser is starting.') : (runtime.lastMessage || 'Shipping Bypasser status refreshed.'));
     }
     return d;
   } catch (e) {
     if (setStatusText) setStatus('Shipping Bypasser status load failed: ' + e.message);
     setCrmShippingBypasserStatusText('Shipping Bypasser status load failed.');
-    const runtimeEl = document.getElementById('crmShippingBypasserRuntimeText');
-    if (runtimeEl) runtimeEl.textContent = e.message;
+    if (getCrmStockAutomationSelectedSource() === 'shipping_bypasser') {
+      setCrmStockAutomationTestStatus('Shipping Bypasser test status load failed.', e.message);
+    }
     stopCrmShippingBypasserPolling();
     return null;
   }
 }
 
 async function startCrmShippingBypasserRun(dryRun, button = null, singleOrder = false) {
-  if (await maybeForceStopFromButton(button)) return;
-  const rawOrderTarget = String((document.getElementById('crmOrderGoodsOrderInput') || {}).value || '').trim();
+  if (!singleOrder && await maybeForceStopFromButton(button)) return;
+  const rawOrderTarget = getCrmStockAutomationOrderTarget();
   if (singleOrder && !rawOrderTarget) {
     setStatus('Enter a single order ID or CRM order URL before starting Single Bypasser.');
     return;
@@ -4075,7 +4823,7 @@ async function startCrmShippingBypasserRun(dryRun, button = null, singleOrder = 
     ? (dryRun ? `Starting Single Bypasser dry run for order ${rawOrderTarget}...` : `Starting Single Bypasser run for order ${rawOrderTarget}...`)
     : (dryRun ? 'Starting Shipping Bypasser dry run...' : 'Starting Shipping Bypasser...');
   setStatus(resultMsg);
-  markButtonStoppable(button);
+  if (!singleOrder) markButtonStoppable(button);
   try {
     const payload = {};
     if (singleOrder) payload.order_id = rawOrderTarget;
@@ -4086,6 +4834,12 @@ async function startCrmShippingBypasserRun(dryRun, button = null, singleOrder = 
     });
     renderCrmShippingBypasserStatus(d);
     resultMsg = d.message || resultMsg;
+    if (singleOrder && d.queue_task) {
+      setCrmStockAutomationTestStatus(
+        `Queued ${dryRun ? 'Shipping Bypasser Dry Run' : 'Shipping Bypasser Run'}.`,
+        `Order ${rawOrderTarget} | ${resultMsg}`
+      );
+    }
   } catch (e) {
     resultMsg = 'Shipping Bypasser request failed: ' + e.message;
   }
@@ -4093,10 +4847,12 @@ async function startCrmShippingBypasserRun(dryRun, button = null, singleOrder = 
   await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
   await loadCrmShippingBypasserStatus(false);
+  await loadCrmMassEmailerStatus(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmProcessingStatus(false);
   setStatus(resultMsg);
-  if (!(crmShippingBypasserStatusPayload && crmShippingBypasserStatusPayload.running)) restoreStoppableButton(button);
+  if (!singleOrder && !(crmShippingBypasserStatusPayload && crmShippingBypasserStatusPayload.running)) restoreStoppableButton(button);
+  if (singleOrder) restoreStoppableButton(button);
 }
 
 function stopCrmShippingBypasserPolling() {
@@ -4115,6 +4871,220 @@ function syncCrmShippingBypasserPolling() {
     }
   } else {
     stopCrmShippingBypasserPolling();
+  }
+}
+
+function formatCrmMassEmailerAction(action) {
+  const key = String(action || '').trim();
+  if (key === 'scan_sheet') return 'Sheet Scan';
+  if (key === 'process_order') return 'Single Order';
+  return 'Queue';
+}
+
+function renderCrmMassEmailerHistory(rows) {
+  const root = document.getElementById('crmMassEmailerHistoryRows');
+  if (!root) return;
+  const allItems = Array.isArray(rows) ? rows : [];
+  const collapsedCount = 5;
+  const items = crmMassEmailerHistoryExpanded ? allItems : allItems.slice(0, collapsedCount);
+  const latestRows = latestHistoryRows(allItems);
+  const moreBtn = document.getElementById('crmMassEmailerHistoryMoreBtn');
+  const meta = document.getElementById('crmMassEmailerHistoryMetaText');
+  if (moreBtn) {
+    if (allItems.length > collapsedCount) {
+      moreBtn.style.display = '';
+      moreBtn.textContent = crmMassEmailerHistoryExpanded ? 'Show Less' : `View More (${allItems.length - collapsedCount} more)`;
+    } else {
+      moreBtn.style.display = 'none';
+    }
+  }
+  if (meta) {
+    if (allItems.length === 0) meta.textContent = 'No Mass Emailer runs yet.';
+    else if (allItems.length > collapsedCount && !crmMassEmailerHistoryExpanded) meta.textContent = `Showing ${items.length} of ${allItems.length} runs.`;
+    else meta.textContent = `Showing ${items.length} run${items.length === 1 ? '' : 's'}.`;
+  }
+  if (items.length === 0) {
+    root.innerHTML = "<tr><td colspan='9' class='muted'>No Mass Emailer runs yet.</td></tr>";
+    return;
+  }
+  root.innerHTML = items.map((row) => {
+    const when = row && row.timestamp ? fmtDateTime(row.timestamp) : '-';
+    const orderIds = normalizeCrmOrderIds(row && row.order_ids);
+    const orderCount = Number(row && row.order_count || orderIds.length || 0);
+    const failures = Number(row && row.failure_count || 0);
+    const skipped = Number(row && row.skipped_count || 0);
+    const orderDetailsJson = JSON.stringify(orderIds.map((orderId) => ({ order_id: orderId })));
+    const orderCell = orderIds.length > 0
+      ? `<button class='secondary' data-order-ids="${esc(orderIds.join(','))}" data-order-details="${esc(orderDetailsJson)}" data-order-label="${esc(`Mass Emailer Orders${when !== '-' ? ` | ${when}` : ''}`)}" onclick='openCrmOrderIdsDialogFromButton(this)'>View ${esc(String(orderCount || orderIds.length))} Order${(orderCount || orderIds.length) === 1 ? '' : 's'}</button>`
+      : (orderCount > 0 ? esc(`${orderCount} order${orderCount === 1 ? '' : 's'}`) : '-');
+    const mode = row && row.dry_run ? 'Dry Run' : (row && row.action === 'scan_sheet' ? 'Scan' : 'Live');
+    const status = row && row.success ? 'Success' : 'Needs attention';
+    return `<tr>${historyWhenCellHtml(when, latestRows.has(row))}<td>${esc(formatCrmMassEmailerAction(row && row.action))}</td><td>${orderCell}</td><td>${esc(String(failures))}</td><td>${esc(String(skipped))}</td><td>${esc(fmtDuration(row && row.duration_seconds))}</td><td>${esc(mode)}</td><td>${esc(status)}</td><td>${esc(row && row.message ? row.message : '')}</td></tr>`;
+  }).join('');
+}
+
+function renderCrmMassEmailerStatus(payload) {
+  crmMassEmailerStatusPayload = payload;
+  const state = payload && payload.state ? payload.state : {};
+  const runtime = payload && payload.runtime ? payload.runtime : {};
+  const running = Boolean(payload && payload.running);
+  const processingRunning = Boolean(crmProcessingStatusPayload && crmProcessingStatusPayload.running);
+  const lastSuccess = state.last_run_success;
+  let headline = 'Mass Emailer is idle.';
+  if (running) headline = runtime.dryRun ? 'Mass Emailer dry run is running.' : 'Mass Emailer is running.';
+  else if (processingRunning) headline = 'Mass Emailer is waiting for Automate Processing to finish.';
+  else if (lastSuccess === true) headline = 'Last Mass Emailer run completed successfully.';
+  else if (lastSuccess === false) headline = 'Last Mass Emailer run needs attention.';
+  const orderCount = Number((running ? runtime.orderCount : state.last_order_count) || 0);
+  const failureCount = Number((running ? runtime.failureCount : state.last_failure_count) || 0);
+  const skippedCount = Number((running ? runtime.skippedCount : state.last_skipped_count) || 0);
+  const action = (running ? runtime.lastAction : state.last_action) || 'process_queue';
+  const mode = running ? (runtime.dryRun ? 'Dry Run' : (action === 'scan_sheet' ? 'Scan' : 'Live')) : formatCrmMassEmailerAction(action);
+  const runtimeText = running
+    ? `${mode} | Orders ${orderCount} | Failures ${failureCount} | Skipped ${skippedCount}. ${runtime.lastMessage || ''}`.trim()
+    : (state.last_run_message || 'No Mass Emailer runs yet.');
+  const statusText = document.getElementById('crmMassEmailerStatusText');
+  if (statusText) statusText.textContent = headline;
+  const runtimeNode = document.getElementById('crmMassEmailerRuntimeText');
+  if (runtimeNode) runtimeNode.textContent = runtimeText;
+  const lastRun = document.getElementById('crmMassEmailerLastRunText');
+  if (lastRun) lastRun.textContent = state.last_run_timestamp ? fmtDateTime(state.last_run_timestamp) : '-';
+  const lastOrderCount = document.getElementById('crmMassEmailerLastOrderCountText');
+  if (lastOrderCount) lastOrderCount.textContent = String(state.last_order_count || 0);
+  const lastFailureCount = document.getElementById('crmMassEmailerLastFailureCountText');
+  if (lastFailureCount) lastFailureCount.textContent = String(state.last_failure_count || 0);
+  const totalOrders = document.getElementById('crmMassEmailerTotalOrdersText');
+  if (totalOrders) totalOrders.textContent = String(state.total_orders_processed || 0);
+  const scanBtn = document.getElementById('crmMassEmailerScanBtn');
+  const dryBtn = document.getElementById('crmMassEmailerDryRunBtn');
+  const runBtn = document.getElementById('crmMassEmailerRunBtn');
+  if (running && !processingRunning) {
+    if (scanBtn) scanBtn.disabled = true;
+    if (dryBtn) dryBtn.disabled = true;
+    if (runBtn) markButtonStoppable(runBtn);
+  } else {
+    if (scanBtn) scanBtn.disabled = processingRunning;
+    if (dryBtn) dryBtn.disabled = processingRunning;
+    if (runBtn) {
+      restoreStoppableButton(runBtn);
+      runBtn.disabled = processingRunning;
+    }
+  }
+  renderCrmMassEmailerHistory(state.run_history || []);
+  syncCrmMassEmailerPolling();
+}
+
+async function loadCrmMassEmailerStatus(setStatusText = false) {
+  try {
+    const d = await api('/crm/mass-emailer/status');
+    renderCrmMassEmailerStatus(d);
+    if (setStatusText) {
+      const runtime = d && d.runtime ? d.runtime : {};
+      setStatus(d.running ? (runtime.lastMessage || 'Mass Emailer is starting.') : (runtime.lastMessage || 'Mass Emailer status refreshed.'));
+    }
+    return d;
+  } catch (e) {
+    if (setStatusText) setStatus('Mass Emailer status load failed: ' + e.message);
+    const statusText = document.getElementById('crmMassEmailerStatusText');
+    if (statusText) statusText.textContent = 'Mass Emailer status load failed.';
+    stopCrmMassEmailerPolling();
+    return null;
+  }
+}
+
+function buildCrmMassEmailerPayload() {
+  const rawLimit = String((document.getElementById('crmMassEmailerLimitInput') || {}).value || '').trim();
+  const limit = rawLimit ? Number(rawLimit) : 0;
+  if (!Number.isFinite(limit) || limit < 0) {
+    throw new Error('Enter a row limit of 0 or higher.');
+  }
+  const retryErrors = Boolean((document.getElementById('crmMassEmailerRetryErrorsInput') || {}).checked);
+  const payload = { retry_errors: retryErrors };
+  if (limit > 0) payload.limit = Math.floor(limit);
+  return payload;
+}
+
+async function startCrmMassEmailerRun(mode, button = null) {
+  if (await maybeForceStopFromButton(button)) return;
+  let path = '/crm/mass-emailer';
+  let label = 'Mass Emailer';
+  if (mode === 'scan') {
+    path = '/crm/mass-emailer/scan';
+    label = 'Mass Emailer sheet scan';
+  } else if (mode === 'dry-run') {
+    path = '/crm/mass-emailer/dry-run';
+    label = 'Mass Emailer dry run';
+  } else {
+    const confirmed = window.confirm('Mass Emailer live run will send Salesforce emails, cancel CRM orders, process refunds, and delete successful sheet rows. Continue?');
+    if (!confirmed) {
+      setStatus('Mass Emailer live run canceled.');
+      return;
+    }
+  }
+  let payload;
+  try {
+    payload = buildCrmMassEmailerPayload();
+  } catch (e) {
+    setStatus(e.message);
+    return;
+  }
+  let resultMsg = `Starting ${label}...`;
+  setStatus(resultMsg);
+  markButtonStoppable(button);
+  try {
+    const d = await api(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    renderCrmMassEmailerStatus(d);
+    resultMsg = d.message || resultMsg;
+  } catch (e) {
+    resultMsg = 'Mass Emailer request failed: ' + e.message;
+  }
+  await loadCrmMassEmailerStatus(false);
+  await loadCrmProcessingStatus(false);
+  await loadCrmAddressStatus(false);
+  await loadQueue(false);
+  setStatus(resultMsg);
+  if (!(crmMassEmailerStatusPayload && crmMassEmailerStatusPayload.running)) restoreStoppableButton(button);
+}
+
+function toggleCrmMassEmailerHistory() {
+  crmMassEmailerHistoryExpanded = !crmMassEmailerHistoryExpanded;
+  const rows = crmMassEmailerStatusPayload && crmMassEmailerStatusPayload.state ? crmMassEmailerStatusPayload.state.run_history || [] : [];
+  renderCrmMassEmailerHistory(rows);
+}
+
+async function clearCrmMassEmailerHistory() {
+  if (!confirm('Clear Mass Emailer run history?')) return;
+  setStatus('Clearing Mass Emailer history...');
+  try {
+    const d = await api('/crm/mass-emailer/history/clear', { method: 'POST' });
+    crmMassEmailerHistoryExpanded = false;
+    renderCrmMassEmailerStatus(d);
+    setStatus(d.message || 'Mass Emailer history cleared.');
+  } catch (e) {
+    setStatus('Mass Emailer history clear failed: ' + e.message);
+  }
+}
+
+function stopCrmMassEmailerPolling() {
+  if (crmMassEmailerPollTimer) {
+    clearInterval(crmMassEmailerPollTimer);
+    crmMassEmailerPollTimer = null;
+  }
+}
+
+function syncCrmMassEmailerPolling() {
+  if (crmMassEmailerStatusPayload && crmMassEmailerStatusPayload.running) {
+    if (!crmMassEmailerPollTimer) {
+      crmMassEmailerPollTimer = setInterval(() => {
+        loadCrmMassEmailerStatus(false);
+      }, 2000);
+    }
+  } else {
+    stopCrmMassEmailerPolling();
   }
 }
 
@@ -4147,13 +5117,12 @@ function crmAutoSplitterInputs() {
   const orderInput = document.getElementById('crmAutoSplitterOrderInput');
   const tabsInput = document.getElementById('crmAutoSplitterTabsInput');
   const divisionsInput = document.getElementById('crmAutoSplitterDivisionsInput');
-  const workersInput = document.getElementById('crmAutoSplitterParallelWorkersInput');
   return {
     order_target: String(orderInput ? orderInput.value : '').trim(),
     tab_count: Number(String(tabsInput ? tabsInput.value : '').trim()),
     divisions: Number(String(divisionsInput ? divisionsInput.value : '').trim()),
     minimum_tabs: 10,
-    parallel_workers: Math.max(1, Math.min(4, Number(String(workersInput ? workersInput.value : '1').trim()) || 1)),
+    parallel_workers: getSavedCrmWorkerPreference(),
   };
 }
 
@@ -4161,7 +5130,7 @@ function crmAutoSplitterValidation(payload) {
   if (!payload.order_target) return 'Enter an order number or CRM order link.';
   if (!Number.isFinite(payload.tab_count) || payload.tab_count < 1) return 'Enter how many tabs are on the order.';
   if (!Number.isFinite(payload.divisions) || payload.divisions < 2) return 'Enter how many divisions to split into.';
-  if (!Number.isFinite(payload.parallel_workers) || payload.parallel_workers < 1 || payload.parallel_workers > 4) return 'Enter 1 to 4 Auto Splitter workers.';
+  if (!Number.isFinite(payload.parallel_workers) || payload.parallel_workers < 1 || payload.parallel_workers > 8) return 'Enter 1 to 8 automation workers in Settings.';
   if (payload.tab_count < payload.minimum_tabs) return `Auto Splitter requires at least ${payload.minimum_tabs} tabs.`;
   return '';
 }
@@ -4225,6 +5194,7 @@ function renderCrmAutoSplitterHistory(rows) {
   const collapsedCount = 5;
   const visibleCount = crmAutoSplitterHistoryExpanded ? allItems.length : Math.min(allItems.length, collapsedCount);
   const items = allItems.slice(0, visibleCount);
+  const latestRows = latestHistoryRows(allItems);
 
   if (moreBtn) {
     if (allItems.length > collapsedCount) {
@@ -4254,7 +5224,7 @@ function renderCrmAutoSplitterHistory(rows) {
     const mode = row && row.dry_run ? 'Dry Run' : 'Dry Run + Live';
     const status = row && row.success ? 'Success' : 'Failed';
     const message = row && row.message ? row.message : '';
-    return `<tr><td>${esc(when)}</td><td>${orderCell}</td><td>${esc(tabs)}</td><td>${esc(divisions)}</td><td>${esc(duration)}</td><td>${esc(mode)}</td><td>${esc(status)}</td><td>${esc(message)}</td></tr>`;
+    return `<tr>${historyWhenCellHtml(when, latestRows.has(row))}<td>${orderCell}</td><td>${esc(tabs)}</td><td>${esc(divisions)}</td><td>${esc(duration)}</td><td>${esc(mode)}</td><td>${esc(status)}</td><td>${esc(message)}</td></tr>`;
   }).join('');
 }
 
@@ -4304,12 +5274,6 @@ function renderCrmAutoSplitterStatus(payload) {
   const reportEl = document.getElementById('crmAutoSplitterReportText');
   if (reportEl) reportEl.textContent = formatCrmAutoSplitterReport(resultPayload);
 
-  const workersInput = document.getElementById('crmAutoSplitterParallelWorkersInput');
-  const savedWorkers = payload && payload.state ? Number(payload.state.saved_auto_splitter_parallel_workers) : NaN;
-  if (workersInput && !running && Number.isFinite(savedWorkers) && savedWorkers >= 1 && savedWorkers <= 4 && workersInput.dataset.userEdited !== '1') {
-    workersInput.value = String(savedWorkers);
-  }
-
   const liveBtn = document.getElementById('crmAutoSplitterRunBtn');
   if (liveBtn) {
     restoreStoppableButton(liveBtn);
@@ -4322,7 +5286,7 @@ function renderCrmAutoSplitterStatus(payload) {
 }
 
 function ensureCrmAutoSplitterInputWiring() {
-  ['crmAutoSplitterOrderInput', 'crmAutoSplitterTabsInput', 'crmAutoSplitterDivisionsInput', 'crmAutoSplitterParallelWorkersInput'].forEach((id) => {
+  ['crmAutoSplitterOrderInput', 'crmAutoSplitterTabsInput', 'crmAutoSplitterDivisionsInput'].forEach((id) => {
     const input = document.getElementById(id);
     if (!input || input.dataset.bound === '1') return;
     input.addEventListener('input', () => {
@@ -4390,6 +5354,7 @@ async function startCrmAutoSplitterRun(button = null) {
   await loadQueue(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmStatus(false);
+  await loadCrmMassEmailerStatus(false);
   if (requestFailed) setCrmAutoSplitterLocalMessage('Auto Splitter request failed.', resultMsg);
   setStatus(resultMsg);
 }
@@ -4632,31 +5597,30 @@ function buildCrmAddressHistoryDiffHtml(row, fallbackOrderId = '') {
 
 function renderCrmAddressHistory(rows) {
   const root = document.getElementById('crmAddressHistoryRows');
-  const moreBtn = document.getElementById('crmAddressHistoryMoreBtn');
   const meta = document.getElementById('crmAddressHistoryMetaText');
   const toggleBtn = document.getElementById('crmAddressHistoryValueToggleBtn');
   const valueHeader = document.getElementById('crmAddressHistoryValueHeader');
   const allItems = Array.isArray(rows) ? rows : [];
-  const collapsedCount = 5;
-  const visibleCount = crmAddressHistoryExpanded ? allItems.length : Math.min(allItems.length, collapsedCount);
-  const items = allItems.slice(0, visibleCount);
+  const latestRows = latestHistoryRows(allItems);
+  const pageInfo = getHistoryPage(allItems, crmAddressHistoryPage);
+  crmAddressHistoryPage = pageInfo.page;
+  const items = pageInfo.items;
 
   if (toggleBtn) toggleBtn.textContent = crmAddressHistoryShowDiff ? 'Show Message' : 'Show Address Difference';
   if (valueHeader) valueHeader.textContent = crmAddressHistoryShowDiff ? 'Address Difference' : 'Message';
 
-  if (moreBtn) {
-    if (allItems.length > collapsedCount) {
-      moreBtn.style.display = '';
-      moreBtn.textContent = crmAddressHistoryExpanded ? 'Show Less' : `View More (${allItems.length - collapsedCount} more)`;
-    } else {
-      moreBtn.style.display = 'none';
-    }
-  }
+  renderHistoryPager({
+    pagerId: 'crmAddressHistoryPager',
+    prevId: 'crmAddressHistoryPrevPageBtn',
+    nextId: 'crmAddressHistoryNextPageBtn',
+    textId: 'crmAddressHistoryPageText',
+    pageInfo,
+    totalItems: allItems.length,
+  });
 
   if (meta) {
     if (allItems.length === 0) meta.textContent = 'No Address Validator runs yet.';
-    else if (allItems.length > collapsedCount && !crmAddressHistoryExpanded) meta.textContent = `Showing ${items.length} of ${allItems.length} runs.`;
-    else meta.textContent = `Showing ${items.length} run${items.length === 1 ? '' : 's'}.`;
+    else meta.textContent = `Showing ${pageInfo.startIndex + 1}-${pageInfo.endIndex} of ${allItems.length} run${allItems.length === 1 ? '' : 's'}.`;
   }
 
   if (items.length === 0) {
@@ -4690,7 +5654,7 @@ function renderCrmAddressHistory(rows) {
     }
     else if (orderId !== '-') orderCell = crmOrderLinkHtml(orderId);
     const valueCell = crmAddressHistoryShowDiff ? buildCrmAddressHistoryDiffHtml(row, orderId) : esc(message);
-    return `<tr><td>${esc(when)}</td><td>${orderCell}</td><td>${esc(duration)}</td><td>${details}</td><td>${esc(modeLabel)}</td><td>${esc(filterLabel)}</td><td>${esc(status)}</td><td>${esc(resolution)}</td><td>${valueCell}</td></tr>`;
+    return `<tr>${historyWhenCellHtml(when, latestRows.has(row))}<td>${orderCell}</td><td>${esc(duration)}</td><td>${details}</td><td>${esc(modeLabel)}</td><td>${esc(filterLabel)}</td><td>${esc(status)}</td><td>${esc(resolution)}</td><td>${valueCell}</td></tr>`;
   }).join('');
 }
 
@@ -4751,6 +5715,10 @@ function renderCrmAddressStatus(payload) {
   if (parallelPrefInput && document.activeElement !== parallelPrefInput) {
     parallelPrefInput.value = String(savedBatchPrefs.parallelWorkers);
   }
+  const workerRamText = document.getElementById('crmSettingsWorkerRamText');
+  if (workerRamText && parallelPrefInput) {
+    workerRamText.textContent = formatCrmWorkerRamEstimate(parallelPrefInput.value);
+  }
   renderCrmAddressModeControls();
   const filterToggleBtn = document.getElementById('crmAddressFilterToggleBtn');
   if (filterToggleBtn) {
@@ -4784,8 +5752,8 @@ function renderCrmAddressStatus(payload) {
   syncCrmAddressPolling();
 }
 
-function toggleCrmAddressHistory() {
-  crmAddressHistoryExpanded = !crmAddressHistoryExpanded;
+function changeCrmAddressHistoryPage(delta) {
+  crmAddressHistoryPage += Number(delta) || 0;
   const rows = crmAddressStatusPayload && crmAddressStatusPayload.state ? crmAddressStatusPayload.state.run_history || [] : [];
   renderCrmAddressHistory(rows);
 }
@@ -4795,7 +5763,7 @@ async function clearCrmAddressHistory() {
   setStatus('Clearing Address Validator history...');
   try {
     const d = await api('/crm/address-validator/history/clear', { method: 'POST' });
-    crmAddressHistoryExpanded = false;
+    crmAddressHistoryPage = 1;
     renderCrmAddressStatus(d);
     setStatus(d.message || 'Address Validator history cleared.');
   } catch (e) {
@@ -4885,6 +5853,7 @@ async function startCrmAddressRun(dryRun, button = null) {
   await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
   await loadCrmShippingBypasserStatus(false);
+  await loadCrmMassEmailerStatus(false);
   await loadCrmAutoSplitterStatus(false);
   setStatus(resultMsg);
   if (!(crmAddressStatusPayload && crmAddressStatusPayload.running)) restoreStoppableButton(button);
@@ -4978,10 +5947,15 @@ async function loadConfig() {
     const d = await api('/api/config');
     const groups = d.groups || {};
     lastConfigGroups = groups;
+    const crmLinkKeys = new Set(CRM_LINK_SETTING_KEYS);
+    const allConfigFields = [
+      ...(groups.crm || []),
+      ...(groups.other || []).filter((field) => field && crmLinkKeys.has(field.key)),
+    ].filter((field) => field && !HIDDEN_CONFIG_KEYS.has(field.key));
     renderPaycomSettings(groups.paycom || []);
     renderSlackSettings(groups.slack || []);
     renderWorkSettings(groups.work || []);
-    renderCRMSettings(groups.crm || []);
+    renderCRMSettings(allConfigFields);
     renderOtherSettings(groups.other || []);
     renderCrmPreferenceSettings(
       crmAddressStatusPayload && crmAddressStatusPayload.state ? crmAddressStatusPayload.state : {},
@@ -5060,6 +6034,7 @@ async function reloadAll() {
   await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
   await loadCrmShippingBypasserStatus(false);
+  await loadCrmMassEmailerStatus(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmAddressStatus(false);
   await loadConfig();
@@ -5093,6 +6068,7 @@ if (!UI_OPENED_FROM_FILE) {
     loadCrmProductSeparatorStatus(false);
     loadCrmOrderGoodsStatus(false);
     loadCrmShippingBypasserStatus(false);
+    loadCrmMassEmailerStatus(false);
     loadCrmAutoSplitterStatus(false);
     loadCrmAddressStatus(false);
     loadSlackLunchStatus(false);

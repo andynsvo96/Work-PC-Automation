@@ -19,7 +19,9 @@ import server  # noqa: E402
 import crm_validate_address  # noqa: E402
 import crm_order_goods  # noqa: E402
 import crm_auto_splitter  # noqa: E402
+import crm_unlock_orders  # noqa: E402
 import crm_product_separator  # noqa: E402
+import crm_shipping_bypasser  # noqa: E402
 import automation_runtime  # noqa: E402
 
 
@@ -31,6 +33,925 @@ def _report_row(order_id, *, success=True, manual_review_required=False, resolut
         "resolution": resolution,
         "warnings": [],
     }
+
+
+class ChromeProfileRuntimeTests(unittest.TestCase):
+    def test_chrome_profile_match_is_exact_not_prefix(self):
+        root = Path("C:/Automation")
+        sanmar_profile = root / "chrome_profile"
+        crm_profile = root / "chrome_profile_crm"
+        cmdline = f'chrome.exe --user-data-dir="{crm_profile}" --remote-debugging-port=0'
+
+        self.assertFalse(automation_runtime._chrome_cmdline_uses_profile(cmdline, sanmar_profile))
+        self.assertTrue(automation_runtime._chrome_cmdline_uses_profile(cmdline, crm_profile))
+
+    def test_chrome_profile_match_supports_unquoted_user_data_dir(self):
+        profile = Path("C:/Automation/chrome_profile")
+        cmdline = f"chrome.exe --user-data-dir={profile} --headless=new"
+
+        self.assertTrue(automation_runtime._chrome_cmdline_uses_profile(cmdline, profile))
+
+
+class CrmUnlockOrdersTests(unittest.TestCase):
+    def test_verify_update_complete_extends_wait_while_apply_is_in_progress(self):
+        clock = {"now": 100.0}
+        sleep_calls = []
+
+        def fake_time():
+            return clock["now"]
+
+        def fake_sleep(seconds):
+            sleep_calls.append(seconds)
+            clock["now"] += 5.0
+
+        def fake_has_success(_driver):
+            return clock["now"] >= 120.0
+
+        def fake_has_progress(_driver):
+            return True
+
+        with mock.patch.object(crm_unlock_orders, "CRM_ACTION_TIMEOUT", 15), \
+             mock.patch.object(crm_unlock_orders.time, "time", side_effect=fake_time), \
+             mock.patch.object(crm_unlock_orders.time, "sleep", side_effect=fake_sleep), \
+             mock.patch.object(crm_unlock_orders, "_has_update_success_message", side_effect=fake_has_success), \
+             mock.patch.object(crm_unlock_orders, "_has_unlock_apply_progress", side_effect=fake_has_progress), \
+             mock.patch.object(crm_unlock_orders, "_wait_for_order_count_to_settle", return_value=1):
+            result = crm_unlock_orders.verify_update_complete(object(), previous_order_count=8)
+
+        self.assertTrue(result["success_message_seen"])
+        self.assertGreaterEqual(clock["now"], 120.0)
+        self.assertGreaterEqual(len(sleep_calls), 4)
+
+    @mock.patch.object(crm_unlock_orders, "safe_driver_quit")
+    @mock.patch.object(crm_unlock_orders, "build_chrome_driver")
+    @mock.patch.object(crm_unlock_orders, "kill_stale_chrome")
+    @mock.patch.object(crm_unlock_orders, "_looks_like_no_orders_state", return_value=False)
+    @mock.patch.object(crm_unlock_orders, "verify_update_complete", return_value={"success_message_seen": True, "no_orders_remaining": False, "remaining_order_count": 0})
+    @mock.patch.object(crm_unlock_orders, "click_ok_on_modal")
+    @mock.patch.object(crm_unlock_orders, "maybe_wait_for_confirmation_modal", return_value=False)
+    @mock.patch.object(crm_unlock_orders, "click_apply")
+    @mock.patch.object(crm_unlock_orders, "get_apply_button")
+    @mock.patch.object(crm_unlock_orders, "choose_unlock_status")
+    @mock.patch.object(crm_unlock_orders, "wait_for_order_preview_panel", return_value=object())
+    @mock.patch.object(crm_unlock_orders, "select_all_orders", return_value=1)
+    @mock.patch.object(crm_unlock_orders, "_collect_order_ids")
+    @mock.patch.object(crm_unlock_orders, "_open_locked_report_rows")
+    def test_unlocker_live_reopens_list_until_no_orders_remain(
+        self,
+        mock_open_rows,
+        mock_collect_ids,
+        _mock_select_all,
+        _mock_preview,
+        _mock_choose,
+        _mock_get_apply,
+        _mock_click_apply,
+        _mock_confirm,
+        _mock_ok,
+        _mock_verify,
+        _mock_no_orders,
+        _mock_kill,
+        mock_build_driver,
+        _mock_quit,
+    ):
+        mock_build_driver.return_value = mock.Mock()
+        mock_open_rows.side_effect = [[object()], [object()], []]
+        mock_collect_ids.side_effect = [["1000001"], ["1000002"]]
+
+        result = crm_unlock_orders._run_once("unlock_all", dry_run=False, headless_mode=True)
+
+        self.assertEqual(result["order_ids"], ["1000001", "1000002"])
+        self.assertEqual(result["order_count"], 2)
+        self.assertEqual(result["refresh_passes"], 3)
+        self.assertEqual(mock_open_rows.call_count, 3)
+
+
+class ShippingBypasserTests(unittest.TestCase):
+    def test_youth_product_quantities_strip_y_prefix_for_sanmar(self):
+        product = {
+            "product_id": "YST350",
+            "quantities": {"YM": 1, "YL": 2},
+        }
+
+        self.assertEqual(
+            crm_shipping_bypasser._sanmar_quantities_for_product(product),
+            {"M": 1, "L": 2},
+        )
+
+    def test_gildan_youth_b_product_quantities_strip_y_prefix_for_sanmar(self):
+        product = {
+            "product_id": "G500B",
+            "product_name": "Gildan Heavy Cotton Kids T-Shirt",
+            "quantities": {"YXS": 2, "YS": 2, "YM": 2, "YL": 1},
+        }
+
+        self.assertEqual(
+            crm_shipping_bypasser._sanmar_quantities_for_product(product),
+            {"XS": 2, "S": 2, "M": 2, "L": 1},
+        )
+
+    def test_non_youth_product_quantities_keep_sizes(self):
+        product = {
+            "product_id": "ST350",
+            "quantities": {"YM": 1, "M": 2},
+        }
+
+        self.assertEqual(
+            crm_shipping_bypasser._sanmar_quantities_for_product(product),
+            {"YM": 1, "M": 2},
+        )
+
+    def test_infant_month_range_quantities_map_to_sanmar_month_sizes(self):
+        product = {
+            "product_id": "4400",
+            "product_name": "Rabbit Skins Baby Onesie",
+            "quantities": {"3-6MOS": 2, "6-12MOS": 1},
+        }
+
+        self.assertEqual(
+            crm_shipping_bypasser._sanmar_quantities_for_product(product),
+            {"6M": 2, "12M": 1},
+        )
+
+    def test_one_size_quantities_map_to_sanmar_osfa(self):
+        product = {
+            "product_id": "CP80",
+            "product_name": "Port & Company Six-Panel Twill Cap",
+            "quantities": {"ONESIZE": 4},
+        }
+
+        self.assertEqual(
+            crm_shipping_bypasser._sanmar_quantities_for_product(product),
+            {"OSFA": 4},
+        )
+
+    def test_cornerstone_safety_vest_combo_sizes_are_kept_for_sanmar(self):
+        product = {
+            "product_id": "CSV102",
+            "product_name": "CornerStone ANSI 107 Class 2 Mesh Back Safety Vest",
+            "quantities": {"S/M": 2, "L / XL": 10, "2XL/3XL": 1, "4X/5X": 3},
+        }
+
+        self.assertEqual(
+            crm_shipping_bypasser._sanmar_quantities_for_product(product),
+            {"S/M": 2, "L/XL": 10, "2/3X": 1, "4/5X": 3},
+        )
+
+    def test_style_sub_uses_detail_style_as_sanmar_product_id(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = {
+            "bodyText": "Due Date: 06/22/26 Production Date: 06/19/26",
+            "items": [
+                {
+                    "stockLine": "Style Sub - Alpha Stock",
+                    "color": "Style_Sub",
+                    "styleSubStyle": "LST420LS",
+                    "styleSubColor": "White",
+                    "styleSubDescription": "Sport-Tek Women's Posi-UV Pro Long Sleeve",
+                    "quantities": {"M": 3},
+                    "sizes": ["M"],
+                }
+            ],
+            "activeTabText": "H-MarkStrutn991 1 - QTY: 3",
+            "activePanelText": "",
+        }
+
+        with mock.patch.object(crm_shipping_bypasser, "refresh_if_crm_challenge_attempts_exceeded", return_value=False):
+            order = crm_shipping_bypasser._extract_order_data(driver, "4717943")
+
+        self.assertEqual(order["product_id"], "LST420LS")
+        self.assertEqual(order["color"], "White")
+        self.assertEqual(order["product_name"], "Sport-Tek Women's Posi-UV Pro Long Sleeve")
+        self.assertEqual(order["quantities"], {"M": 3})
+        self.assertEqual(order["po"], "H-MarkStrutn991")
+
+    def test_3001c_search_uses_base_3001_inventory_handler(self):
+        options = crm_shipping_bypasser._sanmar_search_options_for_product(
+            {"product_id": "3001C", "is_a4": False}
+        )
+
+        self.assertEqual(options["search_id"], "3001")
+        self.assertTrue(options["click_inventory_button"])
+        self.assertEqual(options["handler"], "3001C")
+
+    def test_bella_canvas_crm_c_suffix_maps_to_sanmar_bc_style(self):
+        options = crm_shipping_bypasser._sanmar_search_options_for_product(
+            {
+                "product_id": "3413C",
+                "product_name": "BELLA+CANVAS Triblend T-Shirt",
+            }
+        )
+
+        self.assertEqual(options["search_id"], "3413")
+        self.assertTrue(options["click_inventory_button"])
+        self.assertEqual(options["handler"], "Bella+Canvas")
+        self.assertIn("BC3413", options["expected_style_keys"])
+        self.assertNotIn("BC3413C", options["expected_style_keys"])
+
+    def test_bella_canvas_known_id_maps_without_product_name(self):
+        options = crm_shipping_bypasser._sanmar_search_options_for_product(
+            {"product_id": "3413C"}
+        )
+
+        self.assertEqual(options["search_id"], "3413")
+        self.assertIn("BC3413", options["expected_style_keys"])
+
+    def test_bella_canvas_b_prefix_maps_to_sanmar_bc_style(self):
+        options = crm_shipping_bypasser._sanmar_search_options_for_product(
+            {
+                "product_id": "B6500",
+                "product_name": "Bella + Canvas Women's Jersey Long Sleeve Shirt",
+            }
+        )
+
+        self.assertEqual(options["search_id"], "6500")
+        self.assertTrue(options["click_inventory_button"])
+        self.assertEqual(options["handler"], "Bella+Canvas")
+        self.assertIn("BC6500", options["expected_style_keys"])
+
+    def test_sanmar_inventory_view_clicks_inventory_pricing_gate(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = "BC6500 Check inventory and pricing"
+
+        with mock.patch.object(
+            crm_shipping_bypasser,
+            "_sanmar_inventory_controls_visible",
+            side_effect=[False, True],
+        ), mock.patch.object(
+            crm_shipping_bypasser,
+            "_click_sanmar_inventory_pricing_button",
+            return_value=True,
+        ) as click_gate, mock.patch.object(crm_shipping_bypasser.time, "sleep"):
+            self.assertTrue(crm_shipping_bypasser._ensure_sanmar_inventory_view(driver))
+
+        click_gate.assert_called_once_with(driver, timeout=1)
+
+    def test_rabbit_skins_search_adds_rs_prefix_and_inventory_handler(self):
+        options = crm_shipping_bypasser._sanmar_search_options_for_product(
+            {"product_id": "4400", "product_name": "Infant Short Sleeve Baby Rib Bodysuit"}
+        )
+
+        self.assertEqual(options["search_id"], "RS4400")
+        self.assertTrue(options["click_inventory_button"])
+        self.assertEqual(options["handler"], "Rabbit Skins")
+        self.assertIn("RS4400", options["expected_style_keys"])
+        self.assertIn("4400", options["expected_style_keys"])
+
+    def test_a4_search_keeps_prefixed_handler(self):
+        options = crm_shipping_bypasser._sanmar_search_options_for_product(
+            {"product_id": "NW3201", "is_a4": True}
+        )
+
+        self.assertEqual(options["search_id"], "a4NW3201")
+        self.assertFalse(options["click_inventory_button"])
+        self.assertEqual(options["handler"], "A4")
+
+    def test_jerzees_search_adds_sanmar_m_suffix(self):
+        options = crm_shipping_bypasser._sanmar_search_options_for_product(
+            {"product_id": "562", "product_name": "Jerzees NuBlend Crewneck Sweatshirt"}
+        )
+
+        self.assertEqual(options["search_id"], "562M")
+        self.assertFalse(options["click_inventory_button"])
+        self.assertEqual(options["handler"], "Jerzees")
+        self.assertIn("562", options["expected_style_keys"])
+        self.assertIn("562M", options["expected_style_keys"])
+
+    def test_jerzees_search_keeps_existing_sanmar_suffix(self):
+        options = crm_shipping_bypasser._sanmar_search_options_for_product(
+            {"product_id": "29LS", "product_name": "Jerzees Dri-Power Long Sleeve T-Shirt"}
+        )
+
+        self.assertEqual(options["search_id"], "29LS")
+        self.assertEqual(options["handler"], "Jerzees")
+
+    def test_next_level_n_style_does_not_use_a4_prefix(self):
+        options = crm_shipping_bypasser._sanmar_search_options_for_product(
+            {
+                "product_id": "N6210",
+                "product_name": "Next Level Cotton Blend T-Shirt",
+                "is_a4": False,
+            }
+        )
+
+        self.assertEqual(options["search_id"], "NL6210")
+        self.assertFalse(options["click_inventory_button"])
+        self.assertEqual(options["handler"], "Next Level")
+        self.assertIn("N6210", options["expected_style_keys"])
+        self.assertIn("NL6210", options["expected_style_keys"])
+
+    def test_gildan_search_maps_short_crm_ids_to_sanmar_styles(self):
+        cases = {
+            "G500": "5000",
+            "G500B": "5000B",
+            "G500L": "5000L",
+            "G640": "64000",
+            "G640L": "64000L",
+            "G640CVC": "64000CVC",
+        }
+
+        for crm_style, sanmar_style in cases.items():
+            with self.subTest(crm_style=crm_style):
+                options = crm_shipping_bypasser._sanmar_search_options_for_product(
+                    {"product_id": crm_style, "product_name": "Gildan Heavy Cotton T-Shirt"}
+                )
+
+                self.assertEqual(options["search_id"], sanmar_style)
+                self.assertFalse(options["click_inventory_button"])
+                self.assertEqual(options["handler"], "Gildan")
+                self.assertIn(crm_style, options["expected_style_keys"])
+                self.assertIn(sanmar_style, options["expected_style_keys"])
+
+    def test_gildan_search_keeps_exact_sanmar_g_styles(self):
+        options = crm_shipping_bypasser._sanmar_search_options_for_product(
+            {"product_id": "G2400", "product_name": "Gildan Ultra Cotton Long Sleeve T-Shirt"}
+        )
+
+        self.assertEqual(options["search_id"], "G2400")
+        self.assertEqual(options["handler"], "Gildan")
+
+    def test_cart_validation_matches_same_style_lines_by_color(self):
+        product_lines = [
+            {
+                "product": {"index": 1, "product_id": "ST350LS", "color": "Carolina Blue"},
+                "search_id": "ST350LS",
+                "expected_style_keys": ["ST350LS"],
+                "quantities": {"L": 1, "M": 1},
+            },
+            {
+                "product": {"index": 2, "product_id": "ST350LS", "color": "Black"},
+                "search_id": "ST350LS",
+                "expected_style_keys": ["ST350LS"],
+                "quantities": {"L": 1, "M": 1},
+            },
+            {
+                "product": {"index": 3, "product_id": "ST350LS", "color": "Iron Grey"},
+                "search_id": "ST350LS",
+                "expected_style_keys": ["ST350LS"],
+                "quantities": {"L": 1, "M": 1, "XL": 4},
+            },
+        ]
+        cart_lines = [
+            {"style": "ST350LS", "color": "Carolina Blue", "size": "M", "quantity": 1, "warehouse": "Phoenix, AZ"},
+            {"style": "ST350LS", "color": "Carolina Blue", "size": "L", "quantity": 1, "warehouse": "Phoenix, AZ"},
+            {"style": "ST350LS", "color": "Black", "size": "M", "quantity": 1, "warehouse": "Phoenix, AZ"},
+            {"style": "ST350LS", "color": "Black", "size": "L", "quantity": 1, "warehouse": "Phoenix, AZ"},
+            {"style": "ST350LS", "color": "Iron Grey", "size": "M", "quantity": 1, "warehouse": "Phoenix, AZ"},
+            {"style": "ST350LS", "color": "Iron Grey", "size": "L", "quantity": 1, "warehouse": "Phoenix, AZ"},
+            {"style": "ST350LS", "color": "Iron Grey", "size": "XL", "quantity": 4, "warehouse": "Phoenix, AZ"},
+        ]
+
+        with mock.patch.object(crm_shipping_bypasser, "_read_sanmar_cart_lines", return_value=cart_lines):
+            result = crm_shipping_bypasser._validate_sanmar_cart_contents(
+                mock.Mock(),
+                product_lines,
+                warehouse="Phoenix, AZ",
+            )
+
+        self.assertTrue(result["success"], result.get("issues"))
+
+    def test_sanmar_color_alias_matches_abbreviated_crm_heathered_color(self):
+        aliases = crm_shipping_bypasser._sanmar_color_alias_labels("Hth Watr/He Ch")
+
+        self.assertIn("Heathered Watermelon/ Heathered Charcoal", aliases)
+        self.assertTrue(
+            crm_shipping_bypasser._cart_color_matches(
+                "Heathered Watermelon/ Heathered Charcoal",
+                "Hth Watr/He Ch",
+            )
+        )
+
+    def test_sanmar_color_alias_matches_deep_red_white_crm_abbreviation(self):
+        aliases = crm_shipping_bypasser._sanmar_color_alias_labels("DpRd/Whit")
+
+        self.assertIn("Deep Red/ White", aliases)
+        self.assertTrue(
+            crm_shipping_bypasser._cart_color_matches(
+                "Deep Red/ White",
+                "DpRd/Whit",
+            )
+        )
+
+    def test_sanmar_color_abbreviation_rejects_different_deep_combo(self):
+        self.assertFalse(
+            crm_shipping_bypasser._cart_color_matches(
+                "Deep Royal/ White",
+                "DpRd/Whit",
+            )
+        )
+
+    def test_sanmar_color_alias_rejects_different_heathered_combo(self):
+        self.assertFalse(
+            crm_shipping_bypasser._cart_color_matches(
+                "Heathered Watermelon/ Heathered Cherry",
+                "Hth Watr/He Ch",
+            )
+        )
+
+    def test_sanmar_4528_true_navy_matches_j_navy(self):
+        product = {"product_id": "4528"}
+        aliases = crm_shipping_bypasser._sanmar_color_alias_labels("TRUE NAVY", product=product)
+
+        self.assertIn("J. Navy", aliases)
+        self.assertTrue(
+            crm_shipping_bypasser._cart_color_matches(
+                "J. Navy",
+                "TRUE NAVY",
+                product=product,
+            )
+        )
+
+    def test_sanmar_true_navy_j_navy_alias_is_limited_to_4528(self):
+        self.assertNotIn("J. Navy", crm_shipping_bypasser._sanmar_color_alias_labels("TRUE NAVY"))
+        self.assertFalse(
+            crm_shipping_bypasser._cart_color_matches(
+                "J. Navy",
+                "TRUE NAVY",
+                product={"product_id": "4529"},
+            )
+        )
+
+    def test_cart_validation_matches_4528_true_navy_to_j_navy(self):
+        product_lines = [
+            {
+                "product": {"index": 1, "product_id": "4528", "color": "TRUE NAVY"},
+                "search_id": "4528",
+                "expected_style_keys": ["4528"],
+                "quantities": {"L": 2},
+            },
+        ]
+        cart_lines = [
+            {"style": "4528", "color": "J. Navy", "size": "L", "quantity": 2, "warehouse": "Robbinsville, NJ"},
+        ]
+
+        with mock.patch.object(crm_shipping_bypasser, "_read_sanmar_cart_lines", return_value=cart_lines):
+            result = crm_shipping_bypasser._validate_sanmar_cart_contents(
+                mock.Mock(),
+                product_lines,
+                warehouse="Robbinsville, NJ",
+            )
+
+        self.assertTrue(result["success"], result.get("issues"))
+
+    def test_single_warehouse_failure_message_names_unavailable_sizes(self):
+        message = crm_shipping_bypasser._single_warehouse_failure_message(
+            [
+                {
+                    "search_id": "5000",
+                    "quantities": {"S": 1},
+                    "inventory": [
+                        {"warehouse": "Phoenix, AZ", "stock": {"S": 0}},
+                        {"warehouse": "Reno, NV", "stock": {"S": 0}},
+                    ],
+                },
+                {
+                    "search_id": "5000B",
+                    "quantities": {"M": 2},
+                    "inventory": [
+                        {"warehouse": "Phoenix, AZ", "stock": {"M": 0}},
+                        {"warehouse": "Reno, NV", "stock": {"M": 0}},
+                    ],
+                },
+            ],
+            "mach6",
+        )
+
+        self.assertIn("5000 S needs 1, max available 0", message)
+        self.assertIn("5000B M needs 2, max available 0", message)
+
+    def test_shipping_bypasser_common_warehouse_requires_stock_buffer(self):
+        product_lines = [
+            {
+                "quantities": {"XL": 5},
+                "inventory": [
+                    {"warehouse": "Robbinsville, NJ", "stock": {"XL": 14}},
+                    {"warehouse": "Richmond, VA", "stock": {"XL": 15}},
+                ],
+            }
+        ]
+
+        warehouse = crm_shipping_bypasser._choose_common_warehouse(product_lines, "inhouse")
+
+        self.assertEqual(warehouse, "Richmond, VA")
+
+    def test_shipping_bypasser_multi_warehouse_allocates_only_above_buffer(self):
+        product_lines = [
+            {
+                "product": {"index": 1, "product_id": "5000"},
+                "quantities": {"XL": 5},
+                "inventory": [
+                    {"warehouse": "Robbinsville, NJ", "stock": {"XL": 14}},
+                    {"warehouse": "Richmond, VA", "stock": {"XL": 11}},
+                ],
+            }
+        ]
+
+        plan = crm_shipping_bypasser._choose_multi_warehouse_plan(product_lines, "inhouse")
+
+        self.assertEqual(plan["mode"], "multi_warehouse")
+        self.assertEqual(plan["warehouses"], ["Robbinsville, NJ", "Richmond, VA"])
+        self.assertEqual(plan["pieces_by_warehouse"], {"Robbinsville, NJ": 4, "Richmond, VA": 1})
+        self.assertEqual([line["quantities"] for line in plan["expanded_lines"]], [{"XL": 4}, {"XL": 1}])
+
+    def test_shipping_bypasser_warehouse_plan_prefers_single_complete_warehouse(self):
+        product_lines = [
+            {
+                "product": {"index": 1, "product_id": "5000"},
+                "quantities": {"S": 2, "M": 2},
+                "inventory": [
+                    {"warehouse": "Robbinsville, NJ", "stock": {"S": 20, "M": 0}},
+                    {"warehouse": "Richmond, VA", "stock": {"S": 20, "M": 20}},
+                ],
+            }
+        ]
+
+        warehouse, plan = crm_shipping_bypasser._choose_warehouse_plan(product_lines, "inhouse")
+
+        self.assertEqual(warehouse, "Richmond, VA")
+        self.assertEqual(plan["mode"], "single_warehouse")
+        self.assertEqual(plan["warehouses"], ["Richmond, VA"])
+        self.assertEqual([line["warehouse"] for line in plan["expanded_lines"]], ["Richmond, VA"])
+
+    def test_failed_order_cleanup_attaches_cleared_cart_message(self):
+        report = [
+            crm_shipping_bypasser._result(
+                "4600001",
+                False,
+                "eta_on_or_after_due_date",
+                "SanMar ETA is too late.",
+            )
+        ]
+        cleanup = {
+            "attempted": True,
+            "success": True,
+            "message": "SanMar cart was cleared after failed order 4600001.",
+        }
+
+        with mock.patch.object(crm_shipping_bypasser, "_clear_sanmar_cart", return_value=cleanup) as clear_cart:
+            ok = crm_shipping_bypasser._cleanup_after_failed_order(mock.Mock(), "4600001", report)
+
+        self.assertTrue(ok)
+        clear_cart.assert_called_once()
+        self.assertEqual(report[0]["sanmar_cart_cleanup"], cleanup)
+        self.assertIn("SanMar cart was cleared", report[0]["message"])
+
+    def test_preexisting_sanmar_cart_stop_does_not_clear_cart(self):
+        report = [
+            crm_shipping_bypasser._result(
+                "4600001",
+                False,
+                "sanmar_cart_not_empty",
+                "SanMar shopping box already has items.",
+                stop_run=True,
+            )
+        ]
+
+        with mock.patch.object(crm_shipping_bypasser, "_clear_sanmar_cart") as clear_cart:
+            ok = crm_shipping_bypasser._cleanup_after_failed_order(mock.Mock(), "4600001", report)
+
+        self.assertTrue(ok)
+        clear_cart.assert_not_called()
+        self.assertNotIn("sanmar_cart_cleanup", report[0])
+
+    def test_failed_cart_cleanup_stops_batch_before_next_order(self):
+        report = [
+            crm_shipping_bypasser._result(
+                "4600001",
+                False,
+                "checkout_warehouse_mismatch",
+                "Warehouse mismatch.",
+            )
+        ]
+        cleanup = {
+            "attempted": True,
+            "success": False,
+            "message": "SanMar cart could not be cleared after failed order 4600001.",
+        }
+
+        with mock.patch.object(crm_shipping_bypasser, "_clear_sanmar_cart", return_value=cleanup):
+            ok = crm_shipping_bypasser._cleanup_after_failed_order(mock.Mock(), "4600001", report)
+
+        self.assertFalse(ok)
+        self.assertEqual(report[-1]["outcome"], "sanmar_cart_cleanup_failed")
+        self.assertTrue(report[-1]["stop_run"])
+
+    def test_shipping_bypasser_failed_order_ids_dedupes_cleanup_rows(self):
+        payload = {
+            "success": False,
+            "order_ids": ["4600001", "4600002"],
+            "report": [
+                {"order_id": "4600001", "success": False, "outcome": "checkout_warehouse_mismatch"},
+                {"order_id": "4600001", "success": False, "outcome": "sanmar_cart_cleanup_failed"},
+                {"order_id": "4600002", "success": True, "outcome": "shipping_bypass_ordered"},
+            ],
+        }
+
+        self.assertEqual(server._shipping_bypasser_failed_order_ids(payload), ["4600001"])
+
+    def test_shipping_bypasser_summary_names_failed_orders(self):
+        report = [
+            {"order_id": "4600001", "success": False, "outcome": "checkout_warehouse_mismatch"},
+            {"order_id": "4600002", "success": True, "outcome": "shipping_bypass_ordered"},
+        ]
+
+        message = crm_shipping_bypasser._summary_message(report, refresh_passes=1, order_count=2)
+
+        self.assertIn("1 order(s) need attention: 4600001.", message)
+
+    def test_shipping_bypasser_partial_summary_stays_compact(self):
+        report = [
+            {
+                "order_id": "4646449",
+                "success": False,
+                "outcome": "sanmar_product_not_found",
+                "message": "Tab 1 skipped.",
+                "stock_tab_index": 1,
+                "stock_tab_count": 2,
+            },
+            {
+                "order_id": "4646449",
+                "success": True,
+                "outcome": "shipping_bypass_ordered",
+                "message": "Tab 2 ordered.",
+                "stock_tab_index": 2,
+                "stock_tab_count": 2,
+                "stock_tab_label": "H-Example124 2 - QTY: 1",
+                "order": {"po": "H-Example124"},
+                "sanmar_confirmation": {
+                    "po": "H-Example124",
+                    "url": "https://www.sanmar.com/checkout/submission?orderCode=123",
+                },
+            },
+        ]
+
+        message = crm_shipping_bypasser._summary_message(report, refresh_passes=2, order_count=1)
+
+        self.assertEqual(
+            message,
+            "Shipping Bypasser processed 1 order(s) and 2 stock tab(s) across 2 CRM list refresh pass(es). "
+            "0 order(s) succeeded. 1 order(s) partially succeeded.",
+        )
+        self.assertNotIn("customer PO H-Example124", message)
+        self.assertNotIn("https://www.sanmar.com/checkout/submission?orderCode=123", message)
+
+    def test_shipping_bypasser_history_preserves_multiple_tab_confirmations(self):
+        payload = {
+            "success": True,
+            "order_ids": ["4646449"],
+            "report": [
+                {
+                    "order_id": "4646449",
+                    "success": True,
+                    "outcome": "shipping_bypass_ordered",
+                    "message": "Tab 1 ordered.",
+                    "stock_tab_index": 1,
+                    "stock_tab_count": 2,
+                    "stock_tab_label": "FirstTab 1 - QTY: 4",
+                    "sanmar_confirmation": {"po": "FirstTab", "url": "https://sanmar.example/1"},
+                },
+                {
+                    "order_id": "4646449",
+                    "success": True,
+                    "outcome": "shipping_bypass_ordered",
+                    "message": "Tab 2 ordered.",
+                    "stock_tab_index": 2,
+                    "stock_tab_count": 2,
+                    "stock_tab_label": "SecondTab 2 - QTY: 8",
+                    "sanmar_confirmation": {"po": "SecondTab", "url": "https://sanmar.example/2"},
+                },
+            ],
+        }
+
+        rows = server._build_crm_shipping_bypasser_order_results(payload)
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([row["stock_tab_index"] for row in rows], [1, 2])
+        self.assertEqual([row["sanmar_confirmation"]["po"] for row in rows], ["FirstTab", "SecondTab"])
+
+    def test_stock_history_normalization_preserves_shipping_bypasser_tab_rows(self):
+        rows = server._normalize_crm_stock_order_results(
+            [
+                {
+                    "order_id": "4646449",
+                    "success": True,
+                    "status": "Already stock ordered",
+                    "outcome": "already_stock_ordered",
+                    "message": "Tab 1 skipped.",
+                    "stock_tab_index": 1,
+                    "stock_tab_count": 2,
+                    "stock_tab_label": "FirstTab 1 - QTY: 4",
+                },
+                {
+                    "order_id": "4646449",
+                    "success": True,
+                    "status": "Bypassed",
+                    "outcome": "shipping_bypass_ordered",
+                    "message": "Tab 2 ordered.",
+                    "stock_tab_index": 2,
+                    "stock_tab_count": 2,
+                    "stock_tab_label": "SecondTab 2 - QTY: 8",
+                    "sanmar_confirmation": {"po": "SecondTab", "url": "https://sanmar.example/2"},
+                    "eta_by_warehouse": {"Richmond, VA": "2026-06-16"},
+                },
+            ],
+            ["4646449"],
+            True,
+            "ok",
+        )
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([row["stock_tab_index"] for row in rows], [1, 2])
+        self.assertEqual(rows[1]["sanmar_confirmation"]["po"], "SecondTab")
+        self.assertEqual(rows[1]["eta_by_warehouse"], {"Richmond, VA": "2026-06-16"})
+
+    def test_shipping_bypasser_history_tab_summary_names_skipped_and_ordered_tabs(self):
+        rows = server._build_crm_shipping_bypasser_order_results(
+            {
+                "success": True,
+                "order_ids": ["4677955"],
+                "report": [
+                    {
+                        "order_id": "4677955",
+                        "success": True,
+                        "outcome": "already_stock_ordered",
+                        "message": "Skipped because stock is already ordered for this tab.",
+                        "stock_tab_index": 1,
+                        "stock_tab_count": 2,
+                        "stock_tab_label": "H-AlexHorn364 1 - QTY: 3",
+                    },
+                    {
+                        "order_id": "4677955",
+                        "success": True,
+                        "outcome": "shipping_bypass_ordered",
+                        "message": "Tab 2 ordered.",
+                        "stock_tab_index": 2,
+                        "stock_tab_count": 2,
+                        "stock_tab_label": "H-AlexHorn366 2 - QTY: 4",
+                        "sanmar_confirmation": {
+                            "po": "H-AlexHorn366",
+                            "url": "https://www.sanmar.com/checkout/submission?orderCode=90223234",
+                        },
+                    },
+                ],
+            }
+        )
+
+        summary = server._crm_shipping_bypasser_history_tab_summary(rows)
+
+        self.assertIn("4677955", summary)
+        self.assertIn("tab 1 of 2", summary)
+        self.assertIn("skipped because stock is already ordered", summary)
+        self.assertIn("tab 2 of 2", summary)
+        self.assertIn("customer PO H-AlexHorn366", summary)
+        self.assertIn("https://www.sanmar.com/checkout/submission?orderCode=90223234", summary)
+
+    def test_shipping_bypasser_history_message_stays_compact_for_ui(self):
+        verbose = (
+            "Shipping Bypasser processed 4 order(s) and 8 stock tab(s) across 2 CRM list refresh pass(es). "
+            "3 order(s) succeeded. 1 order(s) partially succeeded: 4690028 "
+            "(successful stock tab(s): tab 1 of 3 (H-PHYLLISKIN1687, SanMar confirmation "
+            "https://www.sanmar.com/checkout/submission?orderCode=90284964); tab 2 of 3 "
+            "(H-PHYLLISKIN1688, SanMar confirmation https://www.sanmar.com/checkout/submission?orderCode=90284945)). "
+            "Stock tabs: 4695571: tab 1 of 3 skipped because stock is already ordered; "
+            "tab 2 of 3 ordered stock, customer PO H-marcoinver602."
+        )
+
+        self.assertEqual(
+            server._compact_crm_shipping_bypasser_history_message(verbose),
+            "Shipping Bypasser processed 4 order(s) and 8 stock tab(s) across 2 CRM list refresh pass(es). "
+            "3 order(s) succeeded. 1 order(s) partially succeeded.",
+        )
+
+    def test_shipping_bypasser_partial_order_counts_as_successful_history(self):
+        payload = {
+            "success": False,
+            "order_ids": ["4646449"],
+            "report": [
+                {
+                    "order_id": "4646449",
+                    "success": True,
+                    "outcome": "shipping_bypass_ordered",
+                    "stock_tab_index": 1,
+                    "stock_tab_count": 2,
+                    "stock_tab_label": "FirstTab 1 - QTY: 4",
+                    "order": {"po": "FirstTab"},
+                    "sanmar_confirmation": {"po": "FirstTab", "url": "https://sanmar.example/1"},
+                },
+                {
+                    "order_id": "4646449",
+                    "success": False,
+                    "outcome": "no_single_warehouse",
+                    "message": "Tab 2 skipped.",
+                    "stock_tab_index": 2,
+                    "stock_tab_count": 2,
+                    "manual_review_required": True,
+                },
+            ],
+        }
+
+        rows = server._build_crm_shipping_bypasser_order_results(payload)
+
+        self.assertTrue(crm_shipping_bypasser._report_orders_succeeded_or_partially_succeeded(payload["report"]))
+        self.assertTrue(server._crm_shipping_bypasser_order_results_success(rows))
+        self.assertTrue(all(row["success"] for row in rows))
+        self.assertEqual(rows[1]["status"], "Partially successful")
+        self.assertEqual(rows[1]["sanmar_confirmation"]["po"], "FirstTab")
+        self.assertIn("tab 1 of 2", rows[1]["message"])
+        self.assertIn("https://sanmar.example/1", rows[1]["message"])
+
+    def test_shipping_bypasser_partial_requires_confirmed_success_details(self):
+        report = [
+            {
+                "order_id": "4646449",
+                "success": True,
+                "outcome": "shipping_bypass_ordered",
+                "stock_tab_index": 1,
+                "stock_tab_count": 2,
+                "order": {"po": "MissingConfirmation"},
+            },
+            {
+                "order_id": "4646449",
+                "success": False,
+                "outcome": "no_single_warehouse",
+                "message": "Tab 2 skipped.",
+                "stock_tab_index": 2,
+                "stock_tab_count": 2,
+            },
+        ]
+
+        message = crm_shipping_bypasser._summary_message(report, refresh_passes=1, order_count=1)
+
+        self.assertFalse(crm_shipping_bypasser._report_orders_succeeded_or_partially_succeeded(report))
+        self.assertNotIn("partially succeeded", message)
+        self.assertIn("1 order(s) need attention: 4646449.", message)
+
+    def test_shipping_bypasser_runtime_config_allows_multi_tab_list(self):
+        url = "https://crm.example/report?salesNotes=Shipping+is+too+expensive&tabs%5Blow%5D=&tabs%5Bhigh%5D="
+
+        self.assertEqual(crm_shipping_bypasser._validate_runtime_config(url), url)
+
+    def test_shipping_bypasser_po_falls_back_to_tab_name_prefix(self):
+        self.assertEqual(
+            crm_shipping_bypasser._po_from_tab_label("ChrisWilliam679 1 - QTY: 10 Design Previews"),
+            "ChrisWilliam679",
+        )
+        self.assertEqual(
+            crm_shipping_bypasser._po_from_tab_label("H-Example123 2 - QTY: 4 Design Previews"),
+            "H-Example123",
+        )
+        self.assertEqual(
+            crm_shipping_bypasser._po_from_tab_label("H-Example124 3 - QTY: 1 View Proofs"),
+            "H-Example124",
+        )
+
+    def test_shipping_bypasser_stock_tab_summary_accepts_view_proofs_label(self):
+        self.assertEqual(
+            crm_shipping_bypasser._stock_tab_summary_label("H-Example124 3 - QTY: 1 View Proofs"),
+            "H-Example124 3 - QTY: 1",
+        )
+
+    def test_shipping_bypasser_history_only_skips_successful_orders(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+            state_path = handle.name
+            json.dump(
+                {
+                    "run_history": [
+                        {
+                            "automation_key": "shipping_bypasser",
+                            "success": False,
+                            "order_ids": ["4622786", "4622599"],
+                            "order_results": [
+                                {"order_id": "4622786", "success": False, "outcome": "sanmar_cart_mismatch"},
+                                {"order_id": "4622599", "success": False, "outcome": "sanmar_cart_not_empty"},
+                                {"order_id": "4623000", "success": True, "outcome": "shipping_bypass_ordered"},
+                            ],
+                            "dry_run": False,
+                        },
+                        {
+                            "automation_key": "shipping_bypasser",
+                            "success": True,
+                            "order_ids": ["4624000"],
+                            "order_results": [],
+                            "dry_run": False,
+                        },
+                        {
+                            "automation_key": "shipping_bypasser",
+                            "success": True,
+                            "order_ids": ["4625000"],
+                            "order_results": [
+                                {"order_id": "4625000", "success": True, "outcome": "shipping_bypass_ready"},
+                            ],
+                            "dry_run": True,
+                        },
+                    ]
+                },
+                handle,
+            )
+        try:
+            skipped = crm_shipping_bypasser._load_historical_shipping_bypass_order_ids(state_path)
+        finally:
+            Path(state_path).unlink(missing_ok=True)
+
+        self.assertEqual(skipped, {"4623000", "4624000"})
 
 
 class CrmAutoSplitterTests(unittest.TestCase):
@@ -58,8 +979,497 @@ class CrmAutoSplitterTests(unittest.TestCase):
 
         self.assertEqual(original_grand_total, crm_auto_splitter.Decimal("445.11"))
 
+    def test_extract_order_totals_reads_promo_amount_and_code(self):
+        totals = crm_auto_splitter._extract_order_totals_from_text(
+            "Shipping: $468.76 Promo(s): $5.00 [BrightShirt34] "
+            "Subtotal before Tax: $1,665.71 Grand Total: $1,786.40"
+        )
+
+        self.assertEqual(totals["promo"], "5.00")
+        self.assertEqual(totals["promo_code"], "BrightShirt34")
+
+    def test_build_split_plan_allocates_promo_credit_like_shipping(self):
+        designs = [
+            {"tab_number": index, "design_id": str(1000 + index), "design_name": f"Design {index}"}
+            for index in range(1, 4)
+        ]
+
+        plan = crm_auto_splitter._build_split_plan(
+            designs,
+            3,
+            "4650000",
+            shipping_amount=crm_auto_splitter.Decimal("4.00"),
+            promo_amount=crm_auto_splitter.Decimal("5.00"),
+            promo_code="BrightShirt34",
+        )
+
+        self.assertEqual([item["shipping_charge"] for item in plan], ["1.34", "1.33", "1.33"])
+        self.assertEqual([item["promo_credit"] for item in plan], ["1.67", "1.67", "1.66"])
+        self.assertEqual([item["promo_code"] for item in plan], ["BrightShirt34"] * 3)
+
+    def test_split_total_mismatch_message_names_old_new_and_difference(self):
+        message = crm_auto_splitter._split_total_mismatch_message(
+            crm_auto_splitter.Decimal("100.00"),
+            crm_auto_splitter.Decimal("95.00"),
+            crm_auto_splitter.Decimal("-5.00"),
+        )
+
+        self.assertIn("old/original $100.00", message)
+        self.assertIn("new/split $95.00", message)
+        self.assertIn("difference -$5.00", message)
+
+    def test_discount_fee_detection_matches_existing_negative_discount(self):
+        with mock.patch.object(
+            crm_auto_splitter,
+            "_order_fee_rows",
+            return_value=[{"name": "Discount", "code": "discount", "amount": "-1.67"}],
+        ):
+            self.assertTrue(
+                crm_auto_splitter._order_fee_already_present(
+                    mock.Mock(),
+                    "Discount",
+                    crm_auto_splitter.Decimal("-1.67"),
+                )
+            )
+
+    def test_split_promo_discount_fee_uses_negative_discount_amount(self):
+        with mock.patch.object(crm_auto_splitter, "_add_order_fee", return_value={"skipped": False}) as mock_add:
+            result = crm_auto_splitter._add_discount_fee_to_split_order(mock.Mock(), "1.67")
+
+        self.assertFalse(result["skipped"])
+        mock_add.assert_called_once_with(
+            mock.ANY,
+            "Discount",
+            crm_auto_splitter.Decimal("-1.67"),
+            fallback_code="discount",
+        )
+
+    def test_new_split_applies_quote_discount_before_recording_payment(self):
+        events = []
+        driver = mock.Mock()
+        split = {
+            "split_index": 1,
+            "keep_design_names": ["Design 1"],
+            "keep_design_ids": [101],
+            "delete_design_ids": [202],
+            "shipping_charge": "156.26",
+            "promo_credit": "1.67",
+            "promo_code": "BrightShirt34",
+        }
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(crm_auto_splitter, "kill_stale_chrome"))
+            stack.enter_context(mock.patch.object(crm_auto_splitter, "safe_get_with_partial_load"))
+            stack.enter_context(mock.patch.object(crm_auto_splitter, "_handle_login_if_needed"))
+            stack.enter_context(mock.patch.object(crm_auto_splitter, "_is_login_page", return_value=False))
+            stack.enter_context(mock.patch.object(crm_auto_splitter, "_wait_for_crm_context_with_reload"))
+            stack.enter_context(mock.patch.object(crm_auto_splitter, "_wait_for_order_scope"))
+            stack.enter_context(mock.patch.object(crm_auto_splitter, "_copy_order_to_quote"))
+            stack.enter_context(mock.patch.object(crm_auto_splitter, "_open_order_scope_with_reload"))
+            stack.enter_context(mock.patch.object(crm_auto_splitter, "safe_driver_quit"))
+            stack.enter_context(mock.patch.object(crm_auto_splitter, "_build_splitter_driver", return_value=driver))
+            stack.enter_context(
+                mock.patch.object(
+                    crm_auto_splitter,
+                    "_configure_quote_split",
+                    side_effect=lambda *args, **kwargs: events.append("configure_quote") or {},
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    crm_auto_splitter,
+                    "_add_discount_fee_to_split_quote",
+                    side_effect=lambda *args, **kwargs: events.append("quote_discount") or {"skipped": False},
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    crm_auto_splitter,
+                    "_save_quote",
+                    side_effect=lambda *args, **kwargs: events.append("save_quote") or {"quote_id": 123},
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    crm_auto_splitter,
+                    "_record_split_payment_and_wait_for_order",
+                    side_effect=lambda *args, **kwargs: events.append("record_payment") or "4678000",
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    crm_auto_splitter,
+                    "_read_order_totals",
+                    return_value={"grand_total": "100.00", "paid": "100.00", "balance_due": "0.00"},
+                )
+            )
+            post_order_discount = stack.enter_context(
+                mock.patch.object(crm_auto_splitter, "_add_discount_fee_to_split_order")
+            )
+
+            result = crm_auto_splitter._create_split_order_in_worker(
+                split,
+                "4676620",
+                "https://crm.example.test/order/4676620",
+                30,
+                {},
+                "Stripe.com",
+                "pi_test",
+                Path("chrome_profile_test"),
+            )
+
+        self.assertEqual(result["order_id"], "4678000")
+        self.assertLess(events.index("quote_discount"), events.index("save_quote"))
+        self.assertLess(events.index("save_quote"), events.index("record_payment"))
+        post_order_discount.assert_not_called()
+
+    @mock.patch.object(crm_auto_splitter, "safe_driver_quit")
+    @mock.patch.object(crm_auto_splitter, "_extract_process_batch_order_ids")
+    @mock.patch.object(crm_auto_splitter, "_open_browser_if_requested")
+    def test_process_batch_dry_run_reopens_list_until_no_new_orders(self, mock_open_browser, mock_extract_ids, _mock_quit):
+        mock_open_browser.return_value = (mock.Mock(), "https://crm.example.test/report")
+        mock_extract_ids.side_effect = [["4536106"], ["4536164"], []]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result_file = str(Path(tmp) / "result.json")
+            exit_code = crm_auto_splitter.run_process_batch(
+                list_url="https://crm.example.test/report",
+                dry_run=True,
+                result_file=result_file,
+            )
+            with open(result_file, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["order_ids"], ["4536106", "4536164"])
+        self.assertEqual(payload["refresh_passes"], 2)
+        self.assertEqual(mock_extract_ids.call_count, 3)
+        self.assertEqual(mock_extract_ids.call_args_list[1].kwargs["exclude_order_ids"], {"4536106"})
+        self.assertEqual(mock_extract_ids.call_args_list[2].kwargs["exclude_order_ids"], {"4536106", "4536164"})
+
 
 class CrmProductSeparatorTests(unittest.TestCase):
+    def _product_separator_mixed_scan(self):
+        return {
+            "order_id": "4600001",
+            "tab_count": 1,
+            "tabs": [
+                {
+                    "tab_number": 1,
+                    "tab_name": "H-Test001",
+                    "quantity": 2,
+                    "products": [
+                        {
+                            "product_name": "Adult Tee",
+                            "group": "adult_general",
+                            "group_label": "Adult/general",
+                            "color": "BLACK",
+                            "sizes": ["S"],
+                        },
+                        {
+                            "product_name": "Snapback Cap",
+                            "group": "hat_cap",
+                            "group_label": "Hat/cap",
+                            "color": "BLACK",
+                            "sizes": ["ONESIZE"],
+                        },
+                    ],
+                    "groups": [
+                        {"group": "adult_general", "group_label": "Adult/general"},
+                        {"group": "hat_cap", "group_label": "Hat/cap"},
+                    ],
+                    "needs_split": True,
+                }
+            ],
+        }
+
+    def _product_separator_clean_scan(self):
+        return {
+            "order_id": "4600001",
+            "tab_count": 2,
+            "tabs": [
+                {
+                    "tab_number": 1,
+                    "tab_name": "H-Test001",
+                    "quantity": 1,
+                    "products": [
+                        {
+                            "product_name": "Adult Tee",
+                            "group": "adult_general",
+                            "group_label": "Adult/general",
+                            "color": "BLACK",
+                            "sizes": ["S"],
+                        },
+                    ],
+                    "groups": [{"group": "adult_general", "group_label": "Adult/general"}],
+                    "needs_split": False,
+                },
+                {
+                    "tab_number": 2,
+                    "tab_name": "H-Test002",
+                    "quantity": 1,
+                    "products": [
+                        {
+                            "product_name": "Snapback Cap",
+                            "group": "hat_cap",
+                            "group_label": "Hat/cap",
+                            "color": "BLACK",
+                            "sizes": ["ONESIZE"],
+                        },
+                    ],
+                    "groups": [{"group": "hat_cap", "group_label": "Hat/cap"}],
+                    "needs_split": False,
+                },
+            ],
+        }
+
+    def test_report_order_color_filter_includes_lime_green(self):
+        self.assertIn("[34, 236, 72]", crm_product_separator.REPORT_ORDER_IDS_JS)
+        self.assertIn("limeGreen", crm_product_separator.REPORT_ORDER_IDS_JS)
+
+    def test_scan_visible_products_ignores_explicit_zero_quantity_products(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = [
+            {"product_name": "Adult Tee", "total_quantity": 12},
+            {"product_name": "Youth Tee Preserved By CRM", "total_quantity": 0},
+            {"product_name": "Legacy Product Without Parsed Total"},
+        ]
+
+        products = crm_product_separator._scan_visible_products(driver)
+
+        self.assertEqual(
+            [product["product_name"] for product in products],
+            ["Adult Tee", "Legacy Product Without Parsed Total"],
+        )
+
+    def test_separator_plan_reuses_existing_matching_split_tab_on_rerun(self):
+        scan = {
+            "tabs": [
+                {
+                    "tab_number": 6,
+                    "tab_name": "H-NicholeKus882",
+                    "quantity": 14,
+                    "products": [
+                        {
+                            "product_name": "G500 Gildan Heavy Cotton T-Shirt",
+                            "group": "adult_general",
+                            "group_label": "Adult/general",
+                            "color": "MAROON",
+                            "total_quantity": 11,
+                        },
+                        {
+                            "product_name": "G500B Gildan Heavy Cotton Kids T-Shirt",
+                            "group": "youth",
+                            "group_label": "Youth",
+                            "color": "MAROON",
+                            "total_quantity": 3,
+                        },
+                    ],
+                    "groups": [
+                        {"group": "adult_general", "group_label": "Adult/general"},
+                        {"group": "youth", "group_label": "Youth"},
+                    ],
+                    "needs_split": True,
+                    "stock": {"state": "ordered_header_only"},
+                },
+                {
+                    "tab_number": 12,
+                    "tab_name": "H-NicholeKus888",
+                    "quantity": 3,
+                    "products": [
+                        {
+                            "product_name": "G500B Gildan Heavy Cotton Kids T-Shirt",
+                            "group": "youth",
+                            "group_label": "Youth",
+                            "color": "MAROON",
+                            "total_quantity": 3,
+                        },
+                    ],
+                    "groups": [{"group": "youth", "group_label": "Youth"}],
+                    "needs_split": False,
+                    "stock": {"state": "ordered_header_only"},
+                },
+            ],
+        }
+
+        plan = crm_product_separator._build_separator_plan(scan)
+
+        assignments = plan["split_tabs"][0]["assignments"]
+        self.assertEqual([assignment["source"] for assignment in assignments], ["original", "existing"])
+        self.assertEqual(assignments[1]["tab_number"], 12)
+        self.assertEqual(plan["production_notes"], [])
+
+    @mock.patch.object(crm_product_separator, "_prepare_worker_profiles")
+    @mock.patch.object(crm_product_separator, "safe_driver_quit")
+    @mock.patch.object(crm_product_separator, "_extract_report_order_ids")
+    @mock.patch.object(crm_product_separator, "_build_driver")
+    def test_list_run_with_no_detected_orders_passes_short_message(
+        self,
+        mock_build_driver,
+        mock_extract_order_ids,
+        _mock_quit,
+        mock_prepare_profiles,
+    ):
+        driver = mock.Mock()
+        mock_build_driver.return_value = (driver, None)
+        mock_extract_order_ids.return_value = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result_file = str(Path(tmp) / "result.json")
+            exit_code = crm_product_separator.run_product_separator_list(
+                list_url="https://crm.example.test/report",
+                list_mode="rush",
+                dry_run=True,
+                workers=4,
+                result_file=result_file,
+            )
+            with open(result_file, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["message"], "No orders detected")
+        self.assertEqual(payload["order_count"], 0)
+        self.assertEqual(payload["order_ids"], [])
+        mock_prepare_profiles.assert_not_called()
+
+    @mock.patch.object(crm_product_separator, "_run_product_separator_order_id_batch")
+    @mock.patch.object(crm_product_separator, "_prepare_worker_profiles", return_value=("worker-root", ["profile-1", "profile-2"]))
+    @mock.patch.object(crm_product_separator, "safe_driver_quit")
+    @mock.patch.object(crm_product_separator, "_extract_report_order_ids")
+    @mock.patch.object(crm_product_separator, "_build_driver")
+    def test_list_run_reopens_report_after_each_processed_pass(
+        self,
+        mock_build_driver,
+        mock_extract_order_ids,
+        _mock_quit,
+        _mock_prepare_profiles,
+        mock_run_batch,
+    ):
+        mock_build_driver.return_value = (mock.Mock(), None)
+        mock_extract_order_ids.side_effect = [["4600001"], ["4600002"], []]
+        mock_run_batch.side_effect = [
+            {
+                "worker_count": 1,
+                "order_results": [{"order_id": "4600001", "success": True, "needs_split": False, "manual_review_required": False}],
+                "split_order_ids": [],
+                "skipped_order_ids": ["4600001"],
+                "manual_review_order_ids": [],
+                "failed_order_ids": [],
+            },
+            {
+                "worker_count": 1,
+                "order_results": [{"order_id": "4600002", "success": True, "needs_split": False, "manual_review_required": False}],
+                "split_order_ids": [],
+                "skipped_order_ids": ["4600002"],
+                "manual_review_order_ids": [],
+                "failed_order_ids": [],
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result_file = str(Path(tmp) / "result.json")
+            exit_code = crm_product_separator.run_product_separator_list(
+                list_url="https://crm.example.test/report",
+                list_mode="rush",
+                dry_run=True,
+                workers=2,
+                result_file=result_file,
+            )
+            with open(result_file, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["order_ids"], ["4600001", "4600002"])
+        self.assertEqual(payload["refresh_passes"], 2)
+        self.assertEqual(mock_extract_order_ids.call_count, 3)
+        self.assertEqual(mock_extract_order_ids.call_args_list[1].kwargs["exclude_order_ids"], {"4600001"})
+        self.assertEqual(mock_extract_order_ids.call_args_list[2].kwargs["exclude_order_ids"], {"4600001", "4600002"})
+
+    @mock.patch.object(crm_product_separator, "_run_product_separator_order_id_batch")
+    @mock.patch.object(crm_product_separator, "_prepare_worker_profiles", return_value=("worker-root", ["profile-1"]))
+    @mock.patch.object(crm_product_separator, "safe_driver_quit")
+    @mock.patch.object(crm_product_separator, "_extract_report_order_ids")
+    @mock.patch.object(crm_product_separator, "_build_driver")
+    def test_list_run_summary_includes_manual_review_count(
+        self,
+        mock_build_driver,
+        mock_extract_order_ids,
+        _mock_quit,
+        _mock_prepare_profiles,
+        mock_run_batch,
+    ):
+        mock_build_driver.return_value = (mock.Mock(), None)
+        mock_extract_order_ids.side_effect = [["4600001"], []]
+        mock_run_batch.return_value = {
+            "worker_count": 1,
+            "order_results": [
+                {
+                    "order_id": "4600001",
+                    "success": False,
+                    "needs_split": False,
+                    "manual_review_required": True,
+                    "resolution": "manual_review",
+                }
+            ],
+            "split_order_ids": [],
+            "skipped_order_ids": [],
+            "manual_review_order_ids": ["4600001"],
+            "failed_order_ids": [],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result_file = str(Path(tmp) / "result.json")
+            exit_code = crm_product_separator.run_product_separator_list(
+                list_url="https://crm.example.test/report",
+                list_mode="rush",
+                dry_run=True,
+                workers=1,
+                result_file=result_file,
+            )
+            with open(result_file, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+
+        self.assertEqual(exit_code, 4)
+        self.assertFalse(payload["success"])
+        self.assertEqual(
+            payload["message"],
+            "Product Separator list dry run complete. 0 order(s) need splitting, 0 already okay, 1 require manual review.",
+        )
+        self.assertEqual(payload["manual_review_order_ids"], ["4600001"])
+
+    @mock.patch.object(server, "_execute_crm_product_separator_script")
+    def test_live_batch_with_no_detected_orders_passes_short_message(self, mock_run_script):
+        preflight_payload = {
+            "success": True,
+            "message": "No orders detected",
+            "action": "product_separator_list",
+            "dry_run": True,
+            "list_mode": "rush",
+            "parallel_workers": 4,
+            "order_count": 0,
+            "order_ids": [],
+            "split_order_ids": [],
+            "skipped_order_ids": [],
+            "manual_review_order_ids": [],
+            "failed_order_ids": [],
+            "report": [],
+        }
+        mock_run_script.return_value = (True, "No orders detected", preflight_payload)
+
+        ok, message, payload = server._execute_crm_product_separator_worker(
+            dry_run=False,
+            list_mode="rush",
+            parallel_workers=4,
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(message, "No orders detected")
+        self.assertEqual(payload["message"], "No orders detected")
+        self.assertEqual(payload["order_ids"], [])
+        self.assertEqual(payload["order_results"], [])
+        self.assertEqual(mock_run_script.call_count, 1)
+
     def test_not_authenticated_page_is_detected_before_design_tab_failure(self):
         driver = mock.Mock()
         driver.execute_script.return_value = "\u00d7 Error Not authenticated close"
@@ -88,7 +1498,62 @@ class CrmProductSeparatorTests(unittest.TestCase):
         self.assertTrue(results[0]["retried_after_transient_error"])
         self.assertIn("CRM app did not become ready", results[0]["first_attempt_message"])
 
-    def test_stock_ordered_status_accepts_stock_history_confirmation(self):
+    def test_no_split_stock_ordered_missing_manual_order_row_is_skipped(self):
+        driver = mock.Mock()
+        scan = {
+            "order_id": "4600001",
+            "tab_count": 1,
+            "order_stock_status": crm_product_separator._order_stock_status_from_text(
+                "Stock Status: Ordered Stock : Ordered"
+            ),
+            "tabs": [
+                {
+                    "tab_number": 1,
+                    "tab_name": "H-Test001",
+                    "quantity": 1,
+                    "products": [
+                        {
+                            "product_name": "Adult Tee",
+                            "group": "adult_general",
+                            "group_label": "Adult/general",
+                            "color": "BLACK",
+                            "sizes": ["S"],
+                        }
+                    ],
+                    "groups": [{"group": "adult_general", "group_label": "Adult/general"}],
+                    "needs_split": False,
+                    "stock": {
+                        "state": "ordered_header_only",
+                        "stock_status_ordered": True,
+                        "has_vendor_section": True,
+                        "has_po_row": False,
+                        "manual_order_vendor": "",
+                        "manual_order_po": "",
+                        "manual_order_rows": [],
+                    },
+                }
+            ],
+        }
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(crm_product_separator, "_build_driver", return_value=(driver, None)))
+            stack.enter_context(mock.patch.object(crm_product_separator, "safe_get_with_partial_load"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_handle_login_if_needed"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_wait_for_crm_context"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_recover_not_authenticated_page"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_scan_order", return_value=scan))
+            mock_write = stack.enter_context(mock.patch.object(crm_product_separator, "_write_result"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "safe_driver_quit"))
+
+            exit_code = crm_product_separator.run_product_separator_order(order_id="4600001", dry_run=True)
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(mock_write.call_args.args[0])
+        self.assertEqual(mock_write.call_args.kwargs["resolution"], "skipped_no_split_needed")
+        self.assertFalse(mock_write.call_args.kwargs["manual_review_required"])
+        self.assertNotIn("manual_order_reconciliation", mock_write.call_args.kwargs["report"])
+
+    def test_stock_ordered_status_rejects_stock_history_confirmation(self):
         driver = mock.Mock()
         driver.execute_script.return_value = {
             "already_applied": True,
@@ -96,11 +1561,248 @@ class CrmProductSeparatorTests(unittest.TestCase):
             "confirmation": "stock_history",
         }
 
-        result = crm_product_separator._apply_stock_ordered_status(driver)
+        with self.assertRaises(crm_product_separator.ProductSeparatorError):
+            crm_product_separator._apply_stock_ordered_status(driver)
 
-        self.assertTrue(result["already_applied"])
-        self.assertEqual(result["confirmation"], "stock_history")
         driver.execute_script.assert_called_once()
+
+    def test_stock_ordered_status_accepts_visible_header_confirmation(self):
+        driver = mock.Mock()
+        driver.execute_script.side_effect = [
+            {"success": True},
+            None,
+            True,
+            "Stock Status: Ordered",
+        ]
+
+        with mock.patch.object(crm_product_separator.time, "sleep"), mock.patch.object(
+            crm_product_separator.time,
+            "monotonic",
+            side_effect=[0, 1],
+        ):
+            result = crm_product_separator._apply_stock_ordered_status(driver)
+
+        self.assertTrue(result["status_applied"])
+        self.assertEqual(result["confirmation"], "header")
+        driver.refresh.assert_not_called()
+
+    @mock.patch.object(crm_product_separator, "_wait_for_crm_context")
+    def test_stock_ordered_status_refreshes_after_stale_inline_confirmation(self, mock_wait_context):
+        driver = mock.Mock()
+        driver.execute_script.side_effect = [
+            {"success": True},
+            None,
+            True,
+            "Stock Status: Need To Order",
+            "Stock Status: Ordered",
+        ]
+
+        with mock.patch.object(crm_product_separator.time, "sleep"), mock.patch.object(
+            crm_product_separator.time,
+            "monotonic",
+            side_effect=[0, 1, 31, 31, 32],
+        ):
+            result = crm_product_separator._apply_stock_ordered_status(driver)
+
+        self.assertTrue(result["status_applied"])
+        self.assertEqual(result["confirmation"], "header_after_refresh")
+        driver.refresh.assert_called_once()
+        mock_wait_context.assert_called_once_with(driver)
+
+    def test_stock_ordered_status_verification_requires_current_header(self):
+        verification = {
+            "scan_after": {
+                "order_stock_status": {
+                    "state": "need_to_order",
+                    "status_text": "Need To Order",
+                    "stock_status_ordered": False,
+                    "stock_status_needs_order": True,
+                },
+                "tabs": [
+                    {"stock": {"stock_status_ordered": True, "has_po_row": True}},
+                    {"stock": {"stock_status_ordered": True, "has_po_row": True}},
+                ]
+            }
+        }
+
+        result = crm_product_separator._verify_stock_ordered_status_persisted(verification)
+
+        self.assertFalse(result["stock_status_verified"])
+
+    def test_stock_ordered_status_verification_accepts_refreshed_header(self):
+        verification = {
+            "scan_after": {
+                "tabs": [
+                    {"stock": {"stock_status_ordered": False}},
+                ]
+            },
+            "scan_after_refresh": {
+                "tabs": [
+                    {"stock": {"stock_status_ordered": True}},
+                    {"stock": {"stock_status_ordered": True}},
+                ]
+            },
+        }
+
+        result = crm_product_separator._verify_stock_ordered_status_persisted(verification)
+
+        self.assertTrue(result["stock_status_verified"])
+        self.assertEqual(result["verification_scan"], "scan_after_refresh")
+
+    def test_stock_state_accepts_current_stock_ordered_label(self):
+        result = crm_product_separator._stock_state_from_text(
+            "Stock Status: Ordered Stock : Ordered"
+        )
+
+        self.assertTrue(result["stock_status_ordered"])
+        self.assertEqual(result["state"], "ordered_header_only")
+
+    def test_stock_state_does_not_accept_false_stock_ordered_label(self):
+        result = crm_product_separator._stock_state_from_text(
+            "Stock Ordered: false Stock : Need To Order"
+        )
+
+        self.assertFalse(result["stock_status_ordered"])
+
+    def test_order_stock_status_detects_need_to_order_before_ordered_stock_line(self):
+        result = crm_product_separator._order_stock_status_from_text(
+            "Stock Status: Need To Order Stock : Ordered"
+        )
+
+        self.assertEqual(result["state"], "need_to_order")
+        self.assertFalse(result["stock_status_ordered"])
+        self.assertTrue(result["stock_status_needs_order"])
+
+    def test_separator_plan_skips_stock_apply_when_order_status_needs_order(self):
+        scan = self._product_separator_mixed_scan()
+        scan["order_stock_status"] = crm_product_separator._order_stock_status_from_text(
+            "Stock Status: Need To Order Stock : Ordered"
+        )
+        scan["tabs"][0]["stock"] = {
+            "state": "ordered",
+            "stock_status_ordered": True,
+            "manual_order_vendor": "S&S Activewear",
+            "manual_order_po": "H-Test001-SS01",
+            "manual_order_rows": [{"vendor": "S&S Activewear", "po": "H-Test001-SS01"}],
+        }
+
+        plan = crm_product_separator._build_separator_plan(scan)
+
+        self.assertTrue(plan["stock_ordered_for_all_affected_tabs"])
+        self.assertFalse(plan["apply_stock_ordered_after_split"])
+        self.assertIn("Need To Order", plan["stock_ordered_apply_skip_reason"])
+        self.assertEqual(plan["production_notes"], ["tab 1 and 2 in 1 box"])
+
+    def test_separator_plan_skips_production_note_when_source_tab_not_ordered(self):
+        scan = self._product_separator_mixed_scan()
+        scan["order_stock_status"] = crm_product_separator._order_stock_status_from_text(
+            "Stock Status: Need To Order Stock : Need To Order"
+        )
+        scan["tabs"][0]["stock"] = {"state": "not_ordered_or_unknown", "stock_status_ordered": False}
+
+        plan = crm_product_separator._build_separator_plan(scan)
+
+        self.assertFalse(plan["stock_ordered_for_all_affected_tabs"])
+        self.assertFalse(plan["apply_stock_ordered_after_split"])
+        self.assertEqual(plan["production_notes"], [])
+
+    def test_separator_plan_allows_mixed_split_tabs_without_global_stock_apply(self):
+        scan = self._product_separator_mixed_scan()
+        scan["order_stock_status"] = crm_product_separator._order_stock_status_from_text(
+            "Stock Status: Need To Order Stock : Ordered"
+        )
+        scan["tabs"][0]["stock"] = {
+            "state": "ordered_po_only",
+            "stock_status_ordered": False,
+            "manual_order_vendor": "S&S Activewear",
+            "manual_order_po": "H-Test001-SS01",
+            "manual_order_rows": [{"vendor": "S&S Activewear", "po": "H-Test001-SS01"}],
+        }
+        second_tab = {
+            **scan["tabs"][0],
+            "tab_number": 2,
+            "tab_name": "H-Test002",
+            "quantity": 2,
+            "stock": {"state": "not_ordered_or_unknown", "stock_status_ordered": False},
+        }
+        scan["tabs"].append(second_tab)
+        scan["tab_count"] = 2
+
+        plan = crm_product_separator._build_separator_plan(scan)
+
+        self.assertTrue(plan["mixed_stock_state"])
+        self.assertFalse(plan["manual_review_required"])
+        self.assertFalse(plan["apply_stock_ordered_after_split"])
+        self.assertIn("mixed stock-ordered state", plan["stock_ordered_apply_skip_reason"])
+        self.assertEqual(plan["production_notes"], ["tab 1 and 3 in 1 box"])
+
+    def test_separator_plan_skips_stock_apply_for_vendor_manual_order_copy(self):
+        scan = self._product_separator_mixed_scan()
+        scan["order_stock_status"] = crm_product_separator._order_stock_status_from_text(
+            "Stock Status: Ordered Stock : Ordered"
+        )
+        scan["tabs"][0]["stock"] = {
+            "state": "ordered",
+            "stock_status_ordered": True,
+            "manual_order_vendor": "S&S Activewear",
+            "manual_order_po": "H-Test001-SS01",
+            "manual_order_rows": [{"vendor": "S&S Activewear", "po": "H-Test001-SS01"}],
+        }
+
+        plan = crm_product_separator._build_separator_plan(scan)
+
+        self.assertTrue(plan["stock_ordered_for_all_affected_tabs"])
+        self.assertFalse(plan["apply_stock_ordered_after_split"])
+        self.assertIn("copied Manual Order rows", plan["stock_ordered_apply_skip_reason"])
+        self.assertEqual(plan["production_notes"], ["tab 1 and 2 in 1 box"])
+
+    def test_separator_plan_auto_orders_explicit_local_inventory_without_box_note(self):
+        scan = self._product_separator_mixed_scan()
+        scan["order_stock_status"] = crm_product_separator._order_stock_status_from_text(
+            "Stock Status: Ordered Stock : Ordered"
+        )
+        scan["tabs"][0]["stock"] = {
+            "state": "ordered",
+            "stock_status_ordered": True,
+            "manual_order_vendor": "Local Inventory",
+            "manual_order_po": "H-Test001-LI01",
+            "manual_order_rows": [{"vendor": "Local Inventory", "po": "H-Test001-LI01"}],
+        }
+
+        plan = crm_product_separator._build_separator_plan(scan)
+
+        self.assertFalse(plan["manual_review_required"])
+        self.assertEqual(plan["manual_order_records"], [])
+        self.assertEqual(plan["production_notes"], [])
+        self.assertEqual(
+            [target["target_tab_number"] for target in plan["local_inventory_auto_order_targets"]],
+            [2],
+        )
+        self.assertIn("Local Inventory", plan["stock_ordered_apply_skip_reason"])
+
+    def test_separator_plan_requires_manual_review_for_header_only_stock(self):
+        scan = self._product_separator_mixed_scan()
+        scan["order_stock_status"] = crm_product_separator._order_stock_status_from_text(
+            "Stock Status: Ordered Stock : Ordered"
+        )
+        scan["tabs"][0]["stock"] = {
+            "state": "ordered_header_only",
+            "stock_status_ordered": True,
+            "manual_order_vendor": "",
+            "manual_order_po": "",
+            "manual_order_rows": [],
+        }
+
+        plan = crm_product_separator._build_separator_plan(scan)
+
+        self.assertTrue(plan["manual_review_required"])
+        self.assertEqual(
+            plan["manual_review"][0]["reason"],
+            "Source tab is stock ordered, but the ordered PO/vendor could not be detected for copied Manual Order records.",
+        )
+        self.assertEqual(plan["manual_order_records"], [])
+        self.assertEqual(plan["production_notes"], [])
+        self.assertEqual(plan["local_inventory_auto_order_targets"], [])
 
     def test_tabs_still_needing_split_filters_mixed_tabs(self):
         scan = {
@@ -114,17 +1816,359 @@ class CrmProductSeparatorTests(unittest.TestCase):
 
         self.assertEqual([tab["tab_number"] for tab in remaining], [2])
 
+    def test_scan_looks_unchanged_after_split_compares_product_state(self):
+        mixed_scan = self._product_separator_mixed_scan()
+        clean_scan = self._product_separator_clean_scan()
+
+        self.assertTrue(crm_product_separator._scan_looks_unchanged_after_split(mixed_scan, mixed_scan))
+        self.assertFalse(crm_product_separator._scan_looks_unchanged_after_split(mixed_scan, clean_scan))
+
+    @mock.patch.object(crm_product_separator, "_recover_not_authenticated_page")
+    @mock.patch.object(crm_product_separator, "_wait_for_crm_context")
+    @mock.patch.object(crm_product_separator, "_handle_login_if_needed")
+    @mock.patch.object(crm_product_separator, "safe_get_with_partial_load")
+    @mock.patch.object(crm_product_separator, "_scan_order")
+    def test_split_verification_refreshes_once_before_failing(
+        self,
+        mock_scan_order,
+        mock_safe_get,
+        mock_handle_login,
+        mock_wait_context,
+        mock_recover_auth,
+    ):
+        driver = mock.Mock()
+        mixed_scan = {
+            "tabs": [
+                {
+                    "tab_number": 1,
+                    "tab_name": "H-Test001",
+                    "needs_split": True,
+                    "groups": [{"group_label": "Adult/general"}, {"group_label": "Hat/cap"}],
+                }
+            ]
+        }
+        clean_scan = {
+            "tabs": [
+                {"tab_number": 1, "tab_name": "H-Test001", "needs_split": False},
+                {"tab_number": 2, "tab_name": "H-Test002", "needs_split": False},
+            ]
+        }
+        mock_scan_order.side_effect = [mixed_scan, clean_scan]
+
+        verification, remaining = crm_product_separator._verify_split_persisted_after_save(
+            driver,
+            "https://crm2.legacy.printfly.com/order/4600001",
+            "4600001",
+            login_wait_seconds=0,
+        )
+
+        self.assertEqual(remaining, [])
+        self.assertTrue(verification["verification_refresh_attempted"])
+        self.assertEqual(verification["scan_after"], mixed_scan)
+        self.assertEqual(verification["scan_after_refresh"], clean_scan)
+        self.assertIn("H-Test001", verification["remaining_before_refresh"])
+        self.assertEqual(verification["remaining_after_refresh"], "")
+        driver.refresh.assert_called_once()
+        mock_safe_get.assert_called_once()
+        self.assertEqual(mock_scan_order.call_count, 2)
+        self.assertEqual(mock_handle_login.call_count, 2)
+        self.assertEqual(mock_wait_context.call_count, 2)
+        self.assertEqual(mock_recover_auth.call_count, 2)
+
+    @mock.patch.object(crm_product_separator, "_recover_not_authenticated_page")
+    @mock.patch.object(crm_product_separator, "_wait_for_crm_context")
+    @mock.patch.object(crm_product_separator, "_handle_login_if_needed")
+    @mock.patch.object(crm_product_separator, "safe_get_with_partial_load")
+    @mock.patch.object(crm_product_separator, "_scan_order")
+    def test_split_verification_does_not_refresh_when_first_scan_is_clean(
+        self,
+        mock_scan_order,
+        mock_safe_get,
+        _mock_handle_login,
+        _mock_wait_context,
+        _mock_recover_auth,
+    ):
+        driver = mock.Mock()
+        clean_scan = {"tabs": [{"tab_number": 1, "needs_split": False}]}
+        mock_scan_order.return_value = clean_scan
+
+        verification, remaining = crm_product_separator._verify_split_persisted_after_save(
+            driver,
+            "https://crm2.legacy.printfly.com/order/4600001",
+            "4600001",
+        )
+
+        self.assertEqual(remaining, [])
+        self.assertFalse(verification["verification_refresh_attempted"])
+        self.assertEqual(verification["scan_after"], clean_scan)
+        self.assertNotIn("scan_after_refresh", verification)
+        driver.refresh.assert_not_called()
+        mock_safe_get.assert_called_once()
+        mock_scan_order.assert_called_once()
+
+    def test_live_order_retries_split_once_when_first_save_makes_no_change(self):
+        driver = mock.Mock()
+        mixed_scan = self._product_separator_mixed_scan()
+        clean_scan = self._product_separator_clean_scan()
+        retryable_plan = {"needs_split": True, "manual_review_required": False, "split_tabs": []}
+        first_verification = {
+            "scan_after": mixed_scan,
+            "verification_refresh_attempted": True,
+            "scan_after_refresh": mixed_scan,
+        }
+        second_verification = {
+            "scan_after": clean_scan,
+            "verification_refresh_attempted": False,
+        }
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(crm_product_separator, "_build_driver", return_value=(driver, None)))
+            stack.enter_context(mock.patch.object(crm_product_separator, "safe_get_with_partial_load"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_handle_login_if_needed"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_wait_for_crm_context"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_recover_not_authenticated_page"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_scan_order", return_value=mixed_scan))
+            mock_build_plan = stack.enter_context(
+                mock.patch.object(crm_product_separator, "_build_separator_plan", return_value=retryable_plan)
+            )
+            mock_apply = stack.enter_context(
+                mock.patch.object(
+                    crm_product_separator,
+                    "_apply_live_split",
+                    side_effect=[{"attempt": 1}, {"attempt": 2}],
+                )
+            )
+            mock_verify = stack.enter_context(
+                mock.patch.object(
+                    crm_product_separator,
+                    "_verify_split_persisted_after_save",
+                    side_effect=[
+                        (first_verification, mixed_scan["tabs"]),
+                        (second_verification, []),
+                    ],
+                )
+            )
+            mock_write = stack.enter_context(mock.patch.object(crm_product_separator, "_write_result"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "safe_driver_quit"))
+
+            exit_code = crm_product_separator.run_product_separator_order(order_id="4600001", dry_run=False)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(mock_build_plan.call_count, 2)
+        self.assertEqual(mock_apply.call_count, 2)
+        self.assertEqual(mock_verify.call_count, 2)
+        self.assertTrue(mock_write.call_args.args[0])
+        report = mock_write.call_args.kwargs["report"]
+        self.assertEqual(report["live"], {"attempt": 1})
+        self.assertEqual(report["live_retry"]["live"], {"attempt": 2})
+        self.assertTrue(report["live_retry"]["attempted"])
+        self.assertEqual(report["live_retry"]["scan_after"], clean_scan)
+
+    def test_live_order_zeroes_source_quantities_only_after_total_mismatch(self):
+        driver = mock.Mock()
+        initial_scan = self._product_separator_mixed_scan()
+        mismatched_scan = {
+            "tabs": [
+                {
+                    "tab_number": 1,
+                    "tab_name": "H-Test001",
+                    "quantity": 2,
+                    "products": initial_scan["tabs"][0]["products"],
+                    "groups": initial_scan["tabs"][0]["groups"],
+                    "needs_split": True,
+                },
+                {
+                    "tab_number": 2,
+                    "tab_name": "H-Test002",
+                    "quantity": 1,
+                    "products": [
+                        {
+                            "product_name": "Snapback Cap",
+                            "group": "hat_cap",
+                            "group_label": "Hat/cap",
+                            "color": "BLACK",
+                            "sizes": ["ONESIZE"],
+                            "total_quantity": 1,
+                        },
+                    ],
+                    "groups": [{"group": "hat_cap", "group_label": "Hat/cap"}],
+                    "needs_split": False,
+                },
+            ]
+        }
+        clean_scan = self._product_separator_clean_scan()
+        plan = crm_product_separator._build_separator_plan(initial_scan)
+        first_verification = {
+            "scan_after": mismatched_scan,
+            "verification_refresh_attempted": False,
+        }
+        second_verification = {
+            "scan_after": clean_scan,
+            "verification_refresh_attempted": False,
+        }
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(crm_product_separator, "_build_driver", return_value=(driver, None)))
+            stack.enter_context(mock.patch.object(crm_product_separator, "safe_get_with_partial_load"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_handle_login_if_needed"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_wait_for_crm_context"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_recover_not_authenticated_page"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_scan_order", return_value=initial_scan))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_build_separator_plan", return_value=plan))
+            mock_apply = stack.enter_context(mock.patch.object(crm_product_separator, "_apply_live_split", return_value={"attempt": 1}))
+            mock_cleanup = stack.enter_context(
+                mock.patch.object(crm_product_separator, "_apply_source_quantity_cleanup", return_value={"attempted": True})
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    crm_product_separator,
+                    "_verify_split_persisted_after_save",
+                    side_effect=[
+                        (first_verification, mismatched_scan["tabs"][:1]),
+                        (second_verification, []),
+                    ],
+                )
+            )
+            mock_write = stack.enter_context(mock.patch.object(crm_product_separator, "_write_result"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "safe_driver_quit"))
+
+            exit_code = crm_product_separator.run_product_separator_order(order_id="4600001", dry_run=False)
+
+        self.assertEqual(exit_code, 0)
+        mock_apply.assert_called_once()
+        mock_cleanup.assert_called_once()
+        cleanup_targets = mock_cleanup.call_args.args[1]
+        self.assertEqual([target["tab_number"] for target in cleanup_targets], [1])
+        self.assertEqual(cleanup_targets[0]["keep_group"], "adult_general")
+        report = mock_write.call_args.kwargs["report"]
+        self.assertEqual(report["quantity_total_check"]["actual_total"], 2)
+        self.assertTrue(report["final_quantity_total_check"]["matches"])
+
+    def test_live_order_skips_stock_apply_when_order_status_needed_before_split(self):
+        driver = mock.Mock()
+        initial_scan = self._product_separator_mixed_scan()
+        initial_scan["order_stock_status"] = crm_product_separator._order_stock_status_from_text(
+            "Stock Status: Need To Order Stock : Ordered"
+        )
+        initial_scan["tabs"][0]["stock"] = {
+            "state": "ordered",
+            "stock_status_ordered": True,
+            "manual_order_vendor": "S&S Activewear",
+            "manual_order_po": "H-Test001-SS01",
+            "manual_order_rows": [{"vendor": "S&S Activewear", "po": "H-Test001-SS01"}],
+        }
+        clean_scan = self._product_separator_clean_scan()
+        clean_scan["order_stock_status"] = initial_scan["order_stock_status"]
+        for tab in clean_scan["tabs"]:
+            tab["stock"] = {"stock_status_ordered": True}
+        plan = crm_product_separator._build_separator_plan(initial_scan)
+        verification = {
+            "scan_after": clean_scan,
+            "verification_refresh_attempted": False,
+        }
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(crm_product_separator, "_build_driver", return_value=(driver, None)))
+            stack.enter_context(mock.patch.object(crm_product_separator, "safe_get_with_partial_load"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_handle_login_if_needed"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_wait_for_crm_context"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_recover_not_authenticated_page"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_scan_order", return_value=initial_scan))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_build_separator_plan", return_value=plan))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_apply_live_split", return_value={"attempt": 1}))
+            stack.enter_context(
+                mock.patch.object(
+                    crm_product_separator,
+                    "_verify_split_persisted_after_save",
+                    return_value=(verification, []),
+                )
+            )
+            mock_stock_apply = stack.enter_context(mock.patch.object(crm_product_separator, "_apply_stock_ordered_status"))
+            stack.enter_context(
+                mock.patch.object(
+                    crm_product_separator,
+                    "_record_separator_manual_orders",
+                    return_value={"attempted": True, "records": []},
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    crm_product_separator,
+                    "_verify_manual_order_records_persisted",
+                    return_value={"verified": True, "missing_records": []},
+                )
+            )
+            mock_write = stack.enter_context(mock.patch.object(crm_product_separator, "_write_result"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "safe_driver_quit"))
+
+            exit_code = crm_product_separator.run_product_separator_order(order_id="4600001", dry_run=False)
+
+        self.assertEqual(exit_code, 0)
+        mock_stock_apply.assert_not_called()
+        report = mock_write.call_args.kwargs["report"]
+        self.assertTrue(report["stock_status_apply"]["skipped"])
+        self.assertIn("Need To Order", report["stock_status_apply"]["reason"])
+
+    def test_live_order_fails_after_retry_when_second_save_still_makes_no_change(self):
+        driver = mock.Mock()
+        mixed_scan = self._product_separator_mixed_scan()
+        retryable_plan = {"needs_split": True, "manual_review_required": False, "split_tabs": []}
+        unchanged_verification = {
+            "scan_after": mixed_scan,
+            "verification_refresh_attempted": True,
+            "scan_after_refresh": mixed_scan,
+        }
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(crm_product_separator, "_build_driver", return_value=(driver, None)))
+            stack.enter_context(mock.patch.object(crm_product_separator, "safe_get_with_partial_load"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_handle_login_if_needed"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_wait_for_crm_context"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_recover_not_authenticated_page"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_scan_order", return_value=mixed_scan))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_build_separator_plan", return_value=retryable_plan))
+            mock_apply = stack.enter_context(
+                mock.patch.object(
+                    crm_product_separator,
+                    "_apply_live_split",
+                    side_effect=[{"attempt": 1}, {"attempt": 2}],
+                )
+            )
+            mock_verify = stack.enter_context(
+                mock.patch.object(
+                    crm_product_separator,
+                    "_verify_split_persisted_after_save",
+                    side_effect=[
+                        (unchanged_verification, mixed_scan["tabs"]),
+                        (unchanged_verification, mixed_scan["tabs"]),
+                    ],
+                )
+            )
+            mock_write = stack.enter_context(mock.patch.object(crm_product_separator, "_write_result"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "safe_driver_quit"))
+
+            exit_code = crm_product_separator.run_product_separator_order(order_id="4600001", dry_run=False)
+
+        self.assertEqual(exit_code, 4)
+        self.assertEqual(mock_apply.call_count, 2)
+        self.assertEqual(mock_verify.call_count, 2)
+        self.assertFalse(mock_write.call_args.args[0])
+        self.assertIn("after retrying save/split once", mock_write.call_args.args[1])
+        self.assertTrue(mock_write.call_args.kwargs["manual_review_required"])
+        self.assertEqual(mock_write.call_args.kwargs["resolution"], "split_verification_failed")
+
     @mock.patch.object(server, "_execute_crm_product_separator_script")
     def test_live_batch_continues_when_preflight_has_split_orders_and_one_failure(self, mock_run_script):
         preflight_payload = {
             "success": False,
-            "message": "Product Separator list dry run complete. 1 order(s) need splitting, 0 already okay.",
+            "message": "Product Separator list dry run complete. 1 order(s) need splitting, 1 already okay.",
             "action": "product_separator_list",
             "dry_run": True,
             "list_mode": "rush",
             "parallel_workers": 4,
-            "order_ids": ["4609102", "4607350"],
+            "order_ids": ["4609102", "4607350", "4609999"],
             "split_order_ids": ["4609102"],
+            "skipped_order_ids": ["4609999"],
             "failed_order_ids": ["4607350"],
             "report": [
                 {
@@ -140,6 +2184,13 @@ class CrmProductSeparatorTests(unittest.TestCase):
                     "resolution": None,
                     "needs_split": False,
                     "message": "CRM authentication failed: Not authenticated.",
+                },
+                {
+                    "order_id": "4609999",
+                    "success": True,
+                    "resolution": "skipped_no_split_needed",
+                    "needs_split": False,
+                    "message": "already okay",
                 },
             ],
         }
@@ -168,10 +2219,140 @@ class CrmProductSeparatorTests(unittest.TestCase):
         self.assertEqual(mock_run_script.call_count, 2)
         self.assertEqual(payload["dry_run"], False)
         self.assertEqual(payload["live_order_ids"], ["4609102"])
+        self.assertEqual(payload["skipped_order_ids"], ["4609999"])
+        self.assertEqual(payload["order_ids"], ["4609102", "4607350", "4609999"])
+        self.assertEqual(payload["order_count"], 3)
         self.assertIn("1/1 live order", message)
         rows_by_order = {row["order_id"]: row for row in payload["order_results"]}
         self.assertEqual(rows_by_order["4609102"]["status"], "Separated")
         self.assertEqual(rows_by_order["4607350"]["status"], "Needs attention")
+        self.assertEqual(rows_by_order["4609999"]["status"], "Skipped")
+        self.assertEqual([row["order_id"] for row in payload["order_results"]], ["4609102", "4607350", "4609999"])
+
+    @mock.patch.object(server, "_execute_crm_product_separator_script")
+    def test_live_batch_attention_summary_labels_preflight_manual_review(self, mock_run_script):
+        preflight_payload = {
+            "success": False,
+            "message": (
+                "Product Separator list dry run complete. "
+                "1 order(s) need splitting, 0 already okay, 1 require manual review."
+            ),
+            "action": "product_separator_list",
+            "dry_run": True,
+            "list_mode": "rush",
+            "parallel_workers": 4,
+            "order_ids": ["4609102", "4607350"],
+            "split_order_ids": ["4609102"],
+            "skipped_order_ids": [],
+            "manual_review_order_ids": ["4607350"],
+            "failed_order_ids": [],
+            "report": [
+                {
+                    "order_id": "4609102",
+                    "success": True,
+                    "resolution": "dry_run_ready",
+                    "needs_split": True,
+                    "message": "ready",
+                },
+                {
+                    "order_id": "4607350",
+                    "success": False,
+                    "resolution": "manual_review",
+                    "needs_split": False,
+                    "manual_review_required": True,
+                    "message": "missing Manual Order row could not be reconciled",
+                },
+            ],
+        }
+        live_payload = {
+            "success": False,
+            "message": "Product Separator verification failed for order 4609102.",
+            "action": "product_separator_order",
+            "dry_run": False,
+            "target_order_id": "4609102",
+            "order_ids": ["4609102"],
+            "resolution": "split_verification_failed",
+            "duration_seconds": 12.0,
+        }
+        mock_run_script.side_effect = [
+            (False, preflight_payload["message"], preflight_payload),
+            (False, live_payload["message"], live_payload),
+        ]
+
+        ok, message, payload = server._execute_crm_product_separator_worker(
+            dry_run=False,
+            list_mode="rush",
+            parallel_workers=4,
+        )
+
+        self.assertFalse(ok)
+        self.assertIn("1 order(s) require manual review and 1 order(s) need attention", message)
+        self.assertIn("manual review 4607350", message)
+        self.assertIn("live 4609102", message)
+        rows_by_order = {row["order_id"]: row for row in payload["order_results"]}
+        self.assertEqual(rows_by_order["4607350"]["status"], "Manual review")
+        self.assertTrue(rows_by_order["4607350"]["manual_review_required"])
+
+    def test_product_separator_history_preserves_stock_ordered_skipped_status(self):
+        rows = server._build_crm_product_separator_order_results(
+            {
+                "success": True,
+                "message": "Product Separator completed order 4609102.",
+                "target_order_id": "4609102",
+                "resolution": "split_complete",
+                "report": {
+                    "stock_status_apply": {
+                        "status_applied": False,
+                        "skipped": True,
+                        "reason": "Order Stock Status is Need To Order; do not apply Stock Ordered automatically.",
+                        "order_stock_status_before_split": "Need To Order",
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(rows[0]["stock_ordered_status"]["label"], "Stock Ordered not applied")
+        self.assertIn("Need To Order", rows[0]["stock_ordered_status"]["reason"])
+
+    def test_product_separator_history_preserves_stock_ordered_applied_status(self):
+        rows = server._build_crm_product_separator_order_results(
+            {
+                "success": True,
+                "message": "Product Separator completed order 4609102.",
+                "target_order_id": "4609102",
+                "resolution": "split_complete",
+                "report": {
+                    "stock_status_apply": {
+                        "status_applied": True,
+                        "confirmation": "header",
+                        "order_stock_status_before_split": "Stock Ordered",
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(rows[0]["stock_ordered_status"]["label"], "Stock Ordered applied")
+        self.assertTrue(rows[0]["stock_ordered_status"]["applied"])
+
+    def test_product_separator_history_treats_already_stock_ordered_as_applied(self):
+        rows = server._build_crm_product_separator_order_results(
+            {
+                "success": True,
+                "message": "Product Separator completed order 4609102.",
+                "target_order_id": "4609102",
+                "resolution": "split_complete",
+                "report": {
+                    "stock_status_apply": {
+                        "status_applied": False,
+                        "already_applied": True,
+                        "confirmation": "header",
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(rows[0]["stock_ordered_status"]["label"], "Stock Ordered already applied")
+        self.assertTrue(rows[0]["stock_ordered_status"]["applied"])
 
     @mock.patch.object(server, "_execute_crm_product_separator_script")
     def test_live_batch_retries_transient_live_order_failure(self, mock_run_script):
@@ -395,6 +2576,88 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         )
         self.assertIn("lime_green", crm_validate_address.ALLOWED_SHIPPING_LIST_ROW_LABELS)
 
+    def test_shipping_list_row_classifier_includes_purple_variants(self):
+        for rgb in ((156, 31, 188), (128, 43, 181), (112, 36, 174)):
+            with self.subTest(rgb=rgb):
+                self.assertEqual(
+                    crm_validate_address._classify_shipping_list_row_color(rgb),
+                    "purple",
+                )
+        self.assertIn("purple", crm_validate_address.ALLOWED_SHIPPING_LIST_ROW_LABELS)
+        self.assertIn("purple", crm_validate_address.ALLOWED_813_ORDER_GOODS_ROW_LABELS)
+
+    def test_shipping_list_row_classifier_uses_purple_marker(self):
+        details = {
+            "top": 0,
+            "left": 0,
+            "width": 100,
+            "height": 20,
+            "colors": [
+                {
+                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                    "tag": "TR",
+                    "id": "",
+                    "className": "scheduled-purple-order",
+                }
+            ],
+        }
+
+        row = crm_validate_address._describe_shipping_list_order_row_from_details(details)
+
+        self.assertEqual(row["label"], "purple")
+
+    def test_shipping_list_order_selection_accepts_purple_for_default_and_813_rows(self):
+        driver = mock.Mock()
+        purple_link = mock.Mock()
+        tan_link = mock.Mock()
+        driver.find_elements.return_value = [purple_link, tan_link]
+        row_details = [
+            {
+                "displayed": True,
+                "text": "4681259 | Lite Mach 6 Manufacturing",
+                "label": "purple",
+                "rgb": (156, 31, 188),
+                "rect": (0, 0, 100, 20),
+                "element": {},
+            },
+            {
+                "displayed": True,
+                "text": "4680186 | Lite",
+                "label": "tan",
+                "rgb": (245, 202, 153),
+                "rect": (20, 0, 100, 20),
+                "element": {},
+            },
+        ]
+
+        with mock.patch.object(crm_validate_address, "_describe_shipping_list_order_rows", return_value=row_details):
+            default_rows = crm_validate_address._find_shipping_list_orders(
+                driver,
+                limit=5,
+                timeout=0.01,
+                allowed_row_labels=crm_validate_address.ALLOWED_SHIPPING_LIST_ROW_LABELS,
+            )
+            rows_813 = crm_validate_address._find_shipping_list_orders(
+                driver,
+                limit=5,
+                timeout=0.01,
+                allowed_row_labels=crm_validate_address.ALLOWED_813_ORDER_GOODS_ROW_LABELS,
+            )
+
+        self.assertEqual([row["order_id"] for row in default_rows], ["4681259", "4680186"])
+        self.assertEqual([row["order_id"] for row in rows_813], ["4681259"])
+
+    def test_state_route_with_house_number_allows_no_candidates_override(self):
+        address = {
+            "address": "294 NJ-36",
+            "city": "West Long Branch",
+            "state": "New Jersey",
+            "zip": "07764",
+        }
+
+        self.assertTrue(crm_validate_address._is_highway_address(address["address"]))
+        self.assertTrue(crm_validate_address._allow_override_after_no_candidates(address))
+
     def test_shipping_address_caps_normalization_ignores_address_cont(self):
         mixed_case = {
             "address": "2000 Oak Creek Rd",
@@ -454,11 +2717,11 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
     def test_dedupe_address_identifier_moves_box_into_address_cont_when_hash_present(self):
         address, address_cont, extracted = crm_validate_address._dedupe_address_identifier(
-            "22425 W Historic Route 66 Box 965",
+            "12345 W Example Route 66 Box 965",
             "#965",
         )
 
-        self.assertEqual(address, "22425 W HISTORIC ROUTE 66")
+        self.assertEqual(address, "12345 W EXAMPLE ROUTE 66")
         self.assertEqual(address_cont, "BOX 965 #965")
         self.assertEqual(extracted, "BOX 965")
 
@@ -516,8 +2779,8 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
     def test_effective_address_cont_ignores_locality_overflow(self):
         address_fields = {
-            "address": "687 West 204th Street, Apt. 2D",
-            "address_cont": "New York, NY 10034",
+            "address": "123 West Example Street, Apt. 2D",
+            "address_cont": "Example City, NY 10034",
             "city": "New York (Manhattan)",
             "state": "New York",
             "zip": "10034",
@@ -530,14 +2793,14 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
             crm_validate_address._effective_address_cont(address_fields),
         )
 
-        self.assertEqual(address, "687 WEST 204TH STREET")
+        self.assertEqual(address, "123 WEST EXAMPLE STREET")
         self.assertEqual(address_cont, "APT. 2D")
         self.assertEqual(extracted, "APT. 2D")
 
     def test_normalize_display_address_line_converts_leading_number_word(self):
         self.assertEqual(
-            crm_validate_address._normalize_display_address_line("One Dell Way"),
-            "1 Dell Way",
+            crm_validate_address._normalize_display_address_line("One Example Way"),
+            "1 Example Way",
         )
 
     def test_clean_city_field_value_strips_embedded_state_code(self):
@@ -615,33 +2878,33 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
     def test_pick_existing_address_prefers_matching_address_cont(self):
         address = {
-            "address": "687 West 204th Street",
+            "address": "123 West Example Street",
             "address_cont": "Apt. 2D",
             "city": "New York",
             "state": "New York",
             "zip": "10034",
         }
         options = [
-            {"text": "Resident - 687 W 204th St Apt 3D New York NY 10034", "preferred_all_caps": True},
-            {"text": "Resident - 687 W 204th St Apt 2D New York NY 10034", "preferred_all_caps": True},
+            {"text": "Example Resident - 123 W Example St Apt 3D New York NY 10034", "preferred_all_caps": True},
+            {"text": "Example Resident - 123 W Example St Apt 2D New York NY 10034", "preferred_all_caps": True},
         ]
 
         best = crm_validate_address._pick_existing_address_option(address, options)
 
         self.assertIsNotNone(best)
-        self.assertEqual(best["option"]["text"], "Resident - 687 W 204th St Apt 2D New York NY 10034")
+        self.assertEqual(best["option"]["text"], "Example Resident - 123 W Example St Apt 2D New York NY 10034")
         self.assertTrue(best["assessment"]["secondary_match"])
 
     def test_pick_existing_address_can_rescue_missing_street_number(self):
         address = {
-            "address": "Avalon Drive West",
+            "address": "Example Drive West",
             "address_cont": "",
             "city": "Orange",
             "state": "Connecticut",
             "zip": "06477",
         }
         options = [
-            {"text": "Resident - 5111 Avalon dr W Orange CT 06477", "preferred_all_caps": True},
+            {"text": "Example Resident - 5111 Example Dr W Orange CT 06477", "preferred_all_caps": True},
         ]
 
         best = crm_validate_address._pick_existing_address_option(address, options)
@@ -699,19 +2962,19 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
             "zip": "11412",
         }
         options = [
-            {"text": "Christopher Murray - 119-15 192 Street St. Albans NY 11412", "preferred_all_caps": False},
-            {"text": "Christopher Murray - 11915 192ND ST SAINT ALBANS NY 11412-3624", "preferred_all_caps": True},
+            {"text": "Example Customer - 119-15 192 Street St. Albans NY 11412", "preferred_all_caps": False},
+            {"text": "Example Customer - 11915 192ND ST SAINT ALBANS NY 11412-3624", "preferred_all_caps": True},
         ]
 
         best = crm_validate_address._pick_existing_address_option(address, options)
 
         self.assertIsNotNone(best)
-        self.assertEqual(best["option"]["text"], "Christopher Murray - 11915 192ND ST SAINT ALBANS NY 11412-3624")
+        self.assertEqual(best["option"]["text"], "Example Customer - 11915 192ND ST SAINT ALBANS NY 11412-3624")
         self.assertTrue(best["assessment"]["required_match"])
 
     def test_assess_address_text_accepts_hawaii_hyphenated_house_number_and_city_alias(self):
         address = {
-            "address": "61-4032 Kalo'Olo'o Dr",
+            "address": "61-4032 Example Dr",
             "address_cont": "",
             "city": "Waimea",
             "state": "Hawaii",
@@ -720,7 +2983,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
         assessment = crm_validate_address._assess_address_text(
             address,
-            "61-4032 KALOOLOO DR KAMUELA HI 96743-9711",
+            "61-4032 EXAMPLE DR KAMUELA HI 96743-9711",
         )
 
         self.assertTrue(assessment["required_match"])
@@ -730,28 +2993,28 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
     def test_pick_existing_address_prefers_canadian_validated_postal_prefix_match(self):
         address = {
-            "address": "3588 Overlander Dr",
+            "address": "3588 Example Dr",
             "address_cont": "",
             "city": "Kamloops",
             "state": "British Columbia",
             "zip": "V2B 6T6",
         }
         options = [
-            {"text": "Danielle Elliot - 3588 Overlander Dr Kamloops BC V2B 6T6", "preferred_all_caps": False},
-            {"text": "Danielle Elliot - 3588 OVERLANDER DR KAMLOOPS BC V2B 6Y1", "preferred_all_caps": True},
+            {"text": "Example Customer - 3588 Example Dr Kamloops BC V2B 6T6", "preferred_all_caps": False},
+            {"text": "Example Customer - 3588 EXAMPLE DR KAMLOOPS BC V2B 6Y1", "preferred_all_caps": True},
         ]
 
         best = crm_validate_address._pick_existing_address_option(address, options)
 
         self.assertIsNotNone(best)
-        self.assertEqual(best["option"]["text"], "Danielle Elliot - 3588 OVERLANDER DR KAMLOOPS BC V2B 6Y1")
+        self.assertEqual(best["option"]["text"], "Example Customer - 3588 EXAMPLE DR KAMLOOPS BC V2B 6Y1")
         self.assertTrue(best["assessment"]["safe_postal_prefix_match"])
         self.assertTrue(best["assessment"]["canadian_postal_prefix_match"])
 
     def test_existing_address_looks_like_weak_duplicate_when_not_all_caps(self):
         best_existing = {
             "option": {
-                "text": "Dianne Meim - 457 Seahorse Drive Vallejo CA 94591-7126",
+                "text": "Example Customer - 457 Example Drive Vallejo CA 94591-7126",
                 "preferred_all_caps": False,
             },
             "assessment": {
@@ -765,8 +3028,8 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
     def test_existing_address_resolution_can_require_green_valid_state(self):
         address = {
-            "recipient": "William Saks",
-            "address": "174 Trail Dr",
+            "recipient": "Example Recipient",
+            "address": "174 Example Trail",
             "address_cont": "",
             "city": "Alpine",
             "state": "Wyoming",
@@ -774,7 +3037,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         }
         best_existing = {
             "option": {
-                "text": "William Saks - 174 Trail Dr Alpine WY 83128",
+                "text": "Example Recipient - 174 Example Trail Alpine WY 83128",
                 "preferred_all_caps": False,
             },
             "assessment": {
@@ -806,8 +3069,8 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
     def test_existing_address_resolution_can_reuse_prevalidated_selection(self):
         address = {
-            "recipient": "Heidi Kelly",
-            "address": "5774 US-190",
+            "recipient": "Example Recipient",
+            "address": "5774 Example Rd",
             "address_cont": "",
             "city": "Livingston",
             "state": "Texas",
@@ -815,7 +3078,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         }
         best_existing = {
             "option": {
-                "text": "Heidi Kelly - K6Ranch Livingston - 5774 US-190 Livingston TX, 77351",
+                "text": "Example Recipient - Test Ranch Livingston - 5774 Example Rd Livingston TX, 77351",
                 "preferred_all_caps": False,
             },
             "assessment": {
@@ -851,16 +3114,16 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
     def test_existing_address_resolution_can_use_safe_assessed_current_address_after_no_candidates(self):
         original_address = {
-            "recipient": "Clinton Bohn",
-            "address": "2301 FM1187",
+            "recipient": "Example Recipient",
+            "address": "2301 Example Rd",
             "address_cont": "203",
             "city": "Mansfield",
             "state": "Texas",
             "zip": "76063",
         }
         selected_address = {
-            "recipient": "Clinton Bohn",
-            "address": "2301 FM1187",
+            "recipient": "Example Recipient",
+            "address": "2301 Example Rd",
             "address_cont": "203",
             "city": "Mansfield",
             "state": "Texas",
@@ -868,7 +3131,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         }
         best_existing = {
             "option": {
-                "text": "Clinton Bohn - 2301 FM1187 Mansfield TX 76063",
+                "text": "Example Recipient - 2301 Example Rd Mansfield TX 76063",
                 "preferred_all_caps": True,
             },
             "assessment": {
@@ -915,8 +3178,8 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
     def test_existing_address_resolution_skips_saved_address_that_drops_address_cont(self):
         address = {
-            "recipient": "Joseph Maloney",
-            "address": "4230 Deste Ct",
+            "recipient": "Example Recipient",
+            "address": "4230 Example Ct",
             "address_cont": "106",
             "city": "Greenacres",
             "state": "Florida",
@@ -924,12 +3187,12 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         }
         best_existing = {
             "option": {
-                "text": "Joseph Maloney - 4230 DESTE CT LAKE WORTH FL 33467-4302",
+                "text": "Example Recipient - 4230 EXAMPLE CT LAKE WORTH FL 33467-4302",
                 "preferred_all_caps": True,
             },
             "assessment": crm_validate_address._assess_existing_address_text(
                 address,
-                "Joseph Maloney - 4230 DESTE CT LAKE WORTH FL 33467-4302",
+                "Example Recipient - 4230 EXAMPLE CT LAKE WORTH FL 33467-4302",
             ),
         }
         warnings = []
@@ -954,7 +3217,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
     def test_find_best_existing_address_option_rejects_saved_address_that_drops_embedded_box(self):
         address = {
-            "recipient": "Isidore Boutin",
+            "recipient": "Example Recipient",
             "address": "105 main street box 233",
             "address_cont": "",
             "city": "Domremy",
@@ -963,7 +3226,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         }
         options = [
             {
-                "text": "Isidore Boutin - 105 main street Domremy SK s0k1g0",
+                "text": "Example Recipient - 105 main street Domremy SK s0k1g0",
                 "preferred_all_caps": False,
             }
         ]
@@ -998,40 +3261,40 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
     def test_pick_validation_candidate_prefers_all_caps(self):
         address = {
-            "address": "101 Bascom Farm Dr",
+            "address": "101 Example Farm Dr",
             "city": "West Windsor",
             "state": "Vermont",
             "zip": "05037",
         }
         candidates = [
-            {"text": "101 Bascom Farm Rd Brownsville VT 05037-4440", "preferred_all_caps": False},
-            {"text": "101 BASCOM FARM RD BROWNSVILLE VT 05037-4440", "preferred_all_caps": True},
+            {"text": "101 Example Farm Rd Brownsville VT 05037-4440", "preferred_all_caps": False},
+            {"text": "101 EXAMPLE FARM RD BROWNSVILLE VT 05037-4440", "preferred_all_caps": True},
         ]
 
         best, saw_zip_plus4_only = crm_validate_address._pick_validation_candidate(address, candidates)
 
         self.assertFalse(saw_zip_plus4_only)
         self.assertIsNotNone(best)
-        self.assertEqual(best["candidate"]["text"], "101 BASCOM FARM RD BROWNSVILLE VT 05037-4440")
+        self.assertEqual(best["candidate"]["text"], "101 EXAMPLE FARM RD BROWNSVILLE VT 05037-4440")
 
     def test_pick_validation_candidate_prefers_matching_address_cont(self):
         address = {
-            "address": "687 West 204th Street",
+            "address": "123 West Example Street",
             "address_cont": "Apt. 2D",
             "city": "New York",
             "state": "New York",
             "zip": "10034",
         }
         candidates = [
-            {"text": "687 W 204TH ST APT 3D NEW YORK NY 10034", "preferred_all_caps": True},
-            {"text": "687 W 204TH ST APT 2D NEW YORK NY 10034", "preferred_all_caps": True},
+            {"text": "123 W EXAMPLE ST APT 3D NEW YORK NY 10034", "preferred_all_caps": True},
+            {"text": "123 W EXAMPLE ST APT 2D NEW YORK NY 10034", "preferred_all_caps": True},
         ]
 
         best, saw_zip_plus4_only = crm_validate_address._pick_validation_candidate(address, candidates)
 
         self.assertFalse(saw_zip_plus4_only)
         self.assertIsNotNone(best)
-        self.assertEqual(best["candidate"]["text"], "687 W 204TH ST APT 2D NEW YORK NY 10034")
+        self.assertEqual(best["candidate"]["text"], "123 W EXAMPLE ST APT 2D NEW YORK NY 10034")
         self.assertTrue(best["assessment"]["secondary_match"])
 
     def test_address_cont_preservation_accepts_unit_prefix_normalization(self):
@@ -1042,9 +3305,19 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
             crm_validate_address._address_cont_value_preserved("Unit C202", "#C202")
         )
 
+    def test_address_cont_preservation_accepts_reordered_identifier_with_extra_attention_text(self):
+        self.assertTrue(
+            crm_validate_address._address_cont_value_preserved("636 BEH", "BEH 636 Attn FSAE")
+        )
+
+    def test_address_cont_preservation_accepts_reordered_box_identifier(self):
+        self.assertTrue(
+            crm_validate_address._address_cont_value_preserved("BOX 787", "787 BOX")
+        )
+
     def test_assess_address_text_accepts_one_digit_zip_difference(self):
         address = {
-            "address": "6921 S 1st St W",
+            "address": "6921 S Example St W",
             "address_cont": "",
             "city": "Muskogee",
             "state": "Oklahoma",
@@ -1053,7 +3326,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
         assessment = crm_validate_address._assess_address_text(
             address,
-            "6921 S 1ST ST W MUSKOGEE OK 74401-8913",
+            "6921 S EXAMPLE ST W MUSKOGEE OK 74401-8913",
         )
 
         self.assertTrue(assessment["safe_postal_near_match"])
@@ -1062,7 +3335,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
     def test_assess_address_text_can_preserve_building_identifier_with_transposed_zip(self):
         address = {
-            "address": "1 Dell Way",
+            "address": "1 Example Way",
             "address_cont": "Building 3",
             "city": "Round Rock",
             "state": "Texas",
@@ -1071,7 +3344,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
         assessment = crm_validate_address._assess_address_text(
             address,
-            "1 DELL WAY ROUND ROCK TX 78682-7000",
+            "1 EXAMPLE WAY ROUND ROCK TX 78682-7000",
         )
 
         self.assertTrue(assessment["safe_postal_near_match"])
@@ -1080,7 +3353,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
     def test_assess_address_text_accepts_compact_runon_street(self):
         address = {
-            "address": "2PINIONPINELN",
+            "address": "2EXAMPLEPINELN",
             "address_cont": "",
             "city": "QUEENSBURY",
             "state": "New York",
@@ -1089,7 +3362,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
         assessment = crm_validate_address._assess_address_text(
             address,
-            "2 PINION PINE LN QUEENSBURY NY 12804-9014",
+            "2 EXAMPLE PINE LN QUEENSBURY NY 12804-9014",
         )
 
         self.assertTrue(assessment["required_match"])
@@ -1099,7 +3372,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
     def test_assess_address_text_accepts_matching_zip_prefix_when_rest_matches(self):
         address = {
-            "address": "257 Mary Lou Ave",
+            "address": "257 Example Ave",
             "address_cont": "",
             "city": "Yonkers",
             "state": "New York",
@@ -1108,7 +3381,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
         assessment = crm_validate_address._assess_address_text(
             address,
-            "257 MARY LOU AVE YONKERS NY 10703-1903",
+            "257 EXAMPLE AVE YONKERS NY 10703-1903",
         )
 
         self.assertTrue(assessment["safe_postal_prefix_match"])
@@ -1136,7 +3409,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
     def test_compact_runon_zip_plus4_override_line_uses_shared_candidate_address(self):
         address = {
-            "address": "2PINIONPINELN",
+            "address": "2EXAMPLEPINELN",
             "address_cont": "",
             "city": "QUEENSBURY",
             "state": "New York",
@@ -1145,8 +3418,8 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         assessed = crm_validate_address._assessed_validation_candidates(
             address,
             [
-                {"text": "2 PINION PINE LN QUEENSBURY NY 12804-9014", "preferred_all_caps": True},
-                {"text": "2 PINION PINE LN QUEENSBURY NY 12804-9012", "preferred_all_caps": True},
+                {"text": "2 EXAMPLE PINE LN QUEENSBURY NY 12804-9014", "preferred_all_caps": True},
+                {"text": "2 EXAMPLE PINE LN QUEENSBURY NY 12804-9012", "preferred_all_caps": True},
             ],
         )
 
@@ -1156,25 +3429,25 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
                 address,
                 crm_validate_address._postal_extension_bug_candidates(address, assessed),
             ),
-            "2 PINION PINE LN",
+            "2 EXAMPLE PINE LN",
         )
 
     def test_zip_plus4_bug_detection_requires_multiple_variants(self):
         address = {
-            "address": "101 Bascom Farm Dr",
+            "address": "101 Example Farm Dr",
             "city": "West Windsor",
             "state": "Vermont",
             "zip": "05037",
         }
         safe_single = crm_validate_address._assessed_validation_candidates(
             address,
-            [{"text": "101 BASCOM FARM RD BROWNSVILLE VT 05037-4440", "preferred_all_caps": True}],
+            [{"text": "101 EXAMPLE FARM RD BROWNSVILLE VT 05037-4440", "preferred_all_caps": True}],
         )
         buggy_multiple = crm_validate_address._assessed_validation_candidates(
             address,
             [
-                {"text": "101 BASCOM FARM RD BROWNSVILLE VT 05037-4440", "preferred_all_caps": True},
-                {"text": "101 BASCOM FARM RD BROWNSVILLE VT 05037-1234", "preferred_all_caps": True},
+                {"text": "101 EXAMPLE FARM RD BROWNSVILLE VT 05037-4440", "preferred_all_caps": True},
+                {"text": "101 EXAMPLE FARM RD BROWNSVILLE VT 05037-1234", "preferred_all_caps": True},
             ],
         )
 
@@ -1249,7 +3522,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         driver = object()
         shipping_modal = object()
         address = {
-            "recipient": "Alyson Goryl",
+            "recipient": "Example Recipient",
             "address": "P.O. Box 550193",
             "address_cont": "",
             "city": "South Lake Tahoe",
@@ -1293,6 +3566,54 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         mock_ensure.assert_called_once_with(driver, shipping_modal, mock.ANY, dry_run=False)
         mock_save.assert_called_once_with(driver, shipping_modal, "4605090", False, use_scope_send=True)
 
+    def test_apo_psc_address_bypasses_street_number_guard_and_overrides(self):
+        driver = object()
+        shipping_modal = object()
+        address = {
+            "recipient": "Example Recipient",
+            "address": "PSC 1300, Unit 95716 MED",
+            "address_cont": "",
+            "city": "APO",
+            "state": "Armed Forces Americas",
+            "zip": "34042",
+        }
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(crm_validate_address, "_open_target_order", return_value="4717598"))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_extract_shipping_panel_address", return_value=dict(address)))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_shipping_panel_has_valid_address", return_value=False))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_open_shipping_editor", return_value=shipping_modal))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_extract_current_address", return_value=dict(address)))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_address_is_valid", return_value=False))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_ensure_recipient_present", return_value=(True, dict(address))))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_collect_existing_address_options", return_value=[]))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_find_best_existing_address_option", return_value=None))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_try_resolve_with_existing_address", return_value=None))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_rewrite_address_fields_if_needed", return_value=(dict(address), "")))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_apply_override"))
+            mock_ensure = stack.enter_context(mock.patch.object(crm_validate_address, "_ensure_override_ready", return_value=(True, True)))
+            stack.enter_context(
+                mock.patch.object(
+                    crm_validate_address,
+                    "_prepare_shipping_form_for_save",
+                    return_value=(None, dict(address), ""),
+                )
+            )
+            mock_save = stack.enter_context(mock.patch.object(crm_validate_address, "_save_shipping_transaction"))
+
+            result = crm_validate_address._evaluate_and_resolve_order(
+                driver,
+                order_id="4717598",
+                dry_run=False,
+                shipping_filter="rush",
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["outcome"], "apo_override_saved")
+        self.assertEqual(result["resolution"], "apo_override")
+        mock_ensure.assert_called_once_with(driver, shipping_modal, mock.ANY, dry_run=False)
+        mock_save.assert_called_once_with(driver, shipping_modal, "4717598", False, use_scope_send=True)
+
     def test_attempt_validation_candidate_selection_accepts_final_save_ready(self):
         warnings = []
         button = object()
@@ -1306,7 +3627,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
                                 object(),
                                 object(),
                                 object(),
-                                "8905 HARVEST HILL WAY ELK GROVE CA 95624-1457",
+                                "8905 EXAMPLE HILL WAY ELK GROVE CA 95624-1457",
                                 warnings,
                                 dry_run=True,
                             )
@@ -1334,7 +3655,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
                                     object(),
                                     object(),
                                     object(),
-                                    "8905 HARVEST HILL WAY ELK GROVE CA 95624-1457",
+                                    "8905 EXAMPLE HILL WAY ELK GROVE CA 95624-1457",
                                     warnings,
                                     dry_run=False,
                                 )
@@ -1813,16 +4134,16 @@ class CrmAddressServerTests(unittest.TestCase):
     @mock.patch.object(server, "_finish_crm_order_goods_runtime")
     @mock.patch.object(server, "_start_crm_order_goods_runtime")
     @mock.patch.object(server, "_execute_crm_order_goods_worker")
-    @mock.patch.object(server, "load_crm_state")
+    @mock.patch.object(server, "load_crm_address_state")
     def test_processing_order_goods_step_runs_headless_hidden(
         self,
-        mock_load_state,
+        mock_load_address_state,
         mock_execute,
         _mock_start_runtime,
         _mock_finish_runtime,
         _mock_persist,
     ):
-        mock_load_state.return_value = {"saved_order_goods_parallel_workers": 1}
+        mock_load_address_state.return_value = {"saved_parallel_workers": 1}
         mock_execute.return_value = (True, "ok", {"success": True, "message": "ok", "order_ids": []})
 
         result = server._run_crm_processing_step("order_goods", "rush")
@@ -1837,12 +4158,14 @@ class CrmAddressServerTests(unittest.TestCase):
             show_terminal=False,
         )
 
-    def test_order_goods_runtime_config_is_rush_only(self):
-        with self.assertRaises(RuntimeError):
-            crm_order_goods._validate_runtime_config("https://crm.example/report?shippingCharges%5Bhigh%5D=1")
+    def test_order_goods_runtime_config_accepts_explicit_list_override(self):
+        self.assertEqual(
+            crm_order_goods._validate_runtime_config("https://crm.example/report?shippingCharges%5Bhigh%5D=1"),
+            "https://crm.example/report?shippingCharges%5Bhigh%5D=1",
+        )
 
     @mock.patch.object(crm_order_goods, "_find_sanmar_order_goods_button", return_value=None)
-    def test_order_goods_skips_when_stock_already_ordered(self, _mock_button):
+    def test_order_goods_skips_when_stock_already_ordered(self, mock_button):
         driver = mock.Mock()
         driver.execute_script.return_value = "Stock Status: Ordered Stock : Ordered"
 
@@ -1850,6 +4173,7 @@ class CrmAddressServerTests(unittest.TestCase):
 
         self.assertTrue(result["success"])
         self.assertEqual(result["outcome"], "already_stock_ordered")
+        mock_button.assert_not_called()
 
     def test_order_goods_does_not_treat_stock_ordered_false_label_as_ordered(self):
         self.assertFalse(crm_order_goods._text_indicates_stock_already_ordered("Stock Ordered: false"))
@@ -1930,6 +4254,27 @@ class CrmAddressServerTests(unittest.TestCase):
         script = driver.execute_script.call_args.args[0]
         self.assertIn("directMatches", script)
         self.assertIn("!== 'order goods'", script)
+
+    @mock.patch.object(crm_order_goods, "_order_goods_for_all_stock_tabs")
+    @mock.patch.object(crm_order_goods, "_unlock_current_order_for_auto_ordering")
+    @mock.patch.object(crm_order_goods, "_wait_for_order_goods_page_ready", return_value=False)
+    @mock.patch.object(crm_order_goods, "_open_target_order")
+    def test_order_goods_stops_when_order_page_never_renders_expected_order(
+        self,
+        mock_open,
+        mock_ready,
+        mock_unlock,
+        mock_order_tabs,
+    ):
+        driver = mock.Mock()
+
+        with self.assertRaises(crm_order_goods.TimeoutException):
+            crm_order_goods._run_order_with_driver(driver, "4418860", dry_run=False)
+
+        self.assertEqual(mock_open.call_count, 2)
+        self.assertEqual(mock_ready.call_count, 2)
+        mock_unlock.assert_not_called()
+        mock_order_tabs.assert_not_called()
 
     @mock.patch.object(crm_order_goods, "_order_goods_for_all_stock_tabs")
     @mock.patch.object(crm_order_goods, "_wait_after_stock_unlock", return_value="orderable")
@@ -2242,6 +4587,7 @@ class CrmAddressServerTests(unittest.TestCase):
     def test_processing_steps_run_validator_unlocker_then_order_goods_on_rush(self):
         state = {
             "processing_filter": "rush",
+            "mass_emailer_enabled": False,
             "address_validator_enabled": True,
             "stock_unlocker_enabled": True,
             "order_goods_enabled": True,
@@ -2258,6 +4604,7 @@ class CrmAddressServerTests(unittest.TestCase):
             with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
                 server.ensure_crm_processing_state_file()
                 ok, _message, state = server.update_crm_processing_preferences(
+                    mass_emailer_enabled=False,
                     stock_unlocker_enabled=True,
                     address_validator_enabled=True,
                     order_goods_enabled=True,
@@ -2283,6 +4630,7 @@ class CrmAddressServerTests(unittest.TestCase):
                     processing_filter="free",
                 )
                 ok, _message, state = server.update_crm_processing_preferences(
+                    mass_emailer_enabled=False,
                     stock_unlocker_enabled=False,
                     address_validator_enabled=False,
                     product_separator_enabled=False,
@@ -2297,6 +4645,74 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertFalse(state["order_goods_enabled"])
         self.assertEqual(server._crm_processing_selected_steps_from_state(state), [])
 
+    def test_processing_mode_preferences_restore_after_switch_and_reload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "crm_processing_state.json"
+            with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
+                server.ensure_crm_processing_state_file()
+                server.update_crm_processing_preferences(
+                    mass_emailer_enabled=False,
+                    stock_unlocker_enabled=False,
+                    address_validator_enabled=True,
+                    product_separator_enabled=False,
+                    order_goods_enabled=True,
+                    shipping_bypasser_enabled=True,
+                    processing_filter="rush",
+                )
+                server.update_crm_processing_preferences(
+                    address_validator_enabled=False,
+                    order_goods_enabled=False,
+                    shipping_bypasser_enabled=True,
+                    processing_filter="813",
+                )
+                ok, _message, state = server.update_crm_processing_preferences(processing_filter="rush")
+                reloaded = server.load_crm_processing_state()
+
+        self.assertTrue(ok)
+        self.assertEqual(state["processing_filter"], "rush")
+        self.assertTrue(state["address_validator_enabled"])
+        self.assertFalse(state["product_separator_enabled"])
+        self.assertFalse(state["stock_unlocker_enabled"])
+        self.assertTrue(state["order_goods_enabled"])
+        self.assertTrue(state["shipping_bypasser_enabled"])
+        self.assertEqual(
+            server._crm_processing_selected_steps_from_state(state),
+            ["address_validator_batch", "order_goods", "shipping_bypasser"],
+        )
+        self.assertEqual(reloaded["processing_filter"], "rush")
+        self.assertEqual(
+            server._crm_processing_selected_steps_from_state(reloaded),
+            ["address_validator_batch", "order_goods", "shipping_bypasser"],
+        )
+        self.assertFalse(reloaded["mode_preferences"]["813"]["order_goods_enabled"])
+        self.assertTrue(reloaded["mode_preferences"]["813"]["shipping_bypasser_enabled"])
+
+    def test_processing_mass_emailer_preference_is_global_across_mode_switches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "crm_processing_state.json"
+            with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
+                server.ensure_crm_processing_state_file()
+                server.update_crm_processing_preferences(
+                    mass_emailer_enabled=False,
+                    address_validator_enabled=True,
+                    processing_filter="rush",
+                )
+                state_813 = server.update_crm_processing_preferences(processing_filter="813")[2]
+                server.update_crm_processing_preferences(
+                    mass_emailer_enabled=True,
+                    processing_filter="813",
+                )
+                state_rush = server.update_crm_processing_preferences(processing_filter="rush")[2]
+                reloaded = server.load_crm_processing_state()
+
+        self.assertFalse(state_813["mass_emailer_enabled"])
+        self.assertNotIn("mass_emailer", server._crm_processing_selected_steps_from_state(state_813))
+        self.assertTrue(state_rush["mass_emailer_enabled"])
+        self.assertIn("mass_emailer", server._crm_processing_selected_steps_from_state(state_rush))
+        self.assertTrue(reloaded["mass_emailer_enabled"])
+        self.assertNotIn("mass_emailer_enabled", reloaded["mode_preferences"]["rush"])
+        self.assertNotIn("mass_emailer_enabled", reloaded["mode_preferences"]["813"])
+
     def test_processing_preferences_route_ignores_queue_only_options(self):
         with tempfile.TemporaryDirectory() as tmp:
             state_path = Path(tmp) / "crm_processing_state.json"
@@ -2305,6 +4721,7 @@ class CrmAddressServerTests(unittest.TestCase):
                 response = server.app.test_client().post(
                     "/crm/process/preferences",
                     json={
+                        "mass_emailer_enabled": False,
                         "stock_unlocker_enabled": True,
                         "address_validator_enabled": False,
                         "product_separator_enabled": False,
@@ -2355,6 +4772,7 @@ class CrmAddressServerTests(unittest.TestCase):
             with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
                 server.ensure_crm_processing_state_file()
                 ok, _message, state = server.update_crm_processing_preferences(
+                    mass_emailer_enabled=False,
                     stock_unlocker_enabled=True,
                     address_validator_enabled=False,
                     product_separator_enabled=False,
@@ -2372,7 +4790,7 @@ class CrmAddressServerTests(unittest.TestCase):
             ["stock_unlocker", "order_goods"],
         )
 
-    def test_processing_bypass_only_still_selects_order_goods_step(self):
+    def test_processing_bypass_only_selects_shipping_bypasser_step(self):
         state = {
             "processing_filter": "rush",
             "address_validator_enabled": False,
@@ -2382,7 +4800,7 @@ class CrmAddressServerTests(unittest.TestCase):
             "shipping_bypasser_enabled": True,
         }
 
-        self.assertEqual(server._crm_processing_selected_steps_from_state(state), ["order_goods"])
+        self.assertEqual(server._crm_processing_selected_steps_from_state(state), ["shipping_bypasser"])
 
     def test_shipping_bypasser_history_keeps_sanmar_confirmation_link(self):
         payload = {
@@ -2397,6 +4815,7 @@ class CrmAddressServerTests(unittest.TestCase):
                     "sanmar_confirmation": {
                         "url": "https://www.sanmar.com/checkout/thank-you",
                         "web_reference": "12345",
+                        "po": "H-Example123",
                         "screenshot": "screenshots/sanmar_shipping_bypass_4609966.png",
                     },
                 }
@@ -2407,6 +4826,292 @@ class CrmAddressServerTests(unittest.TestCase):
 
         self.assertEqual(results[0]["status"], "Bypassed")
         self.assertEqual(results[0]["sanmar_confirmation"]["url"], "https://www.sanmar.com/checkout/thank-you")
+        self.assertEqual(results[0]["sanmar_confirmation"]["po"], "H-Example123")
+
+    def test_shipping_bypasser_runs_each_stock_tab(self):
+        crm_driver = mock.Mock()
+        sanmar_driver = mock.Mock()
+        tabs = [
+            {"label": "H-TabOne 1 - QTY : 1 Design Previews"},
+            {"label": "H-TabTwo 2 - QTY : 2 Design Previews"},
+        ]
+
+        def process_tab(_crm_driver, _sanmar_driver, order_id, **kwargs):
+            return {
+                "order_id": order_id,
+                "success": True,
+                "outcome": "shipping_bypass_ready",
+                "message": "Ready.",
+                "manual_review_required": False,
+                "stock_tab_index": kwargs.get("stock_tab_index"),
+                "stock_tab_count": kwargs.get("stock_tab_count"),
+                "stock_tab_label": kwargs.get("stock_tab_label"),
+            }
+
+        with mock.patch.object(crm_shipping_bypasser, "_open_target_order") as mock_open, \
+             mock.patch.object(crm_shipping_bypasser, "_wait_for_order_goods_page_ready") as mock_ready, \
+             mock.patch.object(crm_shipping_bypasser, "_find_stock_tabs", return_value=tabs), \
+             mock.patch.object(crm_shipping_bypasser, "_activate_stock_tab", side_effect=tabs), \
+             mock.patch.object(crm_shipping_bypasser, "_process_open_order", side_effect=process_tab) as mock_process:
+            results = crm_shipping_bypasser._run_order_with_drivers(crm_driver, sanmar_driver, "4636204", dry_run=True)
+
+        self.assertEqual(mock_open.call_count, 2)
+        self.assertEqual(mock_ready.call_count, 2)
+        self.assertEqual(mock_process.call_count, 2)
+        self.assertEqual([item["stock_tab_index"] for item in results], [1, 2])
+        self.assertEqual([item["stock_tab_count"] for item in results], [2, 2])
+        self.assertIn("H-TabTwo", results[1]["stock_tab_label"])
+
+    def test_shipping_bypasser_keeps_successful_tabs_when_later_reload_fails(self):
+        crm_driver = mock.Mock()
+        sanmar_driver = mock.Mock()
+        tabs = [
+            {"label": "H-TabOne 1 - QTY : 1 Design Previews"},
+            {"label": "H-TabTwo 2 - QTY : 2 Design Previews"},
+            {"label": "H-TabThree 3 - QTY : 1 Design Previews"},
+        ]
+
+        def process_tab(_crm_driver, _sanmar_driver, order_id, **kwargs):
+            tab_index = kwargs.get("stock_tab_index")
+            return {
+                "order_id": order_id,
+                "success": True,
+                "outcome": "shipping_bypass_ordered",
+                "message": "Ordered.",
+                "manual_review_required": False,
+                "stock_tab_index": tab_index,
+                "stock_tab_count": kwargs.get("stock_tab_count"),
+                "stock_tab_label": kwargs.get("stock_tab_label"),
+                "order": {"po": f"H-Tab{tab_index}"},
+                "sanmar_confirmation": {
+                    "po": f"H-Tab{tab_index}",
+                    "url": f"https://www.sanmar.com/checkout/submission?orderCode={tab_index}",
+                },
+            }
+
+        with mock.patch.object(
+            crm_shipping_bypasser,
+            "_open_target_order",
+            side_effect=[None, None, RuntimeError("Order 4636204 did not open before the timeout expired.")],
+        ), mock.patch.object(crm_shipping_bypasser, "_wait_for_order_goods_page_ready"), \
+             mock.patch.object(crm_shipping_bypasser, "_find_stock_tabs", return_value=tabs), \
+             mock.patch.object(crm_shipping_bypasser, "_activate_stock_tab", side_effect=tabs[:2]), \
+             mock.patch.object(crm_shipping_bypasser, "_process_open_order", side_effect=process_tab), \
+             mock.patch.object(crm_shipping_bypasser, "safe_take_screenshot"):
+            results = crm_shipping_bypasser._run_order_with_drivers(crm_driver, sanmar_driver, "4636204", dry_run=False)
+
+        self.assertEqual(len(results), 3)
+        self.assertEqual([item["success"] for item in results], [True, True, False])
+        self.assertEqual(results[2]["stock_tab_index"], 3)
+        self.assertEqual(results[2]["outcome"], "worker_exception")
+
+        message = crm_shipping_bypasser._summary_message(results, refresh_passes=1, order_count=1)
+
+        self.assertIn("partially succeeded", message)
+        self.assertIn("customer PO H-Tab1", message)
+        self.assertIn("https://www.sanmar.com/checkout/submission?orderCode=1", message)
+        self.assertIn("customer PO H-Tab2", message)
+        self.assertIn("https://www.sanmar.com/checkout/submission?orderCode=2", message)
+
+    def test_shipping_bypasser_stops_when_tab_detection_is_incomplete(self):
+        crm_driver = mock.Mock()
+        sanmar_driver = mock.Mock()
+        tabs = [{"label": "H-TabOne 1 - QTY : 1 Design Previews"}]
+
+        with mock.patch.object(crm_shipping_bypasser, "_open_target_order") as mock_open, \
+             mock.patch.object(crm_shipping_bypasser, "_wait_for_order_goods_page_ready") as mock_ready, \
+             mock.patch.object(crm_shipping_bypasser, "_find_stock_tabs", return_value=tabs), \
+             mock.patch.object(crm_shipping_bypasser, "_visible_design_tab_number_hints", return_value=[1, 2, 3]), \
+             mock.patch.object(crm_shipping_bypasser, "_process_open_order") as mock_process:
+            results = crm_shipping_bypasser._run_order_with_drivers(crm_driver, sanmar_driver, "4638803", dry_run=False)
+
+        mock_open.assert_called_once()
+        mock_ready.assert_called_once()
+        mock_process.assert_not_called()
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0]["success"])
+        self.assertEqual(results[0]["outcome"], "stock_tab_detection_incomplete")
+        self.assertTrue(results[0]["manual_review_required"])
+        self.assertEqual(results[0]["detected_design_tab_numbers"], [1, 2, 3])
+
+    def test_shipping_bypasser_manual_order_guard_includes_s_and_s(self):
+        driver = mock.Mock()
+
+        def execute_script(script, po):
+            self.assertEqual(po, "H-Example123")
+            self.assertIn("sanmar", script)
+            self.assertIn("s\\s*&\\s*s", script)
+            self.assertIn("ssactivewear", script)
+            self.assertNotIn("poNodes", script)
+            self.assertIn("-[a-z0-9]", script)
+            return True
+
+        driver.execute_script.side_effect = execute_script
+
+        self.assertTrue(crm_shipping_bypasser._crm_manual_order_row_exists(driver, "H-Example123"))
+
+    def test_shipping_bypasser_yellow_manual_order_visual_guard_accepts_s_and_s_suffix_po(self):
+        driver = mock.Mock()
+
+        def execute_script(script, po):
+            self.assertEqual(po, "H-MarashaMil266")
+            self.assertIn("yellowish", script)
+            self.assertIn("s\\s*&\\s*s", script)
+            self.assertIn("-[a-z0-9]", script)
+            return True
+
+        driver.execute_script.side_effect = execute_script
+
+        self.assertTrue(crm_shipping_bypasser._crm_stock_order_yellow_visual_exists(driver, "H-MarashaMil266"))
+
+    def test_shipping_bypasser_history_customer_po_prevents_duplicate_order(self):
+        state = {
+            "run_history": [
+                {
+                    "automation_key": "shipping_bypasser",
+                    "dry_run": False,
+                    "order_results": [
+                        {
+                            "success": True,
+                            "outcome": "shipping_bypass_ordered",
+                            "sanmar_confirmation": {"po": "H-MarashaMil266"},
+                        }
+                    ],
+                }
+            ]
+        }
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+            json.dump(state, handle)
+            state_path = handle.name
+
+        try:
+            self.assertTrue(crm_shipping_bypasser._historical_shipping_bypass_po_exists("H-MarashaMil266", state_path=state_path))
+            self.assertFalse(crm_shipping_bypasser._historical_shipping_bypass_po_exists("H-MarashaMil265", state_path=state_path))
+        finally:
+            Path(state_path).unlink(missing_ok=True)
+
+    def test_shipping_bypasser_weekend_eta_moves_production_target_to_monday(self):
+        saturday_eta = crm_shipping_bypasser.datetime(2026, 6, 13).date()
+        sunday_eta = crm_shipping_bypasser.datetime(2026, 6, 14).date()
+        monday = crm_shipping_bypasser.datetime(2026, 6, 15).date()
+
+        self.assertEqual(crm_shipping_bypasser._shipping_bypasser_production_target_for_eta(saturday_eta), monday)
+        self.assertEqual(crm_shipping_bypasser._shipping_bypasser_production_target_for_eta(sunday_eta), monday)
+        self.assertEqual(crm_shipping_bypasser._shipping_bypasser_production_target_for_eta(monday), monday)
+
+    def test_shipping_bypasser_weekend_eta_requires_due_date_after_monday(self):
+        saturday_eta = crm_shipping_bypasser.datetime(2026, 6, 13).date()
+        monday_due_date = crm_shipping_bypasser.datetime(2026, 6, 15).date()
+
+        production_target = crm_shipping_bypasser._shipping_bypasser_production_target_for_eta(saturday_eta)
+
+        self.assertFalse(production_target < monday_due_date)
+
+    def test_shipping_bypasser_production_date_warning_ok_is_acknowledged(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = {"success": True, "found": True}
+
+        with mock.patch.object(crm_shipping_bypasser.time, "sleep"):
+            clicked = crm_shipping_bypasser._acknowledge_crm_production_date_warning(driver, timeout=0)
+
+        self.assertTrue(clicked)
+        script = driver.execute_script.call_args.args[0]
+        self.assertIn("ground\\s+shipping", script)
+        self.assertIn("^ok$", script)
+
+    def test_shipping_bypasser_production_date_save_retries_refresh_before_failing(self):
+        driver = mock.Mock()
+        target_date = crm_shipping_bypasser.datetime(2026, 6, 18).date()
+        stale_date = crm_shipping_bypasser.datetime(2026, 6, 17).date()
+
+        with mock.patch.object(crm_shipping_bypasser, "_find_clickable_by_text", side_effect=[mock.Mock(), mock.Mock()]), \
+             mock.patch.object(crm_shipping_bypasser, "_click_with_fallback"), \
+             mock.patch.object(crm_shipping_bypasser, "_set_crm_edit_date_field", return_value=target_date), \
+             mock.patch.object(crm_shipping_bypasser, "_wait_for_crm_shipping_method_selection"), \
+             mock.patch.object(crm_shipping_bypasser, "_acknowledge_crm_production_date_warning", side_effect=[True, False]) as mock_warning, \
+             mock.patch.object(crm_shipping_bypasser, "_wait_for_text"), \
+             mock.patch.object(crm_shipping_bypasser, "_wait_for_order_goods_page_ready"), \
+             mock.patch.object(crm_shipping_bypasser, "_extract_order_data", return_value={"production_date": stale_date}), \
+             mock.patch.object(crm_shipping_bypasser.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "after save and refresh"):
+                crm_shipping_bypasser._change_crm_production_date(driver, "4681506", target_date)
+
+        self.assertEqual(
+            [call.kwargs for call in mock_warning.call_args_list],
+            [{"timeout": 12}, {"timeout": 5}],
+        )
+        self.assertTrue(all(call.args == (driver,) for call in mock_warning.call_args_list))
+        self.assertEqual(driver.refresh.call_count, 2)
+
+    def test_shipping_bypasser_single_warehouse_eta_is_scoped_to_selected_warehouse(self):
+        driver = mock.Mock()
+        selected_eta = crm_shipping_bypasser.datetime(2026, 6, 16).date()
+
+        with mock.patch.object(
+            crm_shipping_bypasser,
+            "_select_ups_and_latest_eta_by_warehouse",
+            return_value={
+                "latest_eta": selected_eta,
+                "eta_by_warehouse": {"Richmond, VA": selected_eta},
+            },
+        ) as mock_scoped, mock.patch.object(
+            crm_shipping_bypasser,
+            "_select_ups_and_eta",
+            return_value=crm_shipping_bypasser.datetime(2026, 6, 22).date(),
+        ) as mock_unscoped:
+            eta_state = crm_shipping_bypasser._select_ups_eta_for_shipping_plan(
+                driver,
+                "inhouse",
+                warehouse="Richmond, VA",
+                selected_warehouses=["Richmond, VA"],
+                multi_warehouse=False,
+            )
+
+        self.assertEqual(eta_state["eta"], selected_eta)
+        self.assertEqual(eta_state["eta_by_warehouse"], {"Richmond, VA": "2026-06-16"})
+        mock_scoped.assert_called_once_with(driver, ["Richmond, VA"])
+        mock_unscoped.assert_not_called()
+
+    def test_shipping_bypasser_partial_history_and_notification_names_skipped_tab(self):
+        payload = {
+            "success": False,
+            "order_ids": ["4636204"],
+            "report": [
+                {
+                    "order_id": "4636204",
+                    "success": True,
+                    "outcome": "shipping_bypass_ordered",
+                    "message": "Tab one ordered.",
+                    "stock_tab_index": 1,
+                    "stock_tab_count": 2,
+                    "stock_tab_label": "H-TabOne",
+                },
+                {
+                    "order_id": "4636204",
+                    "success": False,
+                    "outcome": "sanmar_product_not_found",
+                    "message": "SanMar product could not be found for ABC123.",
+                    "stock_tab_index": 2,
+                    "stock_tab_count": 2,
+                    "stock_tab_label": "H-TabTwo",
+                },
+            ],
+        }
+
+        results = server._build_crm_order_goods_order_results(payload)
+
+        self.assertFalse(results[0]["success"])
+        self.assertEqual(results[0]["status"], "Partially successful")
+        self.assertEqual(results[0]["outcome"], "partial_success")
+        self.assertIn("tab 2 of 2", results[0]["message"])
+        self.assertIn("H-TabTwo", results[0]["message"])
+
+        with mock.patch.object(server, "notify_user") as mock_notify:
+            server._notify_shipping_bypasser_problem_orders(payload)
+
+        mock_notify.assert_called_once()
+        self.assertIn("4636204 tab 2 of 2", mock_notify.call_args.args[1])
+        self.assertIn("H-TabTwo", mock_notify.call_args.args[1])
 
     def test_processing_all_mode_forces_validator_only(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2414,6 +5119,7 @@ class CrmAddressServerTests(unittest.TestCase):
             with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
                 server.ensure_crm_processing_state_file()
                 ok, _message, state = server.update_crm_processing_preferences(
+                    mass_emailer_enabled=False,
                     stock_unlocker_enabled=True,
                     address_validator_enabled=False,
                     product_separator_enabled=False,

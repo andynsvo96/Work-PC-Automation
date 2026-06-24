@@ -491,7 +491,10 @@ def open_channel_and_find_composer(driver, channel_url, action, attempts=2):
     return None, last_issue, ""
 
 
-def resolve_slack_channel_url(force_test_url=False):
+def resolve_slack_channel_url(force_test_url=False, channel_url=None):
+    explicit_url = str(channel_url or "").strip()
+    if explicit_url:
+        return explicit_url
     if force_test_url:
         print("Slack test mode enabled: using Slack test channel URL.")
         return SLACK_CHANNEL_URL_TEST
@@ -564,7 +567,7 @@ def _run_once(action, message, channel_url, profile_path, headless_mode):
             safe_driver_quit(driver, profile_path=profile_path)
 
 
-def run(action, force_test_url=False, custom_message=None):
+def run(action, force_test_url=False, custom_message=None, channel_url=None):
     global AUDIT_AUTOMATION_NAME
     AUDIT_AUTOMATION_NAME = f"slack_team.{action}"
     log_automation_event(
@@ -594,7 +597,7 @@ def run(action, force_test_url=False, custom_message=None):
             print(f"Detected {day_name} message ({variant}): '{message}'")
         else:
             print(f"Detected {day_name} message: '{message}'")
-    channel_url = resolve_slack_channel_url(force_test_url=force_test_url)
+    channel_url = resolve_slack_channel_url(force_test_url=force_test_url, channel_url=channel_url)
     profile_path = os.path.join(SCRIPT_DIR, "slack_chrome_profile")
 
     if SLACK_FORCE_HEADLESS:
@@ -643,6 +646,11 @@ def _parse_args(argv):
         action="store_true",
         help="Send to SLACK_CHANNEL_URL_TEST instead of the default channel.",
     )
+    parser.add_argument(
+        "--channel-url",
+        default="",
+        help="Explicit Slack channel URL. Overrides default/test channel selection.",
+    )
     args = parser.parse_args(argv)
     if args.action == "custom" and not str(args.custom_message or "").strip():
         parser.error("--message is required when action is 'custom'.")
@@ -665,6 +673,7 @@ if __name__ == "__main__":
         parsed.action,
         force_test_url=bool(parsed.test_url),
         custom_message=parsed.custom_message,
+        channel_url=parsed.channel_url,
     )
     write_result(ok, message)
     if ok:

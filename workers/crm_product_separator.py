@@ -28,12 +28,14 @@ from automation_runtime import (
     build_chrome_driver,
     configure_console_utf8,
     kill_stale_chrome,
+    refresh_if_crm_challenge_attempts_exceeded,
     safe_driver_quit,
     safe_get_with_partial_load,
     safe_take_screenshot,
     write_result_payload,
 )
 from config import (
+    CRM_SHIPPING_813_URL,
     PROCESSOR_ACTION_TIMEOUT,
     PROCESSOR_DRY_RUN,
     PROCESSOR_HEADLESS,
@@ -42,9 +44,16 @@ from config import (
     PROCESSOR_PROFILE_DIR,
     PRODUCT_SEPARATOR_DEFAULT_LIST_MODE,
     PRODUCT_SEPARATOR_LIST_URL,
+    PRODUCT_SEPARATOR_LIST_URL_813,
     PRODUCT_SEPARATOR_LIST_URL_ALL,
     PRODUCT_SEPARATOR_LIST_URL_FREE,
     PRODUCT_SEPARATOR_LIST_URL_RUSH,
+)
+import crm_shipping_bypasser as _shipping_bypasser
+import crm_order_goods as _order_goods
+from crm_shipping_bypasser import (
+    _manual_order_vendor_label,
+    _record_crm_manual_order as _record_crm_stock_manual_order,
 )
 
 configure_console_utf8()
@@ -91,6 +100,108 @@ def _write_result(success, message, result_file=None, **extra_fields):
 
 def _clean_text(value):
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+MANUAL_ORDER_KNOWN_VENDOR_PATTERN = (
+    r"S\s*&\s*S\s+Activewear"
+    r"|S\s+and\s+S\s+Activewear"
+    r"|SS\s*Activewear"
+    r"|Sanmar"
+    r"|Local\s+Inventory"
+    r"|AS\s+COLOUR"
+    r"|Atlantic\s+Coast\s+Cotton"
+    r"|AUGUSTA\s+SPORTSWEAR"
+)
+
+
+def _looks_like_manual_order_po(value):
+    text = _clean_text(value)
+    if not text or len(text) > 90:
+        return False
+    if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}", text):
+        return False
+    return bool(re.search(r"[A-Za-z]", text) and re.fullmatch(r"[A-Za-z0-9._/-]+", text))
+
+
+def _manual_order_row_from_tokens(tokens):
+    values = [_clean_text(token) for token in tokens if _clean_text(token)]
+    if len(values) < 3:
+        return None
+    header_words = {"po", "vendor order #", "order date", "est. delivery", "shipped to"}
+    for start in range(0, max(1, len(values) - 2)):
+        vendor = values[start]
+        po = values[start + 1] if start + 1 < len(values) else ""
+        third = values[start + 2] if start + 2 < len(values) else ""
+        fourth = values[start + 3] if start + 3 < len(values) else ""
+        if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}", third):
+            vendor_order = ""
+            order_date = third
+        else:
+            vendor_order = third
+            order_date = fourth
+        if vendor.lower() in header_words:
+            continue
+        if not _looks_like_manual_order_po(po):
+            continue
+        if vendor_order and not re.fullmatch(r"[A-Za-z0-9-]{2,40}", vendor_order):
+            continue
+        if not re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}", order_date):
+            continue
+        return {
+            "vendor": _manual_order_vendor_label(vendor),
+            "po": po,
+            "vendor_order_number": vendor_order,
+            "order_date": order_date,
+        }
+    return None
+
+
+def _manual_order_rows_from_text(text):
+    raw_text = str(text or "").replace("\r", "\n")
+    rows = []
+    for line in raw_text.splitlines():
+        if not re.search(r"\d{1,2}/\d{1,2}/\d{2,4}", line):
+            continue
+        token_sets = []
+        if "\t" in line:
+            token_sets.append(re.split(r"\t+", line))
+        token_sets.append(re.split(r"\s{2,}", line))
+        for tokens in token_sets:
+            row = _manual_order_row_from_tokens(tokens)
+            if row:
+                rows.append(row)
+                break
+
+    collapsed = _clean_text(raw_text)
+    known_vendor = re.compile(
+        rf"\b(?P<vendor>{MANUAL_ORDER_KNOWN_VENDOR_PATTERN})\b\s+"
+        r"(?P<po>[A-Za-z0-9][A-Za-z0-9._/-]{1,89})\s+"
+        r"(?:(?P<vendor_order>[A-Za-z0-9-]{2,40})\s+)?"
+        r"(?P<order_date>\d{1,2}/\d{1,2}/\d{2,4})",
+        flags=re.IGNORECASE,
+    )
+    for match in known_vendor.finditer(collapsed):
+        po = _clean_text(match.group("po"))
+        if not _looks_like_manual_order_po(po):
+            continue
+        rows.append(
+            {
+                "vendor": _manual_order_vendor_label(match.group("vendor")),
+                "po": po,
+                "vendor_order_number": _clean_text(match.group("vendor_order") or ""),
+                "order_date": _clean_text(match.group("order_date")),
+            }
+        )
+
+    unique_rows = []
+    seen = set()
+    for row in rows:
+        key = (_clean_text(row.get("vendor")).lower(), _clean_text(row.get("po")).lower())
+        if not key[0] or not key[1] or key in seen:
+            continue
+        seen.add(key)
+        unique_rows.append(row)
+    return unique_rows
 
 
 def _extract_order_id(order_id=None, order_url=None):
@@ -152,6 +263,10 @@ def _wait_for_crm_context(driver, timeout=45):
             _activate_crm_context(driver)
             last_url = str(driver.current_url or "")
             last_title = str(driver.title or "")
+            if refresh_if_crm_challenge_attempts_exceeded(driver, "Product Separator CRM context"):
+                last_error = "refreshed CRM challenge page"
+                continue
+            _activate_crm_context(driver)
             last_text = _clean_text(driver.execute_script("return document.body ? document.body.innerText || document.body.textContent || '' : '';"))
             if re.search(r"\bnot authenticated\b", last_text, flags=re.IGNORECASE):
                 raise ProductSeparatorError("CRM authentication failed: Not authenticated.")
@@ -405,6 +520,7 @@ for (const link of links) {
     : editProductMatch
       ? clean(editProductMatch[1])
     : linkText.replace(/\s*-\s*Alpha Stock\s*$/i, '').trim();
+  const totalQuantityMatch = text.match(/\bTotal Quantity\s*:?\s*(\d+)/i);
   const color = (() => {
     const parts = text.split(productName);
     if (parts.length < 2) return '';
@@ -417,6 +533,7 @@ for (const link of links) {
     link_text: linkText,
     text,
     color,
+    total_quantity: totalQuantityMatch ? Number(totalQuantityMatch[1]) : null,
     y: rect.top,
     x: rect.left,
   });
@@ -445,7 +562,20 @@ def _scan_visible_products(driver):
         products = driver.execute_script(PRODUCT_SCAN_JS)
     except Exception:
         products = []
-    return products if isinstance(products, list) else []
+    if not isinstance(products, list):
+        return []
+    return [product for product in products if _product_has_positive_quantity(product)]
+
+
+def _product_has_positive_quantity(product):
+    if not isinstance(product, dict):
+        return False
+    if "total_quantity" not in product or product.get("total_quantity") in (None, ""):
+        return True
+    try:
+        return int(product.get("total_quantity") or 0) > 0
+    except (TypeError, ValueError):
+        return True
 
 
 def _extract_sizes(product):
@@ -511,9 +641,21 @@ def _classify_product(product):
 
 def _stock_state_from_text(text):
     normalized = " ".join(str(text or "").lower().split())
-    stock_status_ordered = bool(re.search(r"\bstock\s+status\s*:\s*ordered\b", normalized))
+    manual_order_rows = _manual_order_rows_from_text(text)
+    primary_manual_order = manual_order_rows[0] if manual_order_rows else {}
+    false_value = r"(?:false|no|not\s+ordered|unordered|0)"
+    true_value = r"(?:ordered|true|yes|1)"
+    stock_ordered_false = bool(re.search(rf"\bstock\s+ordered\s*[:=]\s*{false_value}\b", normalized))
+    stock_status_ordered = (
+        not stock_ordered_false
+        and (
+            bool(re.search(rf"\bstock\s+status\s*[:=]\s*{true_value}\b", normalized))
+            or bool(re.search(rf"\bstock\s*[:=]\s*{true_value}\b", normalized))
+            or bool(re.search(rf"\bstock\s+ordered\s*[:=]\s*{true_value}\b", normalized))
+        )
+    )
     has_vendor_section = "order goods from vendor" in normalized
-    has_yellow_po = bool(re.search(r"\bmanual order\b.*\blocal inventory\b.*\bvendor order\b", normalized))
+    has_yellow_po = bool(manual_order_rows) or bool(re.search(r"\bmanual order\b.*\blocal inventory\b.*\bvendor order\b", normalized))
     missing_order_goods = "order goods" not in normalized or "order goods from vendor" in normalized
     if stock_status_ordered and has_vendor_section and has_yellow_po:
         state = "ordered"
@@ -528,7 +670,40 @@ def _stock_state_from_text(text):
         "stock_status_ordered": stock_status_ordered,
         "has_vendor_section": has_vendor_section,
         "has_po_row": has_yellow_po,
+        "manual_order_vendor": primary_manual_order.get("vendor", ""),
+        "manual_order_po": primary_manual_order.get("po", ""),
+        "manual_order_rows": manual_order_rows,
         "order_goods_button_missing_or_not_detected": missing_order_goods,
+    }
+
+
+def _order_stock_status_from_text(text):
+    body_text = _clean_text(text)
+    match = re.search(
+        r"\bstock\s+status\s*:\s*(?:stock\s+)?(?P<status>ordered|needs?\s+to\s+order|not\s+ordered|unordered)\b",
+        body_text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return {
+            "state": "unknown",
+            "status_text": "",
+            "stock_status_ordered": False,
+            "stock_status_needs_order": False,
+        }
+    status_text = _clean_text(match.group("status"))
+    normalized = status_text.lower()
+    if normalized == "ordered":
+        state = "ordered"
+    elif re.fullmatch(r"needs?\s+to\s+order|not\s+ordered|unordered", normalized):
+        state = "need_to_order"
+    else:
+        state = "unknown"
+    return {
+        "state": state,
+        "status_text": status_text,
+        "stock_status_ordered": state == "ordered",
+        "stock_status_needs_order": state == "need_to_order",
     }
 
 
@@ -583,6 +758,7 @@ def _fallback_scan_from_order_summary(text, expected_order_id=None):
     return {
         "order_id": expected_order_id or "",
         "tab_count": 1,
+        "order_stock_status": _order_stock_status_from_text(text),
         "tabs": [
             {
                 "tab_number": 1,
@@ -617,9 +793,11 @@ def _scan_order(driver, expected_order_id=None):
     _wait_for_crm_context(driver)
     deadline = time.monotonic() + max(45, PROCESSOR_PAGE_LOAD_TIMEOUT)
     tabs = []
+    initial_body_text = ""
     while time.monotonic() < deadline:
         if _is_not_authenticated_page(driver):
             raise ProductSeparatorError("CRM authentication failed: Not authenticated.")
+        initial_body_text = _read_clean_body_text(driver)
         tabs = _visible_design_tabs(driver)
         if tabs:
             break
@@ -668,6 +846,7 @@ def _scan_order(driver, expected_order_id=None):
     return {
         "order_id": expected_order_id or "",
         "tab_count": len(scanned_tabs),
+        "order_stock_status": _order_stock_status_from_text(initial_body_text),
         "tabs": scanned_tabs,
     }
 
@@ -695,7 +874,8 @@ function isTargetRowColor(row) {
   const rgb = parseRgb(window.getComputedStyle(row).backgroundColor);
   const purple = closeRgb(rgb, [134, 32, 159], 10);
   const tanNatural = closeRgb(rgb, [243, 196, 156], 12);
-  return purple || tanNatural;
+  const limeGreen = closeRgb(rgb, [34, 236, 72], 18);
+  return purple || tanNatural || limeGreen;
 }
 function reportRowFor(link, orderId) {
   for (let row = link; row && row !== document.body; row = row.parentElement) {
@@ -724,9 +904,10 @@ return Array.from(ids);
 """
 
 
-def _extract_report_order_ids(driver, list_url, login_wait_seconds=0):
+def _extract_report_order_ids(driver, list_url, login_wait_seconds=0, exclude_order_ids=None):
     safe_get_with_partial_load(driver, list_url, "Product Separator report")
     _handle_login_if_needed(driver, list_url, login_wait_seconds=login_wait_seconds)
+    excluded = {str(order_id).strip() for order_id in (exclude_order_ids or []) if str(order_id).strip()}
     deadline = time.monotonic() + max(45, PROCESSOR_PAGE_LOAD_TIMEOUT)
     order_ids = []
     while time.monotonic() < deadline:
@@ -735,12 +916,13 @@ def _extract_report_order_ids(driver, list_url, login_wait_seconds=0):
         except Exception:
             order_ids = []
         order_ids = [str(order_id) for order_id in order_ids if re.fullmatch(r"\d{5,}", str(order_id or ""))]
+        if excluded:
+            order_ids = [order_id for order_id in order_ids if order_id not in excluded]
         if order_ids:
             break
         time.sleep(1)
     if not order_ids:
-        body_text = _clean_text(driver.execute_script("return document.body ? document.body.innerText : '';"))
-        raise ProductSeparatorError(f"No order IDs were detected on the report page. Visible text starts: {body_text[:300]}")
+        return []
     return list(OrderedDict((order_id, None) for order_id in order_ids).keys())
 
 
@@ -827,6 +1009,13 @@ def _format_tab_list(tab_numbers):
     return f"tab {', '.join(numbers[:-1])}, and {numbers[-1]}"
 
 
+def _source_manual_order_po(source_stock_state, source_tab_name):
+    stock_po = _clean_text((source_stock_state or {}).get("manual_order_po"))
+    if stock_po:
+        return stock_po
+    return _clean_text(source_tab_name)
+
+
 def _is_contiguous(values):
     if not values:
         return False
@@ -834,14 +1023,94 @@ def _is_contiguous(values):
     return sorted_values == list(range(sorted_values[0], sorted_values[-1] + 1))
 
 
+def _product_signature_quantity(product):
+    quantity = product.get("total_quantity")
+    if quantity in (None, ""):
+        quantity = product.get("quantity")
+    try:
+        return int(quantity)
+    except (TypeError, ValueError):
+        return None
+
+
+def _product_group_signature(products):
+    signature = []
+    for product in products or []:
+        quantity = _product_signature_quantity(product)
+        signature.append(
+            (
+                _clean_text(product.get("product_name")).lower(),
+                _clean_text(product.get("color")).lower(),
+                "" if quantity is None else quantity,
+            )
+        )
+    return tuple(sorted(signature))
+
+
+def _find_existing_split_tab_for_group(tabs, source_tab, group, group_products, claimed_tab_numbers=None):
+    source_tab_number = int(source_tab.get("tab_number") or 0)
+    wanted_signature = _product_group_signature(group_products)
+    if not wanted_signature:
+        return None
+    claimed_tab_numbers = set(claimed_tab_numbers or [])
+    for candidate in tabs or []:
+        candidate_tab_number = int(candidate.get("tab_number") or 0)
+        if not candidate_tab_number or candidate_tab_number == source_tab_number:
+            continue
+        if candidate_tab_number in claimed_tab_numbers:
+            continue
+        if candidate.get("needs_split"):
+            continue
+        candidate_groups = [
+            _clean_text(item.get("group"))
+            for item in (candidate.get("groups") or [])
+            if _clean_text(item.get("group"))
+        ]
+        if candidate_groups != [group]:
+            continue
+        candidate_products = [
+            product
+            for product in (candidate.get("products") or [])
+            if _clean_text(product.get("group")) == group
+        ]
+        if _product_group_signature(candidate_products) == wanted_signature:
+            return candidate
+    return None
+
+
+def _stock_state_is_ordered(stock_state):
+    state = str((stock_state or {}).get("state") or "")
+    return state in {"ordered", "ordered_header_only", "ordered_po_only"} or bool((stock_state or {}).get("stock_status_ordered"))
+
+
+def _is_local_inventory_vendor(vendor):
+    return _clean_text(vendor).lower().replace("-", " ") == "local inventory"
+
+
+def _stock_state_has_local_inventory_row(stock_state):
+    stock_state = stock_state or {}
+    if _is_local_inventory_vendor(stock_state.get("manual_order_vendor")):
+        return True
+    return any(_is_local_inventory_vendor(row.get("vendor")) for row in stock_state.get("manual_order_rows") or [])
+
+
+def _stock_state_should_auto_order_local_inventory(stock_state):
+    return _stock_state_has_local_inventory_row(stock_state)
+
+
 def _build_separator_plan(scan):
     tabs = scan.get("tabs") or []
+    order_stock_status = scan.get("order_stock_status") if isinstance(scan.get("order_stock_status"), dict) else {}
+    order_stock_status_state = str(order_stock_status.get("state") or "unknown")
     used_tab_names = {_clean_text(tab.get("tab_name")) for tab in tabs if _clean_text(tab.get("tab_name"))}
     max_tab_number = max([int(tab.get("tab_number") or 0) for tab in tabs] or [0])
     next_tab_number = max_tab_number + 1
     split_tabs = []
     manual_review = []
     production_notes = []
+    manual_order_records = []
+    local_inventory_auto_order_targets = []
+    claimed_existing_tab_numbers = set()
 
     for tab in tabs:
         if not tab.get("needs_split"):
@@ -891,7 +1160,31 @@ def _build_separator_plan(scan):
         ]
         clone_offset = 1
         created_tab_numbers = []
+        existing_tab_numbers = []
         for group in clone_groups:
+            existing_tab = _find_existing_split_tab_for_group(
+                tabs,
+                tab,
+                group,
+                groups[group],
+                claimed_tab_numbers=claimed_existing_tab_numbers,
+            )
+            if existing_tab:
+                existing_tab_number = int(existing_tab.get("tab_number"))
+                claimed_existing_tab_numbers.add(existing_tab_number)
+                existing_tab_numbers.append(existing_tab_number)
+                assignments.append(
+                    {
+                        "tab_number": existing_tab_number,
+                        "tab_name": existing_tab.get("tab_name") or "",
+                        "source": "existing",
+                        "clone_from_tab_number": tab.get("tab_number"),
+                        "keep_group": group,
+                        "keep_group_label": GROUP_LABELS.get(group, group),
+                        "keep_product_names": [item.get("product_name") for item in groups[group]],
+                    }
+                )
+                continue
             new_name = _next_available_incremented_name(original_name, used_tab_names, clone_offset)
             if not new_name:
                 manual_review.append(
@@ -916,14 +1209,62 @@ def _build_separator_plan(scan):
             next_tab_number += 1
             clone_offset += 1
 
-        all_related_tabs = [int(tab.get("tab_number"))] + created_tab_numbers
+        source_stock_state = tab.get("stock") or {}
+        source_stock_ordered = str(source_stock_state.get("state") or "") in {"ordered", "ordered_header_only", "ordered_po_only"}
+        target_manual_order_assignments = [item for item in assignments if item.get("source") != "original"]
+        source_manual_order_vendor = _clean_text(source_stock_state.get("manual_order_vendor"))
+        source_manual_order_po = _source_manual_order_po(source_stock_state, original_name)
+        split_manual_order_records = []
+        split_local_inventory_targets = []
+        if source_stock_ordered and target_manual_order_assignments:
+            if _stock_state_should_auto_order_local_inventory(source_stock_state):
+                for assignment in target_manual_order_assignments:
+                    target = {
+                        "source_tab_number": tab.get("tab_number"),
+                        "source_tab_name": original_name,
+                        "target_tab_number": assignment.get("tab_number"),
+                        "target_tab_name": assignment.get("tab_name"),
+                        "target_source": assignment.get("source"),
+                        "reason": "Source tab is Local Inventory; auto-order the separated tab instead of copying a Manual Order row.",
+                    }
+                    split_local_inventory_targets.append(target)
+                    local_inventory_auto_order_targets.append(target)
+            elif not source_manual_order_po or not source_manual_order_vendor:
+                manual_review.append(
+                    {
+                        "tab_number": tab.get("tab_number"),
+                        "reason": "Source tab is stock ordered, but the ordered PO/vendor could not be detected for copied Manual Order records.",
+                        "source_tab_name": original_name,
+                        "detected_po": source_manual_order_po,
+                        "detected_vendor": source_manual_order_vendor,
+                        "source_stock_state": source_stock_state,
+                    }
+                )
+            else:
+                for assignment in target_manual_order_assignments:
+                    record = {
+                        "source_tab_number": tab.get("tab_number"),
+                        "source_tab_name": original_name,
+                        "target_tab_number": assignment.get("tab_number"),
+                        "target_tab_name": assignment.get("tab_name"),
+                        "target_source": assignment.get("source"),
+                        "po": source_manual_order_po,
+                        "vendor": source_manual_order_vendor,
+                    }
+                    split_manual_order_records.append(record)
+                    manual_order_records.append(record)
+        all_related_tabs = [int(tab.get("tab_number"))] + existing_tab_numbers + created_tab_numbers
         note = f"{_format_tab_list(all_related_tabs)} in 1 box"
-        production_notes.append(note)
+        source_local_inventory = _stock_state_should_auto_order_local_inventory(source_stock_state)
+        has_copied_manual_order_records = bool(split_manual_order_records)
+        if created_tab_numbers and source_stock_ordered and not source_local_inventory and has_copied_manual_order_records:
+            production_notes.append(note)
         split_tabs.append(
             {
                 "source_tab_number": tab.get("tab_number"),
                 "source_tab_name": original_name,
-                "source_stock_state": tab.get("stock"),
+                "source_stock_state": source_stock_state,
+                "source_stock_ordered": source_stock_ordered,
                 "groups_detected": [
                     {
                         "group": group,
@@ -933,7 +1274,16 @@ def _build_separator_plan(scan):
                     for group, items in groups.items()
                 ],
                 "assignments": assignments,
-                "production_note_if_stock_ordered": note,
+                "manual_order_records": split_manual_order_records,
+                "local_inventory_auto_order_targets": split_local_inventory_targets,
+                "production_note_if_stock_ordered": (
+                    note
+                    if created_tab_numbers
+                    and source_stock_ordered
+                    and not source_local_inventory
+                    and has_copied_manual_order_records
+                    else ""
+                ),
             }
         )
 
@@ -944,12 +1294,27 @@ def _build_separator_plan(scan):
     has_ordered = any(state in {"ordered", "ordered_header_only", "ordered_po_only"} for state in affected_stock_states)
     has_not_ordered = any(state == "not_ordered_or_unknown" for state in affected_stock_states)
     mixed_stock_state = bool(has_ordered and has_not_ordered)
+    stock_ordered_for_all_affected_tabs = bool(split_tabs and has_ordered and not has_not_ordered)
+    apply_stock_ordered_after_split = False
+    stock_ordered_apply_skip_reason = ""
     if mixed_stock_state:
-        manual_review.append(
-            {
-                "reason": "Affected split tabs have mixed stock-ordered state. Do not apply stock ordered automatically.",
-                "stock_states": affected_stock_states,
-            }
+        stock_ordered_apply_skip_reason = (
+            "Affected split tabs have mixed stock-ordered state; "
+            "do not apply Stock Ordered automatically."
+        )
+    elif order_stock_status_state == "need_to_order":
+        stock_ordered_apply_skip_reason = (
+            "Order Stock Status is Need To Order; do not apply Stock Ordered automatically."
+        )
+    elif local_inventory_auto_order_targets:
+        stock_ordered_apply_skip_reason = (
+            "Product Separator auto-orders Local Inventory separated tabs; "
+            "do not apply Stock Ordered automatically."
+        )
+    elif stock_ordered_for_all_affected_tabs:
+        stock_ordered_apply_skip_reason = (
+            "Product Separator records copied Manual Order rows for separated stock-ordered tabs; "
+            "do not apply Stock Ordered automatically."
         )
 
     return {
@@ -957,9 +1322,14 @@ def _build_separator_plan(scan):
         "split_tabs": split_tabs,
         "manual_review": manual_review,
         "manual_review_required": bool(manual_review),
-        "stock_ordered_for_all_affected_tabs": bool(split_tabs and has_ordered and not has_not_ordered),
+        "stock_ordered_for_all_affected_tabs": stock_ordered_for_all_affected_tabs,
+        "apply_stock_ordered_after_split": apply_stock_ordered_after_split,
+        "stock_ordered_apply_skip_reason": stock_ordered_apply_skip_reason,
         "mixed_stock_state": mixed_stock_state,
-        "production_notes": production_notes if bool(split_tabs and has_ordered and not has_not_ordered) else [],
+        "order_stock_status_before_split": order_stock_status or _order_stock_status_from_text(""),
+        "production_notes": production_notes,
+        "manual_order_records": manual_order_records,
+        "local_inventory_auto_order_targets": local_inventory_auto_order_targets,
     }
 
 
@@ -1140,6 +1510,20 @@ def _append_production_notes(driver, notes):
     return result
 
 
+def _body_text_confirms_stock_ordered(body_text):
+    return bool(
+        re.search(
+            r"Stock Status:\s*(?:Stock\s+)?Ordered",
+            _clean_text(body_text),
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _read_clean_body_text(driver):
+    return _clean_text(driver.execute_script("return document.body ? document.body.innerText : '';"))
+
+
 def _apply_stock_ordered_status(driver):
     result = driver.execute_script(
         """
@@ -1156,9 +1540,6 @@ def _apply_stock_ordered_status(driver):
         const bodyText = clean(document.body ? document.body.innerText : '');
         if (/Stock Status:\\s*(?:Stock\\s+)?Ordered/i.test(bodyText)) {
           return {already_applied: true, clicked_apply: false, confirmation: 'header'};
-        }
-        if (/\\bStock\\s*:\\s*Ordered\\b/i.test(bodyText) || /\\bOrdered Stock\\b/i.test(bodyText)) {
-          return {already_applied: true, clicked_apply: false, confirmation: 'stock_history'};
         }
         const inputs = Array.from(document.querySelectorAll('input[type=text], input:not([type]), textarea')).filter(visible);
         const statusInput = inputs.find((input) => input.getAttribute('ng-model') === 'orderStatusName') || inputs.find((input) => {
@@ -1186,10 +1567,15 @@ def _apply_stock_ordered_status(driver):
         """
     )
     if isinstance(result, dict) and result.get("already_applied"):
+        confirmation = result.get("confirmation") or "header"
+        if confirmation != "header":
+            raise ProductSeparatorError(
+                f"Stock Ordered status was only confirmed by {confirmation}; current Stock Status was not confirmed."
+            )
         return {
             "status_applied": False,
             "already_applied": True,
-            "confirmation": result.get("confirmation") or "header",
+            "confirmation": confirmation,
         }
     if not isinstance(result, dict) or not result.get("success"):
         raise ProductSeparatorError((result or {}).get("message") or "Could not type Stock Ordered status.")
@@ -1239,11 +1625,42 @@ def _apply_stock_ordered_status(driver):
     while time.monotonic() < deadline:
         time.sleep(0.5)
         last_text = _clean_text(driver.execute_script("return document.body ? document.body.innerText : '';"))
-        if re.search(r"Order's status updated to include\\s+Stock Ordered", last_text, flags=re.IGNORECASE):
+        if re.search(r"Order's status updated to include\s+Stock Ordered", last_text, flags=re.IGNORECASE):
             return {"status_applied": True, "confirmation": "green_popup"}
-        if re.search(r"Stock Status:\\s*(?:Stock\\s+)?Ordered", last_text, flags=re.IGNORECASE):
+        if _body_text_confirms_stock_ordered(last_text):
             return {"status_applied": True, "confirmation": "header"}
-    raise ProductSeparatorError(f"Stock Ordered status did not confirm. Visible text starts: {last_text[:300]}")
+    try:
+        driver.refresh()
+        _wait_for_crm_context(driver)
+        refresh_deadline = time.monotonic() + 15
+        while time.monotonic() < refresh_deadline:
+            time.sleep(0.5)
+            last_text = _read_clean_body_text(driver)
+            if _body_text_confirms_stock_ordered(last_text):
+                return {"status_applied": True, "confirmation": "header_after_refresh"}
+    except Exception:
+        pass
+    raise ProductSeparatorError(f"Stock Ordered status did not confirm after refresh. Visible text starts: {last_text[:300]}")
+
+
+def _scan_confirms_stock_ordered_status(scan):
+    tabs = scan.get("tabs") if isinstance(scan, dict) else []
+    order_stock_status = scan.get("order_stock_status") if isinstance(scan, dict) else None
+    if isinstance(order_stock_status, dict):
+        state = str(order_stock_status.get("state") or "")
+        if state in {"ordered", "need_to_order"}:
+            return state == "ordered"
+    if not tabs:
+        return False
+    return all(bool(((tab.get("stock") or {}).get("stock_status_ordered"))) for tab in tabs)
+
+
+def _verify_stock_ordered_status_persisted(verification):
+    for scan_key in ("scan_after_refresh", "scan_after"):
+        scan = verification.get(scan_key) if isinstance(verification, dict) else None
+        if scan and _scan_confirms_stock_ordered_status(scan):
+            return {"stock_status_verified": True, "verification_scan": scan_key}
+    return {"stock_status_verified": False, "verification_scan": ""}
 
 
 def _duplicate_design_from_index(driver, source_index, new_po):
@@ -1282,6 +1699,109 @@ def _duplicate_design_from_index(driver, source_index, new_po):
     return result
 
 
+def _zero_non_keep_group_quantity_inputs(driver, design_index, keep_group):
+    _click_design_tab(driver, int(design_index) + 1)
+    time.sleep(0.7)
+    return driver.execute_script(
+        r"""
+        const keepGroup = String(arguments[0] || '');
+        function clean(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+        function visible(el) {
+          if (!el) return false;
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle ? window.getComputedStyle(el) : {};
+          return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+        }
+        function classifyText(text) {
+          const normalized = clean(text).toLowerCase();
+          const compact = normalized.replace(/\s+/g, '');
+          if (/\b(towel|rally towel|sport towel)\b/.test(normalized)) return 'towel';
+          if (/\b(tote|bag|backpack|duffel|drawstring)\b/.test(normalized)) return 'bag';
+          if (/\b(hat|cap|beanie|snapback|trucker)\b/.test(normalized)) return 'hat_cap';
+          if (/\b(toddler)\b/.test(normalized) || /\b(2t|3t|4t|5t|6t|7t)\b/.test(normalized) || normalized.includes('5/6')) return 'toddler';
+          if (/\b(infant|baby|onesie|romper)\b/.test(normalized) || /\bnb\b/.test(normalized) || /(0-3mos|3-6mos|6-12mos|12-18mos|18-24mos)/.test(compact)) return 'infant';
+          if (/\b(youth|kids|kid's|girls|boys)\b/.test(normalized) || /\b(yxs|ys|ym|yl|yxl|yxxl)\b/.test(normalized)) return 'youth';
+          return 'adult_general';
+        }
+        function nearestProductBlock(link) {
+          let best = null;
+          for (let el = link; el && el !== document.body; el = el.parentElement) {
+            const text = clean(el.innerText || el.textContent);
+            if (/Size\s*:/i.test(text) && /Quantity\s*:/i.test(text) && /Price\s*:/i.test(text)) {
+              best = el;
+              if (text.length > 80 && text.length < 3500) break;
+            }
+          }
+          return best;
+        }
+        function textNodes(block) {
+          return Array.from(block.querySelectorAll('*'))
+            .filter(visible)
+            .map((el) => ({el, text: clean(el.innerText || el.textContent), rect: el.getBoundingClientRect()}));
+        }
+        function setInputValue(input, value) {
+          const before = input.value;
+          const proto = Object.getPrototypeOf(input);
+          const descriptor = proto && Object.getOwnPropertyDescriptor(proto, 'value');
+          input.scrollIntoView({block: 'center', inline: 'center'});
+          input.focus();
+          if (descriptor && descriptor.set) descriptor.set.call(input, value);
+          else input.value = value;
+          input.dispatchEvent(new Event('input', {bubbles: true}));
+          input.dispatchEvent(new Event('change', {bubbles: true}));
+          input.blur();
+          return before;
+        }
+        const links = Array.from(document.querySelectorAll('a'))
+          .filter(visible)
+          .filter((a) => /\bAlpha(?: Stock)?\b/i.test(a.innerText || a.textContent || ''));
+        const seen = new Set();
+        const changed = [];
+        const blocks = [];
+        for (const link of links) {
+          const block = nearestProductBlock(link);
+          if (!block) continue;
+          const rect = block.getBoundingClientRect();
+          const linkText = clean(link.innerText || link.textContent);
+          const key = `${Math.round(rect.top)}:${Math.round(rect.left)}:${linkText}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const text = clean(block.innerText || block.textContent);
+          const group = classifyText(text);
+          blocks.push({group, text: text.slice(0, 160)});
+          if (group === keepGroup) continue;
+          const nodes = textNodes(block);
+          const quantityLabel = nodes.find((item) => /^Quantity:?$/i.test(item.text));
+          const priceLabel = nodes.find((item) => /^Price:?$/i.test(item.text));
+          if (!quantityLabel || !priceLabel) continue;
+          const qtyTop = quantityLabel.rect.top - 12;
+          const qtyBottom = priceLabel.rect.top - 2;
+          const inputs = Array.from(block.querySelectorAll('input'))
+            .filter(visible)
+            .filter((input) => {
+              const type = String(input.type || '').toLowerCase();
+              if (type === 'checkbox' || type === 'radio' || type === 'hidden') return false;
+              const inputRect = input.getBoundingClientRect();
+              return inputRect.top >= qtyTop && inputRect.top < qtyBottom;
+            });
+          for (const input of inputs) {
+            const before = setInputValue(input, '0');
+            changed.push({
+              group,
+              before,
+              after: input.value,
+              name: input.getAttribute('name') || '',
+              ng_model: input.getAttribute('ng-model') || '',
+              id: input.id || ''
+            });
+          }
+        }
+        return {changed_inputs: changed, product_blocks: blocks};
+        """,
+        str(keep_group),
+    )
+
+
 def _keep_only_group_on_design(driver, design_index, keep_group):
     result = _order_scope(
         driver,
@@ -1317,40 +1837,165 @@ def _keep_only_group_on_design(driver, design_index, keep_group):
         function itemName(item) {
           return clean([item.style, item.ourLabel || item.label].filter(Boolean).join(' '));
         }
+        const knownQuantityKeys = new Set([
+          'quantity',
+          'qty',
+          'orderqty',
+          'orderedqty',
+          'quantityordered',
+          'qtyordered',
+          'stockorderquantity',
+          'stockorderqty',
+          'stockorderedquantity',
+          'stockorderedqty',
+          'totalquantity',
+          'totalqty'
+        ]);
+        function numericValue(value) {
+          if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+          const text = clean(value).replace(/,/g, '');
+          if (!/^-?\d+(?:\.\d+)?$/.test(text)) return null;
+          return Number(text);
+        }
+        function isQuantityKey(key) {
+          const lower = String(key || '').toLowerCase();
+          if (knownQuantityKeys.has(lower)) return true;
+          if (/(price|cost|upcharge|id|code|type|name|size|sort|index|warehouse|available|inventory|sku|style|color)/.test(lower)) return false;
+          return /(quantity|qty)/.test(lower);
+        }
+        function quantityKeys(target) {
+          return Object.keys(target || {}).filter(isQuantityKey);
+        }
+        function sizeLabel(size) {
+          return clean(size.sizeCode || size.size || size.label || size.name || size.sizeName || size.sizeType);
+        }
+        function quantityIndexObj(itemIndex, sizeIndex) {
+          return {
+            designKey: designIndex,
+            designIndex: designIndex,
+            itemKey: itemIndex,
+            itemIndex: itemIndex,
+            designItemKey: itemIndex,
+            sizeKey: sizeIndex,
+            sizeIndex: sizeIndex
+          };
+        }
+        function notifyItemQuantityChanged(item, itemIndex) {
+          const indexObj = quantityIndexObj(itemIndex, 0);
+          if (typeof s.watchItemQuantityChanges === 'function') {
+            s.watchItemQuantityChanges(item, indexObj);
+          } else if (typeof s.watchItemChanges === 'function') {
+            s.watchItemChanges(item);
+          } else {
+            markAsUpdated(item);
+          }
+        }
+        function notifySizeQuantityChanged(item, size, itemIndex, sizeIndex) {
+          const indexObj = quantityIndexObj(itemIndex, sizeIndex);
+          if (typeof s.watchSizeQuantityChanges === 'function') {
+            s.watchSizeQuantityChanges(item, size, indexObj);
+          } else if (typeof s.watchSizeChanges === 'function') {
+            s.watchSizeChanges(item, size);
+          } else {
+            markAsUpdated(item);
+            markAsUpdated(size);
+          }
+        }
+        function markDesignChanged() {
+          markAsUpdated(design);
+          design.$changed = true;
+          const firstCost = (design.designCosts || [])[0];
+          if (firstCost) markAsUpdated(firstCost);
+        }
+        function itemQuantity(item) {
+          let found = false;
+          let total = 0;
+          for (const key of quantityKeys(item)) {
+            const value = numericValue(item[key]);
+            if (value === null) continue;
+            found = true;
+            total += value;
+          }
+          for (const size of (item.sizes || [])) {
+            for (const key of quantityKeys(size)) {
+              const value = numericValue(size[key]);
+              if (value === null) continue;
+              found = true;
+              total += value;
+            }
+          }
+          return found ? total : null;
+        }
+        function effectivelyActive(item) {
+          if ((item.crudAction || '') === 'd') return false;
+          const quantity = itemQuantity(item);
+          return quantity === null || quantity > 0;
+        }
+        function markAsUpdated(item) {
+          if ((item.crudAction || '') === 'd') {
+            item.crudAction = item.id ? 'u' : 'c';
+          } else if (!item.crudAction) {
+            item.crudAction = item.id ? 'u' : 'c';
+          }
+        }
+        function markRemoved(item, source, itemIndex) {
+          item.crudAction = 'd';
+          removedItems.push({
+            source,
+            itemIndex,
+            product_name: itemName(item),
+            id: item.id || null,
+            quantity: itemQuantity(item)
+          });
+          markDesignChanged();
+          return true;
+        }
 
         const before = (design.items || []).map((item, index) => ({
           index,
           id: item.id || null,
           name: itemName(item),
           group: classify(item),
-          crudAction: item.crudAction || ''
+          crudAction: item.crudAction || '',
+          quantity: itemQuantity(item)
         }));
+        const removedItems = [];
 
         runInAngular(s, () => {
           const removeMatchesFrom = (items, removedItem) => {
-            (items || []).forEach((candidate) => {
+            (items || []).forEach((candidate, candidateIndex) => {
               const sameId = removedItem.id && candidate.id && String(candidate.id) === String(removedItem.id);
               const sameStyle = !removedItem.id && clean(candidate.style) === clean(removedItem.style) && clean(candidate.ourLabel || candidate.label) === clean(removedItem.ourLabel || removedItem.label);
               if (candidate === removedItem || sameId || sameStyle) {
-                candidate.crudAction = 'd';
+                markRemoved(candidate, 'design.designItems', candidateIndex);
               }
             });
           };
-          (design.items || []).forEach((item, index) => {
+          (design.items || []).slice().forEach((item, index) => {
             if (classify(item) !== keepGroup) {
               if (typeof s.removeDesignItem === 'function') {
                 s.removeDesignItem(item, designIndex, index);
+                removedItems.push({
+                  source: 'removeDesignItem',
+                  itemIndex: index,
+                  product_name: itemName(item),
+                  id: item.id || null,
+                  quantity: itemQuantity(item)
+                });
               } else {
-                item.crudAction = 'd';
+                markRemoved(item, 'design.items', index);
               }
               removeMatchesFrom(design.designItems, item);
             } else if (item.crudAction === 'd') {
               item.crudAction = item.id ? 'u' : 'c';
             }
           });
-          (design.designItems || []).forEach((item) => {
-            if (classify(item) !== keepGroup) item.crudAction = 'd';
+          (design.designItems || []).forEach((item, index) => {
+            if (classify(item) !== keepGroup) {
+              markRemoved(item, 'design.designItems', index);
+            }
           });
+          if (typeof s.watchDesignChanges === 'function') s.watchDesignChanges(design, designIndex);
         });
 
         const after = (design.items || []).map((item, index) => ({
@@ -1359,7 +2004,8 @@ def _keep_only_group_on_design(driver, design_index, keep_group):
           name: itemName(item),
           group: classify(item),
           crudAction: item.crudAction || '',
-          active: item.crudAction !== 'd'
+          active: effectivelyActive(item),
+          quantity: itemQuantity(item)
         }));
         const active = after.filter((item) => item.active);
         const bad = active.filter((item) => item.group !== keepGroup);
@@ -1371,7 +2017,9 @@ def _keep_only_group_on_design(driver, design_index, keep_group):
           after,
           removed_product_names: after.filter((item) => !item.active).map((item) => item.name),
           remaining_product_names: active.map((item) => item.name),
-          bad_product_names: bad.map((item) => item.name)
+          bad_product_names: bad.map((item) => item.name),
+          removed_items: removedItems,
+          zeroed_quantities: []
         };
         """,
         int(design_index),
@@ -1387,6 +2035,96 @@ def _keep_only_group_on_design(driver, design_index, keep_group):
     return result
 
 
+def _scan_tab_quantity_total(scan):
+    tabs = scan.get("tabs") if isinstance(scan, dict) else []
+    if not tabs:
+        return None
+    total = 0
+    found = False
+    for tab in tabs:
+        try:
+            quantity = int(tab.get("quantity"))
+        except (TypeError, ValueError):
+            continue
+        total += quantity
+        found = True
+    return total if found else None
+
+
+def _quantity_total_check(scan, expected_total):
+    actual_total = _scan_tab_quantity_total(scan)
+    return {
+        "expected_total": expected_total,
+        "actual_total": actual_total,
+        "matches": expected_total is None or actual_total is None or int(actual_total) == int(expected_total),
+    }
+
+
+def _source_quantity_cleanup_targets(plan, scan):
+    tabs_by_number = {}
+    for tab in (scan.get("tabs") if isinstance(scan, dict) else []) or []:
+        try:
+            tabs_by_number[int(tab.get("tab_number"))] = tab
+        except (TypeError, ValueError):
+            continue
+
+    targets = []
+    for split in (plan.get("split_tabs") if isinstance(plan, dict) else []) or []:
+        assignments = split.get("assignments") or []
+        source_assignment = next((item for item in assignments if item.get("source") == "original"), None)
+        if not source_assignment:
+            continue
+        try:
+            tab_number = int(source_assignment.get("tab_number") or split.get("source_tab_number"))
+        except (TypeError, ValueError):
+            continue
+        keep_group = _clean_text(source_assignment.get("keep_group"))
+        if not keep_group:
+            continue
+        tab = tabs_by_number.get(tab_number)
+        if not tab:
+            continue
+        stuck_products = [
+            product
+            for product in (tab.get("products") or [])
+            if _clean_text(product.get("group")) != keep_group and _product_has_positive_quantity(product)
+        ]
+        if not stuck_products:
+            continue
+        targets.append(
+            {
+                "tab_number": tab_number,
+                "design_index": tab_number - 1,
+                "keep_group": keep_group,
+                "keep_group_label": source_assignment.get("keep_group_label"),
+                "stuck_product_names": [product.get("product_name") for product in stuck_products],
+            }
+        )
+    return targets
+
+
+def _apply_source_quantity_cleanup(driver, targets):
+    if not targets:
+        return {"attempted": False, "targets": []}
+    _enter_edit_mode(driver)
+    actions = []
+    for target in targets:
+        cleanup = _zero_non_keep_group_quantity_inputs(
+            driver,
+            int(target.get("design_index")),
+            target.get("keep_group"),
+        )
+        actions.append(
+            {
+                "action": "zero_stuck_source_products",
+                **target,
+                "cleanup": cleanup,
+            }
+        )
+    save_state = _save_order_and_wait(driver)
+    return {"attempted": True, "targets": targets, "actions": actions, "save_state": save_state}
+
+
 def _apply_live_split(driver, plan):
     _enter_edit_mode(driver)
     actions = []
@@ -1396,10 +2134,20 @@ def _apply_live_split(driver, plan):
         assignments = split.get("assignments") or []
         clone_assignments = [item for item in assignments if item.get("source") == "clone"]
         assignment_design_indexes = {source_tab_number: source_design_index}
+        for existing in [item for item in assignments if item.get("source") == "existing"]:
+            existing_tab_number = int(existing.get("tab_number"))
+            assignment_design_indexes[existing_tab_number] = existing_tab_number - 1
         for clone in clone_assignments:
+            planned_tab_number = int(clone.get("tab_number") or 0)
             clone_result = _duplicate_design_from_index(driver, source_design_index, clone.get("tab_name"))
             expected_number = int(clone_result.get("tab_number"))
             clone["tab_number"] = expected_number
+            if planned_tab_number and planned_tab_number != expected_number:
+                for record in (plan.get("manual_order_records") or []) + (split.get("manual_order_records") or []):
+                    same_planned_tab = int(record.get("target_tab_number") or 0) == planned_tab_number
+                    same_tab_name = _clean_text(record.get("target_tab_name")) == _clean_text(clone.get("tab_name"))
+                    if same_planned_tab and same_tab_name:
+                        record["target_tab_number"] = expected_number
             assignment_design_indexes[expected_number] = int(clone_result.get("new_index"))
             actions.append(
                 {
@@ -1435,10 +2183,191 @@ def _apply_live_split(driver, plan):
 
     save_state = _save_order_and_wait(driver)
     status_state = {}
-    if plan.get("stock_ordered_for_all_affected_tabs"):
-        status_state = _apply_stock_ordered_status(driver)
-        actions.append({"action": "apply_stock_ordered_status", **status_state})
     return {"actions": actions, "save_state": save_state, "status_state": status_state}
+
+
+def _record_separator_manual_orders(driver, order_id, order_url, plan, login_wait_seconds=0):
+    records = plan.get("manual_order_records") or []
+    actions = []
+    original_reopen = _shipping_bypasser._reopen_crm_manual_order_target
+    original_wait = _shipping_bypasser._wait_for_order_goods_page_ready
+
+    def _separator_reopen(driver_arg, order_id_arg, order_url=None):
+        try:
+            driver_arg.switch_to.default_content()
+        except Exception:
+            pass
+        target_url = order_url or PROCESSOR_ORDER_URL_TEMPLATE.format(order_id=order_id_arg)
+        safe_get_with_partial_load(driver_arg, target_url, f"Product Separator CRM order {order_id_arg} manual order retry")
+        _handle_login_if_needed(driver_arg, target_url, login_wait_seconds=login_wait_seconds)
+        _wait_for_crm_context(driver_arg)
+
+    def _separator_wait(driver_arg, order_id_arg, timeout=None):
+        try:
+            _activate_crm_context(driver_arg)
+        except Exception:
+            pass
+        return original_wait(driver_arg, order_id_arg, timeout=timeout)
+
+    try:
+        _shipping_bypasser._reopen_crm_manual_order_target = _separator_reopen
+        _shipping_bypasser._wait_for_order_goods_page_ready = _separator_wait
+        for record in records:
+            target_tab_number = int(record.get("target_tab_number") or 0)
+            po = _clean_text(record.get("po"))
+            vendor = _clean_text(record.get("vendor"))
+            if not target_tab_number or not po or not vendor:
+                raise ProductSeparatorError(f"Manual Order record is incomplete: {record}")
+            try:
+                _separator_reopen(driver, order_id, order_url=order_url)
+            except Exception:
+                pass
+            state = _record_crm_stock_manual_order(
+                driver,
+                order_id,
+                po,
+                dry_run=False,
+                stock_tab_index=target_tab_number,
+                vendor_name=vendor,
+                order_url=order_url,
+            )
+            actions.append(
+                {
+                    "action": "manual_order_record",
+                    "state": state,
+                    **record,
+                }
+            )
+    finally:
+        _shipping_bypasser._reopen_crm_manual_order_target = original_reopen
+        _shipping_bypasser._wait_for_order_goods_page_ready = original_wait
+    return {"attempted": bool(records), "records": actions}
+
+
+def _auto_order_local_inventory_tabs(driver, order_id, order_url, plan, login_wait_seconds=0):
+    targets = plan.get("local_inventory_auto_order_targets") or []
+    actions = []
+    for target in targets:
+        target_tab_number = int(target.get("target_tab_number") or 0)
+        if not target_tab_number:
+            raise ProductSeparatorError(f"Local Inventory auto-order target is incomplete: {target}")
+        try:
+            _order_goods._require_order_goods_page_ready(driver, order_id)
+        except Exception:
+            safe_get_with_partial_load(driver, order_url, f"Product Separator CRM order {order_id} local inventory auto-order")
+            _handle_login_if_needed(driver, order_url, login_wait_seconds=login_wait_seconds)
+            _order_goods._require_order_goods_page_ready(driver, order_id)
+        tab = _order_goods._activate_stock_tab(driver, target_tab_number - 1)
+        if tab is None:
+            raise ProductSeparatorError(f"Local Inventory target tab {target_tab_number} could not be activated for auto-order.")
+        stock_state = _active_tab_stock_state(driver)
+        if _stock_state_has_local_inventory_row(stock_state):
+            result = {
+                "success": True,
+                "outcome": "already_local_inventory_ordered",
+                "message": "Target tab already has a Local Inventory row.",
+                "manual_review_required": False,
+            }
+        else:
+            result = _order_goods._order_goods_for_open_order(
+                driver,
+                order_id,
+                dry_run=False,
+                allow_unlock_retry=True,
+                stock_tab_index=target_tab_number - 1,
+                ignore_already_ordered=True,
+            )
+        action = {
+            "action": "local_inventory_auto_order",
+            **target,
+            "stock_tab_index": target_tab_number,
+            "result": result,
+        }
+        actions.append(action)
+        if not isinstance(result, dict) or not result.get("success"):
+            raise ProductSeparatorError((result or {}).get("message") or f"Local Inventory auto-order failed for tab {target_tab_number}.")
+        if str(result.get("outcome") or "") == "order_goods_clicked":
+            safe_get_with_partial_load(driver, order_url, f"Product Separator CRM order {order_id} after local inventory auto-order")
+            _handle_login_if_needed(driver, order_url, login_wait_seconds=login_wait_seconds)
+            _wait_for_crm_context(driver)
+    return {"attempted": bool(targets), "targets": actions}
+
+
+def _manual_order_row_matches(row, po, vendor):
+    row_po = _clean_text((row or {}).get("po")).lower()
+    wanted_po = _clean_text(po).lower()
+    row_vendor = _manual_order_vendor_label((row or {}).get("vendor"))
+    wanted_vendor = _manual_order_vendor_label(vendor)
+    return bool(row_po and wanted_po and row_po == wanted_po and row_vendor == wanted_vendor)
+
+
+def _manual_order_record_missing_after_scan(scan, record):
+    target_tab_number = int(record.get("target_tab_number") or 0)
+    target_tab_name = _clean_text(record.get("target_tab_name"))
+    target_tab = None
+    for tab in scan.get("tabs") or []:
+        tab_number = int(tab.get("tab_number") or 0)
+        tab_name = _clean_text(tab.get("tab_name"))
+        if target_tab_number and tab_number == target_tab_number:
+            target_tab = tab
+            break
+        if target_tab_name and tab_name.lower() == target_tab_name.lower():
+            target_tab = tab
+            break
+    if not target_tab:
+        return {**record, "missing_reason": "target tab was not found after recording"}
+    stock = target_tab.get("stock") or {}
+    rows = stock.get("manual_order_rows") or []
+    if any(_manual_order_row_matches(row, record.get("po"), record.get("vendor")) for row in rows):
+        return None
+    if _manual_order_row_matches(stock, record.get("po"), record.get("vendor")):
+        return None
+    return {**record, "missing_reason": "target tab still has no matching Manual Order row after recording"}
+
+
+def _verify_manual_order_records_persisted(scan, records):
+    missing = []
+    for record in records or []:
+        missing_record = _manual_order_record_missing_after_scan(scan, record)
+        if missing_record:
+            missing.append(missing_record)
+    return {
+        "verified": not missing,
+        "missing_records": missing,
+    }
+
+
+def _local_inventory_auto_order_missing_after_scan(scan, target):
+    target_tab_number = int(target.get("target_tab_number") or 0)
+    target_tab_name = _clean_text(target.get("target_tab_name"))
+    target_tab = None
+    for tab in scan.get("tabs") or []:
+        tab_number = int(tab.get("tab_number") or 0)
+        tab_name = _clean_text(tab.get("tab_name"))
+        if target_tab_number and tab_number == target_tab_number:
+            target_tab = tab
+            break
+        if target_tab_name and tab_name.lower() == target_tab_name.lower():
+            target_tab = tab
+            break
+    if not target_tab:
+        return {**target, "missing_reason": "target tab was not found after Local Inventory auto-order"}
+    stock = target_tab.get("stock") or {}
+    if _stock_state_has_local_inventory_row(stock):
+        return None
+    return {**target, "missing_reason": "target tab still has no Local Inventory row after auto-order"}
+
+
+def _verify_local_inventory_auto_orders(scan, targets):
+    missing = []
+    for target in targets or []:
+        missing_target = _local_inventory_auto_order_missing_after_scan(scan, target)
+        if missing_target:
+            missing.append(missing_target)
+    return {
+        "verified": not missing,
+        "missing_targets": missing,
+    }
 
 
 def _tabs_still_needing_split(scan):
@@ -1458,6 +2387,88 @@ def _format_remaining_split_tabs(tabs):
         suffix = f" ({', '.join(groups)})" if groups else ""
         parts.append(f"tab {tab_number} {tab_name}{suffix}".strip())
     return "; ".join(parts)
+
+
+def _scan_split_signature(scan):
+    def signature_int(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    signature = []
+    for tab in scan.get("tabs") or []:
+        products = []
+        for product in tab.get("products") or []:
+            products.append(
+                (
+                    _clean_text(product.get("product_name")),
+                    _clean_text(product.get("group")),
+                    _clean_text(product.get("color")),
+                    tuple(_clean_text(size) for size in (product.get("sizes") or [])),
+                )
+            )
+        groups = tuple(
+            (_clean_text(group.get("group")), _clean_text(group.get("group_label")))
+            for group in (tab.get("groups") or [])
+        )
+        signature.append(
+            (
+                signature_int(tab.get("tab_number")),
+                _clean_text(tab.get("tab_name")),
+                signature_int(tab.get("quantity")),
+                tuple(products),
+                groups,
+                bool(tab.get("needs_split")),
+            )
+        )
+    return tuple(signature)
+
+
+def _scan_looks_unchanged_after_split(before_scan, after_scan):
+    return bool(before_scan and after_scan) and _scan_split_signature(before_scan) == _scan_split_signature(after_scan)
+
+
+def _refresh_order_before_final_split_verification(driver, target_url, login_wait_seconds=0):
+    try:
+        driver.refresh()
+    except Exception:
+        safe_get_with_partial_load(driver, target_url, "Product Separator verification refresh")
+    _handle_login_if_needed(driver, target_url, login_wait_seconds=login_wait_seconds)
+    _wait_for_crm_context(driver)
+    _recover_not_authenticated_page(driver, target_url, login_wait_seconds=login_wait_seconds)
+
+
+def _verify_split_persisted_after_save(driver, target_url, resolved_order_id, login_wait_seconds=0):
+    safe_get_with_partial_load(driver, target_url, "Product Separator verification")
+    _handle_login_if_needed(driver, target_url, login_wait_seconds=login_wait_seconds)
+    _wait_for_crm_context(driver)
+    _recover_not_authenticated_page(driver, target_url, login_wait_seconds=login_wait_seconds)
+    scan_after = _scan_order(driver, expected_order_id=resolved_order_id)
+    verification = {
+        "scan_after": scan_after,
+        "verification_refresh_attempted": False,
+    }
+    remaining_split_tabs = _tabs_still_needing_split(scan_after)
+    if not remaining_split_tabs:
+        return verification, remaining_split_tabs
+
+    verification["verification_refresh_attempted"] = True
+    verification["remaining_before_refresh"] = _format_remaining_split_tabs(remaining_split_tabs)
+    _refresh_order_before_final_split_verification(
+        driver,
+        target_url,
+        login_wait_seconds=login_wait_seconds,
+    )
+    scan_after_refresh = _scan_order(driver, expected_order_id=resolved_order_id)
+    verification["scan_after_refresh"] = scan_after_refresh
+    remaining_split_tabs = _tabs_still_needing_split(scan_after_refresh)
+    verification["remaining_after_refresh"] = _format_remaining_split_tabs(remaining_split_tabs)
+    return verification, remaining_split_tabs
+
+
+def _last_verification_scan(verification):
+    return verification.get("scan_after_refresh") or verification.get("scan_after") or {}
 
 
 def run_product_separator_order(
@@ -1496,6 +2507,7 @@ def run_product_separator_order(
         scan = _scan_order(driver, expected_order_id=resolved_order_id)
         plan = _build_separator_plan(scan)
         report = {"scan": scan, "plan": plan}
+        expected_quantity_total = _scan_tab_quantity_total(scan)
 
         if not plan.get("needs_split"):
             _write_result(
@@ -1507,6 +2519,7 @@ def run_product_separator_order(
                 target_order_id=resolved_order_id,
                 order_url=target_url,
                 report=report,
+                manual_review_required=False,
                 resolution="skipped_no_split_needed",
                 duration_seconds=round(time.monotonic() - started, 2),
             )
@@ -1545,20 +2558,97 @@ def run_product_separator_order(
             return 0
 
         live = _apply_live_split(driver, plan)
-        safe_get_with_partial_load(driver, target_url, "Product Separator verification")
-        _handle_login_if_needed(driver, target_url, login_wait_seconds=login_wait_seconds)
-        _wait_for_crm_context(driver)
-        _recover_not_authenticated_page(driver, target_url, login_wait_seconds=login_wait_seconds)
-        scan_after = _scan_order(driver, expected_order_id=resolved_order_id)
         report["live"] = live
-        report["scan_after"] = scan_after
-        remaining_split_tabs = _tabs_still_needing_split(scan_after)
+        verification, remaining_split_tabs = _verify_split_persisted_after_save(
+            driver,
+            target_url,
+            resolved_order_id,
+            login_wait_seconds=login_wait_seconds,
+        )
+        report.update(verification)
+        quantity_total_check = _quantity_total_check(_last_verification_scan(verification), expected_quantity_total)
+        report["quantity_total_check"] = quantity_total_check
+        if not quantity_total_check.get("matches"):
+            cleanup_targets = _source_quantity_cleanup_targets(plan, _last_verification_scan(verification))
+            cleanup_result = {"attempted": False, "targets": cleanup_targets}
+            if cleanup_targets:
+                cleanup_result = _apply_source_quantity_cleanup(driver, cleanup_targets)
+                cleanup_verification, remaining_split_tabs = _verify_split_persisted_after_save(
+                    driver,
+                    target_url,
+                    resolved_order_id,
+                    login_wait_seconds=login_wait_seconds,
+                )
+                cleanup_result["verification"] = cleanup_verification
+                cleanup_result["quantity_total_check_after"] = _quantity_total_check(
+                    _last_verification_scan(cleanup_verification),
+                    expected_quantity_total,
+                )
+                report["source_quantity_cleanup"] = cleanup_result
+                report["quantity_total_check"] = cleanup_result["quantity_total_check_after"]
+                verification = cleanup_verification
+                report.update(cleanup_verification)
+            else:
+                report["source_quantity_cleanup"] = cleanup_result
+        if remaining_split_tabs and _scan_looks_unchanged_after_split(scan, _last_verification_scan(verification)):
+            retry_scan = _last_verification_scan(verification)
+            retry_plan = _build_separator_plan(retry_scan)
+            retry = {
+                "attempted": True,
+                "reason": "first live save verification still matched the original mixed order after refresh",
+                "scan_before_retry": retry_scan,
+                "plan": retry_plan,
+            }
+            report["live_retry"] = retry
+            if retry_plan.get("needs_split") and not retry_plan.get("manual_review_required"):
+                retry["live"] = _apply_live_split(driver, retry_plan)
+                retry_verification, remaining_split_tabs = _verify_split_persisted_after_save(
+                    driver,
+                    target_url,
+                    resolved_order_id,
+                    login_wait_seconds=login_wait_seconds,
+                )
+                retry.update(retry_verification)
+                retry_quantity_check = _quantity_total_check(
+                    _last_verification_scan(retry_verification),
+                    expected_quantity_total,
+                )
+                retry["quantity_total_check"] = retry_quantity_check
+                if not retry_quantity_check.get("matches"):
+                    retry_cleanup_targets = _source_quantity_cleanup_targets(
+                        retry_plan,
+                        _last_verification_scan(retry_verification),
+                    )
+                    retry_cleanup_result = {"attempted": False, "targets": retry_cleanup_targets}
+                    if retry_cleanup_targets:
+                        retry_cleanup_result = _apply_source_quantity_cleanup(driver, retry_cleanup_targets)
+                        retry_cleanup_verification, remaining_split_tabs = _verify_split_persisted_after_save(
+                            driver,
+                            target_url,
+                            resolved_order_id,
+                            login_wait_seconds=login_wait_seconds,
+                        )
+                        retry_cleanup_result["verification"] = retry_cleanup_verification
+                        retry_cleanup_result["quantity_total_check_after"] = _quantity_total_check(
+                            _last_verification_scan(retry_cleanup_verification),
+                            expected_quantity_total,
+                        )
+                        retry["source_quantity_cleanup"] = retry_cleanup_result
+                        retry["quantity_total_check"] = retry_cleanup_result["quantity_total_check_after"]
+                        retry.update(retry_cleanup_verification)
+                    else:
+                        retry["source_quantity_cleanup"] = retry_cleanup_result
+            else:
+                retry["skipped"] = True
+                retry["skip_reason"] = "refreshed order no longer had a retryable split plan"
         if remaining_split_tabs:
+            retry_suffix = " after retrying save/split once" if report.get("live_retry", {}).get("attempted") else ""
             _write_result(
                 False,
                 (
                     f"Product Separator verification failed for order {resolved_order_id}: "
-                    f"mixed product tabs still remain after save: {_format_remaining_split_tabs(remaining_split_tabs)}"
+                    f"mixed product tabs still remain after save{retry_suffix}: "
+                    f"{_format_remaining_split_tabs(remaining_split_tabs)}"
                 ),
                 result_file=result_file,
                 action="product_separator_order",
@@ -1571,6 +2661,231 @@ def run_product_separator_order(
                 duration_seconds=round(time.monotonic() - started, 2),
             )
             return 4
+        final_verification = report.get("live_retry") if report.get("live_retry", {}).get("scan_after") else report
+        final_quantity_check = _quantity_total_check(_last_verification_scan(final_verification), expected_quantity_total)
+        report["final_quantity_total_check"] = final_quantity_check
+        if not final_quantity_check.get("matches"):
+            _write_result(
+                False,
+                (
+                    f"Product Separator verification failed for order {resolved_order_id}: "
+                    f"quantity total changed from {final_quantity_check.get('expected_total')} "
+                    f"to {final_quantity_check.get('actual_total')} after split."
+                ),
+                result_file=result_file,
+                action="product_separator_order",
+                dry_run=False,
+                target_order_id=resolved_order_id,
+                order_url=target_url,
+                report=report,
+                manual_review_required=True,
+                resolution="quantity_total_mismatch",
+                duration_seconds=round(time.monotonic() - started, 2),
+            )
+            return 4
+        if plan.get("manual_order_records"):
+            try:
+                report["manual_order_recording"] = _record_separator_manual_orders(
+                    driver,
+                    resolved_order_id,
+                    target_url,
+                    plan,
+                    login_wait_seconds=login_wait_seconds,
+                )
+            except Exception as exc:
+                report["manual_order_recording"] = {
+                    "attempted": True,
+                    "records": plan.get("manual_order_records") or [],
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                }
+                _write_result(
+                    False,
+                    (
+                        f"Product Separator split persisted for order {resolved_order_id}, "
+                        f"but copied Manual Order records could not be saved: {exc}"
+                    ),
+                    result_file=result_file,
+                    action="product_separator_order",
+                    dry_run=False,
+                    target_order_id=resolved_order_id,
+                    order_url=target_url,
+                    report=report,
+                    manual_review_required=True,
+                    resolution="manual_order_record_failed",
+                    duration_seconds=round(time.monotonic() - started, 2),
+                )
+                return 4
+            report["manual_order_recording"]["sequence"] = "after_split_save_verification"
+            _refresh_order_before_final_split_verification(
+                driver,
+                target_url,
+                login_wait_seconds=login_wait_seconds,
+            )
+            scan_after_manual_order = _scan_order(driver, expected_order_id=resolved_order_id)
+            manual_order_verification = _verify_manual_order_records_persisted(
+                scan_after_manual_order,
+                plan.get("manual_order_records") or [],
+            )
+            report["manual_order_recording"]["scan_after"] = scan_after_manual_order
+            report["manual_order_recording"]["verification"] = manual_order_verification
+            if not manual_order_verification.get("verified"):
+                _write_result(
+                    False,
+                    (
+                        f"Product Separator split persisted for order {resolved_order_id}, "
+                        "but copied Manual Order records were not visible on their target tabs after refresh."
+                    ),
+                    result_file=result_file,
+                    action="product_separator_order",
+                    dry_run=False,
+                    target_order_id=resolved_order_id,
+                    order_url=target_url,
+                    report=report,
+                    manual_review_required=True,
+                    resolution="manual_order_record_not_persisted",
+                    duration_seconds=round(time.monotonic() - started, 2),
+                )
+                return 4
+        if plan.get("local_inventory_auto_order_targets"):
+            try:
+                report["local_inventory_auto_ordering"] = _auto_order_local_inventory_tabs(
+                    driver,
+                    resolved_order_id,
+                    target_url,
+                    plan,
+                    login_wait_seconds=login_wait_seconds,
+                )
+            except Exception as exc:
+                report["local_inventory_auto_ordering"] = {
+                    "attempted": True,
+                    "targets": plan.get("local_inventory_auto_order_targets") or [],
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                }
+                _write_result(
+                    False,
+                    (
+                        f"Product Separator split persisted for order {resolved_order_id}, "
+                        f"but Local Inventory auto-order failed: {exc}"
+                    ),
+                    result_file=result_file,
+                    action="product_separator_order",
+                    dry_run=False,
+                    target_order_id=resolved_order_id,
+                    order_url=target_url,
+                    report=report,
+                    manual_review_required=True,
+                    resolution="local_inventory_auto_order_failed",
+                    duration_seconds=round(time.monotonic() - started, 2),
+                )
+                return 4
+            _refresh_order_before_final_split_verification(
+                driver,
+                target_url,
+                login_wait_seconds=login_wait_seconds,
+            )
+            scan_after_local_inventory = _scan_order(driver, expected_order_id=resolved_order_id)
+            local_inventory_verification = _verify_local_inventory_auto_orders(
+                scan_after_local_inventory,
+                plan.get("local_inventory_auto_order_targets") or [],
+            )
+            report["local_inventory_auto_ordering"]["scan_after"] = scan_after_local_inventory
+            report["local_inventory_auto_ordering"]["verification"] = local_inventory_verification
+            remaining_after_local_inventory = _tabs_still_needing_split(scan_after_local_inventory)
+            if remaining_after_local_inventory:
+                _write_result(
+                    False,
+                    (
+                        f"Product Separator verification failed for order {resolved_order_id}: "
+                        "split changed after Local Inventory auto-order."
+                    ),
+                    result_file=result_file,
+                    action="product_separator_order",
+                    dry_run=False,
+                    target_order_id=resolved_order_id,
+                    order_url=target_url,
+                    report=report,
+                    manual_review_required=True,
+                    resolution="local_inventory_split_verification_failed",
+                    duration_seconds=round(time.monotonic() - started, 2),
+                )
+                return 4
+            if not local_inventory_verification.get("verified"):
+                _write_result(
+                    False,
+                    (
+                        f"Product Separator split persisted for order {resolved_order_id}, "
+                        "but Local Inventory auto-order was not visible on the target tab after refresh."
+                    ),
+                    result_file=result_file,
+                    action="product_separator_order",
+                    dry_run=False,
+                    target_order_id=resolved_order_id,
+                    order_url=target_url,
+                    report=report,
+                    manual_review_required=True,
+                    resolution="local_inventory_auto_order_not_persisted",
+                    duration_seconds=round(time.monotonic() - started, 2),
+                )
+                return 4
+        if plan.get("apply_stock_ordered_after_split"):
+            status_state = _apply_stock_ordered_status(driver)
+            report["stock_status_apply"] = status_state
+            status_verification, remaining_after_status = _verify_split_persisted_after_save(
+                driver,
+                target_url,
+                resolved_order_id,
+                login_wait_seconds=login_wait_seconds,
+            )
+            report["stock_status_verification_scan"] = status_verification
+            if remaining_after_status:
+                _write_result(
+                    False,
+                    (
+                        f"Product Separator verification failed for order {resolved_order_id}: "
+                        "split changed after applying Stock Ordered status."
+                    ),
+                    result_file=result_file,
+                    action="product_separator_order",
+                    dry_run=False,
+                    target_order_id=resolved_order_id,
+                    order_url=target_url,
+                    report=report,
+                    manual_review_required=True,
+                    resolution="stock_ordered_split_verification_failed",
+                    duration_seconds=round(time.monotonic() - started, 2),
+                )
+                return 4
+            stock_status_verification = _verify_stock_ordered_status_persisted(final_verification)
+            if not stock_status_verification.get("stock_status_verified"):
+                stock_status_verification = _verify_stock_ordered_status_persisted(status_verification)
+            report["stock_status_verification"] = stock_status_verification
+            if not stock_status_verification.get("stock_status_verified"):
+                _write_result(
+                    False,
+                    (
+                        f"Product Separator verification failed for order {resolved_order_id}: "
+                        "split persisted, but Stock Ordered status was not confirmed after refresh."
+                    ),
+                    result_file=result_file,
+                    action="product_separator_order",
+                    dry_run=False,
+                    target_order_id=resolved_order_id,
+                    order_url=target_url,
+                    report=report,
+                    manual_review_required=True,
+                    resolution="stock_ordered_status_not_persisted",
+                    duration_seconds=round(time.monotonic() - started, 2),
+                )
+                return 4
+        elif plan.get("stock_ordered_apply_skip_reason"):
+            report["stock_status_apply"] = {
+                "status_applied": False,
+                "skipped": True,
+                "reason": plan.get("stock_ordered_apply_skip_reason"),
+                "order_stock_status_before_split": plan.get("order_stock_status_before_split"),
+            }
         _write_result(
             True,
             f"Product Separator completed order {resolved_order_id}.",
@@ -1681,105 +2996,13 @@ def _run_order_chunk_worker(order_ids, profile_dir, result_dir, visible=False, l
     return results
 
 
-def _product_separator_list_url_for_mode(list_mode):
-    mode = _clean_text(list_mode or PRODUCT_SEPARATOR_DEFAULT_LIST_MODE).lower() or "all"
-    urls = {
-        "free": PRODUCT_SEPARATOR_LIST_URL_FREE,
-        "rush": PRODUCT_SEPARATOR_LIST_URL_RUSH,
-        "all": PRODUCT_SEPARATOR_LIST_URL_ALL or PRODUCT_SEPARATOR_LIST_URL,
-    }
-    if mode not in urls:
-        raise ProductSeparatorError(f"Unknown Product Separator list mode: {list_mode}")
-    return mode, urls.get(mode) or ""
-
-
-def run_product_separator_list(
-    list_url=None,
-    list_mode=None,
-    dry_run=True,
-    visible=False,
-    login_wait_seconds=0,
-    workers=4,
-    max_orders=0,
-    result_file=None,
-):
-    started = time.monotonic()
-    resolved_list_mode, configured_list_url = _product_separator_list_url_for_mode(list_mode)
-    list_url = list_url or configured_list_url
-    if not list_url:
-        _write_result(
-            False,
-            f"CRM report/list URL is required for Product Separator mode: {resolved_list_mode}.",
-            result_file=result_file,
-            action="product_separator_list",
-            list_mode=resolved_list_mode,
-        )
-        return 2
-    if not dry_run:
-        _write_result(
-            False,
-            "Live list mode is disabled. Run dry-run first, then live selected order IDs intentionally.",
-            result_file=result_file,
-            action="product_separator_list",
-            list_mode=resolved_list_mode,
-            list_url=list_url,
-        )
-        return 3
-
-    driver = None
-    profile = None
-    worker_profile_dir = None
-    result_dir = os.path.join(PROJECT_ROOT, "product_separator_results", "list_scan_" + time.strftime("%Y%m%d_%H%M%S"))
-    os.makedirs(result_dir, exist_ok=True)
-    try:
-        driver, profile = _build_driver(visible=visible, profile_dir=None, kill_existing=True)
-        order_ids = _extract_report_order_ids(driver, list_url, login_wait_seconds=login_wait_seconds)
-    except Exception as err:
-        if driver is not None:
-            safe_take_screenshot(driver, "product_separator_list_error")
-        _write_result(
-            False,
-            f"Product Separator list scan failed while reading report: {err}",
-            result_file=result_file,
-            action="product_separator_list",
-            dry_run=True,
-            list_mode=resolved_list_mode,
-            list_url=list_url,
-            error_type=type(err).__name__,
-            duration_seconds=round(time.monotonic() - started, 2),
-        )
-        return 1
-    finally:
-        safe_driver_quit(driver, profile_path=profile)
-
-    if max_orders and int(max_orders) > 0:
-        order_ids = order_ids[: int(max_orders)]
-
-    worker_count = max(1, min(int(workers or 1), len(order_ids) or 1))
-    try:
-        worker_profile_dir, profile_dirs = _prepare_worker_profiles(worker_count)
-    except Exception as err:
-        _write_result(
-            False,
-            f"Product Separator list scan failed while preparing worker profiles: {err}",
-            result_file=result_file,
-            action="product_separator_list",
-            dry_run=True,
-            list_mode=resolved_list_mode,
-            list_url=list_url,
-            order_count=len(order_ids),
-            order_ids=order_ids,
-            error_type=type(err).__name__,
-            duration_seconds=round(time.monotonic() - started, 2),
-        )
-        return 1
-
+def _run_product_separator_order_id_batch(order_ids, profile_dirs, result_dir, visible=False, login_wait_seconds=0):
+    worker_count = max(1, min(len(profile_dirs or []), len(order_ids) or 1))
     order_results = []
     split_order_ids = []
     skipped_order_ids = []
     manual_review_order_ids = []
     failed_order_ids = []
-
     chunks = [[] for _ in range(worker_count)]
     for index, order_id in enumerate(order_ids):
         chunks[index % worker_count].append(order_id)
@@ -1831,14 +3054,206 @@ def run_product_separator_list(
                     f"[{len(order_results)}/{len(order_ids)}] {order_id}: "
                     f"{summary['resolution']} split={summary['needs_split']} manual={summary['manual_review_required']}"
                 )
+    order_results.sort(key=lambda item: order_ids.index(item["order_id"]) if item["order_id"] in order_ids else 999999)
+    return {
+        "worker_count": worker_count,
+        "order_results": order_results,
+        "split_order_ids": split_order_ids,
+        "skipped_order_ids": skipped_order_ids,
+        "manual_review_order_ids": manual_review_order_ids,
+        "failed_order_ids": failed_order_ids,
+    }
+
+
+def _product_separator_list_url_for_mode(list_mode):
+    mode = _clean_text(list_mode or PRODUCT_SEPARATOR_DEFAULT_LIST_MODE).lower() or "all"
+    urls = {
+        "free": PRODUCT_SEPARATOR_LIST_URL_FREE,
+        "rush": PRODUCT_SEPARATOR_LIST_URL_RUSH,
+        "all": PRODUCT_SEPARATOR_LIST_URL_ALL or PRODUCT_SEPARATOR_LIST_URL,
+        "813": PRODUCT_SEPARATOR_LIST_URL_813 or CRM_SHIPPING_813_URL,
+    }
+    if mode not in urls:
+        raise ProductSeparatorError(f"Unknown Product Separator list mode: {list_mode}")
+    return mode, urls.get(mode) or ""
+
+
+def _product_separator_list_summary_message(split_count, skipped_count, manual_review_count=0, failed_count=0):
+    parts = [
+        f"{int(split_count or 0)} order(s) need splitting",
+        f"{int(skipped_count or 0)} already okay",
+    ]
+    if manual_review_count:
+        parts.append(f"{int(manual_review_count)} require manual review")
+    if failed_count:
+        parts.append(f"{int(failed_count)} failed")
+    return "Product Separator list dry run complete. " + ", ".join(parts) + "."
+
+
+def run_product_separator_list(
+    list_url=None,
+    list_mode=None,
+    dry_run=True,
+    visible=False,
+    login_wait_seconds=0,
+    workers=4,
+    max_orders=0,
+    result_file=None,
+):
+    started = time.monotonic()
+    resolved_list_mode, configured_list_url = _product_separator_list_url_for_mode(list_mode)
+    list_url = list_url or configured_list_url
+    if not list_url:
+        _write_result(
+            False,
+            f"CRM report/list URL is required for Product Separator mode: {resolved_list_mode}.",
+            result_file=result_file,
+            action="product_separator_list",
+            list_mode=resolved_list_mode,
+        )
+        return 2
+    if not dry_run:
+        _write_result(
+            False,
+            "Live list mode is disabled. Run dry-run first, then live selected order IDs intentionally.",
+            result_file=result_file,
+            action="product_separator_list",
+            list_mode=resolved_list_mode,
+            list_url=list_url,
+        )
+        return 3
+
+    worker_profile_dir = None
+    result_dir = os.path.join(PROJECT_ROOT, "product_separator_results", "list_scan_" + time.strftime("%Y%m%d_%H%M%S"))
+    os.makedirs(result_dir, exist_ok=True)
+    max_order_count = int(max_orders or 0) if max_orders else 0
+    requested_worker_count = max(1, int(workers or 1))
+    profile_dirs = []
+    refresh_passes = 0
+    attempted_order_ids = set()
+    order_ids = []
+    order_results = []
+    split_order_ids = []
+    skipped_order_ids = []
+    manual_review_order_ids = []
+    failed_order_ids = []
+    worker_count = 0
+    try:
+        while True:
+            driver = None
+            profile = None
+            try:
+                driver, profile = _build_driver(visible=visible, profile_dir=None, kill_existing=True)
+                remaining = max_order_count - len(order_ids) if max_order_count > 0 else 0
+                pass_order_ids = _extract_report_order_ids(
+                    driver,
+                    list_url,
+                    login_wait_seconds=login_wait_seconds,
+                    exclude_order_ids=set(attempted_order_ids),
+                )
+                if remaining > 0:
+                    pass_order_ids = pass_order_ids[:remaining]
+            except Exception as err:
+                if driver is not None:
+                    safe_take_screenshot(driver, "product_separator_list_error")
+                _write_result(
+                    False,
+                    f"Product Separator list scan failed while reading report: {err}",
+                    result_file=result_file,
+                    action="product_separator_list",
+                    dry_run=True,
+                    list_mode=resolved_list_mode,
+                    list_url=list_url,
+                    error_type=type(err).__name__,
+                    duration_seconds=round(time.monotonic() - started, 2),
+                    refresh_passes=refresh_passes,
+                )
+                return 1
+            finally:
+                safe_driver_quit(driver, profile_path=profile)
+
+            if not pass_order_ids:
+                break
+
+            refresh_passes += 1
+            for order_id in pass_order_ids:
+                attempted_order_ids.add(order_id)
+                order_ids.append(order_id)
+
+            if not profile_dirs:
+                worker_count = max(1, min(requested_worker_count, len(pass_order_ids) or 1))
+                try:
+                    worker_profile_dir, profile_dirs = _prepare_worker_profiles(worker_count)
+                except Exception as err:
+                    _write_result(
+                        False,
+                        f"Product Separator list scan failed while preparing worker profiles: {err}",
+                        result_file=result_file,
+                        action="product_separator_list",
+                        dry_run=True,
+                        list_mode=resolved_list_mode,
+                        list_url=list_url,
+                        order_count=len(order_ids),
+                        order_ids=order_ids,
+                        error_type=type(err).__name__,
+                        duration_seconds=round(time.monotonic() - started, 2),
+                        refresh_passes=refresh_passes,
+                    )
+                    return 1
+
+            batch = _run_product_separator_order_id_batch(
+                pass_order_ids,
+                profile_dirs,
+                result_dir,
+                visible=visible,
+                login_wait_seconds=login_wait_seconds,
+            )
+            worker_count = max(worker_count, int(batch.get("worker_count") or 0))
+            order_results.extend(batch["order_results"])
+            split_order_ids.extend(batch["split_order_ids"])
+            skipped_order_ids.extend(batch["skipped_order_ids"])
+            manual_review_order_ids.extend(batch["manual_review_order_ids"])
+            failed_order_ids.extend(batch["failed_order_ids"])
+
+            if max_order_count > 0 and len(order_ids) >= max_order_count:
+                break
+            print(f"Finished Product Separator list refresh pass {refresh_passes}; reopening the list to look for additional orders...")
+    finally:
+        if worker_profile_dir and os.path.isdir(worker_profile_dir):
+            shutil.rmtree(worker_profile_dir, ignore_errors=True)
+
+    if not order_ids:
+        _write_result(
+            True,
+            "No orders detected",
+            result_file=result_file,
+            action="product_separator_list",
+            dry_run=True,
+            list_mode=resolved_list_mode,
+            list_url=list_url,
+            workers=0,
+            order_count=0,
+            order_ids=[],
+            split_order_ids=[],
+            skipped_order_ids=[],
+            manual_review_order_ids=[],
+            failed_order_ids=[],
+            result_dir=result_dir,
+            report=[],
+            duration_seconds=round(time.monotonic() - started, 2),
+            refresh_passes=refresh_passes,
+        )
+        return 0
 
     order_results.sort(key=lambda item: order_ids.index(item["order_id"]) if item["order_id"] in order_ids else 999999)
     success = not failed_order_ids and not manual_review_order_ids
     _write_result(
         success,
-        (
-            f"Product Separator list dry run complete. "
-            f"{len(split_order_ids)} order(s) need splitting, {len(skipped_order_ids)} already okay."
+        _product_separator_list_summary_message(
+            len(split_order_ids),
+            len(skipped_order_ids),
+            manual_review_count=len(manual_review_order_ids),
+            failed_count=len(failed_order_ids),
         ),
         result_file=result_file,
         action="product_separator_list",
@@ -1857,9 +3272,8 @@ def run_product_separator_list(
         worker_profile_dir_cleaned=True,
         report=order_results,
         duration_seconds=round(time.monotonic() - started, 2),
+        refresh_passes=refresh_passes,
     )
-    if worker_profile_dir and os.path.isdir(worker_profile_dir):
-        shutil.rmtree(worker_profile_dir, ignore_errors=True)
     return 0 if success else 4
 
 
@@ -1869,7 +3283,7 @@ def main(argv=None):
     parser.add_argument("--order-id", default="")
     parser.add_argument("--order-url", default="")
     parser.add_argument("--list-url", default="")
-    parser.add_argument("--list-mode", choices=["free", "rush", "all"], default=PRODUCT_SEPARATOR_DEFAULT_LIST_MODE)
+    parser.add_argument("--list-mode", choices=["free", "rush", "all", "813"], default=PRODUCT_SEPARATOR_DEFAULT_LIST_MODE)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--max-orders", type=int, default=0)
     parser.add_argument("--dry-run", action="store_true", default=PROCESSOR_DRY_RUN)

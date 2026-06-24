@@ -30,6 +30,7 @@ from automation_runtime import (
     build_chrome_driver,
     configure_console_utf8,
     kill_stale_chrome,
+    refresh_if_crm_challenge_attempts_exceeded,
     safe_driver_quit,
     safe_get_with_partial_load,
     safe_take_screenshot,
@@ -52,6 +53,9 @@ AUTOMATION_NAME = "crm.auto_splitter"
 SOURCE = "crm_auto_splitter.py"
 DEFAULT_MINIMUM_SPLIT_TABS = 10
 ORDER_SAVE_TIMEOUT_SECONDS = 300
+COPY_QUOTE_BASE_TIMEOUT_SECONDS = 90
+COPY_QUOTE_SECONDS_PER_DESIGN = 6
+COPY_QUOTE_MAX_TIMEOUT_SECONDS = 300
 SPLIT_TOTAL_TOLERANCE = Decimal("0.01")
 
 
@@ -70,7 +74,7 @@ def _normalize_parallel_workers(value, divisions=1):
         workers = int(value)
     except Exception:
         workers = 1
-    workers = max(1, min(4, workers))
+    workers = max(1, min(8, workers))
     try:
         divisions_count = int(divisions)
     except Exception:
@@ -188,6 +192,12 @@ def _money_text(amount):
     return f"{Decimal(amount).quantize(Decimal('0.01')):.2f}"
 
 
+def _signed_money_text(amount):
+    value = Decimal(amount).quantize(Decimal("0.01"))
+    prefix = "-" if value < 0 else ""
+    return f"{prefix}${_money_text(value.copy_abs())}"
+
+
 def _extract_order_id(order_id=None, order_url=None):
     if order_id:
         match = re.search(r"\d+", str(order_id))
@@ -246,23 +256,29 @@ def _split_ranges(total_tabs, divisions):
     return ranges
 
 
-def _allocate_shipping(total_shipping, divisions):
-    amount = Decimal(total_shipping or "0.00").quantize(Decimal("0.01"))
+def _allocate_money(amount, divisions):
+    amount = Decimal(amount or "0.00").quantize(Decimal("0.01"))
     if divisions <= 0:
         return []
-    cents = int((amount * 100).to_integral_value(rounding=ROUND_HALF_UP))
+    sign = -1 if amount < 0 else 1
+    cents = int((amount.copy_abs() * 100).to_integral_value(rounding=ROUND_HALF_UP))
     base = cents // divisions
     remainder = cents % divisions
     allocated = []
     for index in range(divisions):
-        split_cents = base + (1 if index < remainder else 0)
+        split_cents = sign * (base + (1 if index < remainder else 0))
         allocated.append((Decimal(split_cents) / Decimal(100)).quantize(Decimal("0.01")))
     return allocated
 
 
-def _build_split_plan(designs, divisions, original_order_id, shipping_amount=Decimal("0.00")):
+def _allocate_shipping(total_shipping, divisions):
+    return _allocate_money(total_shipping, divisions)
+
+
+def _build_split_plan(designs, divisions, original_order_id, shipping_amount=Decimal("0.00"), promo_amount=Decimal("0.00"), promo_code=""):
     ranges = _split_ranges(len(designs), divisions)
     shipping_allocations = _allocate_shipping(shipping_amount, divisions)
+    promo_allocations = _allocate_money(promo_amount, divisions)
     all_names = [design.get("design_name") for design in designs]
     duplicate_names = sorted({name for name in all_names if name and all_names.count(name) > 1})
     if duplicate_names:
@@ -292,6 +308,8 @@ def _build_split_plan(designs, divisions, original_order_id, shipping_amount=Dec
                 "delete_design_ids": delete_ids,
                 "sales_note": f"transferred from {original_order_id}",
                 "shipping_charge": _money_text(shipping_allocations[index] if index < len(shipping_allocations) else Decimal("0.00")),
+                "promo_credit": _money_text(promo_allocations[index] if index < len(promo_allocations) else Decimal("0.00")),
+                "promo_code": _clean_text(promo_code),
             }
         )
     return plan
@@ -454,6 +472,10 @@ def _wait_for_crm_context(driver, timeout=45):
     while time.monotonic() < deadline:
         try:
             _activate_crm_context(driver)
+            if refresh_if_crm_challenge_attempts_exceeded(driver, "Auto Splitter CRM context"):
+                last_error = "refreshed CRM challenge page"
+                continue
+            _activate_crm_context(driver)
             ready = driver.execute_script("return !!(window.angular && document.body && document.body.innerText.length);")
             if ready:
                 return True
@@ -591,6 +613,18 @@ def _wait_for_quote_scope(driver, timeout=60):
     raise SplitterError("Could not find loaded CRM quote scope.")
 
 
+def _copy_quote_timeout_seconds(expected_design_count):
+    try:
+        design_count = int(expected_design_count or 0)
+    except Exception:
+        design_count = 0
+    scaled_timeout = design_count * COPY_QUOTE_SECONDS_PER_DESIGN
+    return min(
+        COPY_QUOTE_MAX_TIMEOUT_SECONDS,
+        max(COPY_QUOTE_BASE_TIMEOUT_SECONDS, scaled_timeout),
+    )
+
+
 def _append_note(existing, note):
     existing_text = str(existing or "").strip()
     if not existing_text:
@@ -685,19 +719,30 @@ def _copy_order_to_quote(driver, original_order_id, expected_design_count):
         return true;
         """,
     )
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + _copy_quote_timeout_seconds(expected_design_count)
+    last_state = {}
     while time.monotonic() < deadline:
         time.sleep(1)
         try:
             _activate_crm_context(driver)
-            if "/quotes/" not in str(driver.current_url):
-                continue
             quote = _wait_for_quote_scope(driver, timeout=3)
+            last_state = {
+                "url": str(driver.current_url or ""),
+                "quote_id": quote.get("quote_id"),
+                "order_id": quote.get("order_id"),
+                "design_count": quote.get("design_count"),
+                "expected_design_count": expected_design_count,
+                "design_ids": quote.get("design_ids", [])[:10],
+            }
             if int(quote.get("design_count") or 0) == int(expected_design_count):
                 return quote
-        except Exception:
-            pass
-    raise SplitterError("Copy order did not open a complete copied quote.")
+        except Exception as err:
+            last_state = {
+                "url": str(driver.current_url or ""),
+                "error": str(err),
+                "expected_design_count": expected_design_count,
+            }
+    raise SplitterError(f"Copy order did not open a complete copied quote. Last copied quote state: {last_state}")
 
 
 def _configure_quote_split(driver, plan, original_state):
@@ -746,6 +791,11 @@ def _configure_quote_split(driver, plan, original_state):
         due_time,
         _money_text(plan.get("shipping_charge", "0.00")),
     )
+    result["promo_config"] = {
+        "promo_credit": _money_text(plan.get("promo_credit", "0.00")),
+        "promo_code": plan.get("promo_code", ""),
+        "apply_stage": "quote_discount_fee_before_payment",
+    }
     after_ids = [int(value) for value in result.get("after", [])]
     if sorted(after_ids) != sorted(keep_ids):
         raise SplitterError(
@@ -764,6 +814,150 @@ def _quote_design_ids(driver):
             """,
         )
     ]
+
+
+def _quote_fee_rows(driver):
+    try:
+        return _quote_scope(
+            driver,
+            """
+            const containers = [
+              q.orderFees,
+              q.fees,
+              op.orderFees,
+              op.fees
+            ].filter((rows) => Array.isArray(rows));
+            const rows = containers.find((items) => items.length) || [];
+            return rows.map((fee) => ({
+              feeId: fee.feeId || fee.id || '',
+              name: fee.name || fee.feeName || '',
+              code: fee.code || '',
+              amount: fee.amount || fee.price || fee.total || ''
+            }));
+            """,
+        )
+    except Exception:
+        return []
+
+
+def _quote_fee_already_present(driver, fee_label, amount):
+    wanted = _clean_text(fee_label).lower()
+    for fee in _quote_fee_rows(driver):
+        label = _clean_text(f"{fee.get('name', '')} {fee.get('code', '')}").lower()
+        if wanted in label and _money_amount_matches(fee.get("amount"), amount):
+            return True
+    return False
+
+
+def _add_quote_fee(driver, fee_label, amount, fallback_fee_id=None, fallback_code=None):
+    amount = Decimal(str(amount or "0")).quantize(Decimal("0.01"))
+    if amount == Decimal("0.00"):
+        return {"skipped": True, "reason": "zero_amount", "fee_label": fee_label, "amount": _money_text(amount)}
+    if _quote_fee_already_present(driver, fee_label, amount):
+        return {"skipped": True, "reason": "already_present", "fee_label": fee_label, "amount": _money_text(amount)}
+
+    if not _click_add_fee(driver, fee_label):
+        raise SplitterError(f"Could not click Add Fee for quote {fee_label}.")
+    time.sleep(0.5)
+    result = _quote_scope(
+        driver,
+        """
+        const feeLabel = arguments[0];
+        const amount = arguments[1];
+        const fallbackFeeId = arguments[2];
+        const fallbackCode = arguments[3];
+        const wanted = String(feeLabel || '').trim().toLowerCase();
+        function feeText(fee) {
+          return [
+            fee && (fee.name || fee.feeName || fee.label),
+            fee && fee.code
+          ].filter(Boolean).join(' ').replace(/\\s+/g, ' ').trim().toLowerCase();
+        }
+        function findFeeDefinition() {
+          const nodes = Array.from(document.querySelectorAll('*'));
+          for (const el of nodes) {
+            let scope = null;
+            try { scope = angular.element(el).scope && angular.element(el).scope(); } catch (err) {}
+            for (let hops = 0; scope && hops < 8; scope = scope.$parent, hops++) {
+              const controller = scope.OrderFeesController || scope.orderFeesController || null;
+              const candidates = [
+                controller && controller.availableFees,
+                scope.availableFees,
+                scope.fees,
+                scope.feeTypes
+              ];
+              for (const list of candidates) {
+                if (!Array.isArray(list)) continue;
+                const exact = list.find((fee) => feeText(fee) === wanted);
+                if (exact) return exact;
+                const partial = list.find((fee) => feeText(fee).includes(wanted));
+                if (partial) return partial;
+              }
+            }
+          }
+          return null;
+        }
+        function addContainer(owner, prop, label, containers, seen) {
+          if (!owner || !Array.isArray(owner[prop])) return;
+          const key = label + ':' + prop;
+          if (seen.has(key)) return;
+          seen.add(key);
+          containers.push({owner, prop, label});
+        }
+        function feeContainers() {
+          const containers = [];
+          const seen = new Set();
+          addContainer(q, 'orderFees', 'quote.orderFees', containers, seen);
+          addContainer(q, 'fees', 'quote.fees', containers, seen);
+          addContainer(op, 'orderFees', 'option.orderFees', containers, seen);
+          addContainer(op, 'fees', 'option.fees', containers, seen);
+          const nodes = Array.from(document.querySelectorAll('*'));
+          for (const el of nodes) {
+            let scope = null;
+            try { scope = angular.element(el).scope && angular.element(el).scope(); } catch (err) {}
+            for (let hops = 0; scope && hops < 8; scope = scope.$parent, hops++) {
+              const controller = scope.OrderFeesController || scope.orderFeesController || null;
+              addContainer(controller && controller.order, 'orderFees', 'controller.orderFees', containers, seen);
+              addContainer(controller && controller.order, 'fees', 'controller.fees', containers, seen);
+              addContainer(scope.order, 'orderFees', 'scope.orderFees', containers, seen);
+              addContainer(scope.order, 'fees', 'scope.fees', containers, seen);
+            }
+          }
+          return containers;
+        }
+        const containers = feeContainers();
+        const target = containers.find((item) => item.owner[item.prop].length);
+        if (!target) throw new Error('No quote fee row was created');
+        const fees = target.owner[target.prop];
+        const definition = findFeeDefinition() || {};
+        const fee = fees[fees.length - 1];
+        const feeId = definition.feeId || definition.id || fallbackFeeId || fee.feeId;
+        if (feeId !== undefined && feeId !== null && feeId !== '') fee.feeId = feeId;
+        fee.name = definition.name || definition.feeName || definition.label || feeLabel;
+        fee.code = definition.code || fallbackCode || String(feeLabel || '').trim().toLowerCase();
+        fee.amount = amount;
+        fee.crudAction = fee.crudAction || 'c';
+        runInAngular(s, () => {});
+        return {feeId: fee.feeId || '', name: fee.name || '', code: fee.code || '', amount: fee.amount || '', source: target.label};
+        """,
+        fee_label,
+        _signed_money_text(amount).replace("$", ""),
+        fallback_fee_id or "",
+        fallback_code or "",
+    )
+    return {"skipped": False, "fee": result, "save": "pending_save_quote"}
+
+
+def _add_discount_fee_to_split_quote(driver, promo_credit):
+    amount = Decimal(str(promo_credit or "0")).copy_abs()
+    if amount == Decimal("0.00"):
+        return {"skipped": True, "reason": "no_promo_credit", "amount": "0.00"}
+    return _add_quote_fee(
+        driver,
+        "Discount",
+        -amount,
+        fallback_code="discount",
+    )
 
 
 def _remove_quote_design_by_id(driver, design_id):
@@ -1033,6 +1227,7 @@ def _create_split_order_in_worker(
         _wait_for_order_scope(driver, order_id=original_order_id)
         _copy_order_to_quote(driver, original_order_id, expected_tab_count)
         configured = _configure_quote_split(driver, split, original_state)
+        promo_discount_fee = _add_discount_fee_to_split_quote(driver, split.get("promo_credit", "0.00"))
         saved_quote = _save_quote(driver)
         new_order_id = _record_split_payment_and_wait_for_order(
             driver,
@@ -1054,6 +1249,9 @@ def _create_split_order_in_worker(
             "kept_design_ids": split["keep_design_ids"],
             "deleted_design_ids": split["delete_design_ids"],
             "shipping_charge": split["shipping_charge"],
+            "promo_credit": split.get("promo_credit", "0.00"),
+            "promo_code": split.get("promo_code", ""),
+            "promo_discount_fee": promo_discount_fee,
             "quote_save": saved_quote,
             "configure_result": configured,
             "totals": totals,
@@ -1096,6 +1294,14 @@ def _status_history_confirms_cancel_order(body_text):
 
 def _money_amount_matches(value, expected):
     return _parse_money(value).copy_abs() == Decimal(str(expected or "0")).copy_abs().quantize(Decimal("0.01"))
+
+
+def _split_total_mismatch_message(original_grand_total, split_total, split_total_delta):
+    return (
+        "Total does not match: "
+        f"old/original ${_money_text(original_grand_total)} vs new/split ${_money_text(split_total)} "
+        f"(difference {_signed_money_text(split_total_delta)})."
+    )
 
 
 def _original_refund_fee_already_present(driver, refund_amount):
@@ -1143,6 +1349,139 @@ def _existing_original_refund_fee_amount(driver):
     return sum(refund_amounts, Decimal("0.00")).quantize(Decimal("0.01"))
 
 
+def _order_fee_rows(driver):
+    try:
+        return _order_scope(
+            driver,
+            """
+            const rows = r.orderFees || r.fees || [];
+            return rows.map((fee) => ({
+              feeId: fee.feeId || fee.id || '',
+              name: fee.name || fee.feeName || '',
+              code: fee.code || '',
+              amount: fee.amount || fee.price || fee.total || ''
+            }));
+            """,
+        )
+    except Exception:
+        return []
+
+
+def _order_fee_already_present(driver, fee_label, amount):
+    wanted = _clean_text(fee_label).lower()
+    for fee in _order_fee_rows(driver):
+        label = _clean_text(f"{fee.get('name', '')} {fee.get('code', '')}").lower()
+        if wanted in label and _money_amount_matches(fee.get("amount"), amount):
+            return True
+    return False
+
+
+def _click_add_fee(driver, target_label):
+    clicked = _click_ng_button(driver, "OrderFeesController.order.addFee(null, OrderFeesController.availableFees[0])", "add fee")
+    if clicked:
+        return True
+    return bool(
+        driver.execute_script(
+            """
+            const forbidden = /\\b(refund|issue\\s+refund|refund\\s+payment)\\b/i;
+            const button = Array.from(document.querySelectorAll('button,a')).find((el) => {
+              const text = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+              if (forbidden.test(text)) throw new Error('Refusing to click refund control: ' + text);
+              return text.toLowerCase() === 'add fee';
+            });
+            if (!button) return false;
+            button.click();
+            return true;
+            """
+        )
+    )
+
+
+def _add_order_fee(driver, fee_label, amount, fallback_fee_id=None, fallback_code=None):
+    amount = Decimal(str(amount or "0")).quantize(Decimal("0.01"))
+    if amount == Decimal("0.00"):
+        return {"skipped": True, "reason": "zero_amount", "fee_label": fee_label, "amount": _money_text(amount)}
+    if _order_fee_already_present(driver, fee_label, amount):
+        return {"skipped": True, "reason": "already_present", "fee_label": fee_label, "amount": _money_text(amount)}
+
+    _order_scope(driver, "runInAngular(s, () => s.editModeOn()); return true;")
+    time.sleep(0.5)
+    if not _click_add_fee(driver, fee_label):
+        raise SplitterError(f"Could not click Add Fee for {fee_label}.")
+    time.sleep(0.5)
+    result = _order_scope(
+        driver,
+        """
+        const feeLabel = arguments[0];
+        const amount = arguments[1];
+        const fallbackFeeId = arguments[2];
+        const fallbackCode = arguments[3];
+        const wanted = String(feeLabel || '').trim().toLowerCase();
+        function feeText(fee) {
+          return [
+            fee && (fee.name || fee.feeName || fee.label),
+            fee && fee.code
+          ].filter(Boolean).join(' ').replace(/\\s+/g, ' ').trim().toLowerCase();
+        }
+        function findFeeDefinition() {
+          const nodes = Array.from(document.querySelectorAll('*'));
+          for (const el of nodes) {
+            let scope = null;
+            try { scope = angular.element(el).scope && angular.element(el).scope(); } catch (err) {}
+            for (let hops = 0; scope && hops < 8; scope = scope.$parent, hops++) {
+              const controller = scope.OrderFeesController || scope.orderFeesController || null;
+              const candidates = [
+                controller && controller.availableFees,
+                scope.availableFees,
+                scope.fees,
+                scope.feeTypes
+              ];
+              for (const list of candidates) {
+                if (!Array.isArray(list)) continue;
+                const exact = list.find((fee) => feeText(fee) === wanted);
+                if (exact) return exact;
+                const partial = list.find((fee) => feeText(fee).includes(wanted));
+                if (partial) return partial;
+              }
+            }
+          }
+          return null;
+        }
+        const fees = r.orderFees || r.fees || [];
+        if (!fees.length) throw new Error('No fee row was created');
+        const definition = findFeeDefinition() || {};
+        const fee = fees[fees.length - 1];
+        const feeId = definition.feeId || definition.id || fallbackFeeId || fee.feeId;
+        if (feeId !== undefined && feeId !== null && feeId !== '') fee.feeId = feeId;
+        fee.name = definition.name || definition.feeName || definition.label || feeLabel;
+        fee.code = definition.code || fallbackCode || String(feeLabel || '').trim().toLowerCase();
+        fee.amount = amount;
+        fee.crudAction = fee.crudAction || 'c';
+        r.orderFees = fees;
+        runInAngular(s, () => {});
+        return {feeId: fee.feeId || '', name: fee.name || '', code: fee.code || '', amount: fee.amount || ''};
+        """,
+        fee_label,
+        _signed_money_text(amount).replace("$", ""),
+        fallback_fee_id or "",
+        fallback_code or "",
+    )
+    save_result = _save_order_and_wait(driver)
+    return {"skipped": False, "fee": result, "save": save_result}
+
+
+def _add_discount_fee_to_split_order(driver, promo_credit):
+    amount = Decimal(str(promo_credit or "0")).copy_abs()
+    if amount == Decimal("0.00"):
+        return {"skipped": True, "reason": "no_promo_credit", "amount": "0.00"}
+    return _add_order_fee(
+        driver,
+        "Discount",
+        -amount,
+        fallback_code="discount",
+    )
+
+
 def _design_name_set(designs):
     return {
         _clean_text(design.get("design_name")).lower()
@@ -1159,7 +1498,6 @@ def _inspect_existing_split_order(driver, split_order_id, plan, used_split_index
     order_url = _order_url(order_id=split_order_id)
     _open_order_scope_with_reload(driver, order_url, order_id=split_order_id, label=f"existing split order {split_order_id}")
     scan = _scan_original_order(driver)
-    totals = _read_order_totals(driver)
     existing_names = _design_name_set(scan.get("designs", []))
     matches = []
     for split in plan:
@@ -1177,6 +1515,8 @@ def _inspect_existing_split_order(driver, split_order_id, plan, used_split_index
     if len(matches) > 1:
         raise SplitterError(f"Existing split order {split_order_id} matched multiple split plans. Stopping before creating more split orders.")
     split = matches[0]
+    promo_discount_fee = _add_discount_fee_to_split_order(driver, split.get("promo_credit", "0.00"))
+    totals = _read_order_totals(driver)
     return {
         "split_index": split["split_index"],
         "order_id": split_order_id,
@@ -1185,6 +1525,9 @@ def _inspect_existing_split_order(driver, split_order_id, plan, used_split_index
         "kept_design_ids": split["keep_design_ids"],
         "deleted_design_ids": split["delete_design_ids"],
         "shipping_charge": split["shipping_charge"],
+        "promo_credit": split.get("promo_credit", "0.00"),
+        "promo_code": split.get("promo_code", ""),
+        "promo_discount_fee": promo_discount_fee,
         "quote_save": None,
         "configure_result": {"existing_order_id": split_order_id, "matched_by": "design_names"},
         "totals": totals,
@@ -1503,6 +1846,17 @@ def _extract_order_totals_from_text(body_text):
     if payment_match:
         payment_type = _clean_text(payment_match.group(1))
 
+    promo_amount = ""
+    promo_code = ""
+    promo_match = re.search(
+        r"Promo(?:\(s\)|s)?\s*:?\s*(?:\$)?(-?[0-9,]+\.\d{2}|Free)(?:\s*\[([^\]]+)\])?",
+        body_text,
+        re.IGNORECASE,
+    )
+    if promo_match:
+        promo_amount = _money_text(_parse_money(promo_match.group(1)))
+        promo_code = _clean_text(promo_match.group(2))
+
     return {
         "subtotal": find_money("Subtotals"),
         "subtotal_before_tax": find_money("Subtotal before Tax"),
@@ -1511,6 +1865,8 @@ def _extract_order_totals_from_text(body_text):
         "paid": find_money("Paid"),
         "balance_due": find_money("Balance Due"),
         "shipping": find_money("Shipping"),
+        "promo": promo_amount,
+        "promo_code": promo_code,
         "due_date": due_date,
         "due_time": due_time,
         "payment_type": payment_type,
@@ -1683,6 +2039,60 @@ def run_process_order(order_id=None, dry_run=True, visible=False, result_file=No
         safe_driver_quit(driver, profile_path=_profile_path())
 
 
+PROCESS_BATCH_REPORT_ORDER_IDS_JS = r"""
+const ids = new Set();
+function clean(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+function visible(el) {
+  if (!el) return false;
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  const style = window.getComputedStyle ? window.getComputedStyle(el) : {};
+  return style.display !== 'none' && style.visibility !== 'hidden';
+}
+function addFromText(text) {
+  for (const match of clean(text).matchAll(/\b\d{7}\b/g)) ids.add(match[0]);
+}
+for (const link of Array.from(document.querySelectorAll('a')).filter(visible)) {
+  addFromText(link.innerText || link.textContent || '');
+  const href = String(link.getAttribute('href') || '');
+  const match = href.match(/\/order\/(\d{7})\b/);
+  if (match) ids.add(match[1]);
+}
+for (const row of Array.from(document.querySelectorAll('tr')).filter(visible)) {
+  addFromText(row.innerText || row.textContent || '');
+}
+return Array.from(ids);
+"""
+
+
+def _extract_process_batch_order_ids(driver, list_url, exclude_order_ids=None):
+    target = (list_url or PROCESSOR_LIST_URL or PROCESSOR_LOGIN_URL or "").strip()
+    if not target:
+        raise SplitterError("Auto Splitter batch list URL is empty.")
+    safe_get_with_partial_load(driver, target, "auto splitter batch list")
+    _handle_login_if_needed(driver, target)
+    excluded = {str(order_id).strip() for order_id in (exclude_order_ids or []) if str(order_id).strip()}
+    deadline = time.monotonic() + max(45, PROCESSOR_PAGE_LOAD_TIMEOUT)
+    order_ids = []
+    while time.monotonic() < deadline:
+        try:
+            order_ids = driver.execute_script(PROCESS_BATCH_REPORT_ORDER_IDS_JS) or []
+        except Exception:
+            order_ids = []
+        cleaned = []
+        seen = set()
+        for raw in order_ids:
+            order_id = str(raw or "").strip()
+            if not re.fullmatch(r"\d{7}", order_id) or order_id in excluded or order_id in seen:
+                continue
+            seen.add(order_id)
+            cleaned.append(order_id)
+        if cleaned:
+            return cleaned
+        time.sleep(1)
+    return []
+
+
 def run_process_batch(list_url=None, dry_run=True, visible=False, result_file=None):
     started = time.monotonic()
     if not dry_run:
@@ -1704,19 +2114,39 @@ def run_process_batch(list_url=None, dry_run=True, visible=False, result_file=No
             open_browser=True,
         )
 
-        # TODO: Read eligible rows from the list page and build order_ids.
         order_ids = []
+        report = []
+        attempted_order_ids = set()
+        refresh_passes = 0
+        while True:
+            pass_order_ids = _extract_process_batch_order_ids(driver, target, exclude_order_ids=set(attempted_order_ids))
+            if not pass_order_ids:
+                break
+            refresh_passes += 1
+            for order_id in pass_order_ids:
+                attempted_order_ids.add(order_id)
+                order_ids.append(order_id)
+                report.append(
+                    {
+                        "order_id": str(order_id),
+                        "outcome": "dry_run_template",
+                        "message": "Template reached batch dry-run mode. Add page inspection logic here.",
+                    }
+                )
+            print(f"Finished Auto Splitter batch refresh pass {refresh_passes}; reopening the list to look for additional orders...")
+
         _write_result(
             True,
-            "Batch dry run complete. Template did not process any orders yet.",
+            f"Batch dry run complete. Found {len(order_ids)} order(s) across {max(1, refresh_passes)} list refresh pass(es).",
             result_file=result_file,
             action="process_batch",
             dry_run=True,
             order_count=len(order_ids),
             order_ids=order_ids,
-            report=[],
+            report=report,
             browser_target=target,
             duration_seconds=round(time.monotonic() - started, 2),
+            refresh_passes=refresh_passes,
         )
         return 0
     except Exception as err:
@@ -1810,11 +2240,15 @@ def run_split_order(
 
         scan = _scan_original_order(driver, expected_tab_count=expected_tab_count)
         shipping_amount = _parse_money(scan.get("totals", {}).get("shipping"))
+        promo_amount = _parse_money(scan.get("totals", {}).get("promo")).copy_abs()
+        promo_code = scan.get("totals", {}).get("promo_code", "")
         plan = _build_split_plan(
             scan["designs"],
             divisions,
             resolved_order_id or "UNKNOWN",
             shipping_amount=shipping_amount,
+            promo_amount=promo_amount,
+            promo_code=promo_code,
         )
         original_note_after_split = f"transferred to {_format_order_list(['<split order #>' for _ in range(divisions)])}"
         payment_type = scan.get("totals", {}).get("payment_type", "")
@@ -1829,6 +2263,8 @@ def run_split_order(
             "designs": scan["designs"],
             "totals": scan["totals"],
             "split_plan": plan,
+            "promo_allocation_total": _money_text(promo_amount),
+            "promo_code": _clean_text(promo_code),
             "payment_transfer": {
                 "original_payment_type": payment_type,
                 "split_transaction_tag": _transaction_tag_for_payment_type(payment_type),
@@ -1911,17 +2347,36 @@ def run_split_order(
                 with ThreadPoolExecutor(max_workers=worker_count) as executor:
                     for profile_for_split in worker_profiles[:worker_count]:
                         _submit_next(executor, profile_for_split)
+                    worker_errors = []
                     while futures:
                         future = next(as_completed(list(futures)))
                         profile_for_split = futures.pop(future)
-                        split_order = future.result()
+                        try:
+                            split_order = future.result()
+                        except Exception as err:
+                            worker_errors.append(
+                                {
+                                    "profile": profile_for_split,
+                                    "error_type": type(err).__name__,
+                                    "message": str(err),
+                                }
+                            )
+                            report["parallel_worker_errors"] = worker_errors
+                            continue
                         split_total += Decimal(split_order["totals"]["grand_total"])
                         split_orders.append(split_order)
                         report["split_orders"] = sorted(split_orders, key=lambda item: int(item.get("split_index") or 0))
                         report["completed_split_count"] = len(split_orders)
                         report["remaining_split_count"] = max(len(plan) - len(split_orders), 0)
                         report["split_total_so_far"] = _money_text(split_total)
-                        _submit_next(executor, profile_for_split)
+                        if not worker_errors:
+                            _submit_next(executor, profile_for_split)
+                    if worker_errors:
+                        first_error = worker_errors[0]
+                        raise SplitterError(
+                            f"Parallel split worker failed after {len(split_orders)}/{len(plan)} split order(s) were recorded. "
+                            f"{first_error.get('error_type')}: {first_error.get('message')}"
+                        )
                 split_orders.sort(key=lambda item: int(item.get("split_index") or 0))
             else:
                 for split in pending_splits:
@@ -1933,6 +2388,7 @@ def run_split_order(
                     )
                     _copy_order_to_quote(driver, resolved_order_id, expected_tab_count)
                     configured = _configure_quote_split(driver, split, original_state)
+                    promo_discount_fee = _add_discount_fee_to_split_quote(driver, split.get("promo_credit", "0.00"))
                     saved_quote = _save_quote(driver)
                     new_order_id = _record_split_payment_and_wait_for_order(
                         driver,
@@ -1956,6 +2412,9 @@ def run_split_order(
                             "kept_design_ids": split["keep_design_ids"],
                             "deleted_design_ids": split["delete_design_ids"],
                             "shipping_charge": split["shipping_charge"],
+                            "promo_credit": split.get("promo_credit", "0.00"),
+                            "promo_code": split.get("promo_code", ""),
+                            "promo_discount_fee": promo_discount_fee,
                             "quote_save": saved_quote,
                             "configure_result": configured,
                             "totals": totals,
@@ -1969,11 +2428,20 @@ def run_split_order(
             if original_grand_total == Decimal("0.00") and resume_existing_order_ids and split_total > Decimal("0.00"):
                 original_grand_total = split_total.quantize(Decimal("0.01"))
             split_total_delta = (split_total - original_grand_total).quantize(Decimal("0.01"))
+            split_total_mismatch_warning = ""
             if split_total_delta.copy_abs() > SPLIT_TOTAL_TOLERANCE:
-                raise SplitterError(
-                    f"Split order totals do not match original. Split total {_money_text(split_total)} vs original {_money_text(original_grand_total)}."
+                split_total_mismatch_warning = _split_total_mismatch_message(
+                    original_grand_total,
+                    split_total,
+                    split_total_delta,
                 )
-            if split_total_delta:
+                report["split_total_mismatch"] = {
+                    "old_original_total": _money_text(original_grand_total),
+                    "new_split_total": _money_text(split_total),
+                    "difference": _money_text(split_total_delta),
+                    "message": split_total_mismatch_warning,
+                }
+            elif split_total_delta:
                 report["split_total_rounding_delta"] = _money_text(split_total_delta)
 
             transfer_note = f"transferred to {_format_order_list([item['order_id'] for item in split_orders])}"
@@ -2016,6 +2484,7 @@ def run_split_order(
                     "split_orders": split_orders,
                     "split_total": _money_text(split_total),
                     "original_grand_total": _money_text(original_grand_total),
+                    "split_total_delta": _money_text(split_total_delta),
                     "completed_split_count": len(split_orders),
                     "remaining_split_count": 0,
                     "parallel_workers": parallel_workers,
@@ -2030,18 +2499,27 @@ def run_split_order(
                     },
                 }
             )
+            completion_message = (
+                f"Auto-split complete for order {resolved_order_id}. "
+                f"New split orders: {_format_order_list([item['order_id'] for item in split_orders])}."
+            )
+            if split_total_mismatch_warning:
+                report["total_mismatch_warning"] = split_total_mismatch_warning
+                completion_message = f"{completion_message} {split_total_mismatch_warning}"
             _write_result(
                 True,
-                f"Auto-split complete for order {resolved_order_id}. New split orders: {_format_order_list([item['order_id'] for item in split_orders])}.",
+                completion_message,
                 result_file=result_file,
                 action="split_order",
                 dry_run=False,
+                status="completed",
                 target_order_id=resolved_order_id,
                 order_url=target_url,
                 detected_tab_count=scan["detected_tab_count"],
                 expected_tab_count=expected_tab_count,
                 divisions=divisions,
                 new_order_ids=[item["order_id"] for item in split_orders],
+                total_mismatch_warning=split_total_mismatch_warning,
                 report=report,
                 duration_seconds=round(time.monotonic() - started, 2),
             )
