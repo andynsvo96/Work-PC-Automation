@@ -9,6 +9,8 @@ import os
 import threading
 from datetime import datetime
 
+from runtime_paths import state_file
+
 DAY_NAMES = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
 VALID_ACTIONS = {"in", "out"}
 STATE_FILENAME = "slack_message_rotation_state.json"
@@ -26,7 +28,7 @@ def _default_state():
 
 
 def _default_state_path():
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), STATE_FILENAME)
+    return state_file(STATE_FILENAME)
 
 
 def _normalize_entry(raw):

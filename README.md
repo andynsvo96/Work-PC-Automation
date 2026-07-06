@@ -2,7 +2,7 @@
 
 Local Windows automation dashboard for coordinating work-day routines, CRM order workflows, Slack status updates, Paycom time tracking, desktop power timers, and optional system metrics from one private control panel.
 
-The app runs as a local Flask server with a browser control panel and a tray icon. Worker scripts handle the actual browser automation through Selenium, while the server coordinates scheduling, locks, retries, state updates, and audit logging.
+The app runs as a local Flask server with a browser control panel and a tray icon. Worker scripts handle the browser automation through Selenium, while the server coordinates scheduling, locks, retries, runtime state, result history, stage timing, and audit logging.
 
 ## What It Does
 
@@ -11,9 +11,11 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - Calculates auto clock-out timing against a configurable weekly hour cap.
 - Sends Slack start/end/lunch/custom status messages.
 - Rotates day-specific Slack messages.
-- Runs CRM automation workers for address validation, stock unlocks, rush goods ordering, and auto-splitting.
+- Runs CRM automation workers for address validation, stock unlocks, rush goods ordering, auto-splitting, shipping bypasses, push-back handling, and queue-driven issue processing.
+- Scans supported queue rows for cancellation, reachout, auto-split, and manual stock-order workflows.
 - Provides a local web UI and HTTP API for manual controls and external triggers.
 - Records automation results in a shared audit log.
+- Keeps local state, result JSON, screenshots, logs, debug output, and cloned browser profiles under ignored runtime folders.
 - Supports hidden startup through a Windows Script Host launcher.
 
 ## Project Layout
@@ -23,6 +25,7 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - `workers/` - Selenium worker scripts for Paycom, Slack, and CRM workflows.
 - `routes/` - grouped Flask route modules.
 - `automation_runtime.py` - shared Selenium/runtime helpers.
+- `runtime_paths.py` - centralized paths for ignored local runtime artifacts.
 - `automation_audit.py` - audit log helpers.
 - `slack_message_rotation.py` - alternating Slack message state logic.
 - `config.example.py` - safe template for local runtime settings.
@@ -66,16 +69,14 @@ For hidden startup on Windows, use `start_server_hidden.vbs`.
 The following are created or maintained locally and are ignored by Git:
 
 - `config.py`
-- `work_hours.json`
-- `crm_state.json`
-- `crm_processing_state.json`
-- `crm_address_validator_state.json`
-- `slack_message_rotation_state.json`
-- `last_result.json`
-- `automation_record_log.txt`
-- `server.log`
+- `runtime/state/` for active JSON state and templates
+- `runtime/results/` for latest and historical result JSON
+- `runtime/screenshots/` for browser screenshots
+- `runtime/logs/` for `server.log` and `automation_record_log.txt`
+- `runtime/generated_profiles/` for temporary cloned browser profiles
+- `runtime/debug/` for old backups, exports, temp files, and test artifacts
 - browser profile folders such as `chrome_profile_crm/`
-- screenshots, exports, backups, driver downloads, and cache folders
+- driver downloads and cache folders
 
 Keeping these files local prevents credentials, login sessions, audit history, and generated artifacts from being published.
 

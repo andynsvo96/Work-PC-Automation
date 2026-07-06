@@ -6,8 +6,10 @@ import os
 import threading
 from datetime import datetime
 
+from runtime_paths import log_file
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-AUDIT_LOG_FILE = os.path.join(SCRIPT_DIR, "automation_record_log.txt")
+AUDIT_LOG_FILE = log_file("automation_record_log.txt")
 _AUDIT_LOCK = threading.Lock()
 
 

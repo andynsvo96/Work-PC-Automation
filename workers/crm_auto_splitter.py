@@ -36,6 +36,8 @@ from automation_runtime import (
     safe_take_screenshot,
     write_result_payload,
 )
+from runtime_paths import GENERATED_PROFILES_DIR
+import config as _config
 from config import (
     PROCESSOR_ACTION_TIMEOUT,
     PROCESSOR_DRY_RUN,
@@ -46,12 +48,15 @@ from config import (
     PROCESSOR_PAGE_LOAD_TIMEOUT,
     PROCESSOR_PROFILE_DIR,
 )
+import crm_product_separator as _product_separator
+from slack_team import run as _run_slack_team
 
 configure_console_utf8()
 
 AUTOMATION_NAME = "crm.auto_splitter"
 SOURCE = "crm_auto_splitter.py"
 DEFAULT_MINIMUM_SPLIT_TABS = 10
+DEFAULT_MAX_TABS_PER_SPLIT = DEFAULT_MINIMUM_SPLIT_TABS
 ORDER_SAVE_TIMEOUT_SECONDS = 300
 COPY_QUOTE_BASE_TIMEOUT_SECONDS = 90
 COPY_QUOTE_SECONDS_PER_DESIGN = 6
@@ -83,7 +88,7 @@ def _normalize_parallel_workers(value, divisions=1):
 
 
 def _parallel_profile_root():
-    return os.path.join(PROJECT_ROOT, "chrome_profile_crm_auto_splitter_workers")
+    return os.path.join(GENERATED_PROFILES_DIR, "chrome_profile_crm_auto_splitter_workers")
 
 
 def _parallel_profile_path(run_id, worker_index):
@@ -235,6 +240,191 @@ def _format_order_list(order_numbers):
     return f"{', '.join(values[:-1])}, and {values[-1]}"
 
 
+def _normalize_design_name(value):
+    return _clean_text(value).lower()
+
+
+def _subcontractor_from_page_text(text):
+    body = _clean_text(text)
+    match = re.search(
+        r"\bSubcontractor:\s*(.+?)(?:\s+Preferred File Types\b|\s+Preferred Carriers\b|\s+Since\b|$)",
+        body,
+        flags=re.IGNORECASE,
+    )
+    return _clean_text(match.group(1) if match else "")
+
+
+def _stock_state_is_ordered(stock_state):
+    return bool(_product_separator._stock_state_is_ordered(stock_state))
+
+
+def _stock_row_is_local_inventory(row):
+    return bool(_product_separator._is_local_inventory_vendor((row or {}).get("vendor")))
+
+
+def _stock_row_is_cancelled_channel_vendor(row):
+    vendor = _clean_text((row or {}).get("vendor")).lower()
+    vendor = re.sub(r"\bs\s*&\s*s\b", "s and s", vendor)
+    vendor = re.sub(r"\s+", " ", vendor)
+    return bool("sanmar" in vendor or "s and s activewear" in vendor or "ss activewear" in vendor)
+
+
+def _stock_rows_from_state(stock_state):
+    stock_state = stock_state or {}
+    rows = stock_state.get("manual_order_rows") or []
+    if not rows and (_clean_text(stock_state.get("manual_order_vendor")) or _clean_text(stock_state.get("manual_order_po"))):
+        rows = [stock_state]
+    normalized_rows = []
+    seen = set()
+    for row in rows:
+        vendor = _clean_text((row or {}).get("vendor"))
+        po = _clean_text((row or {}).get("po"))
+        if not vendor or not po:
+            continue
+        normalized = {
+            "vendor": _product_separator._manual_order_vendor_label(vendor),
+            "po": po,
+            "vendor_order_number": _clean_text((row or {}).get("vendor_order_number")),
+        }
+        key = (normalized["vendor"].lower(), normalized["po"].lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized_rows.append(normalized)
+    return normalized_rows
+
+
+def _stock_transfer_records_for_design(design):
+    stock_state = design.get("stock") or {}
+    if not _stock_state_is_ordered(stock_state):
+        return []
+    records = []
+    for row in _stock_rows_from_state(stock_state):
+        records.append(
+            {
+                "source_tab_number": design.get("tab_number"),
+                "source_design_id": _clean_text(design.get("design_id")),
+                "source_design_name": _clean_text(design.get("design_name")),
+                "source_quantity": design.get("quantity"),
+                "source_subtotal": _clean_text(design.get("subtotal")),
+                "vendor": row.get("vendor"),
+                "po": row.get("po"),
+                "vendor_order_number": row.get("vendor_order_number", ""),
+                "local_inventory": _stock_row_is_local_inventory(row),
+                "cancelled_channel_vendor": _stock_row_is_cancelled_channel_vendor(row),
+            }
+        )
+    return records
+
+
+def _summarize_original_stock(designs, order_stock_status=None):
+    ordered_tabs = []
+    transfer_records = []
+    local_inventory_rows = []
+    cancelled_channel_rows = []
+    outside_stock_rows = []
+    unknown_ordered_tabs = []
+    for design in designs or []:
+        stock_state = design.get("stock") or {}
+        if not _stock_state_is_ordered(stock_state):
+            continue
+        ordered_tabs.append(
+            {
+                "tab_number": design.get("tab_number"),
+                "design_id": _clean_text(design.get("design_id")),
+                "design_name": _clean_text(design.get("design_name")),
+                "state": stock_state.get("state"),
+            }
+        )
+        rows = _stock_transfer_records_for_design(design)
+        if not rows:
+            unknown_ordered_tabs.append(
+                {
+                    "tab_number": design.get("tab_number"),
+                    "design_id": _clean_text(design.get("design_id")),
+                    "design_name": _clean_text(design.get("design_name")),
+                    "state": stock_state.get("state"),
+                }
+            )
+            continue
+        for row in rows:
+            transfer_records.append(row)
+            if row.get("local_inventory"):
+                local_inventory_rows.append(row)
+            else:
+                outside_stock_rows.append(row)
+                if row.get("cancelled_channel_vendor"):
+                    cancelled_channel_rows.append(row)
+    order_stock_status = order_stock_status if isinstance(order_stock_status, dict) else {}
+    if order_stock_status.get("stock_status_ordered") and not ordered_tabs:
+        unknown_ordered_tabs.append(
+            {
+                "tab_number": None,
+                "design_id": "",
+                "design_name": "",
+                "state": order_stock_status.get("state") or "order_stock_status_ordered",
+            }
+        )
+    stock_ordered = bool(ordered_tabs or order_stock_status.get("stock_status_ordered"))
+    return {
+        "stock_ordered": stock_ordered,
+        "ordered_tabs": ordered_tabs,
+        "transfer_records": transfer_records,
+        "local_inventory_rows": local_inventory_rows,
+        "outside_stock_rows": outside_stock_rows,
+        "cancelled_channel_rows": cancelled_channel_rows,
+        "unknown_ordered_tabs": unknown_ordered_tabs,
+        "local_inventory_only": bool(stock_ordered and local_inventory_rows and not outside_stock_rows and not unknown_ordered_tabs),
+        "order_stock_status": order_stock_status,
+    }
+
+
+def _planned_stock_routing(stock_summary, subcontractor):
+    stock_summary = stock_summary or {}
+    subcontractor = _clean_text(subcontractor)
+    is_subcontractor = bool(subcontractor)
+    is_mach6 = "mach 6" in subcontractor.lower()
+    if not stock_summary.get("stock_ordered"):
+        return {"action": "none", "reason": "no_stock_ordered", "subcontractor": subcontractor}
+    if stock_summary.get("unknown_ordered_tabs"):
+        return {
+            "action": "manual_review",
+            "reason": "stock_ordered_vendor_po_unknown",
+            "subcontractor": subcontractor,
+        }
+    if not is_subcontractor:
+        return {"action": "copy_to_split_orders", "subcontractor": subcontractor}
+    if is_mach6:
+        if stock_summary.get("cancelled_channel_rows"):
+            return {
+                "action": "slack_mach6_cancelled",
+                "subcontractor": subcontractor,
+                "message": "<original order URL> cancelled",
+            }
+        if stock_summary.get("outside_stock_rows") or stock_summary.get("unknown_ordered_tabs"):
+            return {
+                "action": "manual_review",
+                "reason": "mach6_stock_vendor_not_supported_for_auto_slack",
+                "subcontractor": subcontractor,
+            }
+        return {
+            "action": "complete_local_inventory",
+            "reason": "mach6_local_inventory_only",
+            "subcontractor": subcontractor,
+        }
+    if stock_summary.get("outside_stock_rows") or stock_summary.get("unknown_ordered_tabs"):
+        return {
+            "action": "manual_review",
+            "reason": "unsupported_subcontractor_stock_routing",
+            "subcontractor": subcontractor,
+        }
+    return {
+        "action": "complete_local_inventory",
+        "reason": "subcontractor_local_inventory_only",
+        "subcontractor": subcontractor,
+    }
+
+
 def _split_ranges(total_tabs, divisions):
     if total_tabs <= 0:
         raise SplitterError("Tab count must be greater than zero.")
@@ -254,6 +444,33 @@ def _split_ranges(total_tabs, divisions):
         ranges.append({"split_index": index + 1, "start_tab": start, "end_tab": end, "tab_count": size})
         cursor = end + 1
     return ranges
+
+
+def _auto_divisions_for_tab_count(total_tabs, max_tabs_per_split=DEFAULT_MAX_TABS_PER_SPLIT):
+    try:
+        total_tabs = int(total_tabs)
+        max_tabs_per_split = int(max_tabs_per_split)
+    except Exception as err:
+        raise SplitterError(f"Tab count and max tabs per split must be numeric: {err}")
+    if total_tabs <= 0:
+        raise SplitterError("Tab count must be greater than zero.")
+    if max_tabs_per_split <= 0:
+        raise SplitterError("Max tabs per split must be greater than zero.")
+    if total_tabs <= max_tabs_per_split:
+        raise SplitterError(
+            f"Order has {total_tabs} tab(s). Auto Splitter only splits orders with more than {max_tabs_per_split} tabs."
+        )
+    return (total_tabs + max_tabs_per_split - 1) // max_tabs_per_split
+
+
+def _validate_split_ranges_within_limit(ranges, max_tabs_per_split=DEFAULT_MAX_TABS_PER_SPLIT):
+    for split_range in ranges or []:
+        if int(split_range.get("tab_count") or 0) > int(max_tabs_per_split):
+            raise SplitterError(
+                f"Split {split_range.get('split_index')} would contain {split_range.get('tab_count')} tabs. "
+                f"Warehouse limit is {max_tabs_per_split} tabs per split order."
+            )
+    return True
 
 
 def _allocate_money(amount, divisions):
@@ -299,6 +516,9 @@ def _build_split_plan(designs, divisions, original_order_id, shipping_amount=Dec
             for design in designs
             if design.get("design_name") not in keep_names and str(design.get("design_id") or "").isdigit()
         ]
+        stock_transfer_records = []
+        for design in keep:
+            stock_transfer_records.extend(_stock_transfer_records_for_design(design))
         plan.append(
             {
                 **split_range,
@@ -310,6 +530,7 @@ def _build_split_plan(designs, divisions, original_order_id, shipping_amount=Dec
                 "shipping_charge": _money_text(shipping_allocations[index] if index < len(shipping_allocations) else Decimal("0.00")),
                 "promo_credit": _money_text(promo_allocations[index] if index < len(promo_allocations) else Decimal("0.00")),
                 "promo_code": _clean_text(promo_code),
+                "stock_transfer_records": stock_transfer_records,
             }
         )
     return plan
@@ -625,6 +846,36 @@ def _copy_quote_timeout_seconds(expected_design_count):
     )
 
 
+def _clear_copied_quote_art_notes(driver):
+    return _quote_scope(
+        driver,
+        """
+        const before = {
+          artNotes: q.artNotes || '',
+          addArtNotes: q.addArtNotes || '',
+          artNoteOptions: q.artNoteOptions || ''
+        };
+        runInAngular(s, () => {
+          q.artNotes = '';
+          q.addArtNotes = '';
+        });
+        const root = document.querySelector('#quote-notes-art-notes') || document;
+        const fields = Array.from(root.querySelectorAll('textarea[ng-model="quote.addArtNotes"]'));
+        for (const field of fields) {
+          field.value = '';
+          field.dispatchEvent(new Event('input', {bubbles: true}));
+          field.dispatchEvent(new Event('change', {bubbles: true}));
+        }
+        return {
+          before,
+          artNotes: q.artNotes || '',
+          addArtNotes: q.addArtNotes || '',
+          artNoteOptions: q.artNoteOptions || ''
+        };
+        """,
+    )
+
+
 def _append_note(existing, note):
     existing_text = str(existing or "").strip()
     if not existing_text:
@@ -735,6 +986,7 @@ def _copy_order_to_quote(driver, original_order_id, expected_design_count):
                 "design_ids": quote.get("design_ids", [])[:10],
             }
             if int(quote.get("design_count") or 0) == int(expected_design_count):
+                quote["art_notes_clear"] = _clear_copied_quote_art_notes(driver)
                 return quote
         except Exception as err:
             last_state = {
@@ -1251,6 +1503,7 @@ def _create_split_order_in_worker(
             "shipping_charge": split["shipping_charge"],
             "promo_credit": split.get("promo_credit", "0.00"),
             "promo_code": split.get("promo_code", ""),
+            "stock_transfer_records": split.get("stock_transfer_records", []),
             "promo_discount_fee": promo_discount_fee,
             "quote_save": saved_quote,
             "configure_result": configured,
@@ -1527,10 +1780,148 @@ def _inspect_existing_split_order(driver, split_order_id, plan, used_split_index
         "shipping_charge": split["shipping_charge"],
         "promo_credit": split.get("promo_credit", "0.00"),
         "promo_code": split.get("promo_code", ""),
+        "stock_transfer_records": split.get("stock_transfer_records", []),
         "promo_discount_fee": promo_discount_fee,
         "quote_save": None,
         "configure_result": {"existing_order_id": split_order_id, "matched_by": "design_names"},
         "totals": totals,
+    }
+
+
+def _record_design_key(record):
+    design_id = _clean_text(record.get("source_design_id"))
+    if design_id:
+        return ("id", design_id)
+    return ("name", _normalize_design_name(record.get("source_design_name")))
+
+
+def _matching_new_design(record, new_designs):
+    source_id = _clean_text(record.get("source_design_id"))
+    source_name = _normalize_design_name(record.get("source_design_name"))
+    candidates = []
+    if source_id:
+        candidates = [design for design in new_designs if _clean_text(design.get("design_id")) == source_id]
+    if not candidates and source_name:
+        candidates = [design for design in new_designs if _normalize_design_name(design.get("design_name")) == source_name]
+    if not candidates:
+        raise SplitterError(
+            "Could not match stocked source design "
+            f"{record.get('source_design_name') or record.get('source_design_id')} to a tab on the new split order."
+        )
+    if len(candidates) > 1:
+        raise SplitterError(
+            "Multiple new split-order tabs matched stocked source design "
+            f"{record.get('source_design_name') or record.get('source_design_id')}; manual review required."
+        )
+    match = candidates[0]
+    source_quantity = record.get("source_quantity")
+    target_quantity = match.get("quantity")
+    if source_quantity not in (None, "") and target_quantity not in (None, ""):
+        try:
+            if int(source_quantity) != int(target_quantity):
+                raise SplitterError(
+                    f"Matched design {record.get('source_design_name')} has quantity {target_quantity} on the new order, "
+                    f"but source quantity was {source_quantity}; manual review required."
+                )
+        except ValueError:
+            pass
+    source_subtotal = _clean_text(record.get("source_subtotal"))
+    target_subtotal = _clean_text(match.get("subtotal"))
+    if source_subtotal and target_subtotal and _money_text(_parse_money(source_subtotal)) != _money_text(_parse_money(target_subtotal)):
+        raise SplitterError(
+            f"Matched design {record.get('source_design_name')} has subtotal {target_subtotal} on the new order, "
+            f"but source subtotal was {source_subtotal}; manual review required."
+        )
+    return match
+
+
+def _records_with_new_tab_matches(records, new_scan):
+    records = records or []
+    new_designs = new_scan.get("designs") or []
+    match_cache = {}
+    matched = []
+    for record in records:
+        key = _record_design_key(record)
+        if key not in match_cache:
+            match_cache[key] = _matching_new_design(record, new_designs)
+        new_design = match_cache[key]
+        matched.append(
+            {
+                **record,
+                "target_tab_number": new_design.get("tab_number"),
+                "target_tab_name": _clean_text(new_design.get("design_name")),
+                "target_design_id": _clean_text(new_design.get("design_id")),
+            }
+        )
+    return matched
+
+
+def _copy_stock_records_to_split_orders(driver, split_orders, login_wait_seconds=0):
+    results = []
+    for split_order in sorted(split_orders or [], key=lambda item: int(item.get("split_index") or 0)):
+        records = split_order.get("stock_transfer_records") or []
+        if not records:
+            continue
+        order_id = str(split_order.get("order_id") or "").strip()
+        if not order_id:
+            raise SplitterError(f"Split {split_order.get('split_index')} has stock records but no new order ID.")
+        order_url = _order_url(order_id=order_id)
+        _open_order_scope_with_reload(
+            driver,
+            order_url,
+            order_id=order_id,
+            label=f"new split order {order_id} for stock transfer",
+        )
+        new_scan = _scan_original_order(driver)
+        matched_records = _records_with_new_tab_matches(records, new_scan)
+        try:
+            recording = _product_separator._record_separator_manual_orders(
+                driver,
+                order_id,
+                order_url,
+                {"manual_order_records": matched_records},
+                login_wait_seconds=login_wait_seconds,
+            )
+        except Exception as exc:
+            raise SplitterError(
+                f"Could not copy ordered stock records to split order {order_id}: {exc}"
+            ) from exc
+        results.append(
+            {
+                "split_index": split_order.get("split_index"),
+                "order_id": order_id,
+                "records": matched_records,
+                "recording": recording,
+            }
+        )
+    return {"attempted": bool(results), "orders": results}
+
+
+def _send_mach6_stock_cancel_slack(order_url, dry_run=False):
+    channel_url = str(getattr(_config, "COPYRIGHT_CANCEL_MACH6_STOCK_RETURN_SLACK_URL", "") or "").strip()
+    message = f"{order_url} cancelled"
+    channel_id_match = re.search(r"/client/[^/]+/([^/?#]+)", channel_url)
+    channel_id = channel_id_match.group(1) if channel_id_match else ""
+    if dry_run:
+        return {
+            "sent": False,
+            "dry_run": True,
+            "channel_url": channel_url,
+            "channel_id": channel_id,
+            "message": message,
+        }
+    if not channel_url:
+        raise SplitterError("Mach6 stock-return Slack channel URL is not configured.")
+    ok, result_message = _run_slack_team("custom", custom_message=message, channel_url=channel_url)
+    if not ok:
+        raise SplitterError(f"Mach6 stock-return Slack message failed for {channel_id or channel_url}: {result_message}")
+    return {
+        "sent": True,
+        "dry_run": False,
+        "channel_url": channel_url,
+        "channel_id": channel_id,
+        "message": message,
+        "result": result_message,
     }
 
 
@@ -1821,6 +2212,7 @@ def _scan_current_design_detail(driver, tab_number):
         "quantity": int(quantity_match.group(1)) if quantity_match else None,
         "subtotal": _money_text(_parse_money(subtotal_match.group(1))) if subtotal_match else "",
         "visible_prices": prices[:20],
+        "stock": _product_separator._stock_state_from_text(body_text),
     }
 
 
@@ -1881,10 +2273,18 @@ def _scan_original_order(driver, expected_tab_count=None):
         if tabs:
             break
         time.sleep(1)
-    if not tabs and expected_tab_count is not None:
+    if not tabs:
         total_numbers = _design_total_tab_numbers_from_page_text(driver)
-        expected_numbers = list(range(1, int(expected_tab_count) + 1))
-        if total_numbers[: len(expected_numbers)] == expected_numbers:
+        if expected_tab_count is not None:
+            expected_numbers = list(range(1, int(expected_tab_count) + 1))
+        else:
+            expected_numbers = []
+            for number in total_numbers:
+                if number == len(expected_numbers) + 1:
+                    expected_numbers.append(number)
+                else:
+                    break
+        if expected_numbers and total_numbers[: len(expected_numbers)] == expected_numbers:
             tabs = [
                 {
                     "tab_number": number,
@@ -1916,11 +2316,18 @@ def _scan_original_order(driver, expected_tab_count=None):
 
     body_text = driver.execute_script("return document.body ? document.body.innerText : '';")
     totals = _extract_order_totals_from_text(body_text)
+    order_stock_status = _product_separator._order_stock_status_from_text(body_text)
+    stock_summary = _summarize_original_stock(designs, order_stock_status=order_stock_status)
+    subcontractor = _subcontractor_from_page_text(body_text)
     return {
         "detected_tab_count": detected_count,
         "visible_tab_markers": tabs,
         "designs": designs,
         "totals": totals,
+        "order_stock_status": order_stock_status,
+        "stock_summary": stock_summary,
+        "subcontractor": subcontractor,
+        "stock_routing": _planned_stock_routing(stock_summary, subcontractor),
     }
 
 
@@ -2188,21 +2595,16 @@ def run_split_order(
     if not target_url:
         _write_result(False, "Order ID or CRM order URL is required for split_order.", result_file=result_file, action="split_order")
         return 2
-    if expected_tab_count is None:
-        _write_result(False, "--tab-count is required for split_order.", result_file=result_file, action="split_order")
-        return 2
-    if divisions is None:
-        _write_result(False, "--divisions is required for split_order.", result_file=result_file, action="split_order")
-        return 2
-
     try:
-        expected_tab_count = int(expected_tab_count)
-        divisions = int(divisions)
+        expected_tab_count = int(expected_tab_count) if expected_tab_count is not None else None
+        divisions = int(divisions) if divisions is not None else None
         minimum_tabs = int(minimum_tabs)
-        parallel_workers = _normalize_parallel_workers(parallel_workers, divisions=divisions)
-        if expected_tab_count < minimum_tabs:
-            raise SplitterError(f"Order has {expected_tab_count} tabs. Minimum required for auto-split is {minimum_tabs}.")
-        _split_ranges(expected_tab_count, divisions)
+        if expected_tab_count is not None and expected_tab_count <= minimum_tabs:
+            raise SplitterError(
+                f"Order has {expected_tab_count} tab(s). Auto Splitter only splits orders with more than {minimum_tabs} tabs."
+            )
+        if expected_tab_count is not None and divisions is not None:
+            _validate_split_ranges_within_limit(_split_ranges(expected_tab_count, divisions), minimum_tabs)
     except Exception as err:
         _write_result(
             False,
@@ -2231,7 +2633,8 @@ def run_split_order(
             driver = build_attached_chrome_driver(debugger_address=debugger_address)
         else:
             kill_stale_chrome(profile, profile_label="CRM auto splitter")
-            if not dry_run and parallel_workers > 1:
+            if not dry_run and divisions is not None and int(parallel_workers or 1) > 1:
+                parallel_workers = _normalize_parallel_workers(parallel_workers, divisions=divisions)
                 worker_profiles = _prepare_parallel_profiles(profile, parallel_workers)
             driver = _build_splitter_driver(profile, visible=visible)
         safe_get_with_partial_load(driver, target_url, "original CRM order")
@@ -2239,6 +2642,20 @@ def run_split_order(
         _switch_to_crm_app_frame(driver)
 
         scan = _scan_original_order(driver, expected_tab_count=expected_tab_count)
+        detected_tab_count = int(scan["detected_tab_count"])
+        if expected_tab_count is None:
+            expected_tab_count = detected_tab_count
+        if detected_tab_count <= minimum_tabs:
+            raise SplitterError(
+                f"Order has {detected_tab_count} tab(s). Auto Splitter only splits orders with more than {minimum_tabs} tabs."
+            )
+        if divisions is None:
+            divisions = _auto_divisions_for_tab_count(detected_tab_count, minimum_tabs)
+        ranges = _split_ranges(detected_tab_count, divisions)
+        _validate_split_ranges_within_limit(ranges, minimum_tabs)
+        parallel_workers = _normalize_parallel_workers(parallel_workers, divisions=divisions)
+        if not worker_profiles:
+            parallel_workers = 1
         shipping_amount = _parse_money(scan.get("totals", {}).get("shipping"))
         promo_amount = _parse_money(scan.get("totals", {}).get("promo")).copy_abs()
         promo_code = scan.get("totals", {}).get("promo_code", "")
@@ -2250,6 +2667,11 @@ def run_split_order(
             promo_amount=promo_amount,
             promo_code=promo_code,
         )
+        stock_summary = scan.get("stock_summary") or {}
+        subcontractor = _clean_text(scan.get("subcontractor"))
+        stock_routing = _planned_stock_routing(stock_summary, subcontractor)
+        if stock_routing.get("action") == "slack_mach6_cancelled":
+            stock_routing["message"] = f"{target_url} cancelled"
         original_note_after_split = f"transferred to {_format_order_list(['<split order #>' for _ in range(divisions)])}"
         payment_type = scan.get("totals", {}).get("payment_type", "")
         report = {
@@ -2262,6 +2684,10 @@ def run_split_order(
             "parallel_workers": parallel_workers if not dry_run else 1,
             "designs": scan["designs"],
             "totals": scan["totals"],
+            "order_stock_status": scan.get("order_stock_status", {}),
+            "stock_summary": stock_summary,
+            "subcontractor": subcontractor,
+            "stock_routing": stock_routing,
             "split_plan": plan,
             "promo_allocation_total": _money_text(promo_amount),
             "promo_code": _clean_text(promo_code),
@@ -2281,6 +2707,10 @@ def run_split_order(
         }
 
         if not dry_run:
+            if stock_routing.get("action") == "manual_review":
+                raise SplitterError(
+                    f"Auto Splitter stock routing requires manual review: {stock_routing.get('reason') or 'unknown reason'}."
+                )
             original_state = _get_order_live_state(driver)
             payment_info = _get_original_payment_info(driver)
             payment_type = payment_info.get("payment_type") or payment_type
@@ -2414,6 +2844,7 @@ def run_split_order(
                             "shipping_charge": split["shipping_charge"],
                             "promo_credit": split.get("promo_credit", "0.00"),
                             "promo_code": split.get("promo_code", ""),
+                            "stock_transfer_records": split.get("stock_transfer_records", []),
                             "promo_discount_fee": promo_discount_fee,
                             "quote_save": saved_quote,
                             "configure_result": configured,
@@ -2423,6 +2854,14 @@ def run_split_order(
                     report["completed_split_count"] = len(split_orders)
                     report["remaining_split_count"] = max(len(plan) - len(split_orders), 0)
                     report["split_total_so_far"] = _money_text(split_total)
+
+            if stock_routing.get("action") == "copy_to_split_orders":
+                stock_transfer_result = _copy_stock_records_to_split_orders(
+                    driver,
+                    split_orders,
+                    login_wait_seconds=login_wait_seconds,
+                )
+                report["stock_transfer"] = stock_transfer_result
 
             original_grand_total = Decimal(_money_text(original_state.get("grand_total") or scan.get("totals", {}).get("grand_total") or "0"))
             if original_grand_total == Decimal("0.00") and resume_existing_order_ids and split_total > Decimal("0.00"):
@@ -2472,6 +2911,8 @@ def run_split_order(
             time.sleep(2)
             _add_original_transfer_note(driver, transfer_note)
             final_original = _read_order_totals(driver)
+            if stock_routing.get("action") == "slack_mach6_cancelled":
+                report["stock_cancel_slack"] = _send_mach6_stock_cancel_slack(target_url, dry_run=False)
 
             report.update(
                 {

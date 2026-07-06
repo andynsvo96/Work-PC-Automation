@@ -34,6 +34,7 @@ from automation_runtime import (
     safe_take_screenshot,
     write_result_payload,
 )
+from runtime_paths import GENERATED_PROFILES_DIR, RESULTS_DIR
 from config import (
     CRM_SHIPPING_813_URL,
     PROCESSOR_ACTION_TIMEOUT,
@@ -71,6 +72,14 @@ GROUP_LABELS = {
     "towel": "Towel",
 }
 
+PRODUCT_GROUP_OVERRIDES = (
+    (
+        re.compile(r"\b1010BE\b.*\bladies['\u2019]?\s+micro\s+ribbed\s+baby\s+tee\b", flags=re.IGNORECASE),
+        "adult_general",
+        "1010BE Ladies' Micro Ribbed Baby Tee is a women's tee",
+    ),
+)
+
 
 class ProductSeparatorError(Exception):
     """Raised when Product Separator must stop before live changes."""
@@ -100,6 +109,14 @@ def _write_result(success, message, result_file=None, **extra_fields):
 
 def _clean_text(value):
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _product_group_override(product_name):
+    text = _clean_text(product_name)
+    for pattern, group, reason in PRODUCT_GROUP_OVERRIDES:
+        if pattern.search(text):
+            return group, reason
+    return None
 
 
 MANUAL_ORDER_KNOWN_VENDOR_PATTERN = (
@@ -610,7 +627,10 @@ def _classify_product(product):
     reason = "default adult/general"
     confidence = "normal"
 
-    if re.search(r"\b(towel|rally towel|sport towel)\b", name):
+    override = _product_group_override(product.get("product_name"))
+    if override:
+        group, reason = override
+    elif re.search(r"\b(towel|rally towel|sport towel)\b", name):
         group, reason = "towel", "product name contains towel"
     elif re.search(r"\b(tote|bag|backpack|duffel|drawstring)\b", name):
         group, reason = "bag", "product name contains bag keyword"
@@ -962,7 +982,7 @@ def _prepare_worker_profiles(worker_count):
     source_profile = _profile_path()
     if not os.path.isdir(source_profile):
         raise ProductSeparatorError(f"Chrome profile does not exist: {source_profile}")
-    run_dir = os.path.join(PROJECT_ROOT, "product_separator_worker_profiles", time.strftime("%Y%m%d_%H%M%S"))
+    run_dir = os.path.join(GENERATED_PROFILES_DIR, "product_separator_worker_profiles", time.strftime("%Y%m%d_%H%M%S"))
     os.makedirs(run_dir, exist_ok=True)
     profiles = []
     for index in range(max(1, int(worker_count))):
@@ -1214,6 +1234,7 @@ def _build_separator_plan(scan):
         target_manual_order_assignments = [item for item in assignments if item.get("source") != "original"]
         source_manual_order_vendor = _clean_text(source_stock_state.get("manual_order_vendor"))
         source_manual_order_po = _source_manual_order_po(source_stock_state, original_name)
+        source_has_manual_order_row = bool(source_stock_state.get("has_po_row") or source_stock_state.get("manual_order_rows"))
         split_manual_order_records = []
         split_local_inventory_targets = []
         if source_stock_ordered and target_manual_order_assignments:
@@ -1229,7 +1250,7 @@ def _build_separator_plan(scan):
                     }
                     split_local_inventory_targets.append(target)
                     local_inventory_auto_order_targets.append(target)
-            elif not source_manual_order_po or not source_manual_order_vendor:
+            elif source_has_manual_order_row and (not source_manual_order_po or not source_manual_order_vendor):
                 manual_review.append(
                     {
                         "tab_number": tab.get("tab_number"),
@@ -1240,7 +1261,7 @@ def _build_separator_plan(scan):
                         "source_stock_state": source_stock_state,
                     }
                 )
-            else:
+            elif source_has_manual_order_row:
                 for assignment in target_manual_order_assignments:
                     record = {
                         "source_tab_number": tab.get("tab_number"),
@@ -1257,7 +1278,7 @@ def _build_separator_plan(scan):
         note = f"{_format_tab_list(all_related_tabs)} in 1 box"
         source_local_inventory = _stock_state_should_auto_order_local_inventory(source_stock_state)
         has_copied_manual_order_records = bool(split_manual_order_records)
-        if created_tab_numbers and source_stock_ordered and not source_local_inventory and has_copied_manual_order_records:
+        if created_tab_numbers and source_stock_ordered and not source_local_inventory:
             production_notes.append(note)
         split_tabs.append(
             {
@@ -1281,7 +1302,6 @@ def _build_separator_plan(scan):
                     if created_tab_numbers
                     and source_stock_ordered
                     and not source_local_inventory
-                    and has_copied_manual_order_records
                     else ""
                 ),
             }
@@ -1311,9 +1331,14 @@ def _build_separator_plan(scan):
             "Product Separator auto-orders Local Inventory separated tabs; "
             "do not apply Stock Ordered automatically."
         )
-    elif stock_ordered_for_all_affected_tabs:
+    elif manual_order_records:
         stock_ordered_apply_skip_reason = (
             "Product Separator records copied Manual Order rows for separated stock-ordered tabs; "
+            "do not apply Stock Ordered automatically."
+        )
+    elif stock_ordered_for_all_affected_tabs:
+        stock_ordered_apply_skip_reason = (
+            "Affected split tabs were already stock ordered; "
             "do not apply Stock Ordered automatically."
         )
 
@@ -1715,6 +1740,7 @@ def _zero_non_keep_group_quantity_inputs(driver, design_index, keep_group):
         function classifyText(text) {
           const normalized = clean(text).toLowerCase();
           const compact = normalized.replace(/\s+/g, '');
+          if (/\b1010be\b.*\bladies['\u2019]?\s+micro\s+ribbed\s+baby\s+tee\b/.test(normalized)) return 'adult_general';
           if (/\b(towel|rally towel|sport towel)\b/.test(normalized)) return 'towel';
           if (/\b(tote|bag|backpack|duffel|drawstring)\b/.test(normalized)) return 'bag';
           if (/\b(hat|cap|beanie|snapback|trucker)\b/.test(normalized)) return 'hat_cap';
@@ -1826,6 +1852,7 @@ def _keep_only_group_on_design(driver, design_index, keep_group):
             sizeText
           ].join(' ')).toLowerCase();
           const compact = text.replace(/\s+/g, '');
+          if (/\b1010be\b.*\bladies['\u2019]?\s+micro\s+ribbed\s+baby\s+tee\b/.test(text)) return 'adult_general';
           if (/\b(towel|rally towel|sport towel)\b/.test(text)) return 'towel';
           if (/\b(tote|bag|backpack|duffel|drawstring)\b/.test(text)) return 'bag';
           if (/\b(hat|cap|beanie|snapback|trucker)\b/.test(text)) return 'hat_cap';
@@ -2337,6 +2364,28 @@ def _verify_manual_order_records_persisted(scan, records):
     }
 
 
+def _verify_manual_order_records_visible_in_dom(driver, records):
+    missing = []
+    for record in records or []:
+        target_tab_number = int(record.get("target_tab_number") or 0)
+        po = _clean_text(record.get("po"))
+        vendor = _clean_text(record.get("vendor"))
+        if target_tab_number:
+            try:
+                _order_goods._activate_stock_tab(driver, target_tab_number - 1)
+                time.sleep(0.4)
+            except Exception:
+                pass
+        if po and _shipping_bypasser._crm_manual_order_row_exists(driver, po, vendor_name=vendor):
+            continue
+        missing.append({**record, "missing_reason": "matching Manual Order row was not visible in CRM DOM"})
+    return {
+        "verified": not missing,
+        "missing_records": missing,
+        "source": "crm_dom",
+    }
+
+
 def _local_inventory_auto_order_missing_after_scan(scan, target):
     target_tab_number = int(target.get("target_tab_number") or 0)
     target_tab_name = _clean_text(target.get("target_tab_name"))
@@ -2524,6 +2573,45 @@ def run_product_separator_order(
                 duration_seconds=round(time.monotonic() - started, 2),
             )
             return 0
+
+        if plan.get("manual_review_required"):
+            report["manual_review_retry"] = {
+                "attempted": True,
+                "reason": "initial plan required manual review; refreshed order once before final decision",
+                "initial_manual_review": plan.get("manual_review") or [],
+            }
+            _refresh_order_before_final_split_verification(
+                driver,
+                target_url,
+                login_wait_seconds=login_wait_seconds,
+            )
+            retry_scan = _scan_order(driver, expected_order_id=resolved_order_id)
+            retry_plan = _build_separator_plan(retry_scan)
+            report["manual_review_retry"]["scan_after_refresh"] = retry_scan
+            report["manual_review_retry"]["plan_after_refresh"] = retry_plan
+            if retry_plan.get("needs_split") and not retry_plan.get("manual_review_required"):
+                scan = retry_scan
+                plan = retry_plan
+                report["scan"] = scan
+                report["plan"] = plan
+                expected_quantity_total = _scan_tab_quantity_total(scan)
+            elif not retry_plan.get("needs_split"):
+                report["scan"] = retry_scan
+                report["plan"] = retry_plan
+                _write_result(
+                    True,
+                    f"Product Separator skipped order {resolved_order_id}: no mixed product tabs detected after refresh.",
+                    result_file=result_file,
+                    action="product_separator_order",
+                    dry_run=bool(dry_run),
+                    target_order_id=resolved_order_id,
+                    order_url=target_url,
+                    report=report,
+                    manual_review_required=False,
+                    resolution="skipped_no_split_needed_after_refresh",
+                    duration_seconds=round(time.monotonic() - started, 2),
+                )
+                return 0
 
         if plan.get("manual_review_required"):
             _write_result(
@@ -2727,6 +2815,15 @@ def run_product_separator_order(
                 scan_after_manual_order,
                 plan.get("manual_order_records") or [],
             )
+            if not manual_order_verification.get("verified"):
+                dom_verification = _verify_manual_order_records_visible_in_dom(
+                    driver,
+                    manual_order_verification.get("missing_records") or plan.get("manual_order_records") or [],
+                )
+                manual_order_verification["dom_verification"] = dom_verification
+                if dom_verification.get("verified"):
+                    manual_order_verification["verified"] = True
+                    manual_order_verification["scan_verified"] = False
             report["manual_order_recording"]["scan_after"] = scan_after_manual_order
             report["manual_order_recording"]["verification"] = manual_order_verification
             if not manual_order_verification.get("verified"):
@@ -3124,7 +3221,7 @@ def run_product_separator_list(
         return 3
 
     worker_profile_dir = None
-    result_dir = os.path.join(PROJECT_ROOT, "product_separator_results", "list_scan_" + time.strftime("%Y%m%d_%H%M%S"))
+    result_dir = os.path.join(RESULTS_DIR, "product_separator_results", "list_scan_" + time.strftime("%Y%m%d_%H%M%S"))
     os.makedirs(result_dir, exist_ok=True)
     max_order_count = int(max_orders or 0) if max_orders else 0
     requested_worker_count = max(1, int(workers or 1))

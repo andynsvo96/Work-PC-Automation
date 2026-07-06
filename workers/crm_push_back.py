@@ -9,7 +9,9 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
+import threading
 import time
 from collections import OrderedDict
 
@@ -49,17 +51,21 @@ from crm_validate_address import (
     _batch_limit_reached,
     _build_crm_session_driver,
     _classify_shipping_list_row_candidate,
+    _clone_profile_for_worker,
     _crm_attempt_modes,
     _is_retryable_exception,
     _normalize_requested_batch_size,
     _normalize_target_order_id,
     _open_target_order,
+    _record_stage_timing,
+    _worker_profile_lock,
     login_if_needed,
 )
 
 configure_console_utf8()
 
 AUTOMATION_NAME = "crm.push_back"
+crm_order_goods_worker.AUTOMATION_NAME = AUTOMATION_NAME
 PROFILE_PATH = os.path.join(SCRIPT_DIR, CRM_PROFILE_DIR)
 CONTINUOUS_ORDER_FETCH_LIMIT = 25
 VALID_FILTERS = {"rush", "813"}
@@ -179,12 +185,7 @@ def _result(order_id, success, outcome, message, **extra):
 
 
 def _run_order_goods_with_push_back_status(driver, order_id, dry_run=False):
-    previous_automation_name = crm_order_goods_worker.AUTOMATION_NAME
-    try:
-        crm_order_goods_worker.AUTOMATION_NAME = AUTOMATION_NAME
-        return _order_goods_for_order_with_driver(driver, order_id, dry_run=dry_run)
-    finally:
-        crm_order_goods_worker.AUTOMATION_NAME = previous_automation_name
+    return _order_goods_for_order_with_driver(driver, order_id, dry_run=dry_run)
 
 
 def _normalize_stock_order_results(results):
@@ -211,6 +212,42 @@ def _stock_order_summary(results, dry_run=False):
     if dry_run:
         return f"Stock dry run checked {total} tab(s); {successful} tab(s) looked orderable or already handled."
     return f"Stock ordering finished for {successful}/{total} tab(s)."
+
+
+def _text_indicates_push_back_stock_already_ordered(text):
+    normalized = " ".join(str(text or "").lower().split())
+    if not normalized:
+        return False
+    stock_status_ordered = bool(re.search(r"\bstock\s+status\s*:\s*ordered\b", normalized))
+    stock_ordered = bool(re.search(r"\bstock\s*:\s*ordered\b", normalized))
+    return stock_status_ordered and stock_ordered
+
+
+def _page_indicates_push_back_stock_already_ordered(driver):
+    try:
+        text = driver.execute_script(
+            r"""
+const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+function isVisible(node) {
+  if (!node) return false;
+  const rect = node.getBoundingClientRect && node.getBoundingClientRect();
+  if (rect && ((rect.width || 0) <= 0 || (rect.height || 0) <= 0)) return false;
+  for (let current = node; current; current = current.parentElement) {
+    const style = window.getComputedStyle(current);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+  }
+  return true;
+}
+const parts = [];
+for (const node of Array.from(document.querySelectorAll('body *')).filter(isVisible)) {
+  parts.push(node.innerText || node.textContent || node.value || '');
+}
+return normalize(parts.join('\n'));
+"""
+        )
+    except Exception:
+        text = ""
+    return _text_indicates_push_back_stock_already_ordered(text)
 
 
 def _precheck_row(row):
@@ -458,6 +495,47 @@ def _collect_push_back_rows_with_driver(
     return selected
 
 
+def _collect_push_back_rows(
+    processing_filter,
+    limit,
+    profile_path,
+    list_url,
+    exclude_order_ids=None,
+    visible=False,
+):
+    resolved_profile_path = os.path.abspath(profile_path or PROFILE_PATH)
+    attempt_modes = [False] if visible else _crm_attempt_modes()
+    last_error = None
+
+    for index, headless_mode in enumerate(attempt_modes, start=1):
+        driver = None
+        try:
+            driver = _build_crm_session_driver(
+                resolved_profile_path,
+                headless_mode=headless_mode,
+                profile_label="CRM push back batch source",
+            )
+            return _collect_push_back_rows_with_driver(
+                driver,
+                processing_filter,
+                limit,
+                list_url,
+                exclude_order_ids=exclude_order_ids,
+            )
+        except Exception as exc:
+            last_error = exc
+            if not headless_mode or index == len(attempt_modes) or not _is_retryable_exception(exc):
+                raise
+            print("Headless Push Back batch source failed with a retryable error; retrying with visible Chrome...")
+            time.sleep(1)
+        finally:
+            safe_driver_quit(driver, profile_path=resolved_profile_path)
+
+    if last_error is not None:
+        raise last_error
+    return []
+
+
 def _open_and_read_order(driver, order_id, processing_filter, list_url):
     _open_target_order(
         driver,
@@ -467,6 +545,52 @@ def _open_and_read_order(driver, order_id, processing_filter, list_url):
     )
     _wait_for_order_goods_page_ready(driver, order_id)
     return _extract_order_data(driver, order_id)
+
+
+def _refresh_and_read_order_for_save_retry(driver, order_id, processing_filter, list_url):
+    _publish_status(
+        f"Refreshing CRM order {order_id} after Push Back save did not complete.",
+        stage="refreshing_order_retry",
+        order_id=order_id,
+    )
+    try:
+        driver.switch_to.default_content()
+    except Exception:
+        pass
+    safe_get_with_partial_load(
+        driver,
+        f"https://crm2.legacy.printfly.com/order/{order_id}",
+        f"CRM order {order_id} refresh before Push Back retry",
+    )
+    if login_if_needed(driver):
+        safe_get_with_partial_load(
+            driver,
+            f"https://crm2.legacy.printfly.com/order/{order_id}",
+            f"CRM order {order_id} refresh after login before Push Back retry",
+        )
+    _wait_for_order_goods_page_ready(driver, order_id)
+    return _extract_order_data(driver, order_id)
+
+
+def _change_crm_production_date_with_retry(driver, order_id, target_date, processing_filter, list_url):
+    try:
+        return _change_crm_production_date(driver, order_id, target_date), 0, None
+    except Exception as first_error:
+        print(
+            f"Push Back save did not complete for order {order_id}: {first_error}. "
+            "Refreshing the order once and retrying."
+        )
+        refreshed = _refresh_and_read_order_for_save_retry(driver, order_id, processing_filter, list_url)
+        refreshed_date = refreshed.get("production_date")
+        if refreshed_date == target_date:
+            print(f"CRM order {order_id} already shows the target production date after refresh.")
+            return target_date, 1, str(first_error)
+        _publish_status(
+            f"Retrying Push Back save for CRM order {order_id}.",
+            stage="saving_order_retry",
+            order_id=order_id,
+        )
+        return _change_crm_production_date(driver, order_id, target_date), 1, str(first_error)
 
 
 def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=False):
@@ -526,6 +650,22 @@ def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=Fal
             row_color=(row or {}).get("colorLabel"),
         )
 
+    if _page_indicates_push_back_stock_already_ordered(driver):
+        return _result(
+            order_id,
+            True,
+            "stock_already_ordered_skipped",
+            (
+                "Skipped because CRM shows Stock Status: Ordered and Stock: Ordered; "
+                "Push Back is treating this list entry as already handled."
+            ),
+            manual_review_required=False,
+            production_date=production_date,
+            target_production_date=target_date,
+            due_date=due_date,
+            row_color=(row or {}).get("colorLabel"),
+        )
+
     if dry_run:
         _publish_status(f"Checking stock order readiness for CRM order {order_id}.", stage="checking_stock_order", order_id=order_id)
         stock_results = _run_order_goods_with_push_back_status(driver, order_id, dry_run=True)
@@ -554,7 +694,13 @@ def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=Fal
         stage="saving_order",
         order_id=order_id,
     )
-    saved_date = _change_crm_production_date(driver, order_id, target_date)
+    saved_date, save_retry_count, save_retry_error = _change_crm_production_date_with_retry(
+        driver,
+        order_id,
+        target_date,
+        processing_filter,
+        list_url,
+    )
     _publish_status(f"Ordering stock after Push Back for CRM order {order_id}.", stage="ordering_stock", order_id=order_id)
     stock_results = _run_order_goods_with_push_back_status(driver, order_id, dry_run=False)
     stock_success = _stock_order_success(stock_results)
@@ -570,6 +716,8 @@ def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=Fal
         saved_production_date=saved_date,
         due_date=due_date,
         row_color=(row or {}).get("colorLabel"),
+        save_retry_count=save_retry_count,
+        save_retry_error=save_retry_error,
         stock_order_attempted=True,
         stock_order_success=stock_success,
         stock_order_results=stock_results,
@@ -596,7 +744,42 @@ def _summary_message(report_items, refresh_passes=1, order_count=0, dry_run=Fals
     return " ".join(parts)
 
 
-def _run_batch_with_mode(headless_mode, processing_filter="rush", dry_run=False, batch_size=None, profile_path=None, list_url=None):
+def _run_order_worker_payload(row, headless_mode, processing_filter, list_url, dry_run=False, profile_path=None, skip_stale_chrome_check=False):
+    order_id = str((row or {}).get("orderId") or "").strip()
+    driver = None
+    try:
+        driver = _build_crm_session_driver(
+            os.path.abspath(profile_path or PROFILE_PATH),
+            headless_mode=headless_mode,
+            profile_label=f"CRM push back {order_id or 'order'}",
+            skip_stale_chrome_check=skip_stale_chrome_check,
+        )
+        return _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=dry_run)
+    except Exception as exc:
+        if driver is not None:
+            safe_take_screenshot(driver, "crm_push_back_error")
+        return _result(
+            order_id,
+            False,
+            "worker_exception",
+            str(exc),
+            manual_review_required=True,
+            retryable=_is_retryable_exception(exc),
+            error_type=type(exc).__name__,
+        )
+    finally:
+        safe_driver_quit(driver, profile_path=profile_path)
+
+
+def _push_back_result_retryable(item):
+    return (
+        isinstance(item, dict)
+        and str(item.get("outcome") or "") == "worker_exception"
+        and bool(item.get("retryable"))
+    )
+
+
+def _run_parallel_batch_with_mode(headless_mode, processing_filter="rush", dry_run=False, batch_size=None, profile_path=None, list_url=None, parallel_workers=1):
     started_at = time.monotonic()
     normalized_filter = _normalize_processing_filter(processing_filter)
     target_url = _list_url_for_filter(normalized_filter, list_url=list_url)
@@ -604,6 +787,224 @@ def _run_batch_with_mode(headless_mode, processing_filter="rush", dry_run=False,
         config_key = "CRM_PUSH_BACK_813_URL" if normalized_filter == "813" else "CRM_PUSH_BACK_RUSH_URL"
         raise RuntimeError(f"{config_key} is empty in config.py.")
     requested_batch_size = _normalize_requested_batch_size(batch_size)
+    resolved_profile_path = os.path.abspath(profile_path or PROFILE_PATH)
+    worker_limit = max(1, int(parallel_workers or 1))
+    if requested_batch_size is not None:
+        worker_limit = min(worker_limit, requested_batch_size)
+
+    report_items = []
+    attempted_order_ids = []
+    attempted_order_id_set = set()
+    refresh_passes = 0
+    completed_count = 0
+    total_scanned_count = 0
+    stage_timings = []
+
+    while not _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
+        refresh_passes += 1
+        remaining = _batch_collection_limit(
+            requested_batch_size,
+            len(attempted_order_ids),
+            worker_limit=worker_limit,
+        )
+        _publish_status(
+            f"Loading Push Back list pass {refresh_passes} to scan for eligible orders.",
+            stage="loading_crm_list",
+            current=completed_count if total_scanned_count else None,
+            total=total_scanned_count or None,
+        )
+        list_scan_started_at = time.monotonic()
+        rows = _collect_push_back_rows(
+            normalized_filter,
+            remaining,
+            resolved_profile_path,
+            target_url,
+            exclude_order_ids=attempted_order_id_set,
+            visible=not bool(headless_mode),
+        )
+        _record_stage_timing(
+            stage_timings,
+            "list_scan",
+            list_scan_started_at,
+            refresh_pass=refresh_passes,
+            order_count=len(rows),
+        )
+        if not rows:
+            _publish_status(
+                "No more eligible Push Back orders were found in the CRM list.",
+                stage="scan_complete",
+                current=completed_count if total_scanned_count else None,
+                total=total_scanned_count or None,
+            )
+            break
+        rows = rows[:remaining]
+        total_scanned_count += len(rows)
+        _publish_status(
+            f"Scanned {len(rows)} Push Back order(s) on pass {refresh_passes}; processing with {worker_limit} worker(s).",
+            stage="processing_orders",
+            current=completed_count,
+            total=total_scanned_count,
+        )
+
+        finished_lock = threading.Lock()
+        worker_gate = threading.BoundedSemaphore(worker_limit)
+        threads = []
+        chunk_items = []
+        chunk_started_at = time.monotonic()
+
+        def _worker(order_index, row):
+            nonlocal completed_count
+            order_id = str((row or {}).get("orderId") or "").strip()
+            with worker_gate:
+                order_started_at = time.monotonic()
+                print(f"Launching Push Back worker {order_index + 1}/{len(rows)} for order {order_id}...")
+                with finished_lock:
+                    current_done = completed_count
+                _publish_status(
+                    f"Processing Push Back order {order_id} ({current_done}/{total_scanned_count} done).",
+                    stage="processing_order",
+                    current=current_done,
+                    total=total_scanned_count,
+                    order_id=order_id,
+                )
+                item = None
+                attempt_count = 0
+                total_attempts = 1 if dry_run else 2
+                worker_slot = (order_index % worker_limit) + 1
+                for attempt in range(1, total_attempts + 1):
+                    attempt_count = attempt
+                    temp_root = None
+                    cloned_profile_path = None
+                    try:
+                        temp_root, cloned_profile_path = _clone_profile_for_worker(
+                            resolved_profile_path,
+                            f"push_back_{order_index + 1}_{order_id}_attempt_{attempt}",
+                            worker_slot=worker_slot,
+                            pool_name="push_back",
+                            rebuild=attempt > 1,
+                        )
+                        if attempt > 1:
+                            print(f"Retrying Push Back order {order_id} once with a fresh CRM worker profile...")
+                            time.sleep(1)
+                        with _worker_profile_lock(cloned_profile_path):
+                            item = _run_order_worker_payload(
+                                row,
+                                headless_mode=headless_mode,
+                                processing_filter=normalized_filter,
+                                list_url=target_url,
+                                dry_run=dry_run,
+                                profile_path=cloned_profile_path,
+                                skip_stale_chrome_check=True,
+                            )
+                    except Exception as exc:
+                        item = _result(
+                            order_id,
+                            False,
+                            "worker_exception",
+                            str(exc),
+                            manual_review_required=True,
+                            retryable=_is_retryable_exception(exc),
+                            error_type=type(exc).__name__,
+                        )
+                    finally:
+                        if temp_root:
+                            shutil.rmtree(temp_root, ignore_errors=True)
+                    if not _push_back_result_retryable(item) or attempt >= total_attempts:
+                        break
+                item["attempt_count"] = attempt_count
+                item["duration_seconds"] = _elapsed_seconds(order_started_at)
+                item["session_duration_seconds"] = item["duration_seconds"]
+                with finished_lock:
+                    chunk_items.append(item)
+                    completed_count += 1
+                    current_done = completed_count
+                _publish_status(
+                    f"Finished Push Back order {order_id} ({current_done}/{total_scanned_count} done).",
+                    stage="finished_order",
+                    current=current_done,
+                    total=total_scanned_count,
+                    order_id=order_id,
+                )
+
+        for order_index, row in enumerate(rows):
+            order_id = str(row.get("orderId") or "").strip()
+            attempted_order_id_set.add(order_id)
+            attempted_order_ids.append(order_id)
+            thread = threading.Thread(target=_worker, args=(order_index, row), daemon=True)
+            threads.append(thread)
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+        _record_stage_timing(
+            stage_timings,
+            "parallel_order_processing",
+            chunk_started_at,
+            refresh_pass=refresh_passes,
+            order_count=len(rows),
+            worker_count=worker_limit,
+        )
+
+        chunk_order_position = {
+            str(row.get("orderId") or "").strip(): index
+            for index, row in enumerate(rows)
+        }
+        chunk_items.sort(key=lambda item: chunk_order_position.get(str(item.get("order_id") or ""), 999999))
+        report_items.extend(chunk_items)
+
+        if _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
+            break
+        print("Finished Push Back list pass; reopening the list to look for more eligible orders...")
+
+    success = all(bool(item.get("success")) for item in report_items) if report_items else True
+    message = _summary_message(
+        report_items,
+        refresh_passes=refresh_passes,
+        order_count=len(attempted_order_ids),
+        dry_run=dry_run,
+    )
+    return {
+        "action": "push_back_batch",
+        "success": success,
+        "message": message,
+        "order_count": len(attempted_order_ids),
+        "order_ids": attempted_order_ids,
+        "report": report_items,
+        "dry_run": bool(dry_run),
+        "headless": bool(headless_mode),
+        "shipping_filter": normalized_filter,
+        "list_url": target_url,
+        "batch_size": requested_batch_size,
+        "parallel_workers": worker_limit,
+        "refresh_passes": refresh_passes,
+        "duration_seconds": _elapsed_seconds(started_at),
+        "stage_timings": stage_timings,
+        "manual_review_required": any(bool(item.get("manual_review_required")) for item in report_items),
+        "resolution": "batch" if attempted_order_ids else "no_orders",
+    }
+
+
+def _run_batch_with_mode(headless_mode, processing_filter="rush", dry_run=False, batch_size=None, profile_path=None, list_url=None, parallel_workers=1):
+    started_at = time.monotonic()
+    normalized_filter = _normalize_processing_filter(processing_filter)
+    target_url = _list_url_for_filter(normalized_filter, list_url=list_url)
+    if not target_url:
+        config_key = "CRM_PUSH_BACK_813_URL" if normalized_filter == "813" else "CRM_PUSH_BACK_RUSH_URL"
+        raise RuntimeError(f"{config_key} is empty in config.py.")
+    requested_batch_size = _normalize_requested_batch_size(batch_size)
+    worker_limit = max(1, int(parallel_workers or 1))
+    if requested_batch_size is not None:
+        worker_limit = min(worker_limit, requested_batch_size)
+    if worker_limit > 1:
+        return _run_parallel_batch_with_mode(
+            headless_mode,
+            processing_filter=normalized_filter,
+            dry_run=dry_run,
+            batch_size=requested_batch_size,
+            profile_path=profile_path,
+            list_url=target_url,
+            parallel_workers=worker_limit,
+        )
     resolved_profile_path = os.path.abspath(profile_path or PROFILE_PATH)
     driver = _build_crm_session_driver(
         resolved_profile_path,
@@ -616,6 +1017,7 @@ def _run_batch_with_mode(headless_mode, processing_filter="rush", dry_run=False,
     refresh_passes = 0
     completed_count = 0
     total_scanned_count = 0
+    stage_timings = []
 
     try:
         while not _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
@@ -631,12 +1033,20 @@ def _run_batch_with_mode(headless_mode, processing_filter="rush", dry_run=False,
                 current=completed_count if total_scanned_count else None,
                 total=total_scanned_count or None,
             )
+            list_scan_started_at = time.monotonic()
             rows = _collect_push_back_rows_with_driver(
                 driver,
                 normalized_filter,
                 remaining,
                 target_url,
                 exclude_order_ids=attempted_order_id_set,
+            )
+            _record_stage_timing(
+                stage_timings,
+                "list_scan",
+                list_scan_started_at,
+                refresh_pass=refresh_passes,
+                order_count=len(rows),
             )
             if not rows:
                 _publish_status(
@@ -653,6 +1063,7 @@ def _run_batch_with_mode(headless_mode, processing_filter="rush", dry_run=False,
                 current=completed_count,
                 total=total_scanned_count,
             )
+            chunk_started_at = time.monotonic()
             for row in rows:
                 order_id = str(row.get("orderId") or "").strip()
                 if _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
@@ -701,6 +1112,14 @@ def _run_batch_with_mode(headless_mode, processing_filter="rush", dry_run=False,
                     total=total_scanned_count,
                     order_id=order_id,
                 )
+            _record_stage_timing(
+                stage_timings,
+                "shared_session_order_processing",
+                chunk_started_at,
+                refresh_pass=refresh_passes,
+                order_count=len(rows),
+                worker_count=worker_limit,
+            )
             if _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
                 break
             print("Finished Push Back list pass; reopening the list to look for more eligible orders...")
@@ -726,15 +1145,16 @@ def _run_batch_with_mode(headless_mode, processing_filter="rush", dry_run=False,
         "shipping_filter": normalized_filter,
         "list_url": target_url,
         "batch_size": requested_batch_size,
-        "parallel_workers": 1,
+        "parallel_workers": worker_limit,
         "refresh_passes": refresh_passes,
         "duration_seconds": _elapsed_seconds(started_at),
+        "stage_timings": stage_timings,
         "manual_review_required": any(bool(item.get("manual_review_required")) for item in report_items),
         "resolution": "batch" if attempted_order_ids else "no_orders",
     }
 
 
-def _run_batch(processing_filter="rush", dry_run=False, batch_size=None, profile_path=None, list_url=None, visible=False):
+def _run_batch(processing_filter="rush", dry_run=False, batch_size=None, parallel_workers=1, profile_path=None, list_url=None, visible=False):
     started_at = time.monotonic()
     modes = [False] if visible else _crm_attempt_modes()
     last_payload = None
@@ -745,6 +1165,7 @@ def _run_batch(processing_filter="rush", dry_run=False, batch_size=None, profile
                 processing_filter=processing_filter,
                 dry_run=dry_run,
                 batch_size=batch_size,
+                parallel_workers=parallel_workers,
                 profile_path=profile_path,
                 list_url=list_url,
             )
@@ -865,6 +1286,7 @@ def run(
     processing_filter="rush",
     dry_run=False,
     batch_size=None,
+    parallel_workers=1,
     profile_path=None,
     result_file=None,
     list_url=None,
@@ -888,6 +1310,7 @@ def run(
             processing_filter=normalized_filter,
             dry_run=dry_run,
             batch_size=batch_size,
+            parallel_workers=parallel_workers,
             profile_path=profile_path,
             list_url=list_url,
             visible=visible,
@@ -909,6 +1332,7 @@ def parse_args(argv=None):
     parser.add_argument("--order-id", required=False, help="Optional single 7-digit CRM order ID or CRM order URL.")
     parser.add_argument("--processing-filter", choices=["rush", "813"], default="rush")
     parser.add_argument("--batch-size", type=int, default=None, help="Process up to this many orders; 0/unset means run until no eligible orders remain.")
+    parser.add_argument("--parallel-workers", type=int, default=1, help="Number of CRM orders to process at once in batch mode.")
     parser.add_argument("--profile-path", required=False, help="Optional CRM Chrome user-data-dir override.")
     parser.add_argument("--result-file", required=False, help="Optional path for the JSON result payload.")
     parser.add_argument("--list-url", required=False, help="Optional Push Back CRM report URL override.")
@@ -925,6 +1349,7 @@ if __name__ == "__main__":
             processing_filter=options.processing_filter,
             dry_run=bool(options.dry_run),
             batch_size=options.batch_size,
+            parallel_workers=options.parallel_workers,
             profile_path=options.profile_path,
             result_file=options.result_file,
             list_url=options.list_url,

@@ -43,6 +43,11 @@ from config import (
     SANMAR_PROFILE_DIR,
     SANMAR_URL,
 )
+try:
+    from config import SANMAR_PASSWORD, SANMAR_USERNAME
+except ImportError:
+    SANMAR_USERNAME = ""
+    SANMAR_PASSWORD = ""
 from crm_validate_address import (
     ALLOWED_SHIPPING_LIST_ROW_DESCRIPTION,
     _batch_collection_limit,
@@ -60,6 +65,7 @@ from crm_validate_address import (
     _worker_profile_lock,
 )
 from crm_order_goods import _wait_for_order_goods_page_ready
+from runtime_paths import SCREENSHOTS_DIR, state_file
 
 configure_console_utf8()
 
@@ -68,7 +74,8 @@ PROFILE_PATH = os.path.join(SCRIPT_DIR, CRM_PROFILE_DIR)
 SANMAR_PROFILE_PATH = os.path.join(SCRIPT_DIR, SANMAR_PROFILE_DIR)
 RUSH_FILTER = "rush"
 CONTINUOUS_ORDER_FETCH_LIMIT = 25
-CRM_STATE_PATH = os.path.join(SCRIPT_DIR, "crm_state.json")
+CRM_STATE_PATH = state_file("crm_state.json")
+SHIPPING_BYPASS_PENDING_SUBMISSIONS_PATH = state_file("shipping_bypasser_pending_submissions.json")
 WAREHOUSE_DISTANCE = {
     "inhouse": [
         "Robbinsville, NJ",
@@ -175,6 +182,7 @@ SANMAR_JERZEES_STYLE_IDS = {
 }
 SANMAR_GILDAN_STYLE_IDS = {
     "64PLSMA", "64000CVC", "18000", "64200", "42400", "5000B",
+    "12500",
     "H000", "2410", "64400", "18600", "64800", "G2400", "64000L",
     "19000", "SF000", "42000", "G5200", "64800L", "64220LCVC",
     "64000", "8000", "8800", "SF008", "SF600", "2000T", "75000",
@@ -189,9 +197,29 @@ SANMAR_GILDAN_STYLE_IDS = {
 SANMAR_COLOR_ALIASES = {
     "FORESTGREEN": ["Forest"],
     "KELLYGREEN": ["Kelly"],
+    "SAFETYGREEN": ["S. Green"],
+    "SAFETYORANGE": ["S. Orange"],
 }
 SANMAR_PRODUCT_COLOR_ALIASES = {
     ("4528", "TRUENAVY"): ["J. Navy"],
+    ("3330", "WHITESOLIDBLACK"): ["White/ Black"],
+    ("RS3330", "WHITESOLIDBLACK"): ["White/ Black"],
+    ("J325", "BTLGREY"): ["Battleship Grey"],
+    ("J325", "BATTLEGREY"): ["Battleship Grey"],
+    ("J325", "BATTLESHIPGREY"): ["Battleship Grey"],
+    ("J325", "DSBLNAVY"): ["Dress Blue Navy"],
+    ("J325", "DRESSBLUENAVY"): ["Dress Blue Navy"],
+    ("LST402", "BLACKTRIADSOLID"): ["Black Triad Solid"],
+    ("LST402", "BLACKTRIADSLD"): ["Black Triad Solid"],
+    ("LST402", "DARKGREYHTHR"): ["Dark Grey Heather"],
+    ("LST402", "DKGREYHTHR"): ["Dark Grey Heather"],
+    ("LST402", "LIGHTGREYHTHR"): ["Light Grey Heather"],
+    ("LST402", "LTGREYHTHR"): ["Light Grey Heather"],
+    ("LST402", "PINKRASPBERRYHTHR"): ["Pink Raspberry Heather"],
+    ("LST402", "PINKRASPHTHR"): ["Pink Raspberry Heather"],
+    ("LST402", "PNKRASPBERRYHTHR"): ["Pink Raspberry Heather"],
+    ("LST402", "PONDBLUEHTHR"): ["Pond Blue Heather"],
+    ("LST402", "PONDBLUHTHR"): ["Pond Blue Heather"],
 }
 SANMAR_KNOWN_COLOR_NAMES = (
     "Deep Red/ White",
@@ -228,6 +256,7 @@ BELLA_CANVAS_SANMAR_COLOR_NAMES = (
     "Grass Green Triblend",
     "Green Triblend",
     "Grey Triblend",
+    "Heather Columbia Blue",
     "Ice Blue Triblend",
     "Kelly Triblend",
     "Lilac Triblend",
@@ -285,6 +314,7 @@ BELLA_CANVAS_CRM_COLOR_WORD_ALIASES = {
     "CEMENT": ("CEM",),
     "CHARCOAL": ("CHAR", "CHRCL"),
     "CHARITY": ("CHARITY", "CHRITY"),
+    "COLUMBIA": ("COLUM", "COL"),
     "DARK": ("DK",),
     "DENIM": ("DNM",),
     "DUSTY": ("DSTY",),
@@ -326,6 +356,7 @@ UNIQUE_PRODUCT_ID_HANDLERS = {
     "3001C": "Search as 3001, choose BC3001, then click Check inventory and pricing before selecting color/quantities.",
     "Rabbit Skins": "Rabbit Skins CRM styles may omit the RS prefix, for example 4400 -> RS4400, and require the inventory/pricing button.",
     "Jerzees": "Jerzees CRM styles can omit SanMar's trailing M, for example 562 -> 562M.",
+    "Next Level": "Next Level CRM styles can omit or suffix SanMar's NL prefix, for example 3600 -> NL3600 and 3933NL -> NL3933.",
 }
 
 
@@ -438,6 +469,87 @@ def _load_historical_shipping_bypass_customer_pos(state_path=CRM_STATE_PATH):
     return customer_pos
 
 
+def _load_pending_shipping_bypass_submissions(path=SHIPPING_BYPASS_PENDING_SUBMISSIONS_PATH):
+    try:
+        with open(path, "r", encoding="utf-8-sig") as handle:
+            payload = json.load(handle)
+    except FileNotFoundError:
+        return []
+    except Exception as exc:
+        print(f"Warning: could not read pending Shipping Bypasser submissions: {exc}")
+        return []
+    submissions = payload.get("submissions") if isinstance(payload, dict) else payload
+    return [item for item in submissions if isinstance(item, dict)] if isinstance(submissions, list) else []
+
+
+def _write_pending_shipping_bypass_submissions(submissions, path=SHIPPING_BYPASS_PENDING_SUBMISSIONS_PATH):
+    rows = [item for item in submissions if isinstance(item, dict)]
+    temp_path = f"{path}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump({"submissions": rows}, handle)
+    os.replace(temp_path, path)
+
+
+def _pending_shipping_bypass_submission(order_id, po):
+    normalized_order_id = _normalize_target_order_id(order_id)
+    normalized_po = str(po or "").strip().lower()
+    if not normalized_order_id or not normalized_po:
+        return None
+    for item in reversed(_load_pending_shipping_bypass_submissions()):
+        item_order_id = _normalize_target_order_id(item.get("order_id"))
+        item_po = str(item.get("po") or "").strip().lower()
+        if item_order_id == normalized_order_id and item_po == normalized_po and not item.get("crm_recorded_at"):
+            return item
+    return None
+
+
+def _remember_pending_shipping_bypass_submission(order_id, po, sanmar_confirmation, vendor_name="Sanmar"):
+    normalized_order_id = _normalize_target_order_id(order_id)
+    normalized_po = str(po or "").strip()
+    if not normalized_order_id or not normalized_po:
+        return None
+    submissions = _load_pending_shipping_bypass_submissions()
+    replacement = {
+        "order_id": normalized_order_id,
+        "po": normalized_po,
+        "vendor": _manual_order_vendor_label(vendor_name),
+        "sanmar_confirmation": sanmar_confirmation if isinstance(sanmar_confirmation, dict) else {},
+        "submitted_at": datetime.now().isoformat(),
+    }
+    kept = [
+        item for item in submissions
+        if not (
+            _normalize_target_order_id(item.get("order_id")) == normalized_order_id
+            and str(item.get("po") or "").strip().lower() == normalized_po.lower()
+            and not item.get("crm_recorded_at")
+        )
+    ]
+    kept.append(replacement)
+    _write_pending_shipping_bypass_submissions(kept)
+    return replacement
+
+
+def _mark_pending_shipping_bypass_submission_recorded(order_id, po, record_state):
+    normalized_order_id = _normalize_target_order_id(order_id)
+    normalized_po = str(po or "").strip().lower()
+    if not normalized_order_id or not normalized_po:
+        return False
+    submissions = _load_pending_shipping_bypass_submissions()
+    changed = False
+    for item in submissions:
+        if (
+            _normalize_target_order_id(item.get("order_id")) == normalized_order_id
+            and str(item.get("po") or "").strip().lower() == normalized_po
+            and not item.get("crm_recorded_at")
+        ):
+            item["crm_recorded_at"] = datetime.now().isoformat()
+            item["crm_record_state"] = str(record_state or "")
+            changed = True
+    if changed:
+        _write_pending_shipping_bypass_submissions(submissions)
+    return changed
+
+
 def _normalize_text(value):
     return " ".join(str(value or "").replace("\xa0", " ").split())
 
@@ -512,6 +624,20 @@ def _build_known_sanmar_color_aliases():
 SANMAR_KNOWN_COLOR_ALIASES = _build_known_sanmar_color_aliases()
 
 
+def _sanmar_slash_color_alias_labels(color):
+    label = _normalize_text(color)
+    if "/" not in label:
+        return []
+    parts = [_normalize_text(part) for part in re.split(r"\s*/\s*", label) if _normalize_text(part)]
+    if len(parts) < 2:
+        return []
+    return list(dict.fromkeys((
+        "/".join(parts),
+        "/ ".join(parts),
+        " / ".join(parts),
+    )))
+
+
 def _sanmar_product_color_alias_labels(product, color):
     wanted = _upper_key(color)
     if not wanted:
@@ -531,6 +657,7 @@ def _sanmar_product_color_alias_labels(product, color):
 def _sanmar_color_alias_labels(color, product=None):
     wanted = _upper_key(color)
     labels = []
+    labels.extend(_sanmar_slash_color_alias_labels(color))
     labels.extend(_sanmar_product_color_alias_labels(product, color))
     labels.extend(SANMAR_COLOR_ALIASES.get(wanted, []))
     labels.extend(SANMAR_KNOWN_COLOR_ALIASES.get(wanted, []))
@@ -950,12 +1077,16 @@ def _extract_order_data(driver, order_id, tab_context=None):
         if dedupe_key in seen_products:
             continue
         seen_products.add(dedupe_key)
+        is_a4 = bool(
+            re.search(r"\bA4\b", f"{stock_line} {product_name}", flags=re.I)
+            or re.fullmatch(r"N(?:B|W)\d{4}[A-Z]?", product_id)
+        )
         product = {
             "index": index,
             "stock_line": stock_line,
             "product_id": product_id,
             "product_name": product_name,
-            "is_a4": bool(re.search(r"\bA4\b", f"{stock_line} {product_name}", flags=re.I)),
+            "is_a4": is_a4,
             "color": _normalize_text(raw_item.get("styleSubColor") if is_style_sub and raw_item.get("styleSubColor") else raw_item.get("color")),
             "quantities": quantities,
         }
@@ -1196,30 +1327,8 @@ def _wait_for_text(driver, pattern, timeout=15):
     return ""
 
 
-def _ensure_sanmar_logged_in(driver):
-    safe_get_with_partial_load(driver, SANMAR_URL, label="SanMar home")
-    text = _wait_for_text(driver, r"(Welcome,\s*EZONLINE1|Log In|Shopping Box)", timeout=15)
-    if re.search(r"Welcome,\s*EZONLINE1", text, flags=re.I):
-        return True
-    login = _find_clickable_by_text(driver, r"^Log In$")
-    if login is not None:
-        _click_with_fallback(driver, login)
-        time.sleep(1.0)
-    button = _find_clickable_by_text(driver, r"^Log In$")
-    if button is not None:
-        _click_with_fallback(driver, button)
-    text = _wait_for_text(driver, r"Welcome,\s*EZONLINE1", timeout=20)
-    if not re.search(r"Welcome,\s*EZONLINE1", text, flags=re.I) and bool(getattr(driver, "_shipping_bypasser_visible", False)):
-        print("SanMar login is visible. Sign in as EZONLINE1 in the Chrome window; the worker will continue after login is confirmed.")
-        text = _wait_for_text(driver, r"Welcome,\s*EZONLINE1", timeout=180)
-    if not re.search(r"Welcome,\s*EZONLINE1", text, flags=re.I):
-        raise RuntimeError("SanMar login was not confirmed as EZONLINE1. Use Open SanMar Cart to sign in, then rerun Shipping Bypasser.")
-    return True
-
-
-def _find_clickable_by_text(driver, pattern):
+def _sanmar_selected_color_label(driver):
     script = r"""
-const pattern = new RegExp(arguments[0], 'i');
 const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
 function isVisible(node) {
   if (!node) return false;
@@ -1231,13 +1340,340 @@ function isVisible(node) {
   }
   return true;
 }
-const controls = Array.from(document.querySelectorAll('button,a,input[type="button"],input[type="submit"],[role="button"],.btn,[class*="btn"]')).filter(isVisible);
-return controls.find((node) => pattern.test(normalize(node.innerText || node.textContent || node.value || node.getAttribute('aria-label')))) || null;
+const selectors = [
+  '.color-selected',
+  '[class*="color-selected"]',
+  '[class*="selected-color"]',
+  '[class*="ColorSelected"]'
+];
+for (const selector of selectors) {
+  for (const node of Array.from(document.querySelectorAll(selector)).filter(isVisible)) {
+    const clone = node.cloneNode(true);
+    for (const removable of Array.from(clone.querySelectorAll('#js-prices-info-m,[id*="price"],[class*="price"]'))) {
+      removable.remove();
+    }
+    const text = normalize(clone.innerText || clone.textContent || node.getAttribute('aria-label') || '');
+    const match = text.match(/Color\s+selected\s*:?\s*(.+?)(?:\s+Show\s+all\s+colors|\s+Show\s+less\s+colors|$)/i);
+    if (match && normalize(match[1])) return normalize(match[1]);
+    const imageLabel = normalize((node.querySelector('img') || {}).alt || '');
+    if (imageLabel) return imageLabel;
+  }
+}
+const bodyText = normalize(document.body && (document.body.innerText || document.body.textContent) || '');
+const bodyMatch = bodyText.match(/Color\s+selected\s*:?\s*(.+?)(?:\s+Show\s+all\s+colors|\s+Show\s+less\s+colors|$)/i);
+return bodyMatch ? normalize(bodyMatch[1]) : '';
 """
     try:
-        element = driver.execute_script(script, pattern)
+        return _clean_sanmar_selected_color_label(driver.execute_script(script))
+    except Exception:
+        return ""
+
+
+def _clean_sanmar_selected_color_label(value):
+    label = _normalize_text(value)
+    label = re.sub(r"\s+Add\s+to\s+shopping\s+box\s*$", "", label, flags=re.IGNORECASE)
+    return _normalize_text(label)
+
+
+def _sanmar_auth_state(driver):
+    script = r"""
+function isVisible(node) {
+  if (!node) return false;
+  const rect = node.getBoundingClientRect();
+  if ((rect.width || 0) <= 0 || (rect.height || 0) <= 0) return false;
+  for (let current = node; current; current = current.parentElement) {
+    const style = window.getComputedStyle(current);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+  }
+  return true;
+}
+const text = String(document.body && (document.body.innerText || document.body.textContent) || '');
+const visiblePasswordInputs = Array.from(document.querySelectorAll('input[type="password"]')).filter(isVisible);
+const visibleInputs = Array.from(document.querySelectorAll('input')).filter(isVisible);
+const visibleText = String(document.body && (document.body.innerText || '') || '');
+const loginControls = Array.from(document.querySelectorAll('button,a,input[type="button"],input[type="submit"],[role="button"]'))
+  .filter(isVisible)
+  .map((node) => String(node.innerText || node.textContent || node.value || node.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim())
+  .filter(Boolean);
+return {
+  text,
+  url: String(location.href || ''),
+  hasPasswordInput: visiblePasswordInputs.length > 0,
+  passwordFilled: visiblePasswordInputs.some((node) => String(node.value || '').length > 0),
+  needsTwoFactor: /let'?s verify your email|verification code|two[-\s]*factor/i.test(visibleText),
+  usernameFilled: visibleInputs.some((node) => {
+    const type = String(node.type || '').toLowerCase();
+    if (type === 'password' || type === 'hidden' || type === 'submit' || type === 'button') return false;
+    return String(node.value || '').trim().length > 0;
+  }),
+  loginControls,
+};
+"""
+    try:
+        state = driver.execute_script(script)
+        return state if isinstance(state, dict) else {}
+    except Exception:
+        return {}
+
+
+def _sanmar_state_confirms_login(state):
+    text = str((state or {}).get("text") or "")
+    normalized = _normalize_text(text)
+    if re.search(r"Welcome,\s*EZONLINE1", normalized, flags=re.I):
+        return True
+    if (state or {}).get("hasPasswordInput"):
+        return False
+    if re.search(r"\b(?:Sign\s*Out|Logout|Log\s*Out|My\s+Account|EZONLINE1)\b", normalized, flags=re.I):
+        return True
+    if re.search(r"\b(?:My\s+Shopping\s+Box|Shopping\s+Details|Continue\s+Checkout|Proceed\s+to\s+Checkout)\b", normalized, flags=re.I):
+        return True
+    return False
+
+
+def _wait_for_sanmar_login_confirmed(driver, timeout=20):
+    deadline = time.time() + timeout
+    last_state = {}
+    while time.time() < deadline:
+        last_state = _sanmar_auth_state(driver)
+        if _sanmar_state_confirms_login(last_state):
+            return True
+        time.sleep(0.3)
+    return _sanmar_state_confirms_login(last_state)
+
+
+def _sanmar_login_url():
+    base = str(SANMAR_URL or "https://www.sanmar.com/").strip() or "https://www.sanmar.com/"
+    return base.rstrip("/") + "/login"
+
+
+def _sanmar_login_credentials():
+    username = str(os.environ.get("SANMAR_USERNAME") or SANMAR_USERNAME or "").strip()
+    password = str(os.environ.get("SANMAR_PASSWORD") or SANMAR_PASSWORD or "")
+    return username, password
+
+
+def _click_sanmar_autofilled_login(driver, timeout=8):
+    script = r"""
+function isVisible(node) {
+  if (!node) return false;
+  const rect = node.getBoundingClientRect();
+  if ((rect.width || 0) <= 0 || (rect.height || 0) <= 0) return false;
+  for (let current = node; current; current = current.parentElement) {
+    const style = window.getComputedStyle(current);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+  }
+  return true;
+}
+function label(node) {
+  return String(node.innerText || node.textContent || node.value || node.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+}
+const password = Array.from(document.querySelectorAll('input[type="password"]')).filter(isVisible).find((node) => String(node.value || '').length > 0);
+if (!password) return { clicked: false, reason: 'password_not_filled' };
+const root = password.closest('form') || password.closest('.modal,.dropdown-menu,.login,.account-login') || document;
+const submit = Array.from(root.querySelectorAll('button,input[type="button"],input[type="submit"],a,[role="button"]'))
+  .filter(isVisible)
+  .find((node) => /^log\s*in$/i.test(label(node)) || /sign\s*in/i.test(label(node)))
+  || Array.from(document.querySelectorAll('button,input[type="button"],input[type="submit"],a,[role="button"]'))
+    .filter(isVisible)
+    .find((node) => /^log\s*in$/i.test(label(node)) || /sign\s*in/i.test(label(node)));
+if (!submit) return { clicked: false, reason: 'login_button_not_found' };
+submit.click();
+return { clicked: true };
+"""
+    deadline = time.time() + timeout
+    last = {}
+    while time.time() < deadline:
+        try:
+            last = driver.execute_script(script)
+        except Exception as exc:
+            last = {"clicked": False, "reason": str(exc)}
+        if isinstance(last, dict) and last.get("clicked"):
+            return True
+        time.sleep(0.4)
+    return False
+
+
+def _submit_sanmar_login_with_credentials(driver, timeout=8):
+    username, password = _sanmar_login_credentials()
+    if not username or not password:
+        return False
+    script = r"""
+const username = arguments[0];
+const password = arguments[1];
+function isVisible(node) {
+  if (!node) return false;
+  const rect = node.getBoundingClientRect();
+  if ((rect.width || 0) <= 0 || (rect.height || 0) <= 0) return false;
+  for (let current = node; current; current = current.parentElement) {
+    const style = window.getComputedStyle(current);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+  }
+  return true;
+}
+function setValue(node, value) {
+  if (!node) return false;
+  node.focus();
+  const proto = Object.getPrototypeOf(node);
+  const descriptor = proto && Object.getOwnPropertyDescriptor(proto, 'value');
+  if (descriptor && descriptor.set) descriptor.set.call(node, value);
+  else node.value = value;
+  node.dispatchEvent(new Event('input', { bubbles: true }));
+  node.dispatchEvent(new Event('change', { bubbles: true }));
+  return true;
+}
+function label(node) {
+  return String(node.innerText || node.textContent || node.value || node.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+}
+const forms = Array.from(document.querySelectorAll('#login-page-form,#login-header-form,form[action*="j_spring_security_check"],form'));
+for (const form of forms) {
+  const user = Array.from(form.querySelectorAll('input[name="j_username"],#j_username,#username,input[autocomplete="username"],input[type="text"],input[type="email"]')).find(isVisible);
+  const pass = Array.from(form.querySelectorAll('input[name="j_password"],#j_password,#password,input[type="password"]')).find(isVisible);
+  if (!user || !pass) continue;
+  setValue(user, username);
+  setValue(pass, password);
+  const remember = Array.from(form.querySelectorAll('input[name="_spring_security_remember_me"],#remember_me_login,input[type="checkbox"]')).find(isVisible);
+  if (remember && !remember.checked) remember.click();
+  const submit = Array.from(form.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"]'))
+    .filter(isVisible)
+    .find((node) => /^log\s*in$/i.test(label(node)) || /sign\s*in/i.test(label(node)))
+    || form.querySelector('button[type="submit"],input[type="submit"]');
+  if (submit && isVisible(submit)) submit.click();
+  else if (form.requestSubmit) form.requestSubmit();
+  else form.submit();
+  return { submitted: true };
+}
+return { submitted: false, reason: 'login_form_not_found' };
+"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            result = driver.execute_script(script, username, password)
+        except Exception:
+            result = None
+        if isinstance(result, dict) and result.get("submitted"):
+            return True
+        time.sleep(0.4)
+    return False
+
+
+def _ensure_sanmar_logged_in(driver):
+    safe_get_with_partial_load(driver, SANMAR_URL, label="SanMar home")
+    if _wait_for_sanmar_login_confirmed(driver, timeout=5):
+        return True
+    text = _wait_for_text(driver, r"(Welcome,\s*EZONLINE1|Log In|Shopping Box)", timeout=15)
+    if re.search(r"Welcome,\s*EZONLINE1", text, flags=re.I) or _wait_for_sanmar_login_confirmed(driver, timeout=2):
+        return True
+    if _submit_sanmar_login_with_credentials(driver, timeout=4):
+        if _wait_for_sanmar_login_confirmed(driver, timeout=25):
+            return True
+    if _click_sanmar_autofilled_login(driver, timeout=8):
+        if _wait_for_sanmar_login_confirmed(driver, timeout=25):
+            return True
+    safe_get_with_partial_load(driver, _sanmar_login_url(), label="SanMar login")
+    if _wait_for_sanmar_login_confirmed(driver, timeout=3):
+        return True
+    if _submit_sanmar_login_with_credentials(driver, timeout=8):
+        if _wait_for_sanmar_login_confirmed(driver, timeout=25):
+            return True
+    if _click_sanmar_autofilled_login(driver, timeout=8):
+        if _wait_for_sanmar_login_confirmed(driver, timeout=25):
+            return True
+    confirmed = _wait_for_sanmar_login_confirmed(driver, timeout=20)
+    state = _sanmar_auth_state(driver)
+    if not confirmed and state.get("needsTwoFactor"):
+        print("SanMar is asking for email verification. Complete the verification in the Chrome window, then the worker will continue.")
+    if not confirmed and bool(getattr(driver, "_shipping_bypasser_visible", False)):
+        print("SanMar login is visible. Sign in as EZONLINE1 in the Chrome window; the worker will continue after login is confirmed.")
+        confirmed = _wait_for_sanmar_login_confirmed(driver, timeout=180)
+    if not confirmed:
+        if state.get("needsTwoFactor"):
+            raise RuntimeError("SanMar login needs email verification. Use Open SanMar Cart to complete verification, then rerun Shipping Bypasser.")
+        raise RuntimeError("SanMar login was not confirmed as EZONLINE1. Set SANMAR_USERNAME and SANMAR_PASSWORD in config.py or use Open SanMar Cart to sign in, then rerun Shipping Bypasser.")
+    return True
+
+
+def _find_clickable_by_text(driver, pattern):
+    script = r"""
+const pattern = new RegExp(arguments[0], 'i');
+const patternText = String(arguments[0] || '').toLowerCase();
+const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+function isVisible(node) {
+  if (!node) return false;
+  const rect = node.getBoundingClientRect();
+  if ((rect.width || 0) <= 0 || (rect.height || 0) <= 0) return false;
+  for (let current = node; current; current = current.parentElement) {
+    const style = window.getComputedStyle(current);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+  }
+  return true;
+}
+function labelFor(node) {
+  return normalize([
+    node.innerText,
+    node.textContent,
+    node.value,
+    node.getAttribute && node.getAttribute('aria-label'),
+    node.getAttribute && node.getAttribute('title')
+  ].filter(Boolean).join(' '));
+}
+const controls = Array.from(document.querySelectorAll([
+  'button',
+  'a',
+  'input[type="button"]',
+  'input[type="submit"]',
+  '[role="button"]',
+  '[ng-click]',
+  '[onclick]',
+  '.btn',
+  '[class*="btn"]',
+  '[class*="button"]'
+].join(','))).filter(isVisible);
+const textMatch = controls.find((node) => pattern.test(labelFor(node)));
+if (textMatch) return textMatch;
+if (patternText.includes('edit') && patternText.includes('order')) {
+  const editMode = controls.find((node) => /editModeOn\s*\(/i.test(String(node.getAttribute && node.getAttribute('ng-click') || '')));
+  if (editMode) return editMode;
+}
+if (patternText.includes('save') && patternText.includes('order')) {
+  const saveOrder = controls.find((node) => /saveOrder\s*\(/i.test(String(node.getAttribute && node.getAttribute('ng-click') || '')));
+  if (saveOrder) return saveOrder;
+}
+return null;
+"""
+    def _find_in_current_context():
+        try:
+            element = driver.execute_script(script, pattern)
+            if element is not None:
+                return element
+        except Exception:
+            pass
+        return None
+
+    element = _find_in_current_context()
+    if element is not None:
+        return element
+    try:
+        driver.switch_to.default_content()
+    except Exception:
+        pass
+    element = _find_in_current_context()
+    if element is not None:
+        return element
+    try:
+        frames = list(driver.find_elements(By.XPATH, "//iframe | //frame") or [])
+    except Exception:
+        frames = []
+    for frame in frames:
+        try:
+            driver.switch_to.default_content()
+            driver.switch_to.frame(frame)
+        except Exception:
+            continue
+        element = _find_in_current_context()
         if element is not None:
             return element
+    try:
+        driver.switch_to.default_content()
     except Exception:
         pass
     return None
@@ -1829,13 +2265,22 @@ for (const node of nodes) {
   const rect = node.getBoundingClientRect();
   const clickable = node.closest('button,a,label') || node;
   const tag = String(clickable.tagName || '').toLowerCase();
+  const component = String(clickable.getAttribute && clickable.getAttribute('data-component') || '').toLowerCase();
+  const componentScore = component.includes('colorswatch') ? -5000 : 0;
   const tagScore = tag === 'a' || tag === 'button' || tag === 'label' ? 0 : 10000;
   const area = Math.max(1, Math.round((rect.width || 1) * (rect.height || 1)));
-  const score = (colorScore * 100000) + tagScore + area + Math.round(rect.top || 0) + String(text).length;
+  const score = (colorScore * 100000) + componentScore + tagScore + area + Math.round(rect.top || 0) + String(text).length;
   if (!best || score < best.score) best = { node: clickable, score };
 }
 if (!best) return { success: false };
 best.node.scrollIntoView({ block: 'center', inline: 'center' });
+const href = best.node && best.node.tagName && String(best.node.tagName).toLowerCase() === 'a'
+  ? best.node.getAttribute('href')
+  : '';
+if (href) {
+  window.location.assign(href);
+  return { success: true, navigated: true, href };
+}
 best.node.click();
 return { success: true };
 """
@@ -1862,7 +2307,15 @@ return { success: true };
     if not text and any(key in {"NAVY", "ROYAL"} for key in wanted_keys):
         text = _wait_for_text(driver, r"Color\s+selected:.*(Navy|Royal)", timeout=3)
     if not text:
-        text = _wait_for_text(driver, r"Color\s+selected:", timeout=3)
+        selected_color = _sanmar_selected_color_label(driver)
+        if selected_color and _cart_color_matches(selected_color, color, product=product):
+            time.sleep(0.7)
+            return
+        if selected_color:
+            raise RuntimeError(
+                f"SanMar selected color '{selected_color}' did not match CRM color '{color}'."
+            )
+        raise RuntimeError(f"SanMar did not confirm selected color '{color}'.")
     time.sleep(0.7)
 
 
@@ -1890,7 +2343,7 @@ const warehouseAliases = [
   ['Reno, NV', ['Reno, NV', 'Reno', 'NV']],
   ['Seattle, WA', ['Seattle, WA', 'Seattle', 'WA']],
 ];
-const sizePattern = /^(XS|S|M|L|XL|[2-6]XL|S\/M|L\/XL|2\/3X|4\/5X|YXS|YS|YM|YL|YXL|LT|XLT|[2-4]XT|ONE SIZE|OSFA|NB|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}MOS|[2-7]T|5\/6)$/;
+const sizePattern = /^(XS|S|M|L|XL|[2-6]XL|S\/M|L\/XL|2\/3X|4\/5X|YXS|YS|YM|YL|YXL|LT|XLT|[2-4]XT|ONE SIZE|OSFA|NB|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}MOS|0003|0306|0612|1218|1824|[2-7]T|5\/6)$/;
 function escapeRegExp(value) { return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function warehouseFromText(text) {
   const haystack = normalize(text).toUpperCase();
@@ -1913,6 +2366,8 @@ function cleanSize(value) {
   if (/^ONE SIZE$/.test(text)) return 'ONE SIZE';
   const compact = text.replace(/\s+/g, '');
   if (compact === 'NEWBORN') return 'NB';
+  const compactInfantSizes = { '0003': '3M', '0306': '6M', '0612': '12M', '1218': '18M', '1824': '24M' };
+  if (compactInfantSizes[compact]) return compactInfantSizes[compact];
   const infantMatch = compact.match(/^([0-9]{1,2}-[0-9]{1,2})(?:MO|MOS|MONTH|MONTHS)$/);
   if (infantMatch) return `${Number(infantMatch[1].split('-')[1])}M`;
   const infantSingleMatch = compact.match(/^([0-9]{1,2})(?:M|MO|MOS|MONTH|MONTHS)$/);
@@ -2215,6 +2670,20 @@ def _choose_warehouse_plan(product_lines, order_type):
     return None, _choose_multi_warehouse_plan(product_lines, order_type)
 
 
+def _single_warehouse_from_plan(warehouse, plan):
+    warehouse = str(warehouse or "").strip()
+    if warehouse:
+        return warehouse
+    if str((plan or {}).get("mode") or "") != "single_warehouse":
+        return None
+    warehouses = [
+        str(item or "").strip()
+        for item in ((plan or {}).get("warehouses") or [])
+        if str(item or "").strip()
+    ]
+    return warehouses[0] if len(warehouses) == 1 else None
+
+
 def _format_multi_warehouse_production_note(order, plan):
     tab_index = order.get("stock_tab_index") or 1
     box_count = int((plan or {}).get("box_count") or len((plan or {}).get("warehouses") or []) or 0)
@@ -2281,6 +2750,9 @@ def _sanmar_size_key_for_product(product, size):
         return combo_size
     if text in {"ONESIZE", "OS", "OSFA"}:
         return "OSFA"
+    compact_infant_sizes = {"0003": "3M", "0306": "6M", "0612": "12M", "1218": "18M", "1824": "24M"}
+    if text in compact_infant_sizes:
+        return compact_infant_sizes[text]
     month_range = re.fullmatch(r"([0-9]{1,2})-([0-9]{1,2})(?:MO|MOS|MONTH|MONTHS)", text)
     if month_range:
         return f"{int(month_range.group(2))}M"
@@ -2417,12 +2889,26 @@ def _is_bella_canvas_product(product):
     )
 
 
-def _next_level_sanmar_style_id(product_id):
+def _next_level_sanmar_style_id(product_id, allow_bare_numeric=False):
     raw_style = _upper_key(product_id)
+    if not raw_style:
+        return ""
+    if raw_style.startswith("NL"):
+        return raw_style
     match = re.fullmatch(r"N(\d{4,})", raw_style)
     if match:
         return f"NL{match.group(1)}"
-    return raw_style if raw_style.startswith("NL") else ""
+    match = re.fullmatch(r"(\d{4,})NL", raw_style)
+    if match:
+        return f"NL{match.group(1)}"
+    if allow_bare_numeric and re.fullmatch(r"\d{4,}", raw_style):
+        return f"NL{raw_style}"
+    return ""
+
+
+def _next_level_sanmar_style_id_requires_brand(product_id):
+    raw_style = _upper_key(product_id)
+    return bool(raw_style and re.fullmatch(r"\d{4,}", raw_style))
 
 
 def _is_next_level_product(product):
@@ -2457,8 +2943,15 @@ def _sanmar_expected_style_keys(product, search_id=None):
     bella_canvas_style_id = _bella_canvas_sanmar_style_id(raw_product_id)
     if bella_canvas_style_id and bella_canvas_style_id not in keys:
         keys.insert(0, bella_canvas_style_id)
-    next_level_style_id = _next_level_sanmar_style_id(raw_product_id)
-    if next_level_style_id and _is_next_level_product(product) and next_level_style_id not in keys:
+    next_level_style_id = _next_level_sanmar_style_id(raw_product_id, allow_bare_numeric=_is_next_level_product(product))
+    if (
+        next_level_style_id
+        and (
+            _is_next_level_product(product)
+            or not _next_level_sanmar_style_id_requires_brand(raw_product_id)
+        )
+        and next_level_style_id not in keys
+    ):
         keys.insert(0, next_level_style_id)
     if "bella" in source_text:
         for value in (raw_product_id, raw_search_id):
@@ -2497,8 +2990,14 @@ def _sanmar_search_options_for_product(product):
             "handler": "Jerzees",
             "expected_style_keys": _sanmar_expected_style_keys(product, jerzees_style_id),
         }
-    next_level_style_id = _next_level_sanmar_style_id(search_id)
-    if next_level_style_id and _is_next_level_product(product):
+    next_level_style_id = _next_level_sanmar_style_id(search_id, allow_bare_numeric=_is_next_level_product(product))
+    if (
+        next_level_style_id
+        and (
+            _is_next_level_product(product)
+            or not _next_level_sanmar_style_id_requires_brand(search_id)
+        )
+    ):
         return {
             "search_id": next_level_style_id,
             "click_inventory_button": False,
@@ -2515,12 +3014,11 @@ def _sanmar_search_options_for_product(product):
         }
     bella_canvas_style_id = _bella_canvas_sanmar_style_id(search_id)
     if bella_canvas_style_id and _is_bella_canvas_product(product):
-        resolved_search_id = bella_canvas_style_id[2:] if bella_canvas_style_id.startswith("BC") else bella_canvas_style_id
         return {
-            "search_id": resolved_search_id,
+            "search_id": bella_canvas_style_id,
             "click_inventory_button": True,
             "handler": "Bella+Canvas",
-            "expected_style_keys": _sanmar_expected_style_keys(product, resolved_search_id),
+            "expected_style_keys": _sanmar_expected_style_keys(product, bella_canvas_style_id),
         }
     rabbit_skins_style_id = _rabbit_skins_sanmar_style_id(search_id)
     if rabbit_skins_style_id:
@@ -2574,12 +3072,14 @@ function isVisible(node) {
 function dispatch(node, name) {
   node.dispatchEvent(new Event(name, { bubbles: true }));
 }
-const sizePattern = /^(XS|S|M|L|XL|[2-6]XL|S\/M|L\/XL|2\/3X|4\/5X|YXS|YS|YM|YL|YXL|LT|XLT|[2-4]XT|ONE SIZE|OSFA|NB|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}MOS|[2-7]T|5\/6)$/;
+const sizePattern = /^(XS|S|M|L|XL|[2-6]XL|S\/M|L\/XL|2\/3X|4\/5X|YXS|YS|YM|YL|YXL|LT|XLT|[2-4]XT|ONE SIZE|OSFA|NB|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}MOS|0003|0306|0612|1218|1824|[2-7]T|5\/6)$/;
 function cleanSize(value) {
   const text = normalize(value).toUpperCase().replace(/\s+/g, ' ');
   if (/^ONE SIZE$/.test(text)) return 'ONE SIZE';
   const compact = text.replace(/\s+/g, '');
   if (compact === 'NEWBORN') return 'NB';
+  const compactInfantSizes = { '0003': '3M', '0306': '6M', '0612': '12M', '1218': '18M', '1824': '24M' };
+  if (compactInfantSizes[compact]) return compactInfantSizes[compact];
   const infantMatch = compact.match(/^([0-9]{1,2}-[0-9]{1,2})(?:MO|MOS|MONTH|MONTHS)$/);
   if (infantMatch) return `${Number(infantMatch[1].split('-')[1])}M`;
   const infantSingleMatch = compact.match(/^([0-9]{1,2})(?:M|MO|MOS|MONTH|MONTHS)$/);
@@ -2917,6 +3417,8 @@ function cleanSize(value) {
   if (/^ONE SIZE$/.test(text)) return 'ONE SIZE';
   const compact = text.replace(/\s+/g, '');
   if (compact === 'NEWBORN') return 'NB';
+  const compactInfantSizes = { '0003': '3M', '0306': '6M', '0612': '12M', '1218': '18M', '1824': '24M' };
+  if (compactInfantSizes[compact]) return compactInfantSizes[compact];
   const infantMatch = compact.match(/^([0-9]{1,2}-[0-9]{1,2})(?:MO|MOS|MONTH|MONTHS)$/);
   if (infantMatch) return `${Number(infantMatch[1].split('-')[1])}M`;
   const infantSingleMatch = compact.match(/^([0-9]{1,2})(?:M|MO|MOS|MONTH|MONTHS)$/);
@@ -3424,19 +3926,20 @@ function rowFor(radio) {
   const tableRow = radio.closest('tr');
   if (tableRow && isVisible(tableRow)) return tableRow;
   let scope = radio.parentElement;
-  for (let depth = 0; scope && depth < 5; scope = scope.parentElement, depth += 1) {
+  for (let depth = 0; scope && depth < 8; scope = scope.parentElement, depth += 1) {
     const text = normalize(scope.innerText || scope.textContent);
     const radioCount = Array.from(scope.querySelectorAll('input[type="radio"]')).filter(isVisible).length;
-    if (dateFrom(text) && radioCount <= 1) return scope;
+    if ((dateFrom(text) || warehousePattern.test(text)) && radioCount <= 1) return scope;
   }
   return radio.parentElement;
 }
 const results = [];
 for (const radio of Array.from(document.querySelectorAll('input[type="radio"]')).filter(isVisible)) {
   const rect = radio.getBoundingClientRect();
-  const warehouse = warehouseForY(rect.top);
-  if (!warehouse) continue;
   const text = normalize(rowFor(radio).innerText || rowFor(radio).textContent);
+  const warehouseMatch = text.match(warehousePattern);
+  const warehouse = warehouseForY(rect.top) || (warehouseMatch ? normalize(warehouseMatch[1]).replace(/\s*,\s*/, ', ') : '');
+  if (!warehouse) continue;
   if (!/\bUPS\b/i.test(text)) continue;
   if (expected.length && !expected.some((item) => item.toLowerCase() === warehouse.toLowerCase())) continue;
   const selected = Boolean(radio.checked);
@@ -3476,9 +3979,174 @@ return results;
     return {"eta_by_warehouse": by_warehouse, "latest_eta": latest_eta}
 
 
-def _select_ups_eta_for_shipping_plan(driver, order_type, warehouse=None, selected_warehouses=None, multi_warehouse=False):
+def _sanmar_checkout_shipping_state(driver):
+    script = r"""
+const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+function isVisible(node) {
+  if (!node) return false;
+  const rect = node.getBoundingClientRect();
+  if ((rect.width || 0) <= 0 || (rect.height || 0) <= 0) return false;
+  for (let current = node; current; current = current.parentElement) {
+    const style = window.getComputedStyle(current);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+    if (Number(style.opacity || 1) <= 0.03) return false;
+  }
+  return true;
+}
+function loaderDetails(node) {
+  const rect = node.getBoundingClientRect();
+  const style = window.getComputedStyle(node);
+  const text = normalize(node.innerText || node.textContent || node.getAttribute('aria-label') || node.getAttribute('title'));
+  return {
+    tag: String(node.tagName || '').toLowerCase(),
+    className: String(node.className || ''),
+    id: String(node.id || ''),
+    role: String(node.getAttribute('role') || ''),
+    text: text.slice(0, 160),
+    position: style.position,
+    zIndex: style.zIndex,
+    width: Math.round(rect.width || 0),
+    height: Math.round(rect.height || 0),
+  };
+}
+const text = normalize(document.body && (document.body.innerText || document.body.textContent) || '');
+const radios = Array.from(document.querySelectorAll('input[type="radio"]')).filter(isVisible);
+const upsRadios = radios.filter((radio) => {
+  let scope = radio.parentElement;
+  for (let depth = 0; scope && depth < 8; scope = scope.parentElement, depth += 1) {
+    const scopeText = normalize(scope.innerText || scope.textContent);
+    if (/\bUPS\b/i.test(scopeText)) return true;
+  }
+  return false;
+});
+const loaderSelector = [
+  '[aria-busy="true"]',
+  '[role="progressbar"]',
+  '.blockUI',
+  '.modal-backdrop',
+  '.loading',
+  '.loader',
+  '.spinner',
+  '[class*="loading"]',
+  '[class*="loader"]',
+  '[class*="spinner"]',
+  '[class*="preloader"]',
+  '[class*="progress"]',
+  '[class*="busy"]',
+  '[id*="loading"]',
+  '[id*="loader"]',
+  '[id*="spinner"]'
+].join(',');
+const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
+const loadingNodes = Array.from(document.querySelectorAll(loaderSelector))
+  .filter(isVisible)
+  .filter((node) => {
+    const rect = node.getBoundingClientRect();
+    const style = window.getComputedStyle(node);
+    const areaRatio = ((rect.width || 0) * (rect.height || 0)) / viewportArea;
+    const classAndId = `${node.className || ''} ${node.id || ''}`;
+    const meaningfulLoaderName = /loading|loader|spinner|preloader|progress|busy|blockUI|modal-backdrop/i.test(classAndId);
+    const overlayLike = ['fixed', 'absolute', 'sticky'].includes(style.position)
+      && (areaRatio >= 0.02 || Number.parseInt(style.zIndex || '0', 10) >= 10);
+    return node.getAttribute('aria-busy') === 'true'
+      || node.getAttribute('role') === 'progressbar'
+      || meaningfulLoaderName && overlayLike;
+  })
+  .map(loaderDetails);
+return {
+  readyState: document.readyState,
+  hasShippingMethodText: /Shipping\s+Method/i.test(text),
+  hasUpsText: /\bUPS\b/i.test(text),
+  upsRadioCount: upsRadios.length,
+  radioCount: radios.length,
+  loading: loadingNodes.length > 0,
+  loadingNodes,
+  textSample: text.slice(0, 500),
+};
+"""
+    try:
+        state = driver.execute_script(script)
+    except Exception:
+        return {"readyState": "complete", "loading": False, "hasShippingMethodText": True, "upsRadioCount": 0, "radioCount": 0, "syntheticReady": True}
+    return state if isinstance(state, dict) else {"readyState": "complete", "loading": False, "hasShippingMethodText": True, "upsRadioCount": 0, "radioCount": 0, "syntheticReady": True}
+
+
+def _wait_for_sanmar_checkout_shipping_methods(driver, timeout=75, settle_seconds=1.0):
+    deadline = time.time() + max(1, float(timeout or 0))
+    stable_ready_since = None
+    last_state = {}
+    while time.time() <= deadline:
+        state = _sanmar_checkout_shipping_state(driver)
+        last_state = state
+        loading = bool(state.get("loading"))
+        has_ups = int(state.get("upsRadioCount") or 0) > 0 or bool(state.get("hasUpsText"))
+        has_shipping_method = bool(state.get("hasShippingMethodText"))
+        ready_state = str(state.get("readyState") or "")
+        ready = not loading and ready_state in {"interactive", "complete"} and (has_ups or has_shipping_method)
+        if ready:
+            if state.get("syntheticReady"):
+                return state
+            if stable_ready_since is None:
+                stable_ready_since = time.time()
+            if time.time() - stable_ready_since >= max(0, float(settle_seconds or 0)):
+                return state
+        else:
+            stable_ready_since = None
+        time.sleep(0.5)
+    loader_detail = ""
+    loading_nodes = last_state.get("loadingNodes") if isinstance(last_state.get("loadingNodes"), list) else []
+    if loading_nodes:
+        first = loading_nodes[0]
+        loader_detail = f" Last visible loader: {first}."
+    raise RuntimeError(f"SanMar checkout shipping methods did not finish loading within {int(timeout)} seconds.{loader_detail}")
+
+
+def _capture_sanmar_checkout_diagnostic(driver, order_id=None, reason="ups_unavailable"):
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_order_id = re.sub(r"[^0-9A-Za-z_-]+", "_", str(order_id or "order"))
+    safe_reason = re.sub(r"[^0-9A-Za-z_-]+", "_", str(reason or "checkout"))
+    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+    base = f"sanmar_checkout_{safe_reason}_{safe_order_id}_{stamp}"
+    screenshot_path = os.path.join(SCREENSHOTS_DIR, f"{base}.png")
+    text_path = os.path.join(SCREENSHOTS_DIR, f"{base}.txt")
+    diagnostic = {
+        "screenshot": screenshot_path,
+        "text_snapshot": text_path,
+        "url": str(getattr(driver, "current_url", "") or ""),
+    }
+    try:
+        driver.save_screenshot(screenshot_path)
+    except Exception as exc:
+        diagnostic["screenshot_error"] = str(exc)
+        diagnostic["screenshot"] = ""
+    try:
+        text = _normalize_text(
+            driver.execute_script("return String(document.body && (document.body.innerText || document.body.textContent) || '');")
+        )
+        with open(text_path, "w", encoding="utf-8") as handle:
+            handle.write(text[:20000])
+    except Exception as exc:
+        diagnostic["text_snapshot_error"] = str(exc)
+        diagnostic["text_snapshot"] = ""
+    return diagnostic
+
+
+def _select_ups_eta_for_shipping_plan(driver, order_type, warehouse=None, selected_warehouses=None, multi_warehouse=False, order_id=None):
+    try:
+        _wait_for_sanmar_checkout_shipping_methods(driver)
+    except RuntimeError as exc:
+        if order_id:
+            diagnostic = _capture_sanmar_checkout_diagnostic(driver, order_id=order_id, reason="shipping_methods_loading")
+            setattr(exc, "sanmar_checkout_diagnostic", diagnostic)
+        raise
     if multi_warehouse:
-        eta_state = _select_ups_and_latest_eta_by_warehouse(driver, selected_warehouses)
+        try:
+            eta_state = _select_ups_and_latest_eta_by_warehouse(driver, selected_warehouses)
+        except RuntimeError as exc:
+            if order_id:
+                diagnostic = _capture_sanmar_checkout_diagnostic(driver, order_id=order_id, reason="ups_multi_warehouse")
+                setattr(exc, "sanmar_checkout_diagnostic", diagnostic)
+            raise
         return {
             "eta": eta_state.get("latest_eta"),
             "eta_by_warehouse": {
@@ -3487,6 +4155,7 @@ def _select_ups_eta_for_shipping_plan(driver, order_type, warehouse=None, select
             },
         }
     warehouse = str(warehouse or "").strip()
+    scoped_error = None
     if warehouse:
         try:
             eta_state = _select_ups_and_latest_eta_by_warehouse(driver, [warehouse])
@@ -3497,9 +4166,22 @@ def _select_ups_eta_for_shipping_plan(driver, order_type, warehouse=None, select
                     for name, value in (eta_state.get("eta_by_warehouse") or {}).items()
                 },
             }
-        except RuntimeError:
-            pass
-    return {"eta": _select_ups_and_eta(driver, order_type), "eta_by_warehouse": None}
+        except RuntimeError as exc:
+            scoped_error = exc
+    try:
+        return {"eta": _select_ups_and_eta(driver, order_type), "eta_by_warehouse": None}
+    except RuntimeError as exc:
+        diagnostic = _capture_sanmar_checkout_diagnostic(driver, order_id=order_id, reason="ups_unavailable") if order_id else None
+        if scoped_error is not None:
+            combined = RuntimeError(
+                f"{exc} Selected warehouse: {warehouse}. Warehouse-scoped UPS lookup also failed: {scoped_error}"
+            )
+            if diagnostic is not None:
+                setattr(combined, "sanmar_checkout_diagnostic", diagnostic)
+            raise combined from exc
+        if diagnostic is not None:
+            setattr(exc, "sanmar_checkout_diagnostic", diagnostic)
+        raise
 
 
 def _parse_sanmar_eta(value):
@@ -3984,7 +4666,7 @@ return inputs.some((node) => String(node.value || '').trim() === po);
 def _capture_sanmar_confirmation(driver, order_id, po):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_order_id = re.sub(r"[^0-9A-Za-z_-]+", "_", str(order_id or "order"))
-    screenshot_dir = os.path.join(SCRIPT_DIR, "screenshots")
+    screenshot_dir = SCREENSHOTS_DIR
     os.makedirs(screenshot_dir, exist_ok=True)
     screenshot_path = os.path.join(screenshot_dir, f"sanmar_shipping_bypass_{safe_order_id}_{stamp}.png")
     normalized_po = str(po or "").strip()
@@ -4236,24 +4918,24 @@ return { success: true };
     result = driver.execute_script(script)
     if not isinstance(result, dict) or not result.get("success"):
         raise RuntimeError((result or {}).get("message") or "CRM manual order popup could not be saved.")
-    deadline = time.time() + max(60, CRM_ACTION_TIMEOUT * 2)
+    deadline = time.time() + max(18, min(30, CRM_ACTION_TIMEOUT * 2))
     while time.time() < deadline:
         if _crm_manual_order_row_exists(driver, po, vendor_name=vendor_label):
-            time.sleep(3.0)
+            time.sleep(1.0)
             try:
                 _wait_for_order_goods_page_ready(driver, order_id, timeout=max(8, CRM_ACTION_TIMEOUT))
             except Exception:
                 pass
             return "recorded"
         time.sleep(0.8)
-    for _attempt in range(3):
+    for _attempt in range(2):
         _reopen_crm_manual_order_target(driver, order_id, order_url=order_url)
         _wait_for_order_goods_page_ready(driver, order_id, timeout=max(8, CRM_ACTION_TIMEOUT))
         if stock_tab_index is not None:
             _activate_stock_tab(driver, int(stock_tab_index) - 1)
         if _crm_manual_order_row_exists(driver, po, vendor_name=vendor_label):
             return "recorded"
-        time.sleep(3.0)
+        time.sleep(1.0)
     raise RuntimeError(f"CRM Manual Order save did not produce a visible {vendor_label} manual-order row.")
 
 
@@ -4297,8 +4979,8 @@ return Array.from(document.querySelectorAll('tr,[role="row"],li')).filter(isVisi
 """
     try:
         if vendor_name:
-            return bool(driver.execute_script(script, po, _manual_order_vendor_label(vendor_name)))
-        return bool(driver.execute_script(script, po))
+            return driver.execute_script(script, po, _manual_order_vendor_label(vendor_name)) is True
+        return driver.execute_script(script, po) is True
     except Exception:
         return False
 
@@ -4340,7 +5022,7 @@ return Array.from(document.querySelectorAll('tr')).filter(isVisible).some((row) 
 });
 """
     try:
-        return bool(driver.execute_script(script, po))
+        return driver.execute_script(script, po) is True
     except Exception:
         return False
 
@@ -4363,6 +5045,35 @@ def _attach_stock_tab_context(result, stock_tab_index=None, stock_tab_count=None
     if stock_tab_label:
         result["stock_tab_label"] = stock_tab_label
     return result
+
+
+def _shipping_bypasser_actionable_stock_tabs(driver, order_id, tabs):
+    actionable = []
+    skipped = []
+    for tab_index, tab in enumerate(tabs if isinstance(tabs, list) else []):
+        tab_number = tab_index + 1
+        tab_label = _stock_tab_summary_label((tab or {}).get("label"))
+        try:
+            activated = _activate_stock_tab(driver, tab_index)
+            if activated is None:
+                actionable.append((tab_index, tab, "stock_tab_not_found"))
+                continue
+            effective_label = _stock_tab_summary_label((activated or {}).get("label") or tab_label)
+            order = _extract_order_data(driver, order_id, tab_context=tab)
+            po = order.get("po")
+            if po and _crm_stock_order_yellow_visual_exists(driver, po):
+                skipped.append({"tab_number": tab_number, "tab_label": effective_label, "po": po, "reason": "crm_yellow_manual_order"})
+            elif po and _crm_manual_order_row_exists(driver, po):
+                skipped.append({"tab_number": tab_number, "tab_label": effective_label, "po": po, "reason": "crm_manual_order"})
+            elif po and _historical_shipping_bypass_po_exists(po):
+                skipped.append({"tab_number": tab_number, "tab_label": effective_label, "po": po, "reason": "shipping_bypasser_history"})
+            elif order.get("active_panel_stock_ordered"):
+                skipped.append({"tab_number": tab_number, "tab_label": effective_label, "po": po, "reason": "active_panel_stock_ordered"})
+            else:
+                actionable.append((tab_index, tab, "needs_shipping_bypass"))
+        except Exception as exc:
+            actionable.append((tab_index, tab, f"preflight_error:{type(exc).__name__}:{exc}"))
+    return actionable, skipped
 
 
 def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stock_tab_index=None, stock_tab_count=None, stock_tab_label=None, stock_tab_context=None):
@@ -4393,12 +5104,8 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
         already_ordered_source = "crm_yellow_manual_order"
     elif order.get("po") and _crm_manual_order_row_exists(crm_driver, order["po"]):
         already_ordered_source = "crm_manual_order"
-    elif order.get("po") and _historical_shipping_bypass_po_exists(order["po"]):
-        already_ordered_source = "shipping_bypasser_history"
     if already_ordered_source:
-        if already_ordered_source == "shipping_bypasser_history":
-            message = f"Skipped because SanMar customer PO {order['po']} was already confirmed by a previous Shipping Bypasser run."
-        elif already_ordered_source == "crm_yellow_manual_order":
+        if already_ordered_source == "crm_yellow_manual_order":
             message = f"Skipped because CRM shows a highlighted Manual Order stock row for PO {order['po']}."
         else:
             message = f"Skipped because Sanmar Manual Order PO {order['po']} is already recorded for this tab."
@@ -4413,6 +5120,66 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
                 manual_review_required=False,
                 order=order,
                 duplicate_guard=already_ordered_source,
+            )
+        )
+    pending_submission = _pending_shipping_bypass_submission(order_id, order.get("po"))
+    if pending_submission:
+        try:
+            _publish_status(
+                f"Recording CRM Manual Order from previous SanMar confirmation for Shipping Bypasser order {order_id}.",
+                stage="recording_crm_manual_order",
+                order_id=order_id,
+            )
+            record_state = _record_crm_manual_order(
+                crm_driver,
+                order_id,
+                order["po"],
+                dry_run=dry_run,
+                stock_tab_index=stock_tab_index,
+                vendor_name=pending_submission.get("vendor") or "Sanmar",
+            )
+            if not dry_run:
+                _mark_pending_shipping_bypass_submission_recorded(order_id, order["po"], record_state)
+            message = "SanMar stock was already submitted previously and was recorded in CRM Manual Order."
+            if stock_tab_label:
+                message = f"{message} Stock tab: {stock_tab_label}."
+            return done(_result(
+                order_id,
+                True,
+                "shipping_bypass_ordered",
+                message,
+                manual_review_required=False,
+                order=order,
+                sanmar_confirmation=pending_submission.get("sanmar_confirmation") or {},
+                sanmar_submit_state="previously_submitted",
+                crm_record_state=record_state,
+                duplicate_guard="pending_sanmar_confirmation",
+            ))
+        except Exception as exc:
+            return done(_result(
+                order_id,
+                False,
+                "pending_sanmar_submitted_crm_record_failed",
+                f"SanMar order was previously submitted, but CRM Manual Order could not be recorded: {exc}",
+                order=order,
+                sanmar_confirmation=pending_submission.get("sanmar_confirmation") or {},
+                sanmar_submit_state="previously_submitted",
+                manual_review_required=True,
+                retryable=False,
+            ))
+    if order.get("po") and _historical_shipping_bypass_po_exists(order["po"]):
+        message = f"Skipped because SanMar customer PO {order['po']} was already confirmed by a previous Shipping Bypasser run."
+        if stock_tab_label:
+            message = f"{message} Stock tab: {stock_tab_label}."
+        return done(
+            _result(
+                order_id,
+                True,
+                "already_stock_ordered",
+                message,
+                manual_review_required=False,
+                order=order,
+                duplicate_guard="shipping_bypasser_history",
             )
         )
     if order.get("active_panel_stock_ordered"):
@@ -4509,6 +5276,7 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
 
     multi_warehouse = str(warehouse_plan.get("mode") or "") == "multi_warehouse"
     selected_warehouses = warehouse_plan.get("warehouses") or ([warehouse] if warehouse else [])
+    warehouse = _single_warehouse_from_plan(warehouse, warehouse_plan)
     cart_product_lines = warehouse_plan.get("expanded_lines") or []
 
     for line_index, line in enumerate(cart_product_lines, start=1):
@@ -4556,13 +5324,39 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
     eta = None
     eta_by_warehouse = None
     if shipping.get("ship_mode") == "ship":
-        eta_state = _select_ups_eta_for_shipping_plan(
-            sanmar_driver,
-            order["order_type"],
-            warehouse=warehouse,
-            selected_warehouses=selected_warehouses,
-            multi_warehouse=multi_warehouse,
-        )
+        try:
+            eta_state = _select_ups_eta_for_shipping_plan(
+                sanmar_driver,
+                order["order_type"],
+                warehouse=warehouse,
+                selected_warehouses=selected_warehouses,
+                multi_warehouse=multi_warehouse,
+                order_id=order_id,
+            )
+        except RuntimeError as exc:
+            diagnostic = getattr(exc, "sanmar_checkout_diagnostic", None)
+            detail = ""
+            if isinstance(diagnostic, dict):
+                screenshot = diagnostic.get("screenshot")
+                text_snapshot = diagnostic.get("text_snapshot")
+                artifacts = ", ".join(path for path in (screenshot, text_snapshot) if path)
+                if artifacts:
+                    detail = f" Diagnostic saved: {artifacts}."
+            return done(_result(
+                order_id,
+                False,
+                "sanmar_ups_unavailable",
+                f"SanMar UPS shipping option could not be selected/read: {exc}.{detail}",
+                order=order,
+                warehouse=warehouse,
+                warehouses=selected_warehouses,
+                products=product_lines,
+                warehouse_plan=warehouse_plan,
+                shipping=shipping,
+                sanmar_checkout_diagnostic=diagnostic if isinstance(diagnostic, dict) else None,
+                manual_review_required=True,
+                retryable=False,
+            ))
         eta = eta_state.get("eta")
         eta_by_warehouse = eta_state.get("eta_by_warehouse")
         production_target = _shipping_bypasser_production_target_for_eta(eta)
@@ -4617,6 +5411,8 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
     sanmar_confirmation = None
     if submit_state == "submitted":
         sanmar_confirmation = _capture_sanmar_confirmation(sanmar_driver, order_id, order["po"])
+        if sanmar_confirmation.get("po_confirmed"):
+            _remember_pending_shipping_bypass_submission(order_id, order["po"], sanmar_confirmation, vendor_name="Sanmar")
         if not sanmar_confirmation.get("po_confirmed"):
             return done(_result(
                 order_id,
@@ -4636,6 +5432,8 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
     try:
         _publish_status(f"Recording CRM Manual Order for Shipping Bypasser order {order_id}.", stage="recording_crm_manual_order", order_id=order_id)
         record_state = _record_crm_manual_order(crm_driver, order_id, order["po"], dry_run=dry_run, stock_tab_index=stock_tab_index)
+        if submit_state == "submitted" and not dry_run:
+            _mark_pending_shipping_bypass_submission_recorded(order_id, order["po"], record_state)
     except Exception as exc:
         if submit_state == "submitted":
             return done(_result(
@@ -4735,9 +5533,10 @@ def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False):
         return [result]
 
     results = []
-    for tab_index in range(tab_count):
+    skipped_tabs = []
+    for tab_index, tab_context in enumerate(tabs if isinstance(tabs, list) else []):
         tab_number = tab_index + 1
-        tab_label = _stock_tab_summary_label((tabs[tab_index] or {}).get("label"))
+        tab_label = _stock_tab_summary_label((tab_context or {}).get("label"))
         try:
             if tab_index:
                 _publish_status(
@@ -4759,22 +5558,47 @@ def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False):
                     retryable=False,
                 )
             else:
-                print(f"Shipping Bypasser ordering stock tab {tab_number}/{tab_count}: {tab_label or 'untitled tab'}...")
-                _publish_status(
-                    f"Processing Shipping Bypasser order {normalized_order_id} stock tab {tab_number}/{tab_count}.",
-                    stage="processing_stock_tab",
-                    order_id=normalized_order_id,
-                )
-                result = _process_open_order(
-                    crm_driver,
-                    sanmar_driver,
-                    normalized_order_id,
-                    dry_run=dry_run,
-                    stock_tab_index=tab_number,
-                    stock_tab_count=tab_count,
-                    stock_tab_label=tab_label,
-                    stock_tab_context=tab,
-                )
+                order = _extract_order_data(crm_driver, normalized_order_id, tab_context=tab)
+                po = order.get("po")
+                skip_reason = ""
+                if po and _crm_stock_order_yellow_visual_exists(crm_driver, po):
+                    skip_reason = "crm_yellow_manual_order"
+                elif po and _crm_manual_order_row_exists(crm_driver, po):
+                    skip_reason = "crm_manual_order"
+                elif po and _historical_shipping_bypass_po_exists(po):
+                    skip_reason = "shipping_bypasser_history"
+                elif order.get("active_panel_stock_ordered"):
+                    skip_reason = "active_panel_stock_ordered"
+
+                if skip_reason:
+                    skipped_tabs.append({"tab_number": tab_number, "tab_label": tab_label, "po": po, "reason": skip_reason})
+                    result = _result(
+                        normalized_order_id,
+                        True,
+                        "already_stock_ordered",
+                        f"Skipped stock tab {tab_number} of {tab_count} because it is already ordered or recorded.",
+                        manual_review_required=False,
+                        detected_stock_tabs=tabs,
+                        skipped_stock_tabs=skipped_tabs,
+                    )
+                else:
+                    print(f"Shipping Bypasser ordering stock tab {tab_number}/{tab_count}: {tab_label or 'untitled tab'}...")
+                    _publish_status(
+                        f"Processing Shipping Bypasser order {normalized_order_id} stock tab {tab_number}/{tab_count}.",
+                        stage="processing_stock_tab",
+                        order_id=normalized_order_id,
+                    )
+                    result = _process_open_order(
+                        crm_driver,
+                        sanmar_driver,
+                        normalized_order_id,
+                        dry_run=dry_run,
+                        stock_tab_index=tab_number,
+                        stock_tab_count=tab_count,
+                        stock_tab_label=tab_label,
+                        stock_tab_context=tab,
+                    )
+                    result["stock_tab_preflight_reason"] = "needs_shipping_bypass"
         except Exception as exc:
             safe_take_screenshot(crm_driver, "crm_shipping_bypass_tab_error")
             result = _result(
@@ -4799,6 +5623,23 @@ def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False):
                 results.extend(cleanup_report[1:])
             if not cleanup_ok:
                 break
+    if results and len(skipped_tabs) == len(tabs) and all(str(item.get("outcome") or "") == "already_stock_ordered" for item in results):
+        skipped_labels = ", ".join(
+            f"{item.get('po') or item.get('tab_label') or item.get('tab_number')} ({item.get('reason')})"
+            for item in skipped_tabs[:8]
+        )
+        suffix = f": {skipped_labels}" if skipped_labels else "."
+        return [
+            _result(
+                normalized_order_id,
+                True,
+                "already_stock_ordered",
+                f"Skipped because all detected stock tabs are already ordered or recorded{suffix}",
+                manual_review_required=False,
+                detected_stock_tabs=tabs,
+                skipped_stock_tabs=skipped_tabs,
+            )
+        ]
     return results
 
 
@@ -5077,12 +5918,19 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
     target_url = _validate_runtime_config(list_url)
     requested_batch_size = _normalize_requested_batch_size(batch_size)
     resolved_profile_path = os.path.abspath(profile_path or PROFILE_PATH)
+
+    def _launch_crm_driver():
+        return _build_crm_session_driver(
+            resolved_profile_path,
+            headless_mode=headless_mode,
+            profile_label="CRM shipping bypasser",
+        )
+
+    def _launch_sanmar_driver():
+        return _build_sanmar_driver(visible=dry_run)
+
     _publish_status("Loading CRM session for Shipping Bypasser batch.", stage="loading_crm")
-    crm_driver = _build_crm_session_driver(
-        resolved_profile_path,
-        headless_mode=headless_mode,
-        profile_label="CRM shipping bypasser",
-    )
+    crm_driver = _launch_crm_driver()
     sanmar_driver = None
     report_items = []
     attempted_order_ids = []
@@ -5092,9 +5940,24 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
     completed_order_count = 0
     total_scanned_count = 0
     stop_batch = False
+
+    def _relaunch_crm_driver(reason):
+        nonlocal crm_driver
+        print(reason)
+        safe_driver_quit(crm_driver, profile_path=resolved_profile_path)
+        time.sleep(1)
+        crm_driver = _launch_crm_driver()
+
+    def _relaunch_sanmar_driver(reason):
+        nonlocal sanmar_driver
+        print(reason)
+        safe_driver_quit(sanmar_driver, profile_path=os.path.abspath(SANMAR_PROFILE_PATH))
+        time.sleep(1)
+        sanmar_driver = _launch_sanmar_driver()
+
     try:
         _publish_status("Loading SanMar session for Shipping Bypasser batch.", stage="loading_sanmar")
-        sanmar_driver = _build_sanmar_driver(visible=dry_run)
+        sanmar_driver = _launch_sanmar_driver()
         while not stop_batch and not _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
             refresh_passes += 1
             remaining = _batch_collection_limit(
@@ -5108,13 +5971,25 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
                 current=completed_order_count if total_scanned_count else None,
                 total=total_scanned_count or None,
             )
-            order_ids = _collect_batch_order_ids_with_driver(
-                crm_driver,
-                RUSH_FILTER,
-                remaining,
-                list_url_override=target_url,
-                exclude_order_ids=attempted_order_id_set,
-            )
+            list_scan_attempt = 0
+            while True:
+                try:
+                    order_ids = _collect_batch_order_ids_with_driver(
+                        crm_driver,
+                        RUSH_FILTER,
+                        remaining,
+                        list_url_override=target_url,
+                        exclude_order_ids=attempted_order_id_set,
+                    )
+                    break
+                except Exception as exc:
+                    list_scan_attempt += 1
+                    if list_scan_attempt <= 1 and _is_retryable_exception(exc):
+                        _relaunch_crm_driver(
+                            "CRM Shipping Bypasser list scan lost its browser session; relaunching CRM Chrome and retrying the scan..."
+                        )
+                        continue
+                    raise
             if not order_ids:
                 _publish_status(
                     "No more eligible Shipping Bypasser orders were found in the CRM list.",
@@ -5158,13 +6033,36 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
                 except Exception as exc:
                     safe_take_screenshot(crm_driver, "crm_shipping_bypass_error")
                     order_duration = _elapsed_seconds(order_started_at)
-                    failure = _result(order_id, False, "worker_exception", str(exc), retryable=_is_retryable_exception(exc), error_type=type(exc).__name__, duration_seconds=order_duration)
+                    retryable = _is_retryable_exception(exc)
+                    failure = _result(order_id, False, "worker_exception", str(exc), retryable=retryable, error_type=type(exc).__name__, duration_seconds=order_duration)
                     failure_report = [failure]
                     if "cart already had items" in str(exc).lower():
                         stop_batch = True
                     else:
                         _cleanup_after_failed_order(sanmar_driver, order_id, failure_report)
                     report_items.extend(failure_report)
+                    if retryable:
+                        try:
+                            _relaunch_crm_driver(
+                                "CRM Shipping Bypasser order processing lost its CRM browser session; relaunching before the next order..."
+                            )
+                            _relaunch_sanmar_driver(
+                                "CRM Shipping Bypasser order processing hit a retryable browser error; relaunching SanMar before the next order..."
+                            )
+                        except Exception as relaunch_exc:
+                            report_items.append(
+                                _result(
+                                    order_id,
+                                    False,
+                                    "browser_relaunch_failed",
+                                    f"Browser session relaunch failed after retryable Shipping Bypasser error: {relaunch_exc}",
+                                    retryable=_is_retryable_exception(relaunch_exc),
+                                    error_type=type(relaunch_exc).__name__,
+                                    duration_seconds=order_duration,
+                                    stop_run=True,
+                                )
+                            )
+                            stop_batch = True
                 completed_order_count += 1
                 _publish_status(
                     f"Finished Shipping Bypasser order {order_id} ({completed_order_count}/{total_scanned_count} done).",

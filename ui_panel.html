@@ -281,7 +281,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       <details class='section-note'>
         <summary>Read More</summary>
         <div class='section-note-body'>
-          <p>The mode dropdown here only affects the mode-specific Automate Processing steps. Mass Emailer is an independent toggle that can run alongside the selected mode. Rush mode can run Validator, Separator, Unlocker, Order Goods, and Bypasser. 813 mode uses its own CRM list and can run Validator, Order Goods, and Bypasser without Unlocker or Separator. Free Ship and All run Validator and Separator.</p>
+          <p>The mode dropdown here only affects Automate Processing steps. Rush mode can run Validator, Separator, Unlocker, Order Goods, and Bypasser. 813 mode uses its own CRM list and can run Validator, Order Goods, and Bypasser without Unlocker or Separator. Free Ship and All run Validator and Separator.</p>
           <p>Home Assistant / Alexa endpoints: /crm/process/rush, /crm/process/free-ship, /crm/process/all, and /crm/process/813. The original /crm/process endpoint still runs whatever is currently selected above.</p>
         </div>
       </details>
@@ -295,7 +295,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
         <option value='813'>813</option>
       </select>
       <button class='secondary tiny' id='crmProcessingBulkToggleBtn' onclick='toggleCrmProcessingBulkSelection()'>Clear All</button>
-      <button class='secondary toggle-btn active' id='crmProcessingMassEmailerToggleBtn' onclick='toggleCrmProcessingSelection("mass_emailer")'>Mass Emailer</button>
+      <button class='processing-primary-btn' id='crmMassEmailerRunBtn' onclick="startCrmMassEmailerRun('live', this)">SHEETS SCANNER</button>
     </div>
     <div class='row' style='align-items:center'>
       <button class='secondary toggle-btn active' id='crmProcessingAddressToggleBtn' onclick='toggleCrmProcessingSelection("address_validator_batch")'>Validator</button>
@@ -477,11 +477,11 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 
   <div class='card' style='margin-top:14px'>
     <div class='card-title-row'>
-      <h2>Mass Emailer</h2>
+      <h2>Sheets Scanner</h2>
       <details class='section-note'>
         <summary>Read More</summary>
         <div class='section-note-body'>
-          <p>Mass Emailer reads the Google Sheet queue for Copyright - Cancel rows, prepares the Salesforce email, then cancels and refunds the CRM order during live runs. Scan and dry run modes do not send, cancel, refund, or delete sheet rows.</p>
+          <p>Sheets Scanner reads the Google Sheet queue for supported Issue rows, including Auto Splitter and Manual Stock Order. Email/cancel rows can update CRM, send Salesforce email, cancel, refund, and delete successful sheet rows during live runs. Auto Splitter and Manual Stock Order rows run their stock/order automation without email. Scan and dry run modes do not make live changes or delete sheet rows.</p>
         </div>
       </details>
     </div>
@@ -493,13 +493,12 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       <label class='check' style='align-self:center;margin-top:20px'><input type='checkbox' id='crmMassEmailerRetryErrorsInput'> Retry Error Rows</label>
       <button class='secondary' id='crmMassEmailerScanBtn' onclick="startCrmMassEmailerRun('scan', this)">Scan Sheet</button>
       <button class='secondary' id='crmMassEmailerDryRunBtn' onclick="startCrmMassEmailerRun('dry-run', this)">Dry Run</button>
-      <button class='secondary' id='crmMassEmailerRunBtn' onclick="startCrmMassEmailerRun('live', this)">Add to Queue</button>
     </div>
-    <div class='notice' id='crmMassEmailerStatusText'>Mass Emailer status loading...</div>
-    <div class='muted' id='crmMassEmailerRuntimeText'>No Mass Emailer runs yet.</div>
+    <div class='notice' id='crmMassEmailerStatusText'>Sheets Scanner status loading...</div>
+    <div class='muted' id='crmMassEmailerRuntimeText'>No Sheets Scanner runs yet.</div>
     <div class='metrics' style='margin-top:10px'>
       <div class='metric'>
-        <div class='k'>Last Mass Emailer Run</div>
+        <div class='k'>Last Sheets Scanner Run</div>
         <div class='v' id='crmMassEmailerLastRunText'>-</div>
       </div>
       <div class='metric'>
@@ -516,17 +515,17 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       </div>
     </div>
     <div class='row' style='justify-content:space-between;align-items:center;margin-top:12px'>
-      <h3 style='margin:0'>Mass Emailer History</h3>
+      <h3 style='margin:0'>Sheets Scanner History</h3>
       <div class='row'>
         <button class='secondary' id='crmMassEmailerHistoryMoreBtn' onclick='toggleCrmMassEmailerHistory()' style='display:none'>View More</button>
         <button class='secondary' id='crmMassEmailerClearHistoryBtn' onclick='clearCrmMassEmailerHistory()'>Clear History</button>
       </div>
     </div>
-    <div class='muted' id='crmMassEmailerHistoryMetaText'>Showing recent Mass Emailer runs.</div>
+    <div class='muted' id='crmMassEmailerHistoryMetaText'>Showing recent Sheets Scanner runs.</div>
     <div class='tbl-wrap'>
       <table class='tbl'>
         <thead><tr><th>When</th><th>Action</th><th>Orders</th><th>Failures</th><th>Skipped</th><th>Duration</th><th>Mode</th><th>Status</th><th>Message</th></tr></thead>
-        <tbody id='crmMassEmailerHistoryRows'><tr><td colspan='9' class='muted'>No Mass Emailer runs yet.</td></tr></tbody>
+        <tbody id='crmMassEmailerHistoryRows'><tr><td colspan='9' class='muted'>No Sheets Scanner runs yet.</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -537,7 +536,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       <details class='section-note'>
         <summary>Read More</summary>
         <div class='section-note-body'>
-          <p>Auto Splitter first scans the original CRM order, checks the expected tab count, and builds the split plan. If that dry run preflight passes, the live split creates the split orders and updates the original order.</p>
+          <p>Auto Splitter first scans the original CRM order, detects the tab count, calculates the split plan, and confirms every split order stays within the 10-tab warehouse limit. If that dry run preflight passes, the live split creates the split orders and updates the original order.</p>
           <p>If the dry run preflight fails, the live split is skipped and the error explains why.</p>
         </div>
       </details>
@@ -546,14 +545,6 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       <div class='field' style='min-width:320px;flex:1 1 420px'>
         <label for='crmAutoSplitterOrderInput'>Order Number Or CRM Link</label>
         <input id='crmAutoSplitterOrderInput' placeholder='4489412 or https://crm2.legacy.printfly.com/order/4489412'>
-      </div>
-      <div class='field' style='width:150px'>
-        <label for='crmAutoSplitterTabsInput'>Tabs</label>
-        <input id='crmAutoSplitterTabsInput' type='number' min='1' step='1' placeholder='10'>
-      </div>
-      <div class='field' style='width:150px'>
-        <label for='crmAutoSplitterDivisionsInput'>Divisions</label>
-        <input id='crmAutoSplitterDivisionsInput' type='number' min='2' step='1' placeholder='2'>
       </div>
       <button class='secondary' id='crmAutoSplitterRunBtn' onclick='startCrmAutoSplitterRun(this)'>Add to Queue</button>
     </div>
@@ -998,7 +989,6 @@ let crmAddressHistoryShowDiff = false;
 let crmAddressMode = 'single';
 let crmAddressModeDirty = false;
 const CRM_PROCESSING_STEP_LABELS = {
-  mass_emailer: 'Mass Emailer',
   address_validator_batch: 'Address Validator (Batch)',
   product_separator: 'Product Separator',
   stock_unlocker: 'Stock Unlocker',
@@ -1080,7 +1070,6 @@ function formatCrmProcessingStepLabel(stepKey) {
 
 function formatCrmProcessingStepShortLabel(stepKey) {
   const key = String(stepKey || '').trim();
-  if (key === 'mass_emailer') return 'Mass Emailer';
   if (key === 'address_validator_batch') return 'Validator';
   if (key === 'product_separator') return 'Separator';
   if (key === 'stock_unlocker') return 'Unlocker';
@@ -1097,14 +1086,12 @@ function normalizeCrmProcessingStepList(stepList, state = {}) {
   const steps = [];
   const processingFilter = normalizeCrmProcessingFilter(state && state.processing_filter);
   const canRunRushGoods = processingFilter === 'rush' || processingFilter === '813';
-  const massEmailerEnabled = state && state.mass_emailer_enabled !== false;
   const orderGoodsEnabled = state && canRunRushGoods && state.order_goods_enabled;
   const shippingBypasserEnabled = state && canRunRushGoods && state.shipping_bypasser_enabled;
   const pushBackEnabled = state && canRunRushGoods && state.push_back_enabled;
   const source = Array.isArray(stepList) && stepList.length > 0
     ? stepList
     : [
-      massEmailerEnabled ? 'mass_emailer' : '',
       processingFilter === 'all' || (state && state.address_validator_enabled) ? 'address_validator_batch' : '',
       state && processingFilter !== '813' && state.product_separator_enabled !== false ? 'product_separator' : '',
       state && state.stock_unlocker_enabled && processingFilter === 'rush' ? 'stock_unlocker' : '',
@@ -1114,7 +1101,7 @@ function normalizeCrmProcessingStepList(stepList, state = {}) {
     ];
   for (const raw of source) {
     const key = String(raw || '').trim();
-    if ((key === 'mass_emailer' || key === 'address_validator_batch' || key === 'product_separator' || key === 'stock_unlocker' || key === 'order_goods' || key === 'shipping_bypasser' || key === 'push_back') && !steps.includes(key)) steps.push(key);
+    if ((key === 'address_validator_batch' || key === 'product_separator' || key === 'stock_unlocker' || key === 'order_goods' || key === 'shipping_bypasser' || key === 'push_back') && !steps.includes(key)) steps.push(key);
   }
   return steps;
 }
@@ -2123,6 +2110,42 @@ function fmtDuration(value) {
   const s = whole % 60;
   if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}s`;
   return `${m}m ${String(s).padStart(2, '0')}s`;
+}
+
+function formatStageTimingLabel(value) {
+  return String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function stageTimingsText(items, limit = 4) {
+  const rows = Array.isArray(items) ? items : [];
+  return rows
+    .filter((item) => item && item.stage)
+    .slice(0, Math.max(1, Number(limit) || 4))
+    .map((item) => `${formatStageTimingLabel(item.stage)} ${fmtDuration(item.duration_seconds)}`)
+    .join(' | ');
+}
+
+function stageTimingsHtml(items, limit = 4) {
+  const text = stageTimingsText(items, limit);
+  return text ? `<div class='muted' style='margin-top:4px'>Timing: ${esc(text)}</div>` : '';
+}
+
+function processingStepTimingsText(stepResults, limit = 4) {
+  const rows = Array.isArray(stepResults) ? stepResults : [];
+  return rows
+    .map((row) => {
+      const timing = stageTimingsText(row && row.stage_timings, 2);
+      if (!timing) return '';
+      const label = row && row.label ? row.label : formatCrmProcessingStepLabel(row && row.key);
+      return `${label}: ${timing}`;
+    })
+    .filter(Boolean)
+    .slice(0, Math.max(1, Number(limit) || 4))
+    .join(' | ');
 }
 
 function renderDesktopServerRuntime(payload) {
@@ -3482,7 +3505,6 @@ function syncCrmProcessingPolling() {
 function renderCrmProcessingSelectionButtons(state = {}) {
   const selectedSteps = normalizeCrmProcessingStepList([], state);
   const processingFilter = normalizeCrmProcessingFilter(state && state.processing_filter);
-  const massEmailerBtn = document.getElementById('crmProcessingMassEmailerToggleBtn');
   const unlockBtn = document.getElementById('crmProcessingUnlockToggleBtn');
   const addressBtn = document.getElementById('crmProcessingAddressToggleBtn');
   const separatorBtn = document.getElementById('crmProcessingSeparatorToggleBtn');
@@ -3500,14 +3522,6 @@ function renderCrmProcessingSelectionButtons(state = {}) {
   };
   const canRunOrderSupport = processingFilter === 'rush' || processingFilter === '813';
   const canRunSeparator = processingFilter !== '813';
-  if (massEmailerBtn) {
-    const enabled = selectedSteps.includes('mass_emailer');
-    massEmailerBtn.classList.toggle('active', enabled);
-    massEmailerBtn.classList.remove('processing-disabled');
-    massEmailerBtn.disabled = false;
-    massEmailerBtn.textContent = 'Mass Emailer';
-    massEmailerBtn.title = 'Toggle Mass Emailer in Automate Processing.';
-  }
   if (addressBtn) {
     const enabled = selectedSteps.includes('address_validator_batch');
     addressBtn.classList.toggle('active', enabled);
@@ -3636,11 +3650,15 @@ function renderCrmProcessingStatus(payload) {
   const runtimeText = running
     ? `${runningSelectionText} ${runtime.lastMessage || ''}`.trim()
     : (state.last_run_message || 'No automated processing runs yet.');
+  const processingTimingText = processingStepTimingsText(state.last_step_results, 4);
+  const runtimeTextWithTiming = processingTimingText && !running
+    ? `${runtimeText} Timing: ${processingTimingText}`
+    : runtimeText;
   const runBtn = document.getElementById('crmProcessingRunBtn');
 
   setProcessingStatus(processingBannerText);
   document.getElementById('crmProcessingStatusText').textContent = headline;
-  document.getElementById('crmProcessingRuntimeText').textContent = runtimeText;
+  document.getElementById('crmProcessingRuntimeText').textContent = runtimeTextWithTiming;
   document.getElementById('crmProcessingSelectionText').textContent = `Automate selection: ${selectionText}`;
   renderCrmProcessingSelectionButtons({ ...state, processing_filter: processingFilter });
   if (runBtn) {
@@ -3686,9 +3704,6 @@ async function toggleCrmProcessingSelection(stepKey) {
   const nextUnlock = stepKey === 'stock_unlocker'
     ? !Boolean(state.stock_unlocker_enabled)
     : Boolean(state.stock_unlocker_enabled);
-  const nextMassEmailer = stepKey === 'mass_emailer'
-    ? !(state.mass_emailer_enabled !== false)
-    : state.mass_emailer_enabled !== false;
   const nextAddress = stepKey === 'address_validator_batch'
     ? !Boolean(state.address_validator_enabled)
     : Boolean(state.address_validator_enabled);
@@ -3708,7 +3723,6 @@ async function toggleCrmProcessingSelection(stepKey) {
     nextPushBack = !nextPushBack;
   }
   const selectionPayload = {
-    mass_emailer_enabled: nextMassEmailer,
     stock_unlocker_enabled: nextUnlock,
     address_validator_enabled: nextAddress,
     product_separator_enabled: processingFilter === '813' ? false : nextSeparator,
@@ -3719,15 +3733,13 @@ async function toggleCrmProcessingSelection(stepKey) {
   };
   const label = stepKey === 'stock_unlocker'
     ? 'Unlocker'
-    : (stepKey === 'mass_emailer'
-      ? 'Mass Emailer'
-      : (stepKey === 'order_goods'
+    : (stepKey === 'order_goods'
       ? 'Order Goods'
       : (stepKey === 'shipping_bypasser'
         ? 'Shipping Bypasser'
         : (stepKey === 'push_back'
           ? 'Push Back'
-          : (stepKey === 'product_separator' ? 'Product Separator' : 'Validator')))));
+          : (stepKey === 'product_separator' ? 'Product Separator' : 'Validator'))));
   try {
     await persistCrmProcessingSelection(selectionPayload, `${label} selection updated.`);
   } catch (e) {
@@ -3808,6 +3820,26 @@ function normalizeCrmProcessingRepeatMinutes(value) {
   return Math.max(5, Math.min(60, Math.trunc(number)));
 }
 
+function formatCrmProcessingLocalDateTime(date) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:00`;
+}
+
+function resolveCrmProcessingScheduledDateTime(timeValue) {
+  const match = String(timeValue || '').trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  const now = new Date();
+  const scheduled = new Date(now);
+  scheduled.setHours(hours, minutes, 0, 0);
+  if (scheduled <= now) scheduled.setDate(scheduled.getDate() + 1);
+  return scheduled;
+}
+
 function syncCrmProcessingAdvancedControls(source = '') {
   const repeat = document.getElementById('crmProcessingRepeatToggle');
   const scheduled = document.getElementById('crmProcessingScheduledToggle');
@@ -3826,7 +3858,10 @@ function syncCrmProcessingAdvancedControls(source = '') {
   if (mode === 'repeat') {
     summary.textContent = `Repeat is on. AUTOMATE will stay in Queue and rerun every ${minutes ? minutes.value : 5} minutes until canceled.`;
   } else if (mode === 'scheduled') {
-    summary.textContent = `Scheduled is on. AUTOMATE will stay idle in Queue until ${timeInput && timeInput.value ? timeInput.value : 'the selected time'}.`;
+    const scheduledDateTime = timeInput && timeInput.value ? resolveCrmProcessingScheduledDateTime(timeInput.value) : null;
+    summary.textContent = scheduledDateTime
+      ? `Scheduled is on. AUTOMATE will stay idle in Queue until ${fmtDateTime(formatCrmProcessingLocalDateTime(scheduledDateTime))}.`
+      : 'Scheduled is on. AUTOMATE will stay idle in Queue until the selected time.';
   } else {
     summary.textContent = 'Advanced controls are off.';
   }
@@ -3844,8 +3879,12 @@ function buildCrmProcessingAdvancedPayload() {
     if (!scheduledTime) {
       throw new Error('Choose a scheduled time before queuing scheduled AUTOMATE.');
     }
+    const scheduledDateTime = resolveCrmProcessingScheduledDateTime(scheduledTime);
+    if (!scheduledDateTime) {
+      throw new Error('Choose a valid scheduled time before queuing scheduled AUTOMATE.');
+    }
     payload.advanced_mode = 'scheduled';
-    payload.scheduled_time = scheduledTime;
+    payload.scheduled_time = formatCrmProcessingLocalDateTime(scheduledDateTime);
   }
   return payload;
 }
@@ -3856,7 +3895,6 @@ async function startCrmProcessingRun(button = null) {
   const processingFilter = normalizeCrmProcessingFilter(state.processing_filter);
   const canRunOrderSupport = processingFilter === 'rush' || processingFilter === '813';
   const payload = {
-    mass_emailer_enabled: state.mass_emailer_enabled !== false,
     stock_unlocker_enabled: processingFilter === 'rush' ? Boolean(state.stock_unlocker_enabled) : false,
     address_validator_enabled: processingFilter === 'all' ? true : Boolean(state.address_validator_enabled),
     product_separator_enabled: processingFilter === '813' ? false : state.product_separator_enabled !== false,
@@ -3877,7 +3915,7 @@ async function startCrmProcessingRun(button = null) {
     return;
   }
   if (processingFilter === 'all') {
-    const confirmed = window.confirm('ALL mode will run the selected Mass Emailer, Address Validator, and Product Separator steps against their configured queues/lists. Stock Unlocker, Order Goods, Bypasser, and Push Back will not run. Continue?');
+    const confirmed = window.confirm('ALL mode will run the selected Address Validator and Product Separator steps against their configured queues/lists. Stock Unlocker, Order Goods, Bypasser, and Push Back will not run. Continue?');
     if (!confirmed) {
       setStatus('ALL mode Automate Processing canceled.');
       return;
@@ -3963,6 +4001,7 @@ function normalizeCrmOrderDetails(details, orderIds = [], fallbackDetail = null)
       success: Boolean(row.success),
       status: String(row.status || (row.success ? 'Success' : 'Needs attention')),
       outcome: String(row.outcome || ''),
+      function_label: String(row.function_label || row.sheet_function || row.issue_type || ''),
       message: String(row.message || ''),
       duration_seconds: row.duration_seconds != null ? Number(row.duration_seconds) : null,
       sanmar_confirmation: row.sanmar_confirmation && typeof row.sanmar_confirmation === 'object' ? row.sanmar_confirmation : null,
@@ -3980,6 +4019,7 @@ function normalizeCrmOrderDetails(details, orderIds = [], fallbackDetail = null)
       success: fallback.success != null ? Boolean(fallback.success) : true,
       status: String(fallback.status || (fallback.success === false ? 'Needs attention' : 'Success')),
       outcome: String(fallback.outcome || ''),
+      function_label: String(fallback.function_label || fallback.sheet_function || fallback.issue_type || ''),
       message: String(fallback.message || ''),
       duration_seconds: fallback.duration_seconds != null ? Number(fallback.duration_seconds) : null,
       sanmar_confirmation: fallback.sanmar_confirmation && typeof fallback.sanmar_confirmation === 'object' ? fallback.sanmar_confirmation : null,
@@ -4028,7 +4068,9 @@ function buildCrmOrderDetailsHtml(details, orderIds = []) {
   if (!rows.length) return buildCrmOrderLinksHtml(orderIds);
   return rows.map((row) => {
     const statusClass = row.success ? 'ok' : 'bad';
-    const message = row.message ? ` - ${esc(row.message)}` : '';
+    const functionLabel = String(row.function_label || '').trim();
+    const resultText = functionLabel ? `${functionLabel}: ${row.message || row.status}` : row.status;
+    const message = !functionLabel && row.message ? ` - ${esc(row.message)}` : '';
     const duration = row.duration_seconds != null ? ` <span class='muted'>${esc(fmtDuration(row.duration_seconds))}</span>` : '';
     const confirmation = row.sanmar_confirmation && typeof row.sanmar_confirmation === 'object' ? row.sanmar_confirmation : null;
     const sanmarUrl = confirmation && confirmation.url ? String(confirmation.url) : '';
@@ -4041,7 +4083,7 @@ function buildCrmOrderDetailsHtml(details, orderIds = []) {
     const tabText = crmStockTabDetailText(row);
     const tabInfo = tabText ? ` <span class='muted'>${esc(tabText)}</span>` : '';
     const stockOrdered = crmStockOrderedDetailHtml(row);
-    return `${crmOrderLinkHtml(row.order_id)}${tabInfo} <span class='${statusClass}'>${esc(row.status)}</span>${duration}${stockOrdered}${sanmarLink}${message}`;
+    return `${crmOrderLinkHtml(row.order_id)}${tabInfo} <span class='${statusClass}'>${esc(resultText)}</span>${duration}${stockOrdered}${sanmarLink}${message}`;
   }).join('<br>');
 }
 
@@ -4049,7 +4091,9 @@ function buildCrmOrderDetailsText(details, orderIds = []) {
   const rows = normalizeCrmOrderDetails(details, orderIds);
   if (!rows.length) return normalizeCrmOrderIds(orderIds).join('\n');
   return rows.map((row) => {
-    const message = row.message ? ` - ${row.message}` : '';
+    const functionLabel = String(row.function_label || '').trim();
+    const resultText = functionLabel ? `${functionLabel}: ${row.message || row.status}` : row.status;
+    const message = !functionLabel && row.message ? ` - ${row.message}` : '';
     const duration = row.duration_seconds != null ? ` (${fmtDuration(row.duration_seconds)})` : '';
     const confirmation = row.sanmar_confirmation && typeof row.sanmar_confirmation === 'object' ? row.sanmar_confirmation : null;
     const sanmarUrl = confirmation && confirmation.url ? ` | SanMar: ${confirmation.url}` : '';
@@ -4057,7 +4101,7 @@ function buildCrmOrderDetailsText(details, orderIds = []) {
     const tabText = crmStockTabDetailText(row);
     const tabInfo = tabText ? ` ${tabText}` : '';
     const stockOrdered = crmStockOrderedDetailText(row);
-    return `${row.order_id}${tabInfo}: ${row.status}${duration}${stockOrdered}${po}${sanmarUrl}${message}`;
+    return `${row.order_id}${tabInfo}: ${resultText}${duration}${stockOrdered}${po}${sanmarUrl}${message}`;
   }).join('\n');
 }
 
@@ -4251,7 +4295,8 @@ function renderCrmHistory(rows) {
     const details = orderIds.length > 0
       ? `<button class='secondary' data-order-ids="${esc(orderIds.join(','))}" data-order-details="${esc(orderDetailsJson)}" data-order-label="${esc(orderLabel)}" onclick='openCrmOrderIdsDialogFromButton(this)'>View Order IDs</button>`
       : "<span class='muted'>-</span>";
-    return `<tr>${historyWhenCellHtml(when, latestRows.has(row))}<td>${esc(automation)}</td><td>${esc(orders)}</td><td>${esc(duration)}</td><td>${details}</td><td>${esc(mode)}</td><td>${esc(status)}</td><td>${esc(message)}</td></tr>`;
+    const messageHtml = `${esc(message)}${stageTimingsHtml(row && row.stage_timings, 4)}`;
+    return `<tr>${historyWhenCellHtml(when, latestRows.has(row))}<td>${esc(automation)}</td><td>${esc(orders)}</td><td>${esc(duration)}</td><td>${details}</td><td>${esc(mode)}</td><td>${esc(status)}</td><td>${messageHtml}</td></tr>`;
   }).join('');
 }
 
@@ -4899,12 +4944,12 @@ function renderCrmMassEmailerHistory(rows) {
     }
   }
   if (meta) {
-    if (allItems.length === 0) meta.textContent = 'No Mass Emailer runs yet.';
+    if (allItems.length === 0) meta.textContent = 'No Sheets Scanner runs yet.';
     else if (allItems.length > collapsedCount && !crmMassEmailerHistoryExpanded) meta.textContent = `Showing ${items.length} of ${allItems.length} runs.`;
     else meta.textContent = `Showing ${items.length} run${items.length === 1 ? '' : 's'}.`;
   }
   if (items.length === 0) {
-    root.innerHTML = "<tr><td colspan='9' class='muted'>No Mass Emailer runs yet.</td></tr>";
+    root.innerHTML = "<tr><td colspan='9' class='muted'>No Sheets Scanner runs yet.</td></tr>";
     return;
   }
   root.innerHTML = items.map((row) => {
@@ -4913,9 +4958,12 @@ function renderCrmMassEmailerHistory(rows) {
     const orderCount = Number(row && row.order_count || orderIds.length || 0);
     const failures = Number(row && row.failure_count || 0);
     const skipped = Number(row && row.skipped_count || 0);
-    const orderDetailsJson = JSON.stringify(orderIds.map((orderId) => ({ order_id: orderId })));
+    const fallbackDetail = row && row.success === false
+      ? { success: false, status: 'Needs attention', message: row.message || '' }
+      : { success: true, status: 'Success' };
+    const orderDetailsJson = JSON.stringify(normalizeCrmOrderDetails(row && row.order_details, orderIds, fallbackDetail));
     const orderCell = orderIds.length > 0
-      ? `<button class='secondary' data-order-ids="${esc(orderIds.join(','))}" data-order-details="${esc(orderDetailsJson)}" data-order-label="${esc(`Mass Emailer Orders${when !== '-' ? ` | ${when}` : ''}`)}" onclick='openCrmOrderIdsDialogFromButton(this)'>View ${esc(String(orderCount || orderIds.length))} Order${(orderCount || orderIds.length) === 1 ? '' : 's'}</button>`
+      ? `<button class='secondary' data-order-ids="${esc(orderIds.join(','))}" data-order-details="${esc(orderDetailsJson)}" data-order-label="${esc(`Sheets Scanner Orders${when !== '-' ? ` | ${when}` : ''}`)}" onclick='openCrmOrderIdsDialogFromButton(this)'>View ${esc(String(orderCount || orderIds.length))} Order${(orderCount || orderIds.length) === 1 ? '' : 's'}</button>`
       : (orderCount > 0 ? esc(`${orderCount} order${orderCount === 1 ? '' : 's'}`) : '-');
     const mode = row && row.dry_run ? 'Dry Run' : (row && row.action === 'scan_sheet' ? 'Scan' : 'Live');
     const status = row && row.success ? 'Success' : 'Needs attention';
@@ -4928,13 +4976,11 @@ function renderCrmMassEmailerStatus(payload) {
   const state = payload && payload.state ? payload.state : {};
   const runtime = payload && payload.runtime ? payload.runtime : {};
   const running = Boolean(payload && payload.running);
-  const processingRunning = Boolean(crmProcessingStatusPayload && crmProcessingStatusPayload.running);
   const lastSuccess = state.last_run_success;
-  let headline = 'Mass Emailer is idle.';
-  if (running) headline = runtime.dryRun ? 'Mass Emailer dry run is running.' : 'Mass Emailer is running.';
-  else if (processingRunning) headline = 'Mass Emailer is waiting for Automate Processing to finish.';
-  else if (lastSuccess === true) headline = 'Last Mass Emailer run completed successfully.';
-  else if (lastSuccess === false) headline = 'Last Mass Emailer run needs attention.';
+  let headline = 'Sheets Scanner is idle.';
+  if (running) headline = runtime.dryRun ? 'Sheets Scanner dry run is running.' : 'Sheets Scanner is running.';
+  else if (lastSuccess === true) headline = 'Last Sheets Scanner run completed successfully.';
+  else if (lastSuccess === false) headline = 'Last Sheets Scanner run needs attention.';
   const orderCount = Number((running ? runtime.orderCount : state.last_order_count) || 0);
   const failureCount = Number((running ? runtime.failureCount : state.last_failure_count) || 0);
   const skippedCount = Number((running ? runtime.skippedCount : state.last_skipped_count) || 0);
@@ -4942,7 +4988,7 @@ function renderCrmMassEmailerStatus(payload) {
   const mode = running ? (runtime.dryRun ? 'Dry Run' : (action === 'scan_sheet' ? 'Scan' : 'Live')) : formatCrmMassEmailerAction(action);
   const runtimeText = running
     ? `${mode} | Orders ${orderCount} | Failures ${failureCount} | Skipped ${skippedCount}. ${runtime.lastMessage || ''}`.trim()
-    : (state.last_run_message || 'No Mass Emailer runs yet.');
+    : (state.last_run_message || 'No Sheets Scanner runs yet.');
   const statusText = document.getElementById('crmMassEmailerStatusText');
   if (statusText) statusText.textContent = headline;
   const runtimeNode = document.getElementById('crmMassEmailerRuntimeText');
@@ -4958,16 +5004,16 @@ function renderCrmMassEmailerStatus(payload) {
   const scanBtn = document.getElementById('crmMassEmailerScanBtn');
   const dryBtn = document.getElementById('crmMassEmailerDryRunBtn');
   const runBtn = document.getElementById('crmMassEmailerRunBtn');
-  if (running && !processingRunning) {
+  if (running) {
     if (scanBtn) scanBtn.disabled = true;
     if (dryBtn) dryBtn.disabled = true;
     if (runBtn) markButtonStoppable(runBtn);
   } else {
-    if (scanBtn) scanBtn.disabled = processingRunning;
-    if (dryBtn) dryBtn.disabled = processingRunning;
+    if (scanBtn) scanBtn.disabled = false;
+    if (dryBtn) dryBtn.disabled = false;
     if (runBtn) {
       restoreStoppableButton(runBtn);
-      runBtn.disabled = processingRunning;
+      runBtn.disabled = false;
     }
   }
   renderCrmMassEmailerHistory(state.run_history || []);
@@ -4980,13 +5026,13 @@ async function loadCrmMassEmailerStatus(setStatusText = false) {
     renderCrmMassEmailerStatus(d);
     if (setStatusText) {
       const runtime = d && d.runtime ? d.runtime : {};
-      setStatus(d.running ? (runtime.lastMessage || 'Mass Emailer is starting.') : (runtime.lastMessage || 'Mass Emailer status refreshed.'));
+      setStatus(d.running ? (runtime.lastMessage || 'Sheets Scanner is starting.') : (runtime.lastMessage || 'Sheets Scanner status refreshed.'));
     }
     return d;
   } catch (e) {
-    if (setStatusText) setStatus('Mass Emailer status load failed: ' + e.message);
+    if (setStatusText) setStatus('Sheets Scanner status load failed: ' + e.message);
     const statusText = document.getElementById('crmMassEmailerStatusText');
-    if (statusText) statusText.textContent = 'Mass Emailer status load failed.';
+    if (statusText) statusText.textContent = 'Sheets Scanner status load failed.';
     stopCrmMassEmailerPolling();
     return null;
   }
@@ -5007,17 +5053,17 @@ function buildCrmMassEmailerPayload() {
 async function startCrmMassEmailerRun(mode, button = null) {
   if (await maybeForceStopFromButton(button)) return;
   let path = '/crm/mass-emailer';
-  let label = 'Mass Emailer';
+  let label = 'Sheets Scanner';
   if (mode === 'scan') {
     path = '/crm/mass-emailer/scan';
-    label = 'Mass Emailer sheet scan';
+    label = 'Sheets Scanner sheet scan';
   } else if (mode === 'dry-run') {
     path = '/crm/mass-emailer/dry-run';
-    label = 'Mass Emailer dry run';
+    label = 'Sheets Scanner dry run';
   } else {
-    const confirmed = window.confirm('Mass Emailer live run will send Salesforce emails, cancel CRM orders, process refunds, and delete successful sheet rows. Continue?');
+    const confirmed = window.confirm('Sheets Scanner live run will process supported Issue rows. Auto Splitter and Manual Stock Order rows run without email; email/cancel rows may update CRM, send Salesforce email, cancel/refund, and delete successful sheet rows. Continue?');
     if (!confirmed) {
-      setStatus('Mass Emailer live run canceled.');
+      setStatus('Sheets Scanner live run canceled.');
       return;
     }
   }
@@ -5040,7 +5086,7 @@ async function startCrmMassEmailerRun(mode, button = null) {
     renderCrmMassEmailerStatus(d);
     resultMsg = d.message || resultMsg;
   } catch (e) {
-    resultMsg = 'Mass Emailer request failed: ' + e.message;
+    resultMsg = 'Sheets Scanner request failed: ' + e.message;
   }
   await loadCrmMassEmailerStatus(false);
   await loadCrmProcessingStatus(false);
@@ -5057,15 +5103,15 @@ function toggleCrmMassEmailerHistory() {
 }
 
 async function clearCrmMassEmailerHistory() {
-  if (!confirm('Clear Mass Emailer run history?')) return;
-  setStatus('Clearing Mass Emailer history...');
+  if (!confirm('Clear Sheets Scanner run history?')) return;
+  setStatus('Clearing Sheets Scanner history...');
   try {
     const d = await api('/crm/mass-emailer/history/clear', { method: 'POST' });
     crmMassEmailerHistoryExpanded = false;
     renderCrmMassEmailerStatus(d);
-    setStatus(d.message || 'Mass Emailer history cleared.');
+    setStatus(d.message || 'Sheets Scanner history cleared.');
   } catch (e) {
-    setStatus('Mass Emailer history clear failed: ' + e.message);
+    setStatus('Sheets Scanner history clear failed: ' + e.message);
   }
 }
 
@@ -5115,12 +5161,8 @@ function crmAutoSplitterExtractOrderId(value) {
 
 function crmAutoSplitterInputs() {
   const orderInput = document.getElementById('crmAutoSplitterOrderInput');
-  const tabsInput = document.getElementById('crmAutoSplitterTabsInput');
-  const divisionsInput = document.getElementById('crmAutoSplitterDivisionsInput');
   return {
     order_target: String(orderInput ? orderInput.value : '').trim(),
-    tab_count: Number(String(tabsInput ? tabsInput.value : '').trim()),
-    divisions: Number(String(divisionsInput ? divisionsInput.value : '').trim()),
     minimum_tabs: 10,
     parallel_workers: getSavedCrmWorkerPreference(),
   };
@@ -5128,10 +5170,7 @@ function crmAutoSplitterInputs() {
 
 function crmAutoSplitterValidation(payload) {
   if (!payload.order_target) return 'Enter an order number or CRM order link.';
-  if (!Number.isFinite(payload.tab_count) || payload.tab_count < 1) return 'Enter how many tabs are on the order.';
-  if (!Number.isFinite(payload.divisions) || payload.divisions < 2) return 'Enter how many divisions to split into.';
   if (!Number.isFinite(payload.parallel_workers) || payload.parallel_workers < 1 || payload.parallel_workers > 8) return 'Enter 1 to 8 automation workers in Settings.';
-  if (payload.tab_count < payload.minimum_tabs) return `Auto Splitter requires at least ${payload.minimum_tabs} tabs.`;
   return '';
 }
 
@@ -5152,8 +5191,6 @@ function crmAutoSplitterMatchesInputs(resultPayload) {
     && resultPayload.dry_run === true
     && requestedOrderId
     && requestedOrderId === resultOrderId
-    && Number(resultPayload.expected_tab_count) === Number(inputs.tab_count)
-    && Number(resultPayload.divisions) === Number(inputs.divisions)
   );
 }
 
@@ -5286,7 +5323,7 @@ function renderCrmAutoSplitterStatus(payload) {
 }
 
 function ensureCrmAutoSplitterInputWiring() {
-  ['crmAutoSplitterOrderInput', 'crmAutoSplitterTabsInput', 'crmAutoSplitterDivisionsInput'].forEach((id) => {
+  ['crmAutoSplitterOrderInput'].forEach((id) => {
     const input = document.getElementById(id);
     if (!input || input.dataset.bound === '1') return;
     input.addEventListener('input', () => {
@@ -5653,7 +5690,7 @@ function renderCrmAddressHistory(rows) {
         : (orderCount > 0 ? esc(`${orderCount} order${orderCount === 1 ? '' : 's'}`) : '-');
     }
     else if (orderId !== '-') orderCell = crmOrderLinkHtml(orderId);
-    const valueCell = crmAddressHistoryShowDiff ? buildCrmAddressHistoryDiffHtml(row, orderId) : esc(message);
+    const valueCell = crmAddressHistoryShowDiff ? buildCrmAddressHistoryDiffHtml(row, orderId) : `${esc(message)}${stageTimingsHtml(row && row.stage_timings, 4)}`;
     return `<tr>${historyWhenCellHtml(when, latestRows.has(row))}<td>${orderCell}</td><td>${esc(duration)}</td><td>${details}</td><td>${esc(modeLabel)}</td><td>${esc(filterLabel)}</td><td>${esc(status)}</td><td>${esc(resolution)}</td><td>${valueCell}</td></tr>`;
   }).join('');
 }

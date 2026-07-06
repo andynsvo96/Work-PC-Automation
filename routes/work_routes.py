@@ -3,6 +3,7 @@ Work-domain route registration for the automation server.
 """
 
 import re
+from datetime import datetime
 
 from flask import jsonify, request
 
@@ -198,12 +199,6 @@ def register_work_routes(
         data = request.get_json(silent=True) if request.method == "POST" else None
         data = data if isinstance(data, dict) else {}
         return {
-            "mass_emailer_enabled": _first_present(
-                data.get("mass_emailer_enabled"),
-                data.get("massEmailerEnabled"),
-                request.args.get("mass_emailer_enabled"),
-                request.args.get("massEmailerEnabled"),
-            ),
             "stock_unlocker_enabled": _first_present(
                 data.get("stock_unlocker_enabled"),
                 data.get("stockUnlockerEnabled"),
@@ -311,10 +306,6 @@ def register_work_routes(
         fallback_state = {**state, **mode_state}
 
         effective = {
-            "mass_emailer_enabled": _crm_processing_bool(
-                options.get("mass_emailer_enabled"),
-                fallback_state.get("mass_emailer_enabled", True),
-            ),
             "stock_unlocker_enabled": _crm_processing_bool(
                 options.get("stock_unlocker_enabled"),
                 fallback_state.get("stock_unlocker_enabled", True),
@@ -363,10 +354,17 @@ def register_work_routes(
             return key
         return "normal"
 
+    def _crm_processing_schedule_label(value):
+        text = str(value or "").strip()
+        if not text:
+            return "selected time"
+        try:
+            return datetime.fromisoformat(text).strftime("%b %d, %I:%M %p").replace(" 0", " ")
+        except ValueError:
+            return text
+
     def _crm_processing_step_signature(effective):
         steps = []
-        if effective.get("mass_emailer_enabled"):
-            steps.append("mass_emailer")
         if effective.get("address_validator_enabled"):
             steps.append("validator")
         if effective.get("product_separator_enabled") and effective.get("processing_filter") != "813":
@@ -407,11 +405,12 @@ def register_work_routes(
             signature["repeat_interval_minutes"] = interval
         elif mode == "scheduled":
             scheduled = options.get("scheduled_time")
+            scheduled_label = _crm_processing_schedule_label(scheduled)
             queue_options.update(
                 {
                     "queue_mode": "scheduled",
                     "scheduled_for": scheduled,
-                    "advanced_summary": f"Scheduled for {scheduled} | {effective.get('processing_filter')} | {', '.join(steps)}",
+                    "advanced_summary": f"Scheduled for {scheduled_label} | {effective.get('processing_filter')} | {', '.join(steps)}",
                 }
             )
             signature["scheduled_time"] = scheduled
@@ -421,8 +420,6 @@ def register_work_routes(
         effective = _crm_processing_effective_options(options)
         advanced_mode = _crm_processing_advanced_mode(options)
         steps = []
-        if effective.get("mass_emailer_enabled"):
-            steps.append("Mass Emailer")
         if effective.get("address_validator_enabled"):
             steps.append("Validator")
         if effective.get("product_separator_enabled") and effective.get("processing_filter") != "813":
@@ -509,7 +506,6 @@ def register_work_routes(
         preference_options = {
             key: options.get(key)
             for key in (
-                "mass_emailer_enabled",
                 "stock_unlocker_enabled",
                 "address_validator_enabled",
                 "product_separator_enabled",
@@ -682,7 +678,7 @@ def register_work_routes(
     def crm_mass_emailer():
         options = _crm_mass_emailer_request_options()
         return _queue_response(
-            "Mass Emailer",
+            "Sheets Scanner",
             "Processing",
             lambda: run_crm_mass_emailer_run_queued(action="process_queue", dry_run=False, **options),
             get_crm_mass_emailer_status_payload,
@@ -694,7 +690,7 @@ def register_work_routes(
     def crm_mass_emailer_dry_run():
         options = _crm_mass_emailer_request_options()
         return _queue_response(
-            "Mass Emailer Dry Run",
+            "Sheets Scanner Dry Run",
             "Processing",
             lambda: run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, **options),
             get_crm_mass_emailer_status_payload,
@@ -706,7 +702,7 @@ def register_work_routes(
     def crm_mass_emailer_scan():
         options = _crm_mass_emailer_request_options()
         return _queue_response(
-            "Mass Emailer Sheet Scan",
+            "Sheets Scanner Sheet Scan",
             "Processing",
             lambda: run_crm_mass_emailer_run_queued(action="scan_sheet", dry_run=True, **options),
             get_crm_mass_emailer_status_payload,

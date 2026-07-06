@@ -58,6 +58,7 @@ from config import (
     CRM_PROFILE_DIR,
     CRM_USERNAME,
 )
+from runtime_paths import GENERATED_PROFILES_DIR
 
 configure_console_utf8()
 
@@ -117,7 +118,7 @@ PROFILE_CLONE_IGNORE_NAMES = (
     "ZxcvbnData",
 )
 PROFILE_CLONE_IGNORE_LOOKUPS = {name.lower() for name in PROFILE_CLONE_IGNORE_NAMES}
-WORKER_PROFILE_POOL_DIR = os.path.join(SCRIPT_DIR, "chrome_profile_crm_worker_pool")
+WORKER_PROFILE_POOL_DIR = os.path.join(GENERATED_PROFILES_DIR, "chrome_profile_crm_worker_pool")
 WORKER_PROFILE_LOCKS = {}
 WORKER_PROFILE_LOCKS_LOCK = threading.Lock()
 WORKER_PROFILE_LOCK_CLEANUP_NAMES = (
@@ -137,6 +138,19 @@ WORKER_PROFILE_CACHE_DIR_NAMES = (
 
 def _elapsed_seconds(started_at):
     return round(max(0.0, time.monotonic() - started_at), 1)
+
+
+def _record_stage_timing(stage_timings, stage, started_at, **extra):
+    if not isinstance(stage_timings, list):
+        return
+    item = {
+        "stage": str(stage or ""),
+        "duration_seconds": _elapsed_seconds(started_at),
+    }
+    for key, value in extra.items():
+        if value is not None:
+            item[str(key)] = value
+    stage_timings.append(item)
 
 
 def _attach_duration(payload, duration_seconds):
@@ -162,6 +176,7 @@ UNIT_TRAILER_PATTERNS = (
         r"^(?P<street>.+?)(?:,?\s*)(?P<unit>#\s*[A-Z0-9][A-Z0-9-]*(?:\s+[A-Z0-9-]+)*)$"
     ),
 )
+EMAIL_ADDRESS_PATTERN = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 LEADING_UNIT_PREFIX_PATTERNS = (
     re.compile(
         rf"^(?P<unit>#\s*[A-Z0-9][A-Z0-9-]*|{UNIT_LABEL_PATTERN}\.?\s*#?\s*[A-Z0-9][A-Z0-9-]*)\s+(?P<street>.+)$"
@@ -1029,6 +1044,17 @@ def _normalize_space(text):
     return " ".join(str(text or "").split())
 
 
+def _address_fields_contain_email(address_fields):
+    address_fields = address_fields or {}
+    for key in ("address", "address_cont", "city", "state", "zip"):
+        value = _normalize_space(address_fields.get(key))
+        if not value:
+            continue
+        if "@" in value or EMAIL_ADDRESS_PATTERN.search(value):
+            return True
+    return False
+
+
 def _merge_address_fields(primary, fallback):
     merged = dict(primary or {})
     for key in ("recipient", "address", "address_cont", "city", "state", "zip"):
@@ -1161,7 +1187,7 @@ def _leading_house_parts(address_line):
 
     canonical = _canonical_text(address_line)
     tokens = canonical.split()
-    if tokens and any(ch.isdigit() for ch in tokens[0]):
+    if tokens and re.match(r"^\d", tokens[0]):
         return tokens[0], " ".join(tokens[1:])
     return "", canonical
 
@@ -2447,6 +2473,20 @@ def _recipient_missing_result(order_id, warnings, original_address, final_addres
     )
 
 
+def _email_in_shipping_address_result(order_id, warnings, original_address, final_address):
+    return _result_for(
+        order_id,
+        "email_in_shipping_address",
+        "Skipped because the shipping address fields contain an email address and need manual correction.",
+        success=False,
+        resolution="manual_review",
+        manual_review=True,
+        warnings=warnings,
+        original_address=original_address,
+        final_address=final_address,
+    )
+
+
 def _address_cont_preservation_failed_result(order_id, warnings, original_address, final_address, required_cont):
     return _result_for(
         order_id,
@@ -2486,8 +2526,14 @@ def _prepare_shipping_form_for_save(order_id, shipping_modal, original_address, 
     recipient_ok, final_address = _ensure_recipient_present(shipping_modal, original_address.get("recipient"), warnings)
     if not recipient_ok:
         return _recipient_missing_result(order_id, warnings, original_address, final_address), None, preserved_address_cont
+    if _address_fields_contain_email(final_address):
+        warnings.append("Detected an email address in the shipping address fields before saving.")
+        return _email_in_shipping_address_result(order_id, warnings, original_address, final_address), None, preserved_address_cont
     if allow_rewrite:
         final_address, preserved_address_cont = _rewrite_address_fields_if_needed(shipping_modal, warnings, preserved_address_cont)
+        if _address_fields_contain_email(final_address):
+            warnings.append("Detected an email address in the shipping address fields after cleanup.")
+            return _email_in_shipping_address_result(order_id, warnings, original_address, final_address), None, preserved_address_cont
         preserved_ok, final_address = _ensure_address_cont_preserved(shipping_modal, preserved_address_cont, warnings)
         if not preserved_ok:
             return _address_cont_preservation_failed_result(order_id, warnings, original_address, final_address, preserved_address_cont), None, preserved_address_cont
@@ -3240,6 +3286,36 @@ def _is_order_detail_page(driver, order_id=None, list_url=None):
     return False
 
 
+def _wait_for_target_order_open(driver, resolved_order_id, list_url, handles_before, original_handle, timeout_seconds):
+    deadline = time.time() + max(0, float(timeout_seconds or 0))
+    while time.time() < deadline:
+        try:
+            handles_now = driver.window_handles
+        except Exception:
+            handles_now = []
+        new_handles = [handle for handle in handles_now if handle not in handles_before]
+        if new_handles:
+            try:
+                driver.switch_to.window(new_handles[-1])
+            except Exception:
+                pass
+        elif original_handle and original_handle in handles_now:
+            try:
+                driver.switch_to.window(original_handle)
+            except Exception:
+                pass
+
+        switched_into_app = _switch_to_order_app_frame(driver, timeout=0.8)
+        if switched_into_app and _is_order_detail_page(driver, resolved_order_id, list_url=list_url):
+            return True
+        if switched_into_app and _find_shipping_edit_button(driver, timeout=1.0, raise_on_timeout=False) is not None:
+            return True
+        if not switched_into_app and _is_order_detail_page(driver, resolved_order_id, list_url=list_url):
+            return True
+        time.sleep(0.25)
+    return False
+
+
 def _open_target_order(driver, order_id=None, shipping_filter=None, list_url_override=None):
     resolved_order_id = None
     normalized_filter = _normalize_shipping_filter(shipping_filter or CRM_SHIPPING_FILTER_DEFAULT)
@@ -3281,32 +3357,17 @@ def _open_target_order(driver, order_id=None, shipping_filter=None, list_url_ove
         print(f"Opening order {resolved_order_id} from the shipping-address report...")
         _click_with_fallback(driver, order_link)
 
-    deadline = time.time() + max(CRM_ACTION_TIMEOUT * 3, 45)
-    while time.time() < deadline:
-        try:
-            handles_now = driver.window_handles
-        except Exception:
-            handles_now = []
-        new_handles = [handle for handle in handles_now if handle not in handles_before]
-        if new_handles:
-            try:
-                driver.switch_to.window(new_handles[-1])
-            except Exception:
-                pass
-        elif original_handle and original_handle in handles_now:
-            try:
-                driver.switch_to.window(original_handle)
-            except Exception:
-                pass
-
-        switched_into_app = _switch_to_order_app_frame(driver, timeout=0.8)
-        if switched_into_app and _is_order_detail_page(driver, resolved_order_id, list_url=list_url):
-            return resolved_order_id
-        if switched_into_app and _find_shipping_edit_button(driver, timeout=1.0, raise_on_timeout=False) is not None:
-            return resolved_order_id
-        if not switched_into_app and _is_order_detail_page(driver, resolved_order_id, list_url=list_url):
-            return resolved_order_id
-        time.sleep(0.25)
+    open_timeout = max(CRM_ACTION_TIMEOUT * 3, 45)
+    if _wait_for_target_order_open(driver, resolved_order_id, list_url, handles_before, original_handle, open_timeout):
+        return resolved_order_id
+    print(f"Order {resolved_order_id} did not open before timeout; refreshing once and retrying.")
+    try:
+        driver.refresh()
+    except Exception:
+        pass
+    time.sleep(1.0)
+    if _wait_for_target_order_open(driver, resolved_order_id, list_url, handles_before, original_handle, open_timeout):
+        return resolved_order_id
     raise TimeoutException(f"Order {resolved_order_id} did not open before the timeout expired.")
 
 
@@ -4509,6 +4570,13 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
     panel_valid_but_needs_caps_normalization = False
     if _shipping_panel_has_valid_address(driver):
         current_address = panel_address or _extract_shipping_panel_address(driver)
+        if _address_fields_contain_email(current_address):
+            return _email_in_shipping_address_result(
+                order_id,
+                ["Detected an email address in a shipping address field that CRM had marked valid."],
+                current_address,
+                current_address,
+            )
         if not _shipping_address_needs_caps_normalization(current_address):
             return _result_for(
                 order_id,
@@ -4556,6 +4624,9 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
     current_address = _merge_address_fields(current_address, panel_address)
     if not recipient_ok:
         return _recipient_missing_result(order_id, warnings, original_address, current_address)
+    if _address_fields_contain_email(current_address):
+        warnings.append("Detected an email address in a shipping address field before validation.")
+        return _email_in_shipping_address_result(order_id, warnings, original_address, current_address)
     original_address = _merge_address_fields(dict(original_address), current_address)
     original_address["recipient"] = current_address.get("recipient") or original_address.get("recipient")
     recovered_street_number_from_cont = ""
@@ -4664,6 +4735,9 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
     current_address = _merge_address_fields(current_address, panel_address)
     if not recipient_ok:
         return _recipient_missing_result(order_id, warnings, original_address, current_address)
+    if _address_fields_contain_email(current_address):
+        warnings.append("Detected an email address in a shipping address field after cleanup.")
+        return _email_in_shipping_address_result(order_id, warnings, original_address, current_address)
     po_box_profile = _classify_po_box_address(current_address)
 
     if not any(_normalize_space(current_address.get(key)) for key in ("address", "city", "zip", "state")):
@@ -6015,8 +6089,10 @@ def _run_batch(dry_run=False, shipping_filter=None, batch_size=2, parallel_worke
     finished_payloads = []
     attempted_order_ids = []
     refresh_passes = 0
+    stage_timings = []
 
     if worker_limit == 1:
+        reuse_started_at = time.monotonic()
         for collection_attempt in range(1, 3):
             try:
                 finished_payloads, attempted_order_ids, refresh_passes = _run_batch_reusing_session(
@@ -6046,6 +6122,13 @@ def _run_batch(dry_run=False, shipping_filter=None, batch_size=2, parallel_worke
                     started_at=batch_started_at,
                     list_url_override=list_url_override,
                 )
+        _record_stage_timing(
+            stage_timings,
+            "shared_session_batch",
+            reuse_started_at,
+            order_count=len(attempted_order_ids),
+            refresh_passes=refresh_passes,
+        )
     else:
         finished_lock = threading.Lock()
         attempted_order_id_set = set()
@@ -6058,6 +6141,7 @@ def _run_batch(dry_run=False, shipping_filter=None, batch_size=2, parallel_worke
                 worker_limit=worker_limit,
             )
             for collection_attempt in range(1, 3):
+                list_scan_started_at = time.monotonic()
                 try:
                     order_ids = _collect_batch_order_ids(
                         normalized_shipping_filter,
@@ -6067,8 +6151,24 @@ def _run_batch(dry_run=False, shipping_filter=None, batch_size=2, parallel_worke
                         exclude_order_ids=attempted_order_id_set,
                         visible=visible,
                     )
+                    _record_stage_timing(
+                        stage_timings,
+                        "list_scan",
+                        list_scan_started_at,
+                        refresh_pass=refresh_passes,
+                        order_count=len(order_ids),
+                        attempt=collection_attempt,
+                    )
                     break
                 except Exception as exc:
+                    _record_stage_timing(
+                        stage_timings,
+                        "list_scan_failed",
+                        list_scan_started_at,
+                        refresh_pass=refresh_passes,
+                        attempt=collection_attempt,
+                        retryable=_is_retryable_exception(exc),
+                    )
                     if collection_attempt == 1 and _is_retryable_exception(exc):
                         print(
                             "CRM batch list collection lost its browser session; "
@@ -6093,6 +6193,7 @@ def _run_batch(dry_run=False, shipping_filter=None, batch_size=2, parallel_worke
             worker_gate = threading.BoundedSemaphore(worker_limit)
             threads = []
             chunk_results = []
+            chunk_started_at = time.monotonic()
 
             def _worker(order_index, order_id):
                 with worker_gate:
@@ -6186,6 +6287,14 @@ def _run_batch(dry_run=False, shipping_filter=None, batch_size=2, parallel_worke
 
             for thread in threads:
                 thread.join()
+            _record_stage_timing(
+                stage_timings,
+                "parallel_order_processing",
+                chunk_started_at,
+                refresh_pass=refresh_passes,
+                order_count=len(order_ids),
+                worker_count=worker_limit,
+            )
 
             chunk_order_position = {order_id: index for index, order_id in enumerate(order_ids)}
             chunk_results.sort(key=lambda payload: chunk_order_position.get(str(payload.get("target_order_id") or ""), 999999))
@@ -6214,6 +6323,7 @@ def _run_batch(dry_run=False, shipping_filter=None, batch_size=2, parallel_worke
             "parallel_workers": worker_limit,
             "refresh_passes": refresh_passes,
             "duration_seconds": _elapsed_seconds(batch_started_at),
+            "stage_timings": stage_timings,
         }
         if _normalized_list_url_override(list_url_override):
             payload["list_url"] = _normalized_list_url_override(list_url_override)
@@ -6244,6 +6354,7 @@ def _run_batch(dry_run=False, shipping_filter=None, batch_size=2, parallel_worke
         "parallel_workers": worker_limit,
         "refresh_passes": refresh_passes,
         "duration_seconds": _elapsed_seconds(batch_started_at),
+        "stage_timings": stage_timings,
     }
 
 

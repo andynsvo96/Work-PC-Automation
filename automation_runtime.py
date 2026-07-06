@@ -23,10 +23,11 @@ from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
 from automation_audit import log_automation_result
+from runtime_paths import SCREENSHOTS_DIR, result_file, state_file
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-RESULT_FILE = os.path.join(SCRIPT_DIR, "last_result.json")
-STATUS_FILE = os.path.join(SCRIPT_DIR, "automation_status.json")
+RESULT_FILE = result_file("last_result.json")
+STATUS_FILE = state_file("automation_status.json")
 
 FAILURE_SCREENSHOT_MARKERS = (
     "error",
@@ -218,7 +219,7 @@ def take_screenshot(driver, name, screenshots_dir=None):
         print(f"Screenshot skipped by policy: {name}")
         return None
     if not screenshots_dir:
-        screenshots_dir = os.path.join(SCRIPT_DIR, "screenshots")
+        screenshots_dir = SCREENSHOTS_DIR
     os.makedirs(screenshots_dir, exist_ok=True)
     path = os.path.join(
         screenshots_dir,
@@ -581,6 +582,7 @@ def build_chrome_driver(
     options.add_argument(f"--user-data-dir={profile_path}")
     if headless_mode:
         options.add_argument("--headless=new")
+        options.add_argument("--window-position=-32000,-32000")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-extensions")

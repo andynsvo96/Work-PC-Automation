@@ -49,9 +49,11 @@ from crm_validate_address import (
     _normalize_requested_batch_size,
     _normalize_target_order_id,
     _open_target_order,
+    _record_stage_timing,
     _worker_profile_lock,
 )
 from crm_unlock_orders import wait_for_order_preview_panel as _wait_for_stock_unlock_preview_panel
+from runtime_paths import state_file
 
 configure_console_utf8()
 
@@ -59,7 +61,7 @@ AUTOMATION_NAME = "crm.order_goods"
 PROFILE_PATH = os.path.join(SCRIPT_DIR, CRM_PROFILE_DIR)
 RUSH_FILTER = "rush"
 CONTINUOUS_ORDER_FETCH_LIMIT = 25
-CRM_STATE_PATH = os.path.join(SCRIPT_DIR, "crm_state.json")
+CRM_STATE_PATH = state_file("crm_state.json")
 STOCK_UNLOCK_STATUS = "Stock Auto Ordering Unlocked"
 ORDER_OPEN_REFRESH_ATTEMPTS = 2
 ORDER_OPEN_REFRESH_DELAY_SECONDS = 2.0
@@ -1412,6 +1414,34 @@ def _refresh_order_after_stock_unlock(driver, order_id, stock_tab_index=None):
     return _wait_after_stock_unlock(driver, order_id, stock_tab_index=stock_tab_index)
 
 
+def _recover_missing_order_goods_button_once(driver, order_id, stock_tab_index=None):
+    if _page_indicates_non_vendor_stock_tab(driver):
+        return None
+
+    print(
+        f"Sanmar / S&S Activewear order goods button did not appear for {order_id}; "
+        "waiting briefly before one CRM refresh..."
+    )
+    button = _find_sanmar_order_goods_button(driver, timeout=3)
+    if button is not None:
+        return button
+
+    try:
+        driver.refresh()
+        time.sleep(1.0)
+    except Exception:
+        pass
+
+    _wait_for_order_goods_page_ready(driver, order_id, timeout=max(10, CRM_ACTION_TIMEOUT))
+    if stock_tab_index is not None:
+        try:
+            _activate_stock_tab(driver, int(stock_tab_index))
+            time.sleep(0.5)
+        except Exception:
+            pass
+    return _find_sanmar_order_goods_button(driver, timeout=10)
+
+
 def _page_indicates_non_vendor_stock_tab(driver):
     try:
         text = driver.execute_script(
@@ -1434,6 +1464,8 @@ def _order_goods_for_open_order(
     if not ignore_already_ordered and _page_indicates_stock_already_ordered(driver):
         return _stock_already_ordered_result(order_id)
     button = _find_sanmar_order_goods_button(driver)
+    if button is None:
+        button = _recover_missing_order_goods_button_once(driver, order_id, stock_tab_index=stock_tab_index)
     if button is None:
         if allow_unlock_retry and _page_indicates_stock_locked_for_auto_ordering(driver):
             unlock_result = _unlock_current_order_for_auto_ordering(driver, order_id, dry_run=dry_run, force=True)
@@ -1876,6 +1908,7 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
     refresh_passes = 0
     completed_order_count = 0
     total_scanned_count = 0
+    stage_timings = []
     if historical_order_id_set:
         print(
             "Skipping "
@@ -1896,6 +1929,7 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
             current=completed_order_count if total_scanned_count else None,
             total=total_scanned_count or None,
         )
+        list_scan_started_at = time.monotonic()
         order_ids = _collect_batch_order_ids(
             RUSH_FILTER,
             remaining,
@@ -1904,6 +1938,13 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
             exclude_order_ids=attempted_order_id_set,
             visible=not bool(headless_mode),
             **row_options,
+        )
+        _record_stage_timing(
+            stage_timings,
+            "list_scan",
+            list_scan_started_at,
+            refresh_pass=refresh_passes,
+            order_count=len(order_ids),
         )
         if not order_ids:
             _publish_status(
@@ -1926,6 +1967,7 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
         worker_gate = threading.BoundedSemaphore(worker_limit)
         threads = []
         chunk_payloads = []
+        chunk_started_at = time.monotonic()
 
         def _worker(order_index, order_id):
             nonlocal completed_order_count
@@ -2020,6 +2062,14 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
 
         for thread in threads:
             thread.join()
+        _record_stage_timing(
+            stage_timings,
+            "parallel_order_processing",
+            chunk_started_at,
+            refresh_pass=refresh_passes,
+            order_count=len(order_ids),
+            worker_count=worker_limit,
+        )
 
         chunk_order_position = {order_id: index for index, order_id in enumerate(order_ids)}
         chunk_payloads.sort(key=lambda payload: chunk_order_position.get(str((payload.get("order_ids") or [""])[0] or ""), 999999))
@@ -2060,6 +2110,7 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
         "parallel_workers": worker_limit,
         "refresh_passes": refresh_passes,
         "duration_seconds": _elapsed_seconds(batch_started_at),
+        "stage_timings": stage_timings,
         "manual_review_required": any(bool(item.get("manual_review_required")) for item in report_items),
         "resolution": "batch" if attempted_order_ids else "no_orders",
         "skipped_historical_order_count": skipped_historical_count,
@@ -2098,6 +2149,7 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
     refresh_passes = 0
     completed_order_count = 0
     total_scanned_count = 0
+    stage_timings = []
     if historical_order_id_set:
         print(
             "Skipping "
@@ -2118,6 +2170,7 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
                 current=completed_order_count if total_scanned_count else None,
                 total=total_scanned_count or None,
             )
+            list_scan_started_at = time.monotonic()
             order_ids = _collect_batch_order_ids_with_driver(
                 driver,
                 RUSH_FILTER,
@@ -2125,6 +2178,13 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
                 list_url_override=target_url,
                 exclude_order_ids=attempted_order_id_set,
                 **row_options,
+            )
+            _record_stage_timing(
+                stage_timings,
+                "list_scan",
+                list_scan_started_at,
+                refresh_pass=refresh_passes,
+                order_count=len(order_ids),
             )
             if not order_ids:
                 _publish_status(
@@ -2141,6 +2201,7 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
                 current=completed_order_count,
                 total=total_scanned_count,
             )
+            chunk_started_at = time.monotonic()
             for order_id in order_ids:
                 if _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
                     break
@@ -2189,6 +2250,14 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
                 )
                 if _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
                     break
+            _record_stage_timing(
+                stage_timings,
+                "shared_session_order_processing",
+                chunk_started_at,
+                refresh_pass=refresh_passes,
+                order_count=len(order_ids),
+                worker_count=worker_limit,
+            )
             if _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
                 break
             print("Finished Rush Order Goods list pass; reopening the list to look for more eligible orders...")
@@ -2223,6 +2292,7 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
         "parallel_workers": worker_limit,
         "refresh_passes": refresh_passes,
         "duration_seconds": _elapsed_seconds(batch_started_at),
+        "stage_timings": stage_timings,
         "manual_review_required": any(bool(item.get("manual_review_required")) for item in report_items),
         "resolution": "batch" if attempted_order_ids else "no_orders",
         "skipped_historical_order_count": skipped_historical_count,

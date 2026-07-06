@@ -6,6 +6,7 @@ keys/
 .env.*
 
 # Runtime state and logs
+runtime/
 *.log
 automation_record_log.txt
 automation_status.json
