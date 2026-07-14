@@ -32,7 +32,12 @@ from automation_runtime import (
     write_result_payload,
     write_status_payload,
 )
-from config import CRM_813_ORDER_GOODS_URL, CRM_ACTION_TIMEOUT, CRM_ORDER_GOODS_RUSH_URL, CRM_PROFILE_DIR
+from config import (
+    CRM_813_ORDER_GOODS_URL,
+    CRM_ACTION_TIMEOUT,
+    CRM_ORDER_GOODS_RUSH_URL,
+    CRM_PROFILE_DIR,
+)
 from crm_validate_address import (
     ALLOWED_813_ORDER_GOODS_ROW_DESCRIPTION,
     ALLOWED_813_ORDER_GOODS_ROW_LABELS,

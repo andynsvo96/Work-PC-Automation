@@ -48,6 +48,7 @@ from config import (
     PRODUCT_SEPARATOR_LIST_URL_813,
     PRODUCT_SEPARATOR_LIST_URL_ALL,
     PRODUCT_SEPARATOR_LIST_URL_FREE,
+    PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE,
     PRODUCT_SEPARATOR_LIST_URL_RUSH,
 )
 import crm_shipping_bypasser as _shipping_bypasser
@@ -191,7 +192,7 @@ def _manual_order_rows_from_text(text):
 
     collapsed = _clean_text(raw_text)
     known_vendor = re.compile(
-        rf"\b(?P<vendor>{MANUAL_ORDER_KNOWN_VENDOR_PATTERN})\b\s+"
+        rf"\b(?P<vendor>{MANUAL_ORDER_KNOWN_VENDOR_PATTERN})\b(?:\s*\([^)]+\))?\s+"
         r"(?P<po>[A-Za-z0-9][A-Za-z0-9._/-]{1,89})\s+"
         r"(?:(?P<vendor_order>[A-Za-z0-9-]{2,40})\s+)?"
         r"(?P<order_date>\d{1,2}/\d{1,2}/\d{2,4})",
@@ -269,7 +270,7 @@ def _activate_crm_context(driver):
     return "top"
 
 
-def _wait_for_crm_context(driver, timeout=45):
+def _wait_for_crm_context(driver, timeout=45, refresh_on_timeout=True):
     deadline = time.monotonic() + timeout
     last_error = None
     last_url = ""
@@ -293,6 +294,13 @@ def _wait_for_crm_context(driver, timeout=45):
         except Exception as err:
             last_error = err
         time.sleep(0.5)
+    if refresh_on_timeout:
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            pass
+        driver.refresh()
+        return _wait_for_crm_context(driver, timeout=timeout, refresh_on_timeout=False)
     detail = f"url={last_url!r} title={last_title!r} text={last_text[:160]!r}"
     raise ProductSeparatorError(f"CRM app did not become ready. Last error: {last_error}. Last page: {detail}")
 
@@ -809,7 +817,7 @@ def _active_tab_stock_state(driver):
     return _stock_state_from_text(text)
 
 
-def _scan_order(driver, expected_order_id=None):
+def _scan_order(driver, expected_order_id=None, refresh_on_missing_tabs=True):
     _wait_for_crm_context(driver)
     deadline = time.monotonic() + max(45, PROCESSOR_PAGE_LOAD_TIMEOUT)
     tabs = []
@@ -829,6 +837,14 @@ def _scan_order(driver, expected_order_id=None):
         fallback_scan = _fallback_scan_from_order_summary(body_text, expected_order_id=expected_order_id)
         if fallback_scan:
             return fallback_scan
+        if refresh_on_missing_tabs:
+            try:
+                driver.switch_to.default_content()
+            except Exception:
+                pass
+            driver.refresh()
+            _wait_for_crm_context(driver)
+            return _scan_order(driver, expected_order_id=expected_order_id, refresh_on_missing_tabs=False)
         raise ProductSeparatorError(f"No design tabs were detected. Visible text starts: {body_text[:300]}")
 
     scanned_tabs = []
@@ -1278,7 +1294,14 @@ def _build_separator_plan(scan):
         note = f"{_format_tab_list(all_related_tabs)} in 1 box"
         source_local_inventory = _stock_state_should_auto_order_local_inventory(source_stock_state)
         has_copied_manual_order_records = bool(split_manual_order_records)
-        if created_tab_numbers and source_stock_ordered and not source_local_inventory:
+        source_stock_confirmed_for_box_note = bool(
+            source_stock_ordered
+            and (
+                str(source_stock_state.get("state") or "") != "ordered_header_only"
+                or order_stock_status_state == "ordered"
+            )
+        )
+        if created_tab_numbers and source_stock_confirmed_for_box_note and not source_local_inventory:
             production_notes.append(note)
         split_tabs.append(
             {
@@ -1300,7 +1323,7 @@ def _build_separator_plan(scan):
                 "production_note_if_stock_ordered": (
                     note
                     if created_tab_numbers
-                    and source_stock_ordered
+                    and source_stock_confirmed_for_box_note
                     and not source_local_inventory
                     else ""
                 ),
@@ -3163,10 +3186,11 @@ def _run_product_separator_order_id_batch(order_ids, profile_dirs, result_dir, v
 
 
 def _product_separator_list_url_for_mode(list_mode):
-    mode = _clean_text(list_mode or PRODUCT_SEPARATOR_DEFAULT_LIST_MODE).lower() or "all"
+    mode = _clean_text(list_mode or PRODUCT_SEPARATOR_DEFAULT_LIST_MODE).lower().replace("-", "_").replace(" ", "_") or "all"
     urls = {
         "free": PRODUCT_SEPARATOR_LIST_URL_FREE,
         "rush": PRODUCT_SEPARATOR_LIST_URL_RUSH,
+        "high_value": PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE,
         "all": PRODUCT_SEPARATOR_LIST_URL_ALL or PRODUCT_SEPARATOR_LIST_URL,
         "813": PRODUCT_SEPARATOR_LIST_URL_813 or CRM_SHIPPING_813_URL,
     }
@@ -3380,7 +3404,7 @@ def main(argv=None):
     parser.add_argument("--order-id", default="")
     parser.add_argument("--order-url", default="")
     parser.add_argument("--list-url", default="")
-    parser.add_argument("--list-mode", choices=["free", "rush", "all", "813"], default=PRODUCT_SEPARATOR_DEFAULT_LIST_MODE)
+    parser.add_argument("--list-mode", choices=["free", "rush", "all", "813", "high_value"], default=PRODUCT_SEPARATOR_DEFAULT_LIST_MODE)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--max-orders", type=int, default=0)
     parser.add_argument("--dry-run", action="store_true", default=PROCESSOR_DRY_RUN)

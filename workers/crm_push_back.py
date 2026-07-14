@@ -32,6 +32,7 @@ from config import (
     CRM_ACTION_TIMEOUT,
     CRM_PROFILE_DIR,
     CRM_PUSH_BACK_813_URL,
+    CRM_PUSH_BACK_HIGH_VALUE_URL,
     CRM_PUSH_BACK_RUSH_URL,
 )
 import crm_order_goods as crm_order_goods_worker
@@ -68,7 +69,7 @@ AUTOMATION_NAME = "crm.push_back"
 crm_order_goods_worker.AUTOMATION_NAME = AUTOMATION_NAME
 PROFILE_PATH = os.path.join(SCRIPT_DIR, CRM_PROFILE_DIR)
 CONTINUOUS_ORDER_FETCH_LIMIT = 25
-VALID_FILTERS = {"rush", "813"}
+VALID_FILTERS = {"rush", "813", "high_value"}
 RUSH_ROW_LABELS = ("tan", "purple")
 RUSH_ROW_DESCRIPTION = "tan, natural, or purple"
 ORDER_813_ROW_LABELS = ("bright_red", "dark_red", "purple")
@@ -114,6 +115,7 @@ def _json_safe(value):
 
 def _normalize_processing_filter(value):
     key = str(value or "").strip().lower()
+    key = key.replace("-", "_").replace(" ", "_")
     return key if key in VALID_FILTERS else "rush"
 
 
@@ -122,7 +124,11 @@ def _list_url_for_filter(processing_filter, list_url=None):
     if override:
         return override
     key = _normalize_processing_filter(processing_filter)
-    return str(CRM_PUSH_BACK_813_URL if key == "813" else CRM_PUSH_BACK_RUSH_URL).strip()
+    if key == "813":
+        return str(CRM_PUSH_BACK_813_URL).strip()
+    if key == "high_value":
+        return str(CRM_PUSH_BACK_HIGH_VALUE_URL).strip()
+    return str(CRM_PUSH_BACK_RUSH_URL).strip()
 
 
 def _allowed_row_options(processing_filter):
@@ -1330,7 +1336,7 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Push eligible CRM production dates back by one business day.")
     parser.add_argument("--action", choices=["push_back_batch", "push_back_single"], default="push_back_batch")
     parser.add_argument("--order-id", required=False, help="Optional single 7-digit CRM order ID or CRM order URL.")
-    parser.add_argument("--processing-filter", choices=["rush", "813"], default="rush")
+    parser.add_argument("--processing-filter", choices=["rush", "813", "high_value"], default="rush")
     parser.add_argument("--batch-size", type=int, default=None, help="Process up to this many orders; 0/unset means run until no eligible orders remain.")
     parser.add_argument("--parallel-workers", type=int, default=1, help="Number of CRM orders to process at once in batch mode.")
     parser.add_argument("--profile-path", required=False, help="Optional CRM Chrome user-data-dir override.")

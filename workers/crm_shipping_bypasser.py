@@ -237,8 +237,10 @@ SANMAR_CRM_COLOR_WORD_ALIASES = {
 }
 BELLA_CANVAS_SANMAR_COLOR_NAMES = (
     "Aqua Triblend",
+    "Athletic Heather",
     "Athletic Grey Triblend",
     "Berry Triblend",
+    "Black",
     "Black Heather Triblend",
     "Blue Storm Triblend",
     "Blue Triblend",
@@ -246,16 +248,19 @@ BELLA_CANVAS_SANMAR_COLOR_NAMES = (
     "Brown Triblend",
     "Cardinal Triblend",
     "Cement Triblend",
+    "Charity Pink",
     "Charcoal-Black Triblend",
     "Charity Pink Triblend",
     "Clay Triblend",
     "Dark Lavender Triblend",
+    "Dark Grey Heather",
     "Denim Triblend",
     "Dusty Blue Triblend",
     "Emerald Triblend",
     "Grass Green Triblend",
     "Green Triblend",
     "Grey Triblend",
+    "Heather Mauve",
     "Heather Columbia Blue",
     "Ice Blue Triblend",
     "Kelly Triblend",
@@ -265,6 +270,7 @@ BELLA_CANVAS_SANMAR_COLOR_NAMES = (
     "Military Green Triblend",
     "Mint Triblend",
     "Mustard Triblend",
+    "Natural",
     "Navy Triblend",
     "Oatmeal Triblend",
     "Olive Triblend",
@@ -297,8 +303,11 @@ BELLA_CANVAS_SANMAR_COLOR_NAMES = (
     "Storm Triblend",
     "Sunset Triblend",
     "Tan Triblend",
+    "Teal",
     "Teal Triblend",
+    "True Royal",
     "True Royal Triblend",
+    "White",
     "White Fleck Triblend",
     "Yellow Gold Triblend",
 )
@@ -340,11 +349,11 @@ BELLA_CANVAS_CRM_COLOR_WORD_ALIASES = {
     "ROYAL": ("RYL",),
     "SILVER": ("SLVR",),
     "SLATE": ("SLT",),
-    "SOLID": ("SLD",),
+    "SOLID": ("SLD", "SD"),
     "STEEL": ("STL",),
     "STORM": ("STRM",),
     "TEAM": ("TM",),
-    "TRIBLEND": ("TRBLND", "TRI BLEND", "TRI-BLEND"),
+    "TRIBLEND": ("TRIB", "TRIBL", "TRIBLD", "TRIBLN", "TRIBLND", "TRBL", "TRBLD", "TRBLN", "TRBLND", "TRI BLEND", "TRI-BLEND"),
     "TRUE": ("TRU", "TR"),
     "WHITE": ("WHT",),
     "YELLOW": ("YLLW", "YLW"),
@@ -501,6 +510,70 @@ def _pending_shipping_bypass_submission(order_id, po):
         if item_order_id == normalized_order_id and item_po == normalized_po and not item.get("crm_recorded_at"):
             return item
     return None
+
+
+def _saved_shipping_bypass_submission(order_id, po):
+    normalized_order_id = _normalize_target_order_id(order_id)
+    normalized_po = str(po or "").strip().lower()
+    if not normalized_order_id or not normalized_po:
+        return None
+    for item in reversed(_load_pending_shipping_bypass_submissions()):
+        item_order_id = _normalize_target_order_id(item.get("order_id"))
+        item_po = str(item.get("po") or "").strip().lower()
+        if item_order_id == normalized_order_id and item_po == normalized_po:
+            return item
+    return None
+
+
+def _historical_shipping_bypass_confirmation(po, state_path=CRM_STATE_PATH):
+    po_text = str(po or "").strip().lower()
+    if not po_text:
+        return None
+    try:
+        with open(state_path, "r", encoding="utf-8-sig") as handle:
+            state = json.load(handle)
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        print(f"Warning: could not read previous Shipping Bypasser confirmation history: {exc}")
+        return None
+    history = state.get("run_history") if isinstance(state, dict) else []
+    for entry in reversed(history if isinstance(history, list) else []):
+        if not isinstance(entry, dict):
+            continue
+        automation_key = str(entry.get("automation_key") or "").strip().lower()
+        automation_label = str(entry.get("automation_label") or "").strip().lower()
+        if automation_key != "shipping_bypasser" and "shipping bypass" not in automation_label:
+            continue
+        if entry.get("dry_run"):
+            continue
+        for item in reversed(entry.get("order_results") if isinstance(entry.get("order_results"), list) else []):
+            if not isinstance(item, dict):
+                continue
+            confirmation = item.get("sanmar_confirmation") if isinstance(item.get("sanmar_confirmation"), dict) else {}
+            confirmation_po = str(confirmation.get("po") or "").strip().lower()
+            if confirmation_po == po_text:
+                return dict(confirmation)
+            for detail in reversed(item.get("partial_success_details") if isinstance(item.get("partial_success_details"), list) else []):
+                if not isinstance(detail, dict):
+                    continue
+                detail_po = str(detail.get("po") or "").strip().lower()
+                if detail_po != po_text:
+                    continue
+                detail_confirmation = detail.get("sanmar_confirmation") if isinstance(detail.get("sanmar_confirmation"), dict) else {}
+                if detail_confirmation:
+                    return dict(detail_confirmation)
+                return {"po": detail.get("po"), "url": detail.get("url")}
+    return None
+
+
+def _saved_shipping_bypass_confirmation(order_id, po):
+    saved_submission = _saved_shipping_bypass_submission(order_id, po)
+    if saved_submission:
+        confirmation = saved_submission.get("sanmar_confirmation") if isinstance(saved_submission.get("sanmar_confirmation"), dict) else {}
+        if confirmation:
+            return dict(confirmation)
+    return _historical_shipping_bypass_confirmation(po)
 
 
 def _remember_pending_shipping_bypass_submission(order_id, po, sanmar_confirmation, vendor_name="Sanmar"):
@@ -672,11 +745,7 @@ def _sanmar_color_missing_letter_limit(shorter_key, longer_key):
         return 0
     if longer_len <= 6:
         return 2
-    if longer_len <= 12:
-        return 3
-    if longer_len <= 24:
-        return 4
-    return 5
+    return 2
 
 
 def _is_ordered_subsequence(shorter_key, longer_key):
@@ -1241,6 +1310,24 @@ def _find_stock_tabs(driver):
     return tabs if isinstance(tabs, list) else []
 
 
+def _require_crm_order_ready_once_with_refresh(driver, order_id, allow_refresh=True):
+    if _wait_for_order_goods_page_ready(driver, order_id):
+        return True
+    if allow_refresh:
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            pass
+        driver.refresh()
+        time.sleep(1.0)
+        if _wait_for_order_goods_page_ready(driver, order_id, timeout=max(10, CRM_ACTION_TIMEOUT)):
+            return True
+    _open_target_order(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
+    if _wait_for_order_goods_page_ready(driver, order_id, timeout=max(10, CRM_ACTION_TIMEOUT)):
+        return True
+    raise TimeoutException(f"CRM order page {order_id} did not become ready after one refresh.")
+
+
 def _visible_design_tab_number_hints(driver):
     try:
         numbers = driver.execute_script(DESIGN_TAB_NUMBER_HINT_SCRIPT)
@@ -1371,6 +1458,7 @@ return bodyMatch ? normalize(bodyMatch[1]) : '';
 
 def _clean_sanmar_selected_color_label(value):
     label = _normalize_text(value)
+    label = re.sub(r"\s*Prices\s+in\s+red\s+indicate\s+on\s+sale\.?\s*$", "", label, flags=re.IGNORECASE)
     label = re.sub(r"\s+Add\s+to\s+shopping\s+box\s*$", "", label, flags=re.IGNORECASE)
     return _normalize_text(label)
 
@@ -2210,9 +2298,7 @@ function missingLetterLimit(shorter, longer) {
   const longerLength = String(longer || '').length;
   if (shorterLength < 3 || longerLength < shorterLength) return 0;
   if (longerLength <= 6) return 2;
-  if (longerLength <= 12) return 3;
-  if (longerLength <= 24) return 4;
-  return 5;
+  return 2;
 }
 function isOrderedSubsequence(shorter, longer) {
   if (!shorter) return false;
@@ -4985,6 +5071,92 @@ return Array.from(document.querySelectorAll('tr,[role="row"],li')).filter(isVisi
         return False
 
 
+POST_SUBMIT_CRM_RECORD_FAILURE_OUTCOMES = {
+    "sanmar_submitted_crm_record_failed",
+    "pending_sanmar_submitted_crm_record_failed",
+}
+
+
+def _post_submit_crm_record_recovery_needed(report_items):
+    for item in report_items if isinstance(report_items, list) else []:
+        if not isinstance(item, dict) or item.get("success"):
+            continue
+        if str(item.get("outcome") or "") not in POST_SUBMIT_CRM_RECORD_FAILURE_OUTCOMES:
+            continue
+        if not item.get("crm_record_retryable"):
+            continue
+        confirmation = item.get("sanmar_confirmation") if isinstance(item.get("sanmar_confirmation"), dict) else {}
+        if str(confirmation.get("po") or "").strip() or _report_item_customer_po(item):
+            return True
+    return False
+
+
+def _recover_post_submit_crm_record_failures(crm_driver, report_items, dry_run=False):
+    recovered = []
+    for item in report_items if isinstance(report_items, list) else []:
+        if (
+            not isinstance(item, dict)
+            or item.get("success")
+            or str(item.get("outcome") or "") not in POST_SUBMIT_CRM_RECORD_FAILURE_OUTCOMES
+            or not item.get("crm_record_retryable")
+        ):
+            recovered.append(item)
+            continue
+        order_id = _normalize_target_order_id(item.get("order_id"))
+        confirmation = item.get("sanmar_confirmation") if isinstance(item.get("sanmar_confirmation"), dict) else {}
+        order = item.get("order") if isinstance(item.get("order"), dict) else {}
+        po = str(confirmation.get("po") or order.get("po") or item.get("po") or "").strip()
+        if not order_id or not po:
+            recovered.append(item)
+            continue
+        try:
+            _publish_status(
+                f"Recovering CRM Manual Order recording for Shipping Bypasser order {order_id}.",
+                stage="recovering_crm_manual_order",
+                order_id=order_id,
+            )
+            try:
+                _reopen_crm_manual_order_target(crm_driver, order_id, order_url=order.get("order_url"))
+            except Exception:
+                safe_get_with_partial_load(
+                    crm_driver,
+                    f"https://crm2.legacy.printfly.com/order/{order_id}",
+                    f"CRM order {order_id} manual order recovery",
+                )
+            record_state = _record_crm_manual_order(
+                crm_driver,
+                order_id,
+                po,
+                dry_run=dry_run,
+                stock_tab_index=item.get("stock_tab_index"),
+                vendor_name=item.get("vendor") or order.get("vendor") or "Sanmar",
+                order_url=order.get("order_url"),
+            )
+            if not dry_run:
+                _mark_pending_shipping_bypass_submission_recorded(order_id, po, record_state)
+            fixed = dict(item)
+            fixed.update(
+                {
+                    "success": True,
+                    "outcome": "shipping_bypass_ordered",
+                    "message": "SanMar stock was ordered and recorded in CRM Manual Order after CRM browser recovery.",
+                    "manual_review_required": False,
+                    "crm_record_state": record_state,
+                    "crm_record_recovered": True,
+                    "recovered_from_outcome": item.get("outcome"),
+                }
+            )
+            recovered.append(fixed)
+        except Exception as exc:
+            failed = dict(item)
+            failed["message"] = f"{item.get('message') or ''} CRM Manual Order recovery retry failed: {exc}".strip()
+            failed["crm_record_recovery_failed"] = True
+            failed["crm_record_recovery_error_type"] = type(exc).__name__
+            failed["retryable"] = _is_retryable_exception(exc)
+            recovered.append(failed)
+    return recovered
+
+
 def _crm_stock_order_yellow_visual_exists(driver, po):
     script = r"""
 const po = String(arguments[0] || '').toLowerCase();
@@ -5077,7 +5249,7 @@ def _shipping_bypasser_actionable_stock_tabs(driver, order_id, tabs):
 
 
 def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stock_tab_index=None, stock_tab_count=None, stock_tab_label=None, stock_tab_context=None):
-    _wait_for_order_goods_page_ready(crm_driver, order_id)
+    _require_crm_order_ready_once_with_refresh(crm_driver, order_id)
     stock_tab_label = _stock_tab_summary_label(stock_tab_label)
     stock_tab_context = stock_tab_context if isinstance(stock_tab_context, dict) else {}
     stock_tab_context.update(
@@ -5099,6 +5271,34 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
         order_id=order_id,
     )
     order = _extract_order_data(crm_driver, order_id, tab_context=stock_tab_context)
+    products = order.get("products") if isinstance(order.get("products"), list) else []
+    incomplete_crm_data = (
+        any(not order.get(name) for name in ("po", "product_id", "color", "production_date", "due_date"))
+        or not order.get("quantities")
+        or not products
+        or any(
+            not product.get("product_id") or not product.get("color") or not product.get("quantities")
+            for product in products
+        )
+    )
+    if incomplete_crm_data:
+        _publish_status(
+            f"CRM stock data was incomplete for Shipping Bypasser order {order_id}; refreshing once before reporting an error.",
+            stage="refreshing_incomplete_crm_data",
+            order_id=order_id,
+        )
+        try:
+            crm_driver.switch_to.default_content()
+        except Exception:
+            pass
+        crm_driver.refresh()
+        time.sleep(1.0)
+        _require_crm_order_ready_once_with_refresh(crm_driver, order_id, allow_refresh=False)
+        if stock_tab_count and stock_tab_count > 1 and stock_tab_index:
+            _activate_stock_tab(crm_driver, int(stock_tab_index) - 1)
+        order = _extract_order_data(crm_driver, order_id, tab_context=stock_tab_context)
+    pending_submission = _pending_shipping_bypass_submission(order_id, order.get("po"))
+    saved_confirmation = _saved_shipping_bypass_confirmation(order_id, order.get("po"))
     already_ordered_source = ""
     if order.get("po") and _crm_stock_order_yellow_visual_exists(crm_driver, order["po"]):
         already_ordered_source = "crm_yellow_manual_order"
@@ -5111,6 +5311,8 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
             message = f"Skipped because Sanmar Manual Order PO {order['po']} is already recorded for this tab."
         if stock_tab_label:
             message = f"{message} Stock tab: {stock_tab_label}."
+        if pending_submission and not dry_run:
+            _mark_pending_shipping_bypass_submission_recorded(order_id, order["po"], already_ordered_source)
         return done(
             _result(
                 order_id,
@@ -5120,9 +5322,9 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
                 manual_review_required=False,
                 order=order,
                 duplicate_guard=already_ordered_source,
+                sanmar_confirmation=saved_confirmation,
             )
         )
-    pending_submission = _pending_shipping_bypass_submission(order_id, order.get("po"))
     if pending_submission:
         try:
             _publish_status(
@@ -5156,6 +5358,7 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
                 duplicate_guard="pending_sanmar_confirmation",
             ))
         except Exception as exc:
+            record_retryable = _is_retryable_exception(exc)
             return done(_result(
                 order_id,
                 False,
@@ -5165,7 +5368,9 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
                 sanmar_confirmation=pending_submission.get("sanmar_confirmation") or {},
                 sanmar_submit_state="previously_submitted",
                 manual_review_required=True,
-                retryable=False,
+                retryable=record_retryable,
+                crm_record_retryable=record_retryable,
+                crm_record_error_type=type(exc).__name__,
             ))
     if order.get("po") and _historical_shipping_bypass_po_exists(order["po"]):
         message = f"Skipped because SanMar customer PO {order['po']} was already confirmed by a previous Shipping Bypasser run."
@@ -5180,6 +5385,7 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
                 manual_review_required=False,
                 order=order,
                 duplicate_guard="shipping_bypasser_history",
+                sanmar_confirmation=saved_confirmation,
             )
         )
     if order.get("active_panel_stock_ordered"):
@@ -5193,6 +5399,9 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
                 "already_stock_ordered",
                 message,
                 manual_review_required=False,
+                order=order,
+                duplicate_guard="active_panel_stock_ordered",
+                sanmar_confirmation=saved_confirmation,
             )
         )
 
@@ -5435,6 +5644,7 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
         if submit_state == "submitted" and not dry_run:
             _mark_pending_shipping_bypass_submission_recorded(order_id, order["po"], record_state)
     except Exception as exc:
+        record_retryable = _is_retryable_exception(exc)
         if submit_state == "submitted":
             return done(_result(
                 order_id,
@@ -5449,7 +5659,9 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
                 sanmar_submit_state=submit_state,
                 sanmar_confirmation=sanmar_confirmation,
                 manual_review_required=True,
-                retryable=False,
+                retryable=record_retryable,
+                crm_record_retryable=record_retryable,
+                crm_record_error_type=type(exc).__name__,
             ))
         raise
     production_note = _format_multi_warehouse_production_note(order, warehouse_plan) if multi_warehouse else ""
@@ -5493,11 +5705,27 @@ def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False):
     _publish_status(f"Opening CRM order {normalized_order_id} for Shipping Bypasser.", stage="opening_order", order_id=normalized_order_id)
     _open_target_order(crm_driver, normalized_order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
     _publish_status(f"Checking Shipping Bypasser page for order {normalized_order_id}.", stage="checking_order_goods", order_id=normalized_order_id)
-    _wait_for_order_goods_page_ready(crm_driver, normalized_order_id)
+    _require_crm_order_ready_once_with_refresh(crm_driver, normalized_order_id)
     _publish_status(f"Finding stock tabs for Shipping Bypasser order {normalized_order_id}.", stage="finding_stock_tabs", order_id=normalized_order_id)
     tabs = _find_stock_tabs(crm_driver)
     tab_number_hints = _visible_design_tab_number_hints(crm_driver)
     tab_count = len(tabs)
+    if tab_number_hints and len(tabs) < len(tab_number_hints):
+        _publish_status(
+            f"Shipping Bypasser detected an incomplete stock-tab map for order {normalized_order_id}; refreshing once before manual review.",
+            stage="refreshing_stock_tabs",
+            order_id=normalized_order_id,
+        )
+        try:
+            crm_driver.switch_to.default_content()
+        except Exception:
+            pass
+        crm_driver.refresh()
+        time.sleep(1.0)
+        _require_crm_order_ready_once_with_refresh(crm_driver, normalized_order_id, allow_refresh=False)
+        tabs = _find_stock_tabs(crm_driver)
+        tab_number_hints = _visible_design_tab_number_hints(crm_driver)
+        tab_count = len(tabs)
     if tab_number_hints and len(tabs) < len(tab_number_hints):
         return [
             _result(
@@ -5545,7 +5773,7 @@ def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False):
                     order_id=normalized_order_id,
                 )
                 _open_target_order(crm_driver, normalized_order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
-                _wait_for_order_goods_page_ready(crm_driver, normalized_order_id)
+                _require_crm_order_ready_once_with_refresh(crm_driver, normalized_order_id)
             tab = _activate_stock_tab(crm_driver, tab_index)
             tab_label = _stock_tab_summary_label((tab or {}).get("label") or tab_label)
             if tab is None:
@@ -5560,6 +5788,7 @@ def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False):
             else:
                 order = _extract_order_data(crm_driver, normalized_order_id, tab_context=tab)
                 po = order.get("po")
+                saved_confirmation = _saved_shipping_bypass_confirmation(normalized_order_id, po)
                 skip_reason = ""
                 if po and _crm_stock_order_yellow_visual_exists(crm_driver, po):
                     skip_reason = "crm_yellow_manual_order"
@@ -5578,6 +5807,9 @@ def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False):
                         "already_stock_ordered",
                         f"Skipped stock tab {tab_number} of {tab_count} because it is already ordered or recorded.",
                         manual_review_required=False,
+                        order=order,
+                        duplicate_guard=skip_reason,
+                        sanmar_confirmation=saved_confirmation,
                         detected_stock_tabs=tabs,
                         skipped_stock_tabs=skipped_tabs,
                     )
@@ -5623,7 +5855,21 @@ def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False):
                 results.extend(cleanup_report[1:])
             if not cleanup_ok:
                 break
-    if results and len(skipped_tabs) == len(tabs) and all(str(item.get("outcome") or "") == "already_stock_ordered" for item in results):
+    has_recovered_confirmation = any(
+        isinstance(item.get("sanmar_confirmation"), dict)
+        and (
+            str(item["sanmar_confirmation"].get("url") or "").strip()
+            or str(item["sanmar_confirmation"].get("web_reference") or "").strip()
+        )
+        for item in results
+        if isinstance(item, dict)
+    )
+    if (
+        results
+        and not has_recovered_confirmation
+        and len(skipped_tabs) == len(tabs)
+        and all(str(item.get("outcome") or "") == "already_stock_ordered" for item in results)
+    ):
         skipped_labels = ", ".join(
             f"{item.get('po') or item.get('tab_label') or item.get('tab_number')} ({item.get('reason')})"
             for item in skipped_tabs[:8]
@@ -5690,7 +5936,8 @@ def _report_item_sanmar_confirmation_url(item):
 def _report_item_ordered_stock_success_detail(item):
     if not isinstance(item, dict) or not item.get("success"):
         return ""
-    if str(item.get("outcome") or "") not in STOCK_ORDER_SUCCESS_OUTCOMES:
+    outcome = str(item.get("outcome") or "")
+    if outcome not in STOCK_ORDER_SUCCESS_OUTCOMES:
         return ""
     descriptor = _stock_tab_descriptor(item)
     po = _report_item_customer_po(item)
@@ -5716,6 +5963,31 @@ def _ordered_stock_success_details(items):
     return details
 
 
+def _report_item_submitted_stock_detail(item):
+    if not isinstance(item, dict):
+        return ""
+    if str(item.get("outcome") or "") not in POST_SUBMIT_CRM_RECORD_FAILURE_OUTCOMES:
+        return ""
+    descriptor = _stock_tab_descriptor(item)
+    po = _report_item_customer_po(item)
+    url = _report_item_sanmar_confirmation_url(item)
+    if not descriptor or not po or not url:
+        return ""
+    return f"{descriptor}, customer PO {po}, SanMar confirmation {url}"
+
+
+def _submitted_stock_failure_details(items):
+    details = []
+    seen = set()
+    for item in items if isinstance(items, list) else []:
+        detail = _report_item_submitted_stock_detail(item)
+        if not detail or detail in seen:
+            continue
+        seen.add(detail)
+        details.append(detail)
+    return details
+
+
 def _stock_order_report_rows(report_items):
     rows = [item for item in (report_items if isinstance(report_items, list) else []) if isinstance(item, dict)]
     non_cleanup_rows = [item for item in rows if str(item.get("outcome") or "") != "sanmar_cart_cleanup_failed"]
@@ -5734,6 +6006,7 @@ def _summary_message(report_items, refresh_passes=1, order_count=0):
     partial_orders = []
     for order_id, items in order_groups.items():
         success_details = _ordered_stock_success_details(items)
+        submitted_failure_details = _submitted_stock_failure_details(items)
         failed_items = [item for item in items if not bool(item.get("success"))]
         if failed_items and success_details:
             details = (
@@ -5742,6 +6015,8 @@ def _summary_message(report_items, refresh_passes=1, order_count=0):
                 else []
             )
             partial_orders.append((order_id, details))
+        elif failed_items and submitted_failure_details:
+            partial_orders.append((order_id, submitted_failure_details))
     failed_order_ids = [
         order_id
         for order_id, items in order_groups.items()
@@ -5804,6 +6079,14 @@ def _run_single_with_mode(headless_mode, order_id, dry_run=False, profile_path=N
     crm_driver = None
     sanmar_driver = None
     report_items = []
+
+    def _launch_crm_driver():
+        return _build_crm_session_driver(
+            resolved_profile_path,
+            headless_mode=headless_mode,
+            profile_label=f"CRM shipping bypasser single {normalized_order_id}",
+        )
+
     try:
         _publish_status(
             f"Loading CRM session for Shipping Bypasser order {normalized_order_id}.",
@@ -5812,11 +6095,7 @@ def _run_single_with_mode(headless_mode, order_id, dry_run=False, profile_path=N
             total=1,
             order_id=normalized_order_id,
         )
-        crm_driver = _build_crm_session_driver(
-            resolved_profile_path,
-            headless_mode=headless_mode,
-            profile_label=f"CRM shipping bypasser single {normalized_order_id}",
-        )
+        crm_driver = _launch_crm_driver()
         _publish_status(
             f"Loading SanMar session for Shipping Bypasser order {normalized_order_id}.",
             stage="loading_sanmar",
@@ -5826,6 +6105,11 @@ def _run_single_with_mode(headless_mode, order_id, dry_run=False, profile_path=N
         )
         sanmar_driver = _build_sanmar_driver(visible=sanmar_visible or dry_run)
         report_items = _run_order_with_drivers(crm_driver, sanmar_driver, normalized_order_id, dry_run=dry_run)
+        if _post_submit_crm_record_recovery_needed(report_items):
+            safe_driver_quit(crm_driver, profile_path=resolved_profile_path)
+            time.sleep(1)
+            crm_driver = _launch_crm_driver()
+            report_items = _recover_post_submit_crm_record_failures(crm_driver, report_items, dry_run=dry_run)
         if not any(isinstance(item, dict) and item.get("stop_run") for item in report_items):
             _cleanup_after_failed_order(sanmar_driver, normalized_order_id, report_items)
         _publish_status(
@@ -6021,6 +6305,11 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
                 order_started_at = time.monotonic()
                 try:
                     order_report = _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=dry_run)
+                    if _post_submit_crm_record_recovery_needed(order_report):
+                        _relaunch_crm_driver(
+                            "CRM Shipping Bypasser lost its CRM browser session after SanMar submit; relaunching CRM Chrome to record the Manual Order..."
+                        )
+                        order_report = _recover_post_submit_crm_record_failures(crm_driver, order_report, dry_run=dry_run)
                     order_duration = _elapsed_seconds(order_started_at)
                     for item in order_report:
                         if isinstance(item, dict):

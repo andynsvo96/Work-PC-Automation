@@ -50,6 +50,7 @@ from config import (
     CRM_SHIPPING_ALL_URL,
     CRM_SHIPPING_FILTER_DEFAULT,
     CRM_SHIPPING_FREE_URL,
+    CRM_SHIPPING_HIGH_VALUE_URL,
     CRM_SHIPPING_RUSH_URL,
     CRM_SHIPPING_URL,
     CRM_LOGIN_URL,
@@ -441,7 +442,8 @@ def _crm_attempt_modes():
 
 def _normalize_shipping_filter(value):
     key = str(value or "").strip().lower()
-    return key if key in {"all", "free", "rush", "813"} else "free"
+    key = key.replace("-", "_").replace(" ", "_")
+    return key if key in {"all", "free", "rush", "813", "high_value"} else "free"
 
 
 def _normalize_requested_batch_size(batch_size):
@@ -475,6 +477,8 @@ def _shipping_filter_label(value):
     key = _normalize_shipping_filter(value)
     if key == "813":
         return "813 orders"
+    if key == "high_value":
+        return "high value orders"
     if key == "all":
         return "all invalid-address orders"
     return "rush orders" if key == "rush" else "free ship orders"
@@ -499,6 +503,8 @@ def _shipping_list_url_for_filter(value, list_url_override=None):
         return str(CRM_813_VALIDATOR_URL or CRM_SHIPPING_813_URL or "").strip()
     if key == "all":
         return str(CRM_SHIPPING_ALL_URL or CRM_SHIPPING_URL or CRM_SHIPPING_FREE_URL or CRM_SHIPPING_RUSH_URL or "").strip()
+    if key == "high_value":
+        return str(CRM_SHIPPING_HIGH_VALUE_URL or CRM_SHIPPING_RUSH_URL or CRM_SHIPPING_URL or CRM_SHIPPING_FREE_URL or "").strip()
     if key == "rush":
         return str(CRM_SHIPPING_RUSH_URL or CRM_SHIPPING_URL or CRM_SHIPPING_FREE_URL or "").strip()
     return str(CRM_SHIPPING_FREE_URL or CRM_SHIPPING_URL or CRM_SHIPPING_RUSH_URL or "").strip()
@@ -1175,8 +1181,9 @@ def _is_base_only_us_postal(postal_text):
 def _leading_house_parts(address_line):
     raw = _normalize_space(address_line)
     if raw:
+        house_number_piece = r"(?:\d+[A-Z]?|[NSEW]\d+[A-Z]?)"
         match = re.match(
-            r"^(?P<number>\d+[A-Z]?(?:\s*-\s*\d+[A-Z]?)?)(?:\s+(?P<rest>.+))?$",
+            rf"^(?P<number>{house_number_piece}(?:\s*-\s*{house_number_piece})?)(?:\s+(?P<rest>.+))?$",
             raw,
             flags=re.IGNORECASE,
         )
@@ -1526,11 +1533,23 @@ def _split_embedded_po_box_indicator(address_line):
 
 
 def _secondary_address_profile(text):
-    canonical = _canonical_text(text)
+    tokens = _tokenize(text)
+    collapsed_tokens = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        next_token = tokens[index + 1] if index + 1 < len(tokens) else ""
+        if token == "R" and next_token == "R":
+            collapsed_tokens.append("RR")
+            index += 2
+            continue
+        collapsed_tokens.append(token)
+        index += 1
+    canonical = " ".join(collapsed_tokens)
     categories = set()
     values = []
     seen_values = set()
-    for token in canonical.split():
+    for token in collapsed_tokens:
         stripped = token.lstrip("#")
         if not stripped:
             continue
@@ -1815,6 +1834,10 @@ def _address_cont_looks_like_street_fragment(address_fields):
     return bool(re.search(r"[A-Z]", _canonical_text(address_cont)))
 
 
+def _shipping_address_needs_split_street_normalization(address_fields):
+    return _address_cont_looks_like_street_fragment(address_fields)
+
+
 def _dedupe_address_identifier(address_line, address_cont):
     address_line = _normalize_space(address_line)
     address_cont = _normalize_space(address_cont)
@@ -1928,6 +1951,8 @@ def _is_missing_street_number(address_line):
     if not canonical:
         return True
     if _is_po_box(address_line):
+        return False
+    if _is_highway_address(address_line):
         return False
     return not bool(_house_token(address_line))
 
@@ -2251,6 +2276,17 @@ def _assess_existing_address_text(address_fields, comparison_text):
     secondary_match = _secondary_address_matches(address_fields.get("address_cont"), comparison_text)
     secondary_preserved = _secondary_address_can_be_preserved(address_fields.get("address_cont"), comparison_text)
     secondary_ok = (not secondary_required) or secondary_match or secondary_preserved
+    military_without_house_match = (
+        _is_military_address(address_fields)
+        and not bool(house)
+        and not bool(comparison_house)
+        and street_match
+        and state_match
+        and city_match
+        and postal_base_match
+        and secondary_ok
+    )
+    effective_house_match = house_match or military_without_house_match
     missing_number_rescue = (
         not bool(house)
         and bool(comparison_house)
@@ -2260,10 +2296,10 @@ def _assess_existing_address_text(address_fields, comparison_text):
         and (postal_base_match or postal_near_match or postal_prefix_match)
         and secondary_ok
     )
-    safe_postal_near_match = house_match and street_match and state_match and city_match and postal_near_match and secondary_ok
-    safe_postal_prefix_match = house_match and street_match and state_match and city_match and postal_prefix_match and secondary_ok
+    safe_postal_near_match = effective_house_match and street_match and state_match and city_match and postal_near_match and secondary_ok
+    safe_postal_prefix_match = effective_house_match and street_match and state_match and city_match and postal_prefix_match and secondary_ok
     mismatch_fields = []
-    if not house_match:
+    if not effective_house_match:
         mismatch_fields.append("address_number")
     if not street_match:
         mismatch_fields.append("street")
@@ -2276,10 +2312,10 @@ def _assess_existing_address_text(address_fields, comparison_text):
     if secondary_required and not secondary_ok:
         mismatch_fields.append("address_cont")
     return {
-        "required_match": house_match and street_match and state_match and postal_base_match,
-        "exact_match": house_match and street_match and state_match and postal_full_match and city_match and secondary_ok,
-        "city_only_mismatch": house_match and street_match and state_match and postal_base_match and not city_match and secondary_ok,
-        "zip_plus4_only": house_match and street_match and state_match and city_match and postal_base_match and not postal_full_match and _is_us_postal(address_fields.get("zip")) and secondary_ok,
+        "required_match": effective_house_match and street_match and state_match and postal_base_match,
+        "exact_match": effective_house_match and street_match and state_match and postal_full_match and city_match and secondary_ok,
+        "city_only_mismatch": effective_house_match and street_match and state_match and postal_base_match and not city_match and secondary_ok,
+        "zip_plus4_only": effective_house_match and street_match and state_match and city_match and postal_base_match and not postal_full_match and _is_us_postal(address_fields.get("zip")) and secondary_ok,
         "mismatch_fields": mismatch_fields,
         "postal_base_match": postal_base_match,
         "postal_full_match": postal_full_match,
@@ -2294,7 +2330,8 @@ def _assess_existing_address_text(address_fields, comparison_text):
         "safe_postal_near_match": safe_postal_near_match,
         "safe_postal_prefix_match": safe_postal_prefix_match,
         "compact_runon_match": compact_runon_match,
-        "house_match": house_match,
+        "house_match": effective_house_match,
+        "military_without_house_match": military_without_house_match,
         "street_match": street_match,
         "state_match": state_match,
     }
@@ -3069,6 +3106,20 @@ def _try_resolve_with_existing_address(driver, shipping_modal, order_id, dry_run
     if not recipient_ok:
         return _recipient_missing_result(order_id, warnings, original_address, current_address)
 
+    if allow_rewrite:
+        current_address, preserved_address_cont = _rewrite_address_fields_if_needed(
+            shipping_modal,
+            warnings,
+            preserved_address_cont,
+        )
+        recipient_ok, current_address = _ensure_recipient_present(
+            shipping_modal,
+            original_address.get("recipient"),
+            warnings,
+        )
+        if not recipient_ok:
+            return _recipient_missing_result(order_id, warnings, original_address, current_address)
+
     time.sleep(0.2)
     existing_ready = _wait_for_address_valid(shipping_modal, timeout=3)
     if accept_save_button_ready and not existing_ready and _final_save_ready(driver, shipping_modal, timeout=2.5):
@@ -3346,7 +3397,13 @@ def _open_target_order(driver, order_id=None, shipping_filter=None, list_url_ove
         order_link = None
         resolved_order_id, order_link = _find_first_shipping_list_order(driver, timeout=max(CRM_ACTION_TIMEOUT, 12))
         if not resolved_order_id or order_link is None:
-            return None
+            print("No eligible CRM list row appeared on the first pass; reloading the report once to confirm.")
+            safe_get_with_partial_load(driver, list_url, f"CRM shipping-address report recovery reload ({list_label})")
+            if login_if_needed(driver):
+                safe_get_with_partial_load(driver, list_url, f"CRM shipping-address report recovery after login ({list_label})")
+            resolved_order_id, order_link = _find_first_shipping_list_order(driver, timeout=max(CRM_ACTION_TIMEOUT, 12))
+            if not resolved_order_id or order_link is None:
+                return None
 
         handles_before = set(driver.window_handles)
         try:
@@ -3823,9 +3880,11 @@ def _has_zip_plus4_bug(address_fields, assessed_candidates):
 
 def _rewrite_address_fields_if_needed(modal, warnings, preserved_address_cont=""):
     current = _extract_current_address(modal)
-    address_field = _find_labeled_input(modal, "Address:")
-    address_cont_field = _find_labeled_input(modal, "Address (cont):")
-    city_field = _find_labeled_input(modal, "City:")
+    address_field = _find_address_form_input(modal, ADDRESS_LINE_INPUT_SELECTORS, "* Address:")
+    if address_field is None:
+        address_field = _find_address_form_input(modal, ADDRESS_LINE_INPUT_SELECTORS, "Address:")
+    address_cont_field = _find_address_form_input(modal, ADDRESS_CONT_INPUT_SELECTORS, "Address (cont):")
+    city_field = _find_address_form_input(modal, CITY_INPUT_SELECTORS, "City:")
     normalized_address = _normalize_display_address_line(current.get("address"))
     if normalized_address and normalized_address != _normalize_space(current.get("address")) and address_field is not None:
         _set_input_value(address_field, normalized_address)
@@ -3883,6 +3942,7 @@ def _rewrite_address_fields_if_needed(modal, warnings, preserved_address_cont=""
         _set_input_value(address_cont_field, "")
         time.sleep(0.2)
         current = _extract_current_address(modal)
+        preserved_address_cont = ""
         warnings.append(f"Moved '{street_fragment}' from Address (cont) into Address because the main address only contained the house number.")
 
     original_city = _normalize_space(current.get("city"))
@@ -4506,7 +4566,7 @@ def _send_shipping_transaction_via_modal_scope(driver, shipping_modal):
 
 
 
-def _save_shipping_transaction(driver, shipping_modal, order_id, dry_run, use_scope_send=False):
+def _save_shipping_transaction(driver, shipping_modal, order_id, dry_run, use_scope_send=False, accept_success_banner=False):
     if dry_run:
         print("Dry run reached a valid-address state; skipping the final Save click.")
         return
@@ -4525,7 +4585,12 @@ def _save_shipping_transaction(driver, shipping_modal, order_id, dry_run, use_sc
             return
         if _shipping_panel_has_valid_address(driver):
             return
-        if "shipping transaction added successfully" in lowered and not reloaded_after_success_banner:
+        if "shipping transaction added successfully" in lowered:
+            if accept_success_banner:
+                return
+            if reloaded_after_success_banner:
+                time.sleep(0.25)
+                continue
             try:
                 driver.switch_to.default_content()
             except Exception:
@@ -4568,6 +4633,7 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
         )
     panel_address = _extract_shipping_panel_address(driver)
     panel_valid_but_needs_caps_normalization = False
+    panel_valid_but_needs_split_street_normalization = False
     if _shipping_panel_has_valid_address(driver):
         current_address = panel_address or _extract_shipping_panel_address(driver)
         if _address_fields_contain_email(current_address):
@@ -4577,7 +4643,12 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
                 current_address,
                 current_address,
             )
-        if not _shipping_address_needs_caps_normalization(current_address):
+        panel_valid_but_needs_caps_normalization = _shipping_address_needs_caps_normalization(current_address)
+        panel_valid_but_needs_split_street_normalization = _shipping_address_needs_split_street_normalization(current_address)
+        if (
+            not panel_valid_but_needs_caps_normalization
+            and not panel_valid_but_needs_split_street_normalization
+        ):
             return _result_for(
                 order_id,
                 "already_valid_skipped",
@@ -4589,7 +4660,6 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
                 original_address=current_address,
                 final_address=current_address,
             )
-        panel_valid_but_needs_caps_normalization = True
     shipping_filter_key = _normalize_shipping_filter(shipping_filter)
     all_mode_order_totals_shipping_class = ""
     if shipping_filter_key == "all" and _classify_po_box_address(panel_address).get("has_po_box"):
@@ -4604,9 +4674,15 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
     po_box_shipping_filter_key = shipping_filter_key
     if panel_valid_but_needs_caps_normalization:
         warnings.append("The order already showed a valid shipping address, but it was not all caps. Running Save & Verify Address to look for a normalized validated match.")
+    if panel_valid_but_needs_split_street_normalization:
+        warnings.append("The order already showed a valid shipping address, but Address only contained the house number and Address (cont) contained the street name. Opening the editor to merge them.")
 
     if _address_is_valid(shipping_modal):
-        if not _shipping_address_needs_caps_normalization(original_address):
+        modal_needs_split_street_normalization = _shipping_address_needs_split_street_normalization(original_address)
+        if (
+            not _shipping_address_needs_caps_normalization(original_address)
+            and not modal_needs_split_street_normalization
+        ):
             return _result_for(
                 order_id,
                 "already_valid_modal_skipped",
@@ -4618,7 +4694,10 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
                 original_address=original_address,
                 final_address=original_address,
             )
-        warnings.append("The shipping editor already showed Address is valid, but the current address was not all caps. Running Save & Verify Address to look for a normalized validated match.")
+        if _shipping_address_needs_caps_normalization(original_address):
+            warnings.append("The shipping editor already showed Address is valid, but the current address was not all caps. Running Save & Verify Address to look for a normalized validated match.")
+        if modal_needs_split_street_normalization:
+            warnings.append("The shipping editor already showed Address is valid, but Address only contained the house number and Address (cont) contained the street name. Merging the street into Address before saving.")
 
     recipient_ok, current_address = _ensure_recipient_present(shipping_modal, original_address.get("recipient"), warnings)
     current_address = _merge_address_fields(current_address, panel_address)
@@ -4663,18 +4742,24 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
             f"Detected both a PO Box and a street address. Using '{po_box_profile['street_line']}' for validation and keeping '{po_box_profile['po_box_line']}' in Address (cont)."
         )
 
+    needs_split_street_normalization = _shipping_address_needs_split_street_normalization(current_address)
     initial_address_cont = _effective_address_cont(current_address)
-    _, preview_preserved_address_cont, _ = _dedupe_address_identifier(
-        current_address.get("address"),
-        initial_address_cont,
-    )
-    preserved_address_cont = preview_preserved_address_cont or initial_address_cont
+    if needs_split_street_normalization:
+        preserved_address_cont = ""
+    else:
+        _, preview_preserved_address_cont, _ = _dedupe_address_identifier(
+            current_address.get("address"),
+            initial_address_cont,
+        )
+        preserved_address_cont = preview_preserved_address_cont or initial_address_cont
 
     existing_options = None
     best_existing = None
     had_valid_existing_modal_state = _address_is_valid(shipping_modal)
     if po_box_profile["mixed_po_box_and_street"]:
         warnings.append("Detected both a PO Box and a street address. Skipping saved-address shortcuts so CRM validates the street address layout directly.")
+    elif needs_split_street_normalization:
+        warnings.append("Skipping saved-address shortcuts until the split street line is merged into Address.")
     else:
         existing_options = _collect_existing_address_options(driver, shipping_modal)
         best_existing = _find_best_existing_address_option(current_address, existing_options)
@@ -4961,6 +5046,7 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
             order_id,
             dry_run,
             use_scope_send=use_scope_send,
+            accept_success_banner=True,
         )
         return _result_for(
             order_id,
@@ -5168,6 +5254,7 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
                 best_existing=best_existing,
                 accept_save_button_ready=False,
                 allow_prevalidated_selection=True,
+                allow_rewrite=needs_split_street_normalization,
             )
             if existing_result is not None:
                 warnings.append("Used a previously valid matching saved address after the validator returned no candidates.")
@@ -5184,6 +5271,7 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
             max_scrolls=6,
             accept_save_button_ready=False,
             allow_assessed_current_address=True,
+            allow_rewrite=needs_split_street_normalization,
         )
         if existing_result is not None:
             warnings.append("Used a matching existing saved address after the validator returned no candidates.")
@@ -6361,13 +6449,51 @@ def _run_batch(dry_run=False, shipping_filter=None, batch_size=2, parallel_worke
 def _run_once_with_driver(driver, order_id=None, dry_run=False, headless_mode=True, shipping_filter=None, list_url_override=None):
     started_at = time.monotonic()
     try:
-        result = _evaluate_and_resolve_order(
-            driver,
-            order_id,
-            dry_run=dry_run,
-            shipping_filter=shipping_filter,
-            list_url_override=list_url_override,
-        )
+        first_timeout = None
+        try:
+            result = _evaluate_and_resolve_order(
+                driver,
+                order_id,
+                dry_run=dry_run,
+                shipping_filter=shipping_filter,
+                list_url_override=list_url_override,
+            )
+        except TimeoutException as exc:
+            retry_order_id = _normalize_target_order_id(order_id)
+            if not retry_order_id:
+                raise
+            first_timeout = str(exc)
+            print(
+                f"Address Validator timed out for order {retry_order_id}: {exc}. "
+                "Reloading the CRM order once and retrying from a clean page."
+            )
+            try:
+                driver.switch_to.default_content()
+            except Exception:
+                pass
+            safe_get_with_partial_load(
+                driver,
+                f"https://crm2.legacy.printfly.com/order/{retry_order_id}",
+                f"CRM order {retry_order_id} Address Validator timeout recovery",
+            )
+            if login_if_needed(driver):
+                safe_get_with_partial_load(
+                    driver,
+                    f"https://crm2.legacy.printfly.com/order/{retry_order_id}",
+                    f"CRM order {retry_order_id} Address Validator timeout recovery after login",
+                )
+            result = _evaluate_and_resolve_order(
+                driver,
+                retry_order_id,
+                dry_run=dry_run,
+                shipping_filter=shipping_filter,
+                list_url_override=list_url_override,
+            )
+        if first_timeout:
+            result.setdefault("warnings", []).append(
+                f"Recovered after one CRM reload from initial timeout: {first_timeout}"
+            )
+            result["retried_after_timeout"] = True
         result.setdefault("warnings", [])
         duration = _elapsed_seconds(started_at)
         result["duration_seconds"] = duration
@@ -6548,7 +6674,7 @@ def parse_args(argv=None):
     parser.add_argument("--order-id", required=False, help="Optional 7-digit CRM order ID override. If omitted, the first order from CRM_SHIPPING_URL is used.")
     parser.add_argument(
         "--shipping-filter",
-        choices=["free", "rush", "all", "813"],
+        choices=["free", "rush", "all", "813", "high_value"],
         default=_normalize_shipping_filter(CRM_SHIPPING_FILTER_DEFAULT),
         help="Choose which shipping rules to apply and, unless --list-url is provided, which built-in CRM list to use.",
     )

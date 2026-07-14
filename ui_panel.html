@@ -18,6 +18,8 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .field input[type=text],.field input[type=number],.field input[type=time],.field textarea,.field select,select.select{width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;background:#fff}
 .field textarea{min-height:70px}
 .crm-link-panel{border-top:1px solid #eef2f7;padding-top:8px;margin-top:8px}
+.crm-link-category{margin:8px 0 10px}
+.crm-link-category-title{font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#475569;margin:0 0 6px}
 .crm-link-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
 .crm-link-btn{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:42px;background:#fff;color:#0f172a;border-color:#cbd5e1;text-align:left}
 .crm-link-btn:hover{border-color:#2563eb;background:#eff6ff}
@@ -63,6 +65,8 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .filter-toggle.free:hover{background:#dcfce7}
 .filter-toggle.rush{background:#fef2f2;border-color:#ef4444;color:#991b1b}
 .filter-toggle.rush:hover{background:#fee2e2}
+.filter-toggle.high_value{background:#f0f9ff;border-color:#0ea5e9;color:#075985}
+.filter-toggle.high_value:hover{background:#e0f2fe}
 .filter-toggle.all{background:#fefce8;border-color:#eab308;color:#854d0e}
 .filter-toggle.all:hover{background:#fef3c7}
 .metrics{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:8px;margin-bottom:10px}
@@ -281,8 +285,8 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       <details class='section-note'>
         <summary>Read More</summary>
         <div class='section-note-body'>
-          <p>The mode dropdown here only affects Automate Processing steps. Rush mode can run Validator, Separator, Unlocker, Order Goods, and Bypasser. 813 mode uses its own CRM list and can run Validator, Order Goods, and Bypasser without Unlocker or Separator. Free Ship and All run Validator and Separator.</p>
-          <p>Home Assistant / Alexa endpoints: /crm/process/rush, /crm/process/free-ship, /crm/process/all, and /crm/process/813. The original /crm/process endpoint still runs whatever is currently selected above.</p>
+          <p>The mode dropdown here only affects Automate Processing steps. Rush and High Value can run Validator, Separator, Unlocker, Order Goods, Bypasser, and Push Back. Free Ship can run Validator, Separator, and its own Stock Unlocker list. 813 uses its own CRM lists and runs without Unlocker or Separator. All runs Validator and Separator.</p>
+          <p>Home Assistant / Alexa endpoints: /crm/process/rush, /crm/process/high-value, /crm/process/free-ship, /crm/process/all, and /crm/process/813. The original /crm/process endpoint still runs whatever is currently selected above.</p>
         </div>
       </details>
     </div>
@@ -290,6 +294,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       <button class='processing-primary-btn' id='crmProcessingRunBtn' onclick='startCrmProcessingRun(this)'>AUTOMATE</button>
       <select class='select processing-mode-select' id='crmProcessingFilterSelect' onchange='setCrmProcessingFilter(this.value)' title='Automate Processing mode'>
         <option value='rush'>RUSH</option>
+        <option value='high_value'>HIGH VALUE</option>
         <option value='free'>FREE</option>
         <option value='all'>ALL</option>
         <option value='813'>813</option>
@@ -871,7 +876,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       <details class='section-note'>
         <summary>Read More</summary>
         <div class='section-note-body'>
-          <p>CRM LINKS keeps the CRM report URLs together. Automate 813 uses separate links for Validator, Order Goods, and Bypasser; Separator and Unlocker stay disabled for 813.</p>
+          <p>CRM LINKS groups report URLs by list mode. High Value has separate links and uses the same automation set as Rush.</p>
         </div>
       </details>
     </div>
@@ -1009,7 +1014,7 @@ const CRM_HISTORY_STATUS_FILTER_LABELS = {
   successful: 'Successful',
   failed: 'Failed',
 };
-const CRM_PROCESSING_FILTER_SEQUENCE = ['rush', 'free', 'all', '813'];
+const CRM_PROCESSING_FILTER_SEQUENCE = ['rush', 'high_value', 'free', 'all', '813'];
 const HIDDEN_CONFIG_KEYS = new Set([
   'CRM_SHIPPING_813_URL',
   'PRODUCT_SEPARATOR_LIST_URL_813',
@@ -1017,15 +1022,20 @@ const HIDDEN_CONFIG_KEYS = new Set([
 const CRM_LINK_SETTING_KEYS = [
   'CRM_LOGIN_URL',
   'CRM_LOCKED_URL',
+  'CRM_UNLOCKER_FREE_URL',
   'CRM_SHIPPING_FREE_URL',
   'CRM_SHIPPING_RUSH_URL',
   'CRM_SHIPPING_ALL_URL',
+  'CRM_SHIPPING_HIGH_VALUE_URL',
   'CRM_813_VALIDATOR_URL',
   'CRM_813_ORDER_GOODS_URL',
   'CRM_813_BYPASS_URL',
   'CRM_ORDER_GOODS_RUSH_URL',
+  'CRM_ORDER_GOODS_HIGH_VALUE_URL',
   'CRM_SHIPPING_BYPASS_URL',
+  'CRM_SHIPPING_BYPASS_HIGH_VALUE_URL',
   'CRM_PUSH_BACK_RUSH_URL',
+  'CRM_PUSH_BACK_HIGH_VALUE_URL',
   'CRM_PUSH_BACK_813_URL',
   'CRM_SHIPPING_URL',
   'PROCESSOR_LOGIN_URL',
@@ -1034,20 +1044,26 @@ const CRM_LINK_SETTING_KEYS = [
   'PRODUCT_SEPARATOR_LIST_URL_FREE',
   'PRODUCT_SEPARATOR_LIST_URL_RUSH',
   'PRODUCT_SEPARATOR_LIST_URL_ALL',
+  'PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE',
   'PRODUCT_SEPARATOR_LIST_URL',
 ];
 const CRM_LINK_LABEL_OVERRIDES = {
   CRM_LOGIN_URL: 'CRM Login',
   CRM_LOCKED_URL: 'Unlocker List',
+  CRM_UNLOCKER_FREE_URL: 'Unlocker Free List',
   CRM_SHIPPING_FREE_URL: 'Validator Free List',
   CRM_SHIPPING_RUSH_URL: 'Validator Rush List',
   CRM_SHIPPING_ALL_URL: 'Validator All List',
+  CRM_SHIPPING_HIGH_VALUE_URL: 'Validator High Value List',
   CRM_813_VALIDATOR_URL: '813 Validator List',
   CRM_813_ORDER_GOODS_URL: '813 Order Goods List',
   CRM_813_BYPASS_URL: '813 Bypasser List',
   CRM_ORDER_GOODS_RUSH_URL: 'Order Goods Rush List',
+  CRM_ORDER_GOODS_HIGH_VALUE_URL: 'Order Goods High Value List',
   CRM_SHIPPING_BYPASS_URL: 'Bypasser Rush List',
+  CRM_SHIPPING_BYPASS_HIGH_VALUE_URL: 'Bypasser High Value List',
   CRM_PUSH_BACK_RUSH_URL: 'Push Back Rush List',
+  CRM_PUSH_BACK_HIGH_VALUE_URL: 'Push Back High Value List',
   CRM_PUSH_BACK_813_URL: 'Push Back 813 List',
   CRM_SHIPPING_URL: 'Legacy Default Shipping List',
   PROCESSOR_LOGIN_URL: 'Processor Login',
@@ -1056,12 +1072,51 @@ const CRM_LINK_LABEL_OVERRIDES = {
   PRODUCT_SEPARATOR_LIST_URL_FREE: 'Separator Free List',
   PRODUCT_SEPARATOR_LIST_URL_RUSH: 'Separator Rush List',
   PRODUCT_SEPARATOR_LIST_URL_ALL: 'Separator All List',
+  PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE: 'Separator High Value List',
   PRODUCT_SEPARATOR_LIST_URL: 'Separator Default List',
 };
 
+const CRM_LINK_SETTING_GROUPS = [
+  {
+    title: 'Free',
+    keys: ['CRM_SHIPPING_FREE_URL', 'PRODUCT_SEPARATOR_LIST_URL_FREE', 'CRM_UNLOCKER_FREE_URL'],
+  },
+  {
+    title: 'Rush',
+    keys: ['CRM_SHIPPING_RUSH_URL', 'PRODUCT_SEPARATOR_LIST_URL_RUSH', 'CRM_ORDER_GOODS_RUSH_URL', 'CRM_SHIPPING_BYPASS_URL', 'CRM_PUSH_BACK_RUSH_URL'],
+  },
+  {
+    title: 'High Value',
+    keys: ['CRM_SHIPPING_HIGH_VALUE_URL', 'PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE', 'CRM_ORDER_GOODS_HIGH_VALUE_URL', 'CRM_SHIPPING_BYPASS_HIGH_VALUE_URL', 'CRM_PUSH_BACK_HIGH_VALUE_URL'],
+  },
+  {
+    title: 'All',
+    keys: ['CRM_SHIPPING_ALL_URL', 'PRODUCT_SEPARATOR_LIST_URL_ALL'],
+  },
+  {
+    title: '813',
+    keys: ['CRM_813_VALIDATOR_URL', 'CRM_813_ORDER_GOODS_URL', 'CRM_813_BYPASS_URL', 'CRM_PUSH_BACK_813_URL'],
+  },
+  {
+    title: 'Core',
+    keys: ['CRM_LOGIN_URL', 'CRM_LOCKED_URL', 'CRM_SHIPPING_URL', 'PROCESSOR_LOGIN_URL', 'PROCESSOR_LIST_URL', 'PROCESSOR_ORDER_URL_TEMPLATE', 'PRODUCT_SEPARATOR_LIST_URL'],
+  },
+];
+
 function normalizeCrmProcessingFilter(value) {
   const key = String(value || '').trim().toLowerCase();
-  return CRM_PROCESSING_FILTER_SEQUENCE.includes(key) ? key : 'rush';
+  const normalized = key.replace(/[-\s]+/g, '_');
+  return CRM_PROCESSING_FILTER_SEQUENCE.includes(normalized) ? normalized : 'rush';
+}
+
+function isCrmRushLikeProcessingFilter(value) {
+  const key = normalizeCrmProcessingFilter(value);
+  return key === 'rush' || key === 'high_value';
+}
+
+function canCrmProcessingFilterRunUnlocker(value) {
+  const key = normalizeCrmProcessingFilter(value);
+  return isCrmRushLikeProcessingFilter(key) || key === 'free';
 }
 
 function formatCrmProcessingStepLabel(stepKey) {
@@ -1085,16 +1140,18 @@ function formatCrmProcessingStepLabelForState(stepKey, state = {}) {
 function normalizeCrmProcessingStepList(stepList, state = {}) {
   const steps = [];
   const processingFilter = normalizeCrmProcessingFilter(state && state.processing_filter);
-  const canRunRushGoods = processingFilter === 'rush' || processingFilter === '813';
-  const orderGoodsEnabled = state && canRunRushGoods && state.order_goods_enabled;
-  const shippingBypasserEnabled = state && canRunRushGoods && state.shipping_bypasser_enabled;
-  const pushBackEnabled = state && canRunRushGoods && state.push_back_enabled;
+  const rushLike = isCrmRushLikeProcessingFilter(processingFilter);
+  const unlockerCapable = canCrmProcessingFilterRunUnlocker(processingFilter);
+  const canRunOrderSupport = rushLike || processingFilter === '813';
+  const orderGoodsEnabled = state && canRunOrderSupport && state.order_goods_enabled;
+  const shippingBypasserEnabled = state && canRunOrderSupport && state.shipping_bypasser_enabled;
+  const pushBackEnabled = state && canRunOrderSupport && state.push_back_enabled;
   const source = Array.isArray(stepList) && stepList.length > 0
     ? stepList
     : [
       processingFilter === 'all' || (state && state.address_validator_enabled) ? 'address_validator_batch' : '',
       state && processingFilter !== '813' && state.product_separator_enabled !== false ? 'product_separator' : '',
-      state && state.stock_unlocker_enabled && processingFilter === 'rush' ? 'stock_unlocker' : '',
+      state && state.stock_unlocker_enabled && unlockerCapable ? 'stock_unlocker' : '',
       orderGoodsEnabled ? 'order_goods' : '',
       shippingBypasserEnabled ? 'shipping_bypasser' : '',
       pushBackEnabled ? 'push_back' : '',
@@ -1108,10 +1165,11 @@ function normalizeCrmProcessingStepList(stepList, state = {}) {
 
 function crmProcessingAvailableStepsForFilter(processingFilter) {
   const filter = normalizeCrmProcessingFilter(processingFilter);
+  const rushLike = isCrmRushLikeProcessingFilter(filter);
   const steps = ['address_validator_batch'];
   if (filter !== '813') steps.push('product_separator');
-  if (filter === 'rush') steps.push('stock_unlocker');
-  if (filter === 'rush' || filter === '813') {
+  if (canCrmProcessingFilterRunUnlocker(filter)) steps.push('stock_unlocker');
+  if (rushLike || filter === '813') {
     steps.push('order_goods');
     steps.push('shipping_bypasser');
     steps.push('push_back');
@@ -1121,9 +1179,10 @@ function crmProcessingAvailableStepsForFilter(processingFilter) {
 
 function crmProcessingBulkPayload(processingFilter, enabled) {
   const filter = normalizeCrmProcessingFilter(processingFilter);
-  const canRunOrderSupport = filter === 'rush' || filter === '813';
+  const rushLike = isCrmRushLikeProcessingFilter(filter);
+  const canRunOrderSupport = rushLike || filter === '813';
   return {
-    stock_unlocker_enabled: enabled && filter === 'rush',
+    stock_unlocker_enabled: enabled && canCrmProcessingFilterRunUnlocker(filter),
     address_validator_enabled: enabled || filter === 'all',
     product_separator_enabled: enabled && filter !== '813',
     order_goods_enabled: enabled && canRunOrderSupport,
@@ -1168,8 +1227,9 @@ function normalizeCrmAddressFilter(value) {
 }
 
 function formatCrmAddressFilterLabel(value) {
-  const key = String(value || '').trim().toLowerCase();
+  const key = String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
   if (key === '813') return '813 Orders';
+  if (key === 'high_value') return 'High Value Orders';
   if (key === 'all') return 'All Invalid-Address Orders';
   return normalizeCrmAddressFilter(value) === 'rush' ? 'Rush Orders' : 'Free Ship Orders';
 }
@@ -2715,25 +2775,47 @@ function renderCrmLinkButtonPanel(fields) {
   const panel = document.createElement('div');
   panel.className = 'crm-link-panel';
 
-  const grid = document.createElement('div');
-  grid.className = 'crm-link-grid';
-
   for (const field of fields) {
     panel.appendChild(createHiddenConfigInput(field));
-
-    const label = CRM_LINK_LABEL_OVERRIDES[field.key] || keyLabel(field.key);
-    const currentValue = field.value == null ? '' : String(field.value).trim();
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'crm-link-btn' + (currentValue ? ' configured' : '');
-    btn.dataset.key = field.key;
-    btn.title = label;
-    btn.innerHTML = "<span class='name'>" + esc(label) + "</span><span class='state'>" + (currentValue ? 'Set' : 'Empty') + "</span>";
-    btn.addEventListener('click', () => openCrmLinkEditor(field.key));
-    grid.appendChild(btn);
   }
 
-  panel.appendChild(grid);
+  const fieldByKey = {};
+  for (const field of fields) fieldByKey[field.key] = field;
+  const rendered = new Set();
+
+  function appendCategory(titleText, categoryFields) {
+    if (!categoryFields.length) return;
+    const category = document.createElement('div');
+    category.className = 'crm-link-category';
+    const title = document.createElement('div');
+    title.className = 'crm-link-category-title';
+    title.textContent = titleText;
+    category.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.className = 'crm-link-grid';
+    for (const field of categoryFields) {
+      const label = CRM_LINK_LABEL_OVERRIDES[field.key] || keyLabel(field.key);
+      const currentValue = field.value == null ? '' : String(field.value).trim();
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'crm-link-btn' + (currentValue ? ' configured' : '');
+      btn.dataset.key = field.key;
+      btn.title = label;
+      btn.innerHTML = "<span class='name'>" + esc(label) + "</span><span class='state'>" + (currentValue ? 'Set' : 'Empty') + "</span>";
+      btn.addEventListener('click', () => openCrmLinkEditor(field.key));
+      grid.appendChild(btn);
+      rendered.add(field.key);
+    }
+    category.appendChild(grid);
+    panel.appendChild(category);
+  }
+
+  for (const group of CRM_LINK_SETTING_GROUPS) {
+    appendCategory(group.title, group.keys.map((key) => fieldByKey[key]).filter(Boolean));
+  }
+  appendCategory('Other', fields.filter((field) => !rendered.has(field.key)));
+
   return panel;
 }
 
@@ -3516,11 +3598,14 @@ function renderCrmProcessingSelectionButtons(state = {}) {
   const filterSelect = document.getElementById('crmProcessingFilterSelect');
   const filterBtns = {
     rush: document.getElementById('crmProcessingRushFilterBtn'),
+    high_value: document.getElementById('crmProcessingHighValueFilterBtn'),
     free: document.getElementById('crmProcessingFreeFilterBtn'),
     all: document.getElementById('crmProcessingAllFilterBtn'),
     813: document.getElementById('crmProcessing813FilterBtn'),
   };
-  const canRunOrderSupport = processingFilter === 'rush' || processingFilter === '813';
+  const rushLike = isCrmRushLikeProcessingFilter(processingFilter);
+  const unlockerCapable = canCrmProcessingFilterRunUnlocker(processingFilter);
+  const canRunOrderSupport = rushLike || processingFilter === '813';
   const canRunSeparator = processingFilter !== '813';
   if (addressBtn) {
     const enabled = selectedSteps.includes('address_validator_batch');
@@ -3545,11 +3630,11 @@ function renderCrmProcessingSelectionButtons(state = {}) {
   if (unlockBtn) {
     const enabled = selectedSteps.includes('stock_unlocker');
     unlockBtn.classList.toggle('active', enabled);
-    unlockBtn.classList.toggle('processing-disabled', processingFilter !== 'rush');
-    unlockBtn.disabled = processingFilter !== 'rush';
+    unlockBtn.classList.toggle('processing-disabled', !unlockerCapable);
+    unlockBtn.disabled = !unlockerCapable;
     unlockBtn.textContent = 'Unlocker';
-    unlockBtn.title = processingFilter !== 'rush'
-      ? `Unlocker is rush-only and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
+    unlockBtn.title = !unlockerCapable
+      ? `Unlocker is available in Rush, High Value, and Free modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
       : 'Toggle Stock Unlocker in Automate Processing.';
   }
   if (orderGoodsBtn) {
@@ -3559,7 +3644,7 @@ function renderCrmProcessingSelectionButtons(state = {}) {
     orderGoodsBtn.disabled = !canRunOrderSupport;
     orderGoodsBtn.textContent = 'Order Goods';
     orderGoodsBtn.title = !canRunOrderSupport
-      ? `Order Goods is available in Rush and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
+      ? `Order Goods is available in Rush, High Value, and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
       : 'Toggle Order Goods in Automate Processing.';
   }
   if (shippingBypasserBtn) {
@@ -3569,7 +3654,7 @@ function renderCrmProcessingSelectionButtons(state = {}) {
     shippingBypasserBtn.disabled = !canRunOrderSupport;
     shippingBypasserBtn.textContent = 'Bypasser';
     shippingBypasserBtn.title = !canRunOrderSupport
-      ? `Shipping Bypasser is available in Rush and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
+      ? `Shipping Bypasser is available in Rush, High Value, and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
       : 'Toggle Shipping Bypasser in Automate Processing.';
   }
   if (pushBackBtn) {
@@ -3579,7 +3664,7 @@ function renderCrmProcessingSelectionButtons(state = {}) {
     pushBackBtn.disabled = !canRunOrderSupport;
     pushBackBtn.textContent = 'Push Back';
     pushBackBtn.title = !canRunOrderSupport
-      ? `Push Back is available in Rush and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
+      ? `Push Back is available in Rush, High Value, and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
       : 'Toggle Push Back in Automate Processing.';
   }
   if (filterSelect) {
@@ -3591,7 +3676,7 @@ function renderCrmProcessingSelectionButtons(state = {}) {
     filterBtn.disabled = false;
     filterBtn.textContent = processingFilter.toUpperCase();
     filterBtn.title = `Automate Processing is set to ${formatCrmAddressFilterLabel(processingFilter)}. Click to switch.`;
-    filterBtn.classList.remove('all', 'free', 'rush', '813');
+    filterBtn.classList.remove('all', 'free', 'rush', '813', 'high_value');
     filterBtn.classList.add(processingFilter);
     filterBtn.classList.toggle('active', true);
   }
@@ -3687,9 +3772,11 @@ async function toggleCrmProcessingSelection(stepKey) {
     setStatus('All mode always includes Address Validator.');
     return;
   }
-  const canRunOrderSupport = processingFilter === 'rush' || processingFilter === '813';
-  if (stepKey === 'stock_unlocker' && processingFilter !== 'rush') {
-    setStatus('Unlocker is rush-only. Switch Automate Processing back to Rush to enable it.');
+  const rushLike = isCrmRushLikeProcessingFilter(processingFilter);
+  const unlockerCapable = canCrmProcessingFilterRunUnlocker(processingFilter);
+  const canRunOrderSupport = rushLike || processingFilter === '813';
+  if (stepKey === 'stock_unlocker' && !unlockerCapable) {
+    setStatus('Unlocker is available in Rush, High Value, and Free modes.');
     return;
   }
   if (stepKey === 'product_separator' && processingFilter === '813') {
@@ -3698,7 +3785,7 @@ async function toggleCrmProcessingSelection(stepKey) {
   }
   if ((stepKey === 'order_goods' || stepKey === 'shipping_bypasser' || stepKey === 'push_back') && !canRunOrderSupport) {
     const label = stepKey === 'order_goods' ? 'Order Goods' : (stepKey === 'shipping_bypasser' ? 'Shipping Bypasser' : 'Push Back');
-    setStatus(`${label} is available in Rush and 813 modes.`);
+    setStatus(`${label} is available in Rush, High Value, and 813 modes.`);
     return;
   }
   const nextUnlock = stepKey === 'stock_unlocker'
@@ -3893,9 +3980,11 @@ async function startCrmProcessingRun(button = null) {
   return withButtonBusy(button, 'QUEUING...', async () => {
   const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
   const processingFilter = normalizeCrmProcessingFilter(state.processing_filter);
-  const canRunOrderSupport = processingFilter === 'rush' || processingFilter === '813';
+  const rushLike = isCrmRushLikeProcessingFilter(processingFilter);
+  const unlockerCapable = canCrmProcessingFilterRunUnlocker(processingFilter);
+  const canRunOrderSupport = rushLike || processingFilter === '813';
   const payload = {
-    stock_unlocker_enabled: processingFilter === 'rush' ? Boolean(state.stock_unlocker_enabled) : false,
+    stock_unlocker_enabled: unlockerCapable ? Boolean(state.stock_unlocker_enabled) : false,
     address_validator_enabled: processingFilter === 'all' ? true : Boolean(state.address_validator_enabled),
     product_separator_enabled: processingFilter === '813' ? false : state.product_separator_enabled !== false,
     order_goods_enabled: canRunOrderSupport ? Boolean(state.order_goods_enabled) : false,
@@ -4986,8 +5075,13 @@ function renderCrmMassEmailerStatus(payload) {
   const skippedCount = Number((running ? runtime.skippedCount : state.last_skipped_count) || 0);
   const action = (running ? runtime.lastAction : state.last_action) || 'process_queue';
   const mode = running ? (runtime.dryRun ? 'Dry Run' : (action === 'scan_sheet' ? 'Scan' : 'Live')) : formatCrmMassEmailerAction(action);
+  const currentOrderIndex = Number(runtime.currentOrderIndex || 0);
+  const totalOrderCount = Number(runtime.totalOrderCount || 0);
+  const progressText = running && totalOrderCount > 0
+    ? ` | Order ${Math.min(currentOrderIndex, totalOrderCount)}/${totalOrderCount}`
+    : '';
   const runtimeText = running
-    ? `${mode} | Orders ${orderCount} | Failures ${failureCount} | Skipped ${skippedCount}. ${runtime.lastMessage || ''}`.trim()
+    ? `${mode}${progressText} | Orders ${orderCount} | Failures ${failureCount} | Skipped ${skippedCount}. ${runtime.lastMessage || ''}`.trim()
     : (state.last_run_message || 'No Sheets Scanner runs yet.');
   const statusText = document.getElementById('crmMassEmailerStatusText');
   if (statusText) statusText.textContent = headline;

@@ -294,6 +294,17 @@ def _stock_rows_from_state(stock_state):
     return normalized_rows
 
 
+def _stock_state_is_header_only(stock_state):
+    stock_state = stock_state or {}
+    if str(stock_state.get("state") or "") != "ordered_header_only":
+        return False
+    if stock_state.get("has_po_row"):
+        return False
+    if stock_state.get("manual_order_rows"):
+        return False
+    return not (_clean_text(stock_state.get("manual_order_vendor")) or _clean_text(stock_state.get("manual_order_po")))
+
+
 def _stock_transfer_records_for_design(design):
     stock_state = design.get("stock") or {}
     if not _stock_state_is_ordered(stock_state):
@@ -324,6 +335,7 @@ def _summarize_original_stock(designs, order_stock_status=None):
     cancelled_channel_rows = []
     outside_stock_rows = []
     unknown_ordered_tabs = []
+    header_only_ordered_tabs = []
     for design in designs or []:
         stock_state = design.get("stock") or {}
         if not _stock_state_is_ordered(stock_state):
@@ -338,7 +350,8 @@ def _summarize_original_stock(designs, order_stock_status=None):
         )
         rows = _stock_transfer_records_for_design(design)
         if not rows:
-            unknown_ordered_tabs.append(
+            target = header_only_ordered_tabs if _stock_state_is_header_only(stock_state) else unknown_ordered_tabs
+            target.append(
                 {
                     "tab_number": design.get("tab_number"),
                     "design_id": _clean_text(design.get("design_id")),
@@ -374,6 +387,7 @@ def _summarize_original_stock(designs, order_stock_status=None):
         "outside_stock_rows": outside_stock_rows,
         "cancelled_channel_rows": cancelled_channel_rows,
         "unknown_ordered_tabs": unknown_ordered_tabs,
+        "header_only_ordered_tabs": header_only_ordered_tabs,
         "local_inventory_only": bool(stock_ordered and local_inventory_rows and not outside_stock_rows and not unknown_ordered_tabs),
         "order_stock_status": order_stock_status,
     }
@@ -392,8 +406,21 @@ def _planned_stock_routing(stock_summary, subcontractor):
             "reason": "stock_ordered_vendor_po_unknown",
             "subcontractor": subcontractor,
         }
+    header_only_ordered_tabs = stock_summary.get("header_only_ordered_tabs") or []
     if not is_subcontractor:
+        if header_only_ordered_tabs and not stock_summary.get("transfer_records"):
+            return {
+                "action": "header_only_no_transfer",
+                "reason": "stock_ordered_header_only",
+                "subcontractor": subcontractor,
+            }
         return {"action": "copy_to_split_orders", "subcontractor": subcontractor}
+    if header_only_ordered_tabs and not stock_summary.get("transfer_records"):
+        return {
+            "action": "manual_review",
+            "reason": "stock_ordered_header_only_subcontractor",
+            "subcontractor": subcontractor,
+        }
     if is_mach6:
         if stock_summary.get("cancelled_channel_rows"):
             return {
@@ -2266,14 +2293,16 @@ def _extract_order_totals_from_text(body_text):
 
 
 def _scan_original_order(driver, expected_tab_count=None):
-    tabs = []
-    deadline = time.monotonic() + max(45, PROCESSOR_PAGE_LOAD_TIMEOUT)
-    while time.monotonic() < deadline:
-        tabs = _visible_design_tab_numbers(driver)
-        if tabs:
-            break
-        time.sleep(1)
-    if not tabs:
+    def detect_tabs():
+        detected = []
+        deadline = time.monotonic() + max(45, PROCESSOR_PAGE_LOAD_TIMEOUT)
+        while time.monotonic() < deadline:
+            detected = _visible_design_tab_numbers(driver)
+            if detected:
+                break
+            time.sleep(1)
+        if detected:
+            return detected
         total_numbers = _design_total_tab_numbers_from_page_text(driver)
         if expected_tab_count is not None:
             expected_numbers = list(range(1, int(expected_tab_count) + 1))
@@ -2285,7 +2314,7 @@ def _scan_original_order(driver, expected_tab_count=None):
                 else:
                     break
         if expected_numbers and total_numbers[: len(expected_numbers)] == expected_numbers:
-            tabs = [
+            return [
                 {
                     "tab_number": number,
                     "text": f"Design {number} Total fallback marker",
@@ -2293,7 +2322,24 @@ def _scan_original_order(driver, expected_tab_count=None):
                 }
                 for number in expected_numbers
             ]
+        return []
+
+    tabs = detect_tabs()
+    expected_mismatch = expected_tab_count is not None and len(tabs) != int(expected_tab_count)
+    if not tabs or expected_mismatch:
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            pass
+        driver.refresh()
+        _wait_for_crm_context(driver)
+        tabs = detect_tabs()
     detected_count = len(tabs)
+    if not tabs:
+        body_text = _clean_text(driver.execute_script("return document.body ? document.body.innerText : '';"))
+        raise SplitterError(
+            f"No CRM design tabs were detected after one refresh. Visible text starts: {body_text[:300]}"
+        )
     if expected_tab_count is not None and detected_count != int(expected_tab_count):
         body_text = _clean_text(driver.execute_script("return document.body ? document.body.innerText : '';"))
         current_url = driver.current_url

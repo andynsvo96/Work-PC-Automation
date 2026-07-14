@@ -39,6 +39,7 @@ from automation_runtime import (
     safe_driver_quit,
     safe_get_with_partial_load,
     safe_take_screenshot,
+    write_status_payload,
     write_result_payload,
 )
 from config import (
@@ -97,29 +98,47 @@ configure_console_utf8()
 AUTOMATION_NAME = "crm.copyright_cancel"
 SOURCE = "crm_copyright_cancel.py"
 MISSING_REASON_ERROR = "Missing Reason. Copyright cancel must have a reason."
+ORDER_NUMBER_PLACEHOLDER_LABEL = "[ORDER-NUMBER]"
+REASON_PLACEHOLDER_LABEL = "[REASON]"
+ORDER_NUMBER_PLACEHOLDER_RE = re.compile(r"\[\s*ORDER[\s_-]*NUMBER\s*\]", re.IGNORECASE)
+REASON_PLACEHOLDER_RE = re.compile(r"\[\s*REASON\s*\]", re.IGNORECASE)
+LEGACY_PLACEHOLDER_RE = re.compile(r"XXXXXX", re.IGNORECASE)
 HELD_DRIVERS = []
 PROFILE_DIR_OVERRIDE = ""
-COMPLICATED_EMB_ISSUE_TYPE = str(getattr(_config, "COMPLICATED_EMB_ISSUE_TYPE", "Complicated EMB") or "Complicated EMB")
+COMPLICATED_EMB_ISSUE_TYPE = str(
+    getattr(_config, "COMPLICATED_EMB_ISSUE_TYPE", "Complicated EMB to HDD") or "Complicated EMB to HDD"
+)
 OVERSIZE_EMB_TO_HDD_ISSUE_TYPE = str(
     getattr(_config, "OVERSIZE_EMB_TO_HDD_ISSUE_TYPE", "Oversize EMB to HDD") or "Oversize EMB to HDD"
 )
 COPYRIGHT_REACHOUT_ISSUE_TYPE = str(
     getattr(_config, "COPYRIGHT_REACHOUT_ISSUE_TYPE", "Copyright - Reachout") or "Copyright - Reachout"
 )
+COPYRIGHT_REMOVAL_ISSUE_TYPE = str(
+    getattr(_config, "COPYRIGHT_REMOVAL_ISSUE_TYPE", "Copyright Removal") or "Copyright Removal"
+)
 AUTO_SPLITTER_ISSUE_TYPE = str(getattr(_config, "AUTO_SPLITTER_ISSUE_TYPE", "Auto Splitter") or "Auto Splitter")
 MANUAL_STOCK_ORDER_ISSUE_TYPE = str(
     getattr(_config, "MANUAL_STOCK_ORDER_ISSUE_TYPE", "Manual Stock Order") or "Manual Stock Order"
 )
 SALESFORCE_COMPLICATED_EMB_TO_HDD_TEMPLATE = str(
-    getattr(_config, "SALESFORCE_COMPLICATED_EMB_TO_HDD_TEMPLATE", "NO REPLY - Complicated EMB to HDD")
-    or "NO REPLY - Complicated EMB to HDD"
+    getattr(_config, "SALESFORCE_COMPLICATED_EMB_TO_HDD_TEMPLATE", "[AUTO] Complicated EMB to HDD")
+    or "[AUTO] Complicated EMB to HDD"
 )
 SALESFORCE_OVERSIZE_EMBROIDERY_TEMPLATE = str(
-    getattr(_config, "SALESFORCE_OVERSIZE_EMBROIDERY_TEMPLATE", "NO REPLY - Oversize Embroidery")
-    or "NO REPLY - Oversize Embroidery"
+    getattr(_config, "SALESFORCE_OVERSIZE_EMBROIDERY_TEMPLATE", "[AUTO] Oversize Embroidery")
+    or "[AUTO] Oversize Embroidery"
 )
 SALESFORCE_COPYRIGHT_REACHOUT_TEMPLATE = str(
-    getattr(_config, "SALESFORCE_COPYRIGHT_REACHOUT_TEMPLATE", "ISSUE - Copyright") or "ISSUE - Copyright"
+    getattr(_config, "SALESFORCE_COPYRIGHT_REACHOUT_TEMPLATE", "[AUTO] Copyright Reachout") or "[AUTO] Copyright Reachout"
+)
+SALESFORCE_COPYRIGHT_REMOVAL_TEMPLATE = str(
+    getattr(
+        _config,
+        "SALESFORCE_COPYRIGHT_REMOVAL_TEMPLATE",
+        "[AUTO] Copyright Removal",
+    )
+    or "[AUTO] Copyright Removal"
 )
 COPYRIGHT_REACHOUT_CRM_STATUS = str(
     getattr(_config, "COPYRIGHT_REACHOUT_CRM_STATUS", "issue - copyright") or "issue - copyright"
@@ -171,6 +190,8 @@ class CancelProcess:
     requires_reason: bool = True
     cancel_and_refund: bool = True
     fixed_sales_note: str = ""
+    sales_note_template: str = ""
+    template_aliases: tuple = ()
     replace_body_placeholder_with_reason: bool = False
 
 
@@ -184,6 +205,7 @@ COPYRIGHT_CANCEL_PROCESS = CancelProcess(
     subject_markers=("refund has been issued",),
     body_markers=("while reviewing your order", "processed a refund back to your account"),
     display_name="Copyright cancel",
+    replace_body_placeholder_with_reason=True,
 )
 CONTENT_VIOLATION_CANCEL_PROCESS = CancelProcess(
     key="content_violation_cancel",
@@ -238,6 +260,21 @@ COPYRIGHT_REACHOUT_PROCESS = CancelProcess(
     cancel_and_refund=False,
     replace_body_placeholder_with_reason=True,
 )
+COPYRIGHT_REMOVAL_PROCESS = CancelProcess(
+    key="copyright_removal",
+    issue_type=COPYRIGHT_REMOVAL_ISSUE_TYPE,
+    salesforce_template=SALESFORCE_COPYRIGHT_REMOVAL_TEMPLATE,
+    template_search="copyright",
+    sales_note_reason_label="",
+    sales_note_email_line="",
+    subject_markers=("copyrighted element removed",),
+    body_markers=("copyright", "removed"),
+    display_name="Copyright removal",
+    requires_reason=True,
+    cancel_and_refund=False,
+    sales_note_template="Removed {reason} copyright\nemailed",
+    replace_body_placeholder_with_reason=True,
+)
 AUTO_SPLITTER_PROCESS = CancelProcess(
     key="auto_splitter",
     issue_type=AUTO_SPLITTER_ISSUE_TYPE,
@@ -272,6 +309,7 @@ CANCEL_PROCESSES = (
     COMPLICATED_EMB_TO_HDD_PROCESS,
     OVERSIZE_EMB_TO_HDD_PROCESS,
     COPYRIGHT_REACHOUT_PROCESS,
+    COPYRIGHT_REMOVAL_PROCESS,
     AUTO_SPLITTER_PROCESS,
     MANUAL_STOCK_ORDER_PROCESS,
 )
@@ -321,6 +359,22 @@ def _write_result(success, message, result_file=None, **extra_fields):
         extra_fields=extra_fields,
         result_file=result_file or RESULT_FILE,
     )
+
+
+def _publish_status(message, *, stage=None, current=None, total=None, order_id=None):
+    """Publish Sheets Scanner progress for the control-panel status poll."""
+    try:
+        write_status_payload(
+            AUTOMATION_NAME,
+            message,
+            stage=stage,
+            current=current,
+            total=total,
+            order_id=order_id,
+        )
+    except Exception:
+        # Live-status reporting must never interrupt the actual sheet workflow.
+        pass
 
 
 def _normalize_order_id(value):
@@ -502,12 +556,13 @@ def _subcontractor_from_page_text(text):
 
 
 def _stock_row_summary(row, tab=None):
+    row = row or {}
     return {
         "tab_number": (tab or {}).get("tab_number"),
         "tab_name": _clean_text((tab or {}).get("tab_name")),
-        "vendor": _clean_text((row or {}).get("vendor")),
-        "po": _clean_text((row or {}).get("po")),
-        "vendor_order_number": _clean_text((row or {}).get("vendor_order_number")),
+        "vendor": _clean_text(row.get("vendor") or row.get("manual_order_vendor")),
+        "po": _clean_text(row.get("po") or row.get("manual_order_po")),
+        "vendor_order_number": _clean_text(row.get("vendor_order_number")),
     }
 
 
@@ -855,15 +910,100 @@ def _format_copyright_reachout_body_text(body_text):
     return text.strip()
 
 
+def _format_copyright_removal_body_text(body_text):
+    text = _clean_text(body_text)
+    hello_index = text.find("Hello,")
+    if hello_index >= 0:
+        text = text[hello_index:]
+    end_marker = "We appreciate your business."
+    end_index = text.find(end_marker)
+    if end_index >= 0:
+        text = text[: end_index + len(end_marker)]
+    replacements = [
+        ("Hello, Thank you", "Hello,\n\nThank you"),
+        ("RushOrderTees! We wanted", "RushOrderTees!\n\nWe wanted"),
+        ("from the design. Your updated", "from the design.\n\nYour updated"),
+        ("happy to assist. We are", "happy to assist.\n\nWe are"),
+        ("800-620-1233. Thank you", "800-620-1233.\n\nThank you"),
+    ]
+    for before, after in replacements:
+        text = text.replace(before, after)
+    return text.strip()
+
+
+def _format_placeholder_body_text(body_text, process=COPYRIGHT_REACHOUT_PROCESS):
+    process = _cancel_process_for_key(process) if isinstance(process, str) else process
+    if process.key == COPYRIGHT_REMOVAL_PROCESS.key:
+        return _format_copyright_removal_body_text(body_text)
+    return _format_copyright_reachout_body_text(body_text)
+
+
+def _subject_has_order_placeholder(text):
+    return bool(LEGACY_PLACEHOLDER_RE.search(str(text or "")) or ORDER_NUMBER_PLACEHOLDER_RE.search(str(text or "")))
+
+
+def _replace_order_placeholders(text, order_id):
+    return re.sub(
+        r"XXXXXX|\[\s*ORDER[\s_-]*NUMBER\s*\]",
+        str(order_id),
+        str(text or ""),
+        flags=re.IGNORECASE,
+    )
+
+
+def _body_has_reason_placeholder(text):
+    return bool(LEGACY_PLACEHOLDER_RE.search(str(text or "")) or REASON_PLACEHOLDER_RE.search(str(text or "")))
+
+
+def _replace_reason_placeholders(text, reason):
+    return re.sub(
+        r"XXXXXX|\[\s*REASON\s*\]",
+        str(reason),
+        str(text or ""),
+        flags=re.IGNORECASE,
+    )
+
+
+def _unresolved_placeholder_labels(text):
+    value = str(text or "")
+    labels = []
+    checks = (
+        (ORDER_NUMBER_PLACEHOLDER_RE, ORDER_NUMBER_PLACEHOLDER_LABEL),
+        (REASON_PLACEHOLDER_RE, REASON_PLACEHOLDER_LABEL),
+        (LEGACY_PLACEHOLDER_RE, "XXXXXX"),
+    )
+    for pattern, label in checks:
+        if pattern.search(value) and label not in labels:
+            labels.append(label)
+    return labels
+
+
+def _validate_no_unresolved_email_placeholders(subject_text, body_text, body_placeholder_state=None):
+    subject_labels = _unresolved_placeholder_labels(subject_text)
+    body_labels = _unresolved_placeholder_labels(body_text)
+    hidden_body_count = int((body_placeholder_state or {}).get("count") or 0)
+    if hidden_body_count > 0 and REASON_PLACEHOLDER_LABEL not in body_labels:
+        body_labels.append(REASON_PLACEHOLDER_LABEL)
+    if subject_labels or body_labels:
+        pieces = []
+        if subject_labels:
+            pieces.append(f"subject: {', '.join(subject_labels)}")
+        if body_labels:
+            pieces.append(f"body: {', '.join(body_labels)}")
+        raise CopyrightCancelError(
+            "Salesforce email still contains unresolved placeholder(s) before send; refusing to send. "
+            + "; ".join(pieces)
+        )
+
+
 def _html_with_bold_placeholder_reason(body_text, reason):
     clean_reason = _clean_text(reason)
     if not clean_reason:
         raise CopyrightCancelError("Copyright reachout body replacement requires a reason.")
-    placeholder = "XXXXXX"
-    if placeholder not in str(body_text or ""):
-        raise CopyrightCancelError("Salesforce copyright reachout template body does not contain XXXXXX.")
+    if not _body_has_reason_placeholder(body_text):
+        raise CopyrightCancelError(f"Salesforce copyright reachout template body does not contain {REASON_PLACEHOLDER_LABEL}.")
     token = "\0COPYRIGHT_REASON\0"
-    escaped = html.escape(str(body_text or "").replace(placeholder, token))
+    escaped = html.escape(_replace_reason_placeholders(body_text, token))
     bold_reason = f"<strong>{html.escape(clean_reason)}</strong>"
     escaped = escaped.replace(token, bold_reason)
     paragraphs = re.split(r"\n{2,}", escaped)
@@ -1149,20 +1289,27 @@ def _get_crm_contact_info(driver):
         const panels = Array.from(document.querySelectorAll('div,section,table')).filter((el) => {
           const text = el.innerText || '';
           return text.includes('Contact Info and Send Options')
-            && text.includes('Salesforce Account')
+            && (text.includes('Salesforce Account') || text.includes('Salesforce Contact'))
             && (text.match(emailPattern) || []).length;
         });
         const panel = panels.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0] || document.body;
         const text = panel.innerText || '';
         const emails = Array.from(new Set(text.match(emailPattern) || []));
         const sf = Array.from(panel.querySelectorAll('a,button,span'))
-          .find((el) => (el.innerText || '').replace(/\\s+/g, ' ').trim().toLowerCase() === 'salesforce account');
+          .find((el) => {
+            const label = (el.innerText || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return (label === 'salesforce account' || label === 'salesforce contact')
+              && rect.width > 0 && rect.height > 0
+              && style.display !== 'none' && style.visibility !== 'hidden';
+          });
         let customerName = '';
         const lines = text.split(/\\n+/).map((line) => line.trim()).filter(Boolean);
         for (const line of lines) {
           if (/contact info and send options/i.test(line)) continue;
           if (line.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/i)) continue;
-          if (/salesforce account|log in|prior|phone|chat|request review/i.test(line)) continue;
+          if (/salesforce (?:account|contact)|log in|prior|phone|chat|request review/i.test(line)) continue;
           customerName = line;
           break;
         }
@@ -1170,6 +1317,7 @@ def _get_crm_contact_info(driver):
           customer_name: customerName,
           email: emails[0] || '',
           salesforce_visible: !!sf,
+          salesforce_label: sf ? (sf.innerText || '').replace(/\\s+/g, ' ').trim() : '',
           panel_text: text.slice(0, 1000)
         };
         """
@@ -1177,22 +1325,29 @@ def _get_crm_contact_info(driver):
     if not info.get("email"):
         raise CopyrightCancelError("Could not read customer email from CRM contact panel.")
     if not info.get("salesforce_visible"):
-        raise CopyrightCancelError("Could not find Salesforce Account link in CRM contact panel.")
+        raise CopyrightCancelError("Could not find Salesforce Account or Salesforce Contact link in CRM contact panel.")
     return info
 
 
 def _wait_for_crm_contact_info(driver, order_id=None, timeout=90):
-    deadline = time.monotonic() + timeout
     last_error = None
-    while time.monotonic() < deadline:
-        try:
+    for attempt in range(2):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                _activate_crm_context(driver)
+                if order_id:
+                    _wait_for_order_scope(driver, order_id=order_id, timeout=3)
+                return _get_crm_contact_info(driver)
+            except Exception as exc:
+                last_error = exc
+            time.sleep(1)
+        if attempt == 0:
+            driver.switch_to.default_content()
+            driver.refresh()
             _activate_crm_context(driver)
             if order_id:
-                _wait_for_order_scope(driver, order_id=order_id, timeout=3)
-            return _get_crm_contact_info(driver)
-        except Exception as exc:
-            last_error = exc
-        time.sleep(1)
+                _wait_for_order_scope(driver, order_id=order_id, timeout=30)
     raise CopyrightCancelError(f"CRM contact panel did not finish loading. Last error: {last_error}")
 
 
@@ -1211,7 +1366,8 @@ def _click_salesforce_account(driver, order_id=None, timeout=90):
                     const el = nodes.find((node) => {
                       const text = (node.innerText || '').replace(/\\s+/g, ' ').trim().toLowerCase();
                       const rect = node.getBoundingClientRect();
-                      return text === 'salesforce account' && rect.width > 0 && rect.height > 0;
+                      return (text === 'salesforce account' || text === 'salesforce contact')
+                        && rect.width > 0 && rect.height > 0;
                     });
                     if (!el) return false;
                     el.scrollIntoView({block: 'center', inline: 'center'});
@@ -1228,7 +1384,10 @@ def _click_salesforce_account(driver, order_id=None, timeout=90):
             if opened:
                 return
 
-            for element in driver.find_elements("xpath", "//*[normalize-space(.)='Salesforce Account']"):
+            for element in driver.find_elements(
+                "xpath",
+                "//*[normalize-space(.)='Salesforce Account' or normalize-space(.)='Salesforce Contact']",
+            ):
                 try:
                     if not element.is_displayed():
                         continue
@@ -1245,7 +1404,8 @@ def _click_salesforce_account(driver, order_id=None, timeout=90):
                     const el = nodes.find((node) => {
                       const text = (node.innerText || '').replace(/\\s+/g, ' ').trim().toLowerCase();
                       const rect = node.getBoundingClientRect();
-                      return text === 'salesforce account' && rect.width > 0 && rect.height > 0;
+                      return (text === 'salesforce account' || text === 'salesforce contact')
+                        && rect.width > 0 && rect.height > 0;
                     });
                     if (!el) return false;
                     el.click();
@@ -1259,8 +1419,39 @@ def _click_salesforce_account(driver, order_id=None, timeout=90):
             last_error = exc
         time.sleep(1)
     raise CopyrightCancelError(
-        f"Salesforce Account link did not become clickable before timeout. Last error: {last_error}"
+        f"Salesforce Account/Contact link did not become clickable before timeout. Last error: {last_error}"
     )
+
+
+def _salesforce_account_href(driver, order_id=None):
+    _activate_crm_context(driver)
+    if order_id:
+        _wait_for_order_scope(driver, order_id=order_id, timeout=3)
+    href = driver.execute_script(
+        """
+        function clean(value) {
+          return (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+        }
+        function rendered(el) {
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          return rect.width > 0 && rect.height > 0
+            && style.display !== 'none' && style.visibility !== 'hidden';
+        }
+        const nodes = Array.from(document.querySelectorAll('a,button,span,div'));
+        const label = nodes.find((node) => {
+          const text = clean(node.innerText || node.value || '');
+          return (text === 'salesforce account' || text === 'salesforce contact') && rendered(node);
+        });
+        if (!label) return '';
+        const anchor = label.closest('a[href]');
+        if (!anchor) return '';
+        const href = anchor.href || '';
+        if (!href || href.toLowerCase().startsWith('javascript:') || href === window.location.href) return '';
+        return href;
+        """
+    )
+    return str(href or "").strip()
 
 
 def _switch_to_new_or_changed_tab(driver, before_handles, timeout=20):
@@ -1276,7 +1467,17 @@ def _switch_to_new_or_changed_tab(driver, before_handles, timeout=20):
         if "salesforce" in current_url.lower() or "force.com" in current_url.lower():
             return driver.current_window_handle
         time.sleep(0.5)
-    raise CopyrightCancelError("Salesforce tab did not open after clicking Salesforce Account.")
+    raise CopyrightCancelError("Salesforce tab did not open after clicking Salesforce Account/Contact.")
+
+
+def _open_url_in_new_tab(driver, url):
+    before_handles = list(driver.window_handles)
+    if hasattr(driver.switch_to, "new_window"):
+        driver.switch_to.new_window("tab")
+        driver.get(url)
+        return driver.current_window_handle
+    driver.execute_script("window.open(arguments[0], '_blank');", url)
+    return _switch_to_new_or_changed_tab(driver, before_handles, timeout=10)
 
 
 def _visible_salesforce_login_inputs(driver):
@@ -1437,25 +1638,53 @@ def _attempt_salesforce_login(driver, timeout=45):
 
 
 def _open_salesforce_account(driver, crm_handle, expected_email, login_wait_seconds=0, order_id=None):
-    driver.switch_to.window(crm_handle)
-    _activate_crm_context(driver)
-    before = driver.window_handles
-    _click_salesforce_account(driver, order_id=order_id)
-    sf_handle = _switch_to_new_or_changed_tab(driver, before)
+    """Open the CRM account with one refresh if its dynamic link stalls."""
+    refresh_used = False
+
+    def refresh_crm_order_once():
+        nonlocal refresh_used
+        if refresh_used:
+            return False
+        refresh_used = True
+        driver.switch_to.window(crm_handle)
+        driver.refresh()
+        _activate_crm_context(driver)
+        if order_id:
+            _wait_for_order_scope(driver, order_id=order_id, timeout=30)
+        return True
+
+    def open_account_tab():
+        while True:
+            driver.switch_to.window(crm_handle)
+            _activate_crm_context(driver)
+            account_href = _salesforce_account_href(driver, order_id=order_id)
+            before = list(driver.window_handles)
+            try:
+                _click_salesforce_account(driver, order_id=order_id)
+            except CopyrightCancelError:
+                if refresh_crm_order_once():
+                    continue
+                raise
+            try:
+                return _switch_to_new_or_changed_tab(driver, before)
+            except CopyrightCancelError:
+                if account_href:
+                    return _open_url_in_new_tab(driver, account_href)
+                if refresh_crm_order_once():
+                    continue
+                raise
+
+    sf_handle = open_account_tab()
     login_happened = _attempt_salesforce_login(driver)
     if login_happened:
         # CRM's first post-login redirect often lands on the Salesforce default page.
-        # Return to CRM and click Salesforce Account again to reach the customer page.
+        # Return to CRM and click Salesforce Account/Contact again to reach the customer page.
         try:
             if driver.current_window_handle != crm_handle:
                 driver.close()
         except Exception:
             pass
-        driver.switch_to.window(crm_handle)
-        _activate_crm_context(driver)
-        before = driver.window_handles
-        _click_salesforce_account(driver, order_id=order_id)
-        sf_handle = _switch_to_new_or_changed_tab(driver, before)
+        sf_handle = open_account_tab()
     _wait_for_salesforce_account_page(driver, expected_email, timeout=max(30, login_wait_seconds))
     return sf_handle
 
@@ -2664,6 +2893,50 @@ def _click_element_center(driver, element):
                 return False
 
 
+def _click_viewport_point(driver, x, y):
+    try:
+        x = float(x)
+        y = float(y)
+    except Exception:
+        return False
+    clicked = False
+    try:
+        driver.execute_cdp_cmd("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y, "button": "none"})
+        driver.execute_cdp_cmd("Input.dispatchMouseEvent", {"type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1})
+        driver.execute_cdp_cmd("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1})
+        clicked = True
+    except Exception:
+        pass
+    if os.name == "nt":
+        try:
+            metrics = driver.execute_script(
+                """
+                return {
+                  screenX: window.screenX,
+                  screenY: window.screenY,
+                  outerWidth: window.outerWidth,
+                  outerHeight: window.outerHeight,
+                  innerWidth: window.innerWidth,
+                  innerHeight: window.innerHeight
+                };
+                """
+            )
+            border_x = max(0, (float(metrics.get("outerWidth") or 0) - float(metrics.get("innerWidth") or 0)) / 2)
+            chrome_y = max(0, float(metrics.get("outerHeight") or 0) - float(metrics.get("innerHeight") or 0) - border_x)
+            screen_x = int(round(float(metrics.get("screenX") or 0) + border_x + x))
+            screen_y = int(round(float(metrics.get("screenY") or 0) + chrome_y + y))
+            user32 = ctypes.windll.user32
+            user32.SetCursorPos(screen_x, screen_y)
+            time.sleep(0.05)
+            user32.mouse_event(0x0002, 0, 0, 0, 0)
+            time.sleep(0.05)
+            user32.mouse_event(0x0004, 0, 0, 0, 0)
+            clicked = True
+        except Exception:
+            pass
+    return clicked
+
+
 def _click_template_button(driver):
     _restore_salesforce_email_composer(driver)
     _wait_for_email_composer(driver, timeout=10)
@@ -2931,11 +3204,20 @@ def _focus_salesforce_body_editor(driver):
     return True
 
 
+def _template_match_labels(process=COPYRIGHT_CANCEL_PROCESS):
+    labels = []
+    for label in (process.salesforce_template, *(process.template_aliases or ())):
+        label = _clean_text(label)
+        if label and label.lower() not in [item.lower() for item in labels]:
+            labels.append(label)
+    return labels
+
+
 def _click_template_by_name(driver, process=COPYRIGHT_CANCEL_PROCESS):
-    target = process.salesforce_template.lower()
+    targets = [label.lower() for label in _template_match_labels(process)]
     option = driver.execute_script(
         """
-        const target = arguments[0].toLowerCase();
+        const targets = arguments[0].map((value) => String(value || '').toLowerCase()).filter(Boolean);
         function clean(value) {
           return (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
         }
@@ -2954,7 +3236,7 @@ def _click_template_by_name(driver, process=COPYRIGHT_CANCEL_PROCESS):
             const rect = el.getBoundingClientRect();
             return rect.width > 120 && rect.height > 40
               && text.includes('insert a template')
-              && (text.includes('recently used templates') || text.includes(target));
+              && (text.includes('recently used templates') || targets.some((target) => text.includes(target)));
           })
           .sort((a, b) => {
             const ar = a.getBoundingClientRect();
@@ -2967,7 +3249,7 @@ def _click_template_by_name(driver, process=COPYRIGHT_CANCEL_PROCESS):
           .filter((el) => {
             if (!visible(el)) return false;
             const text = clean(el.innerText || el.textContent || el.value || '');
-            if (text !== target) return false;
+            if (!targets.includes(text)) return false;
             const rect = el.getBoundingClientRect();
             return rect.width > 40 && rect.height > 12;
         });
@@ -2984,7 +3266,7 @@ def _click_template_by_name(driver, process=COPYRIGHT_CANCEL_PROCESS):
         try { clickable.scrollIntoView({block: 'center', inline: 'center'}); } catch (err) {}
         return clickable;
         """,
-        target,
+        targets,
     )
     if option is None:
         return False
@@ -2998,15 +3280,18 @@ def _salesforce_template_appears_inserted(driver, process=COPYRIGHT_CANCEL_PROCE
         state = {}
     subject = _clean_text(state.get("subject", ""))
     body = _clean_text(state.get("body", ""))
-    if subject and "enter subject" not in subject.lower():
-        return True
-    if process.body_markers and not _missing_body_markers(body.lower(), process):
-        return True
-    try:
-        text = _clean_text(_read_salesforce_email_composer_text(driver)).lower()
-    except Exception:
-        text = ""
-    return bool(text and (not process.body_markers or not _missing_body_markers(text, process)))
+    if process.body_markers:
+        return bool(subject and body and not _missing_body_markers(body.lower(), process))
+    return bool(subject and "enter subject" not in subject.lower())
+
+
+def _wait_for_salesforce_template_markers(driver, process=COPYRIGHT_CANCEL_PROCESS, timeout=6):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _salesforce_template_appears_inserted(driver, process):
+            return True
+        time.sleep(0.4)
+    return False
 
 
 def _confirm_salesforce_template_insert(driver):
@@ -3220,11 +3505,18 @@ def _search_full_template_modal(driver, query):
 
 def _template_search_queries(process=COPYRIGHT_CANCEL_PROCESS):
     queries = []
-    for query in (
-        process.salesforce_template,
-        process.salesforce_template.replace("NO REPLY -", ""),
-        process.template_search,
-    ):
+    candidates = []
+    if "[AUTO]" in str(process.salesforce_template).upper():
+        candidates.append("[AUTO]")
+    candidates.extend(
+        (
+            process.salesforce_template,
+            *(process.template_aliases or ()),
+            process.salesforce_template.replace("NO REPLY -", ""),
+            process.template_search,
+        )
+    )
+    for query in candidates:
         query = _clean_text(query)
         if query and query.lower() not in [item.lower() for item in queries]:
             queries.append(query)
@@ -3280,10 +3572,10 @@ def _scroll_full_template_modal(driver):
 
 
 def _click_full_template_modal_match(driver, process=COPYRIGHT_CANCEL_PROCESS):
-    target = process.salesforce_template.lower()
+    targets = [label.lower() for label in _template_match_labels(process)]
     option = driver.execute_script(
         """
-        const target = arguments[0].toLowerCase();
+        const targets = arguments[0].map((value) => String(value || '').toLowerCase()).filter(Boolean);
         function clean(value) {
           return (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
         }
@@ -3303,7 +3595,7 @@ def _click_full_template_modal_match(driver, process=COPYRIGHT_CANCEL_PROCESS):
             && rect.right > 0 && rect.left < window.innerWidth;
         }
         function isTargetTemplate(text) {
-          return text === target || text.endsWith(target) || text.includes(target);
+          return targets.some((target) => text === target || text.endsWith(target) || text.includes(target));
         }
         const nodes = walk(document).filter((el) => /^(a|button|td|tr|span|div)$/i.test(el.tagName) || (el.getAttribute('role') || '').toLowerCase() === 'button')
           .filter((el) => {
@@ -3320,8 +3612,8 @@ def _click_full_template_modal_match(driver, process=COPYRIGHT_CANCEL_PROCESS):
         nodes.sort((a, b) => {
           const at = clean(a.innerText || a.textContent || '');
           const bt = clean(b.innerText || b.textContent || '');
-          const aExact = at === target ? 0 : (at.endsWith(target) ? 1 : 2);
-          const bExact = bt === target ? 0 : (bt.endsWith(target) ? 1 : 2);
+          const aExact = targets.includes(at) ? 0 : (targets.some((target) => at.endsWith(target)) ? 1 : 2);
+          const bExact = targets.includes(bt) ? 0 : (targets.some((target) => bt.endsWith(target)) ? 1 : 2);
           if (aExact !== bExact) return aExact - bExact;
           const ar = a.getBoundingClientRect();
           const br = b.getBoundingClientRect();
@@ -3334,7 +3626,7 @@ def _click_full_template_modal_match(driver, process=COPYRIGHT_CANCEL_PROCESS):
         try { clickable.scrollIntoView({block: 'center', inline: 'center'}); } catch (err) {}
         return clickable;
         """,
-        target,
+        targets,
     )
     if option is None:
         return False
@@ -3449,8 +3741,7 @@ def _insert_cancel_template(driver, process=COPYRIGHT_CANCEL_PROCESS):
     time.sleep(0.5)
     if _click_template_by_name(driver, process):
         _confirm_salesforce_template_insert(driver)
-        time.sleep(1)
-        if _salesforce_template_appears_inserted(driver, process):
+        if _wait_for_salesforce_template_markers(driver, process):
             return True
         _click_template_button(driver)
         time.sleep(0.5)
@@ -3466,11 +3757,20 @@ def _insert_cancel_template(driver, process=COPYRIGHT_CANCEL_PROCESS):
             time.sleep(1)
             if _click_full_template_modal_match(driver, process):
                 _confirm_salesforce_template_insert(driver)
-                return True
+                if _wait_for_salesforce_template_markers(driver, process):
+                    return True
+                _click_template_button(driver)
+                time.sleep(0.5)
+                if not _open_full_template_picker_from_menu(driver):
+                    raise CopyrightCancelError("Insert a template was not found in Salesforce template menu.")
+                time.sleep(1)
+                _ensure_private_email_templates_folder(driver)
             if not _scroll_full_template_modal(driver):
                 time.sleep(0.5)
             time.sleep(0.4)
-    raise CopyrightCancelError(f"{process.salesforce_template} template was not selectable in Salesforce.")
+    raise CopyrightCancelError(
+        f"{process.display_name} template was not selectable in Salesforce. Tried: {', '.join(_template_match_labels(process))}"
+    )
 
 
 def _insert_copyright_template(driver):
@@ -3504,6 +3804,12 @@ def _replace_subject_order_number(driver, order_id):
         function fieldText(el) {
           return clean(el.value !== undefined ? el.value : el.innerText || el.textContent || '');
         }
+        function hasOrderPlaceholder(value) {
+          return /XXXXXX|\\[\\s*ORDER[\\s_-]*NUMBER\\s*\\]/i.test(String(value || ''));
+        }
+        function replaceOrderPlaceholder(value) {
+          return String(value || '').replace(/XXXXXX|\\[\\s*ORDER[\\s_-]*NUMBER\\s*\\]/gi, orderId);
+        }
         function hintText(el) {
           return clean(`${el.placeholder || ''} ${el.getAttribute('aria-label') || ''} ${el.getAttribute('name') || ''} ${el.getAttribute('title') || ''}`).toLowerCase();
         }
@@ -3531,18 +3837,18 @@ def _replace_subject_order_number(driver, order_id):
           .filter((el) => /^(input|textarea)$/i.test(el.tagName || '') || el.isContentEditable)
           .filter((el) => visible(el));
         const candidates = fields
-          .filter((el) => fieldText(el).includes('XXXXXX'))
+          .filter((el) => hasOrderPlaceholder(fieldText(el)))
           .sort((a, b) => a.getBoundingClientRect().y - b.getBoundingClientRect().y);
         const subjectFields = fields
           .filter((el) => hintText(el).includes('subject'))
           .sort((a, b) => a.getBoundingClientRect().y - b.getBoundingClientRect().y);
-        const field = candidates[0] || subjectFields.find((el) => fieldText(el).includes('XXXXXX'));
+        const field = candidates[0] || subjectFields.find((el) => hasOrderPlaceholder(fieldText(el)));
         if (!field) {
           const subjectText = subjectFields.length ? fieldText(subjectFields[0]) : '';
           return {replaced: false, subjectText, reason: 'subject placeholder not found'};
         }
         const before = fieldText(field);
-        const next = before.replace(/XXXXXX/g, orderId);
+        const next = replaceOrderPlaceholder(before);
         if (!next.includes(orderId)) {
           return {replaced: false, subjectText: before, reason: 'subject did not contain placeholder'};
         }
@@ -3561,7 +3867,7 @@ def _replace_subject_order_number(driver, order_id):
         subject_text = _clean_text((result or {}).get("subjectText", ""))
         reason = _clean_text((result or {}).get("reason", ""))
         detail = f" Current subject: {subject_text or 'blank'}." if subject_text or reason else ""
-        raise CopyrightCancelError(f"Could not replace XXXXXX in Salesforce email subject.{detail}")
+        raise CopyrightCancelError(f"Could not replace {ORDER_NUMBER_PLACEHOLDER_LABEL} in Salesforce email subject.{detail}")
 
 
 def _missing_body_markers(text, process):
@@ -4153,17 +4459,21 @@ def _verify_local_email_template_loaded(driver, order_id, subject, body):
         raise CopyrightCancelError("Salesforce email body was not filled with the rendered local copyright template.")
 
 
-def _replace_salesforce_body_placeholder_with_reason(driver, reason):
+def _replace_salesforce_body_placeholder_with_reason(driver, reason, process=COPYRIGHT_REACHOUT_PROCESS):
+    process = _cancel_process_for_key(process) if isinstance(process, str) else process
     clean_reason = _clean_text(reason)
     if not clean_reason:
-        raise CopyrightCancelError("Copyright reachout body replacement requires a reason.")
+        raise CopyrightCancelError(f"{process.display_name} body replacement requires a reason.")
     state = _read_salesforce_email_state(driver)
     current_body = _clean_text((state or {}).get("body", ""))
-    if "XXXXXX" not in current_body:
-        raise CopyrightCancelError("Salesforce copyright reachout body does not contain XXXXXX before replacement.")
-    driver.execute_script(
+    if not _body_has_reason_placeholder(current_body):
+        raise CopyrightCancelError(
+            f"Salesforce {process.display_name.lower()} body does not contain {REASON_PLACEHOLDER_LABEL} before replacement."
+        )
+    broad_result = driver.execute_script(
         """
         const reason = arguments[0];
+        return {count: 0, text: ''};
         function visible(el) {
           if (!el || !el.getBoundingClientRect) return false;
           const rect = el.getBoundingClientRect();
@@ -4176,25 +4486,35 @@ def _replace_salesforce_body_placeholder_with_reason(driver, reason):
         function clean(value) {
           return (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
         }
+        function walkElements(root, out = []) {
+          if (!root || !root.querySelectorAll) return out;
+          for (const el of Array.from(root.querySelectorAll('*'))) {
+            out.push(el);
+            if (el.shadowRoot) walkElements(el.shadowRoot, out);
+          }
+          return out;
+        }
+        function hasReasonPlaceholder(value) {
+          return /XXXXXX|\\[\\s*REASON\\s*\\]/i.test(String(value || ''));
+        }
         function replaceTextNode(node, doc) {
           const value = node.nodeValue || '';
-          if (!value.includes('XXXXXX')) return 0;
+          if (!hasReasonPlaceholder(value)) return 0;
           const parent = node.parentNode;
           if (!parent || /^(script|style)$/i.test(parent.nodeName || '')) return 0;
-          const parts = value.split('XXXXXX');
+          const parts = value.split(/XXXXXX|\\[\\s*REASON\\s*\\]/gi);
+          const placeholders = value.match(/XXXXXX|\\[\\s*REASON\\s*\\]/gi) || [];
           const fragment = doc.createDocumentFragment();
-          let count = 0;
           parts.forEach((part, index) => {
             if (part) fragment.appendChild(doc.createTextNode(part));
-            if (index < parts.length - 1) {
+            if (index < placeholders.length) {
               const strong = doc.createElement('strong');
               strong.textContent = reason;
               fragment.appendChild(strong);
-              count += 1;
             }
           });
           parent.replaceChild(fragment, node);
-          return count;
+          return placeholders.length;
         }
         function walkNode(node, doc, seen) {
           if (!node || seen.has(node)) return 0;
@@ -4249,6 +4569,26 @@ def _replace_salesforce_body_placeholder_with_reason(driver, reason):
         """,
         clean_reason,
     )
+    if int((broad_result or {}).get("count") or 0) > 0:
+        time.sleep(0.8)
+        updated_state = _read_salesforce_email_state(driver)
+        updated_body = _clean_text((updated_state or {}).get("body", ""))
+        placeholder_state = _salesforce_email_body_placeholder_state(driver, REASON_PLACEHOLDER_LABEL)
+        broad_text = _clean_text((broad_result or {}).get("text", ""))
+        if (
+            clean_reason.lower() in f"{updated_body} {broad_text}".lower()
+            and not _body_has_reason_placeholder(updated_body)
+            and not _body_has_reason_placeholder(broad_text)
+        ):
+            return {
+                "placeholder": REASON_PLACEHOLDER_LABEL,
+                "replacement": clean_reason,
+                "bold_html_applied": True,
+                "method": "broad_composer_dom",
+                "state": updated_state,
+                "placeholder_state": placeholder_state,
+                "broad_result": {"count": int((broad_result or {}).get("count") or 0)},
+            }
     targeted_result = driver.execute_script(
         """
         const reason = arguments[0];
@@ -4263,6 +4603,17 @@ def _replace_salesforce_body_placeholder_with_reason(driver, reason):
         }
         function clean(value) {
           return (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+        }
+        function walkElements(root, out = []) {
+          if (!root || !root.querySelectorAll) return out;
+          for (const el of Array.from(root.querySelectorAll('*'))) {
+            out.push(el);
+            if (el.shadowRoot) walkElements(el.shadowRoot, out);
+          }
+          return out;
+        }
+        function hasReasonPlaceholder(value) {
+          return /XXXXXX|\\[\\s*REASON\\s*\\]/i.test(String(value || ''));
         }
         function frameState(frame) {
           const rect = frame.getBoundingClientRect();
@@ -4280,31 +4631,44 @@ def _replace_salesforce_body_placeholder_with_reason(driver, reason):
           let score = Math.min(4000, rect.width * rect.height / 100);
           if (attrs.includes('email body')) score += 50000;
           if (attrs.includes('cke_wysiwyg_frame')) score += 50000;
-          if (text.includes('xxxxxx') || html.includes('xxxxxx')) score += 60000;
+          if (hasReasonPlaceholder(text) || hasReasonPlaceholder(html)) score += 60000;
           if (text.includes('while reviewing your order') || html.includes('while reviewing your order')) score += 60000;
           if (text === 'font size' || (text.includes('font size') && !text.includes('while reviewing your order'))) score -= 100000;
           if (rect.height < 100) score -= 10000;
-          return {frame, doc, text, html, score};
+          return {frame, doc, root: doc && doc.body, text, html, score};
+        }
+        function fieldState(field) {
+          const rect = field.getBoundingClientRect();
+          const doc = field.ownerDocument || document;
+          const hint = clean(`${field.placeholder || ''} ${field.getAttribute('aria-label') || ''} ${field.getAttribute('name') || ''} ${field.getAttribute('title') || ''} ${field.className || ''}`);
+          const text = clean(field.value || field.innerText || field.textContent || '');
+          const html = clean(field.innerHTML || '');
+          let score = Math.min(4000, rect.width * rect.height / 100);
+          if (hint.includes('subject') || rect.height < 70) score -= 100000;
+          if (hint.includes('email body') || hint.includes('cke_editable')) score += 50000;
+          if (hasReasonPlaceholder(text) || hasReasonPlaceholder(html)) score += 60000;
+          if (text.includes('while reviewing your order') || html.includes('while reviewing your order')) score += 60000;
+          if (text === 'font size' || (text.includes('font size') && !text.includes('while reviewing your order'))) score -= 100000;
+          return {field, doc, root: field, text, html, score};
         }
         function replaceTextNode(node, doc) {
           const value = node.nodeValue || '';
-          if (!value.includes('XXXXXX')) return 0;
+          if (!hasReasonPlaceholder(value)) return 0;
           const parent = node.parentNode;
           if (!parent || /^(script|style)$/i.test(parent.nodeName || '')) return 0;
-          const parts = value.split('XXXXXX');
+          const parts = value.split(/XXXXXX|\\[\\s*REASON\\s*\\]/gi);
+          const placeholders = value.match(/XXXXXX|\\[\\s*REASON\\s*\\]/gi) || [];
           const fragment = doc.createDocumentFragment();
-          let count = 0;
           parts.forEach((part, index) => {
             if (part) fragment.appendChild(doc.createTextNode(part));
-            if (index < parts.length - 1) {
+            if (index < placeholders.length) {
               const strong = doc.createElement('strong');
               strong.textContent = reason;
               fragment.appendChild(strong);
-              count += 1;
             }
           });
           parent.replaceChild(fragment, node);
-          return count;
+          return placeholders.length;
         }
         function walkReplace(root, doc) {
           if (!root) return 0;
@@ -4319,7 +4683,7 @@ def _replace_salesforce_body_placeholder_with_reason(driver, reason):
         function collectFrames(doc, out = [], seen = new Set()) {
           if (!doc || seen.has(doc)) return out;
           seen.add(doc);
-          for (const frame of Array.from(doc.querySelectorAll('iframe'))) {
+          for (const frame of walkElements(doc).filter((node) => (node.tagName || '').toLowerCase() === 'iframe')) {
             out.push(frame);
             try {
               const childDoc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
@@ -4351,9 +4715,64 @@ def _replace_salesforce_body_placeholder_with_reason(driver, reason):
           return true;
         }
         function replaceHtml(value) {
-          return String(value || '').replace(/XXXXXX/g, `<strong>${reason.replace(/[&<>"']/g, (ch) => ({
+          return String(value || '').replace(/XXXXXX|\\[\\s*REASON\\s*\\]/gi, `<strong>${reason.replace(/[&<>"']/g, (ch) => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
           }[ch]))}</strong>`);
+        }
+        function emitEditorInput(target, win) {
+          const view = win || (target && target.ownerDocument && target.ownerDocument.defaultView) || window;
+          if (!target) return;
+          for (const type of ['beforeinput', 'input', 'change', 'keyup']) {
+            try { target.dispatchEvent(new view.Event(type, {bubbles: true})); } catch (err) {}
+          }
+        }
+        function replaceWithEditorSelection(root, doc) {
+          if (!root || !doc) return 0;
+          const win = doc.defaultView || window;
+          let count = 0;
+          try {
+            root.scrollIntoView({block: 'center', inline: 'nearest'});
+            root.focus();
+          } catch (err) {}
+          for (let guard = 0; guard < 20; guard += 1) {
+            const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+              acceptNode(node) {
+                if (!hasReasonPlaceholder(node.nodeValue || '')) return NodeFilter.FILTER_REJECT;
+                const parent = node.parentNode;
+                if (!parent || /^(script|style)$/i.test(parent.nodeName || '')) return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_ACCEPT;
+              }
+            });
+            const node = walker.nextNode();
+            if (!node) break;
+            const value = node.nodeValue || '';
+            const match = /XXXXXX|\\[\\s*REASON\\s*\\]/i.exec(value);
+            if (!match) break;
+            const range = doc.createRange();
+            range.setStart(node, match.index);
+            range.setEnd(node, match.index + match[0].length);
+            const selection = win.getSelection && win.getSelection();
+            if (selection) {
+              selection.removeAllRanges();
+              selection.addRange(range);
+            }
+            let inserted = false;
+            try {
+              inserted = doc.execCommand('insertHTML', false, replaceHtml(match[0]));
+            } catch (err) {
+              inserted = false;
+            }
+            if (!inserted) {
+              const strong = doc.createElement('strong');
+              strong.textContent = reason;
+              range.deleteContents();
+              range.insertNode(strong);
+            }
+            count += 1;
+            emitEditorInput(root, win);
+          }
+          try { root.blur(); } catch (err) {}
+          return count;
         }
         function syncEditorSurfaces(startWin, bodyHtml) {
           const result = {ckeditors: 0, textareas: 0, editables: 0};
@@ -4368,7 +4787,7 @@ def _replace_salesforce_body_placeholder_with_reason(driver, reason):
               for (const editor of instances) {
                 try {
                   const data = editor.getData ? String(editor.getData() || '') : '';
-                  const nextData = data.includes('XXXXXX') ? replaceHtml(data) : bodyHtml;
+                  const nextData = hasReasonPlaceholder(data) ? replaceHtml(data) : bodyHtml;
                   editor.setData(nextData);
                   if (editor.updateElement) editor.updateElement();
                   if (editor.fire) editor.fire('change');
@@ -4379,7 +4798,7 @@ def _replace_salesforce_body_placeholder_with_reason(driver, reason):
             if (doc) {
               for (const field of Array.from(doc.querySelectorAll('textarea#editor, textarea[name="editor"], textarea.cke_source, input[type="hidden"]'))) {
                 const value = String(field.value || '');
-                const nextValue = value.includes('XXXXXX') ? replaceHtml(value) : bodyHtml;
+                const nextValue = hasReasonPlaceholder(value) ? replaceHtml(value) : bodyHtml;
                 if (setValue(field, nextValue, win)) result.textareas += 1;
               }
               for (const frame of Array.from(doc.querySelectorAll('iframe'))) {
@@ -4404,25 +4823,32 @@ def _replace_salesforce_body_placeholder_with_reason(driver, reason):
           }
           return result;
         }
-        const candidates = collectFrames(document).filter((frame) => {
+        const frameCandidates = collectFrames(document).filter((frame) => {
             try { return visible(frame) || frameState(frame).score > 0; } catch (err) { return false; }
           }).map(frameState)
-          .filter((item) => item.doc && item.doc.body)
-          .sort((a, b) => b.score - a.score);
+          .filter((item) => item.doc && item.root);
+        const fieldCandidates = walkElements(document)
+          .filter((field) => {
+            try { return visible(field) && (field.isContentEditable || /^(textarea)$/i.test(field.tagName || '')); } catch (err) { return false; }
+          })
+          .map(fieldState)
+          .filter((item) => item.root);
+        const candidates = frameCandidates.concat(fieldCandidates).sort((a, b) => b.score - a.score);
         const target = candidates[0];
         if (!target || target.score < 0) return {count: 0, reason: 'no_body_frame', candidates: candidates.slice(0, 5).map((item) => ({score: item.score, text: item.text.slice(0, 80)}))};
-        const count = walkReplace(target.doc.body, target.doc);
-        const bodyHtml = target.doc.body.innerHTML || '';
+        let count = replaceWithEditorSelection(target.root, target.doc);
+        if (count <= 0) count = walkReplace(target.root, target.doc);
+        const bodyHtml = target.root.innerHTML || target.root.value || '';
         const sync = count > 0 ? syncEditorSurfaces(target.doc.defaultView || window, bodyHtml) : {ckeditors: 0, textareas: 0, editables: 0};
         for (const type of ['beforeinput', 'input', 'change', 'keyup', 'blur']) {
-          try { target.doc.body.dispatchEvent(new target.doc.defaultView.Event(type, {bubbles: true})); } catch (err) {}
+          try { target.root.dispatchEvent(new target.doc.defaultView.Event(type, {bubbles: true})); } catch (err) {}
         }
-        try { target.doc.body.blur(); } catch (err) {}
+        try { target.root.blur(); } catch (err) {}
         return {
           count,
           score: target.score,
           sync,
-          body: target.doc.body.innerText || target.doc.body.textContent || '',
+          body: target.root.innerText || target.root.textContent || target.root.value || '',
           html: bodyHtml
         };
         """,
@@ -4432,14 +4858,16 @@ def _replace_salesforce_body_placeholder_with_reason(driver, reason):
         time.sleep(0.8)
         updated_state = _read_salesforce_email_state(driver)
         updated_body = _clean_text((updated_state or {}).get("body", ""))
-        placeholder_state = _salesforce_email_body_placeholder_state(driver)
+        placeholder_state = _salesforce_email_body_placeholder_state(driver, REASON_PLACEHOLDER_LABEL)
+        targeted_body = _clean_text((targeted_result or {}).get("body", ""))
+        targeted_html = str((targeted_result or {}).get("html") or "")
         if (
             clean_reason.lower() in updated_body.lower()
-            and "XXXXXX" not in updated_body
+            and not _body_has_reason_placeholder(updated_body)
             and int(placeholder_state.get("count") or 0) == 0
         ):
             return {
-                "placeholder": "XXXXXX",
+                "placeholder": REASON_PLACEHOLDER_LABEL,
                 "replacement": clean_reason,
                 "bold_html_applied": True,
                 "method": "targeted_ckeditor_body",
@@ -4451,41 +4879,29 @@ def _replace_salesforce_body_placeholder_with_reason(driver, reason):
                     "sync": (targeted_result or {}).get("sync") or {},
                 },
             }
-
-    formatted_body = _format_copyright_reachout_body_text(current_body)
-    html_body = _html_with_bold_placeholder_reason(formatted_body, clean_reason)
-    plain_body = formatted_body.replace("XXXXXX", clean_reason)
-    typed_body = _type_salesforce_body_with_keyboard(driver, plain_body, html_body=html_body)
-    deadline = time.monotonic() + 8
-    updated_state = {}
-    updated_body = ""
-    placeholder_state = {}
-    while time.monotonic() < deadline:
-        time.sleep(0.4)
-        updated_state = _read_salesforce_email_state(driver)
-        updated_body = _clean_text((updated_state or {}).get("body", ""))
-        placeholder_state = _salesforce_email_body_placeholder_state(driver)
         if (
-            clean_reason.lower() in updated_body.lower()
-            and "XXXXXX" not in updated_body
-            and int(placeholder_state.get("count") or 0) == 0
+            clean_reason.lower() in f"{targeted_body} {targeted_html}".lower()
+            and not _body_has_reason_placeholder(targeted_body)
+            and not _body_has_reason_placeholder(targeted_html)
         ):
-            break
-    if clean_reason.lower() not in updated_body.lower():
-        raise CopyrightCancelError("Salesforce copyright reachout body does not contain the replacement reason.")
-    if "XXXXXX" in updated_body or int((placeholder_state or {}).get("count") or 0) > 0:
-        raise CopyrightCancelError(
-            "Salesforce copyright reachout body still contains XXXXXX after replacement. "
-            f"Placeholder state: {placeholder_state}"
-        )
-    return {
-        "placeholder": "XXXXXX",
-        "replacement": clean_reason,
-        "bold_html_applied": f"<strong>{html.escape(clean_reason)}</strong>" in html_body,
-        "typed_body": _clean_text(typed_body),
-        "state": updated_state,
-        "placeholder_state": placeholder_state,
-    }
+            return {
+                "placeholder": REASON_PLACEHOLDER_LABEL,
+                "replacement": clean_reason,
+                "bold_html_applied": True,
+                "method": "targeted_ckeditor_body_editor_verified",
+                "state": updated_state,
+                "placeholder_state": placeholder_state,
+                "targeted_result": {
+                    "count": int((targeted_result or {}).get("count") or 0),
+                    "score": (targeted_result or {}).get("score"),
+                    "sync": (targeted_result or {}).get("sync") or {},
+                },
+            }
+
+    raise CopyrightCancelError(
+        f"Salesforce {process.display_name.lower()} body placeholder could not be replaced inside the loaded template; "
+        "refusing to type or paste fallback body content."
+    )
 
 
 def _fill_salesforce_email_from_salesforce_template(
@@ -4504,9 +4920,9 @@ def _fill_salesforce_email_from_salesforce_template(
         time.sleep(0.5)
         state = _read_salesforce_email_state(driver)
         subject_text = _clean_text(state.get("subject", ""))
-        template_text = _read_salesforce_email_composer_text(driver)
+        template_text = _clean_text(state.get("body", ""))
         lower_text = template_text.lower()
-        subject_ready = "XXXXXX" in subject_text or str(order_id) in subject_text
+        subject_ready = _subject_has_order_placeholder(subject_text) or str(order_id) in subject_text
         if not _missing_body_markers(lower_text, process) and subject_ready:
             break
     else:
@@ -4515,7 +4931,7 @@ def _fill_salesforce_email_from_salesforce_template(
                 f"Salesforce {process.display_name.lower()} template was selected, but the email subject did not load."
             )
         raise CopyrightCancelError(
-            f"Salesforce {process.display_name.lower()} template subject did not contain XXXXXX or order {order_id}. "
+            f"Salesforce {process.display_name.lower()} template subject did not contain {ORDER_NUMBER_PLACEHOLDER_LABEL} or order {order_id}. "
             f"Current subject: {subject_text}"
         )
 
@@ -4539,7 +4955,7 @@ def _fill_salesforce_email_from_salesforce_template(
         raise CopyrightCancelError(f"Salesforce template body is missing expected text: {', '.join(missing)}")
     body_replacement = None
     if process.replace_body_placeholder_with_reason:
-        body_replacement = _replace_salesforce_body_placeholder_with_reason(driver, reason)
+        body_replacement = _replace_salesforce_body_placeholder_with_reason(driver, reason, process=process)
         state = body_replacement.get("state") or _read_salesforce_email_state(driver)
     return {
         "source": "salesforce_template",
@@ -4632,13 +5048,13 @@ def _read_salesforce_email_state(driver):
               const hint = clean(`${el.placeholder || ''} ${el.getAttribute('aria-label') || ''} ${el.getAttribute('name') || ''} ${el.getAttribute('title') || ''}`).toLowerCase();
               const value = clean(el.value || el.innerText || el.textContent || '');
               const rect = el.getBoundingClientRect();
-              return hint.includes('subject') || ((value.includes('XXXXXX') || /\\b\\d{6,}\\b/.test(value)) && rect.height < 90) || rect.height < 70;
+              return hint.includes('subject') || ((/XXXXXX|\\[\\s*ORDER[\\s_-]*NUMBER\\s*\\]/i.test(value) || /\\b\\d{6,}\\b/.test(value)) && rect.height < 90) || rect.height < 70;
             })
             .sort((a, b) => a.getBoundingClientRect().y - b.getBoundingClientRect().y);
           const field = fields.find((el) => {
             const value = clean(el.value || el.innerText || el.textContent || '');
             const rect = el.getBoundingClientRect();
-            return (value.includes('XXXXXX') || /\\b\\d{6,}\\b/.test(value)) && rect.height < 90;
+            return (/XXXXXX|\\[\\s*ORDER[\\s_-]*NUMBER\\s*\\]/i.test(value) || /\\b\\d{6,}\\b/.test(value)) && rect.height < 90;
           }) || fields.find((el) => clean(`${el.placeholder || ''} ${el.getAttribute('aria-label') || ''} ${el.getAttribute('name') || ''} ${el.getAttribute('title') || ''}`).toLowerCase().includes('subject')) || fields[0];
           return field ? clean(field.value || field.innerText || field.textContent || '') : '';
         }
@@ -4651,7 +5067,7 @@ def _read_salesforce_email_state(driver):
             if (cleanText.toLowerCase() === 'font size' || (cleanText.toLowerCase().includes('font size') && !cleanText.toLowerCase().includes('while reviewing your order'))) {
               score -= 100000;
             }
-            if (cleanText.toLowerCase().includes('xxxxxx') || cleanHtml.toLowerCase().includes('xxxxxx')) score += 60000;
+            if (/XXXXXX|\\[\\s*REASON\\s*\\]/i.test(cleanText) || /XXXXXX|\\[\\s*REASON\\s*\\]/i.test(cleanHtml)) score += 60000;
             if (cleanText.toLowerCase().includes('while reviewing your order') || cleanHtml.toLowerCase().includes('while reviewing your order')) score += 60000;
             candidates.push({kind, text: cleanText || cleanHtml, score});
           }
@@ -4710,6 +5126,7 @@ def _salesforce_email_body_placeholder_state(driver, placeholder="XXXXXX"):
     return driver.execute_script(
         """
         const placeholder = String(arguments[0] || '');
+        const reasonMode = /^\\[\\s*REASON\\s*\\]$/i.test(placeholder);
         function visible(el) {
           if (!el || !el.getBoundingClientRect) return false;
           const rect = el.getBoundingClientRect();
@@ -4721,6 +5138,11 @@ def _salesforce_email_body_placeholder_state(driver, placeholder="XXXXXX"):
         }
         function clean(value) {
           return (value || '').replace(/\\s+/g, ' ').trim();
+        }
+        function hasPlaceholder(value) {
+          const text = String(value || '');
+          if (reasonMode) return /XXXXXX|\\[\\s*REASON\\s*\\]/i.test(text);
+          return text.includes(placeholder);
         }
         function walk(root, out = []) {
           if (!root || !root.querySelectorAll) return out;
@@ -4750,7 +5172,7 @@ def _salesforce_email_body_placeholder_state(driver, placeholder="XXXXXX"):
         }
         function addIfMatch(matches, kind, value) {
           const text = String(value || '');
-          if (!text.includes(placeholder)) return;
+          if (!hasPlaceholder(text)) return;
           matches.push({kind, snippet: clean(text).slice(0, 240)});
         }
         function inspectDoc(doc, matches, seen = new Set()) {
@@ -4760,38 +5182,53 @@ def _salesforce_email_body_placeholder_state(driver, placeholder="XXXXXX"):
             const win = doc.defaultView || window;
             const instances = Object.values((win.CKEDITOR && win.CKEDITOR.instances) || {});
             for (const editor of instances) {
-              try { addIfMatch(matches, 'ckeditor_data', editor.getData ? editor.getData() : ''); } catch (err) {}
+              try {
+                const container = editor.container && editor.container.$;
+                if (container && !visible(container)) continue;
+                addIfMatch(matches, 'ckeditor_data', editor.getData ? editor.getData() : '');
+              } catch (err) {}
             }
           } catch (err) {}
           if (doc.body) {
             addIfMatch(matches, 'iframe_body_text', doc.body.innerText || doc.body.textContent || '');
             addIfMatch(matches, 'iframe_body_html', doc.body.innerHTML || '');
           }
-          for (const el of walk(doc).filter((node) => /^(textarea)$/i.test(node.tagName || '') || ((node.tagName || '').toLowerCase() === 'input' && (node.type || '').toLowerCase() === 'hidden') || node.isContentEditable)) {
+          for (const el of walk(doc).filter((node) => /^(textarea)$/i.test(node.tagName || '') || node.isContentEditable)) {
             addIfMatch(matches, 'editor_value', el.value || '');
             addIfMatch(matches, 'editor_text', el.innerText || el.textContent || '');
             addIfMatch(matches, 'editor_html', el.innerHTML || '');
           }
-          for (const frame of walk(doc).filter((node) => (node.tagName || '').toLowerCase() === 'iframe')) {
+          for (const frame of walk(doc).filter((node) => (node.tagName || '').toLowerCase() === 'iframe' && visible(node))) {
             try {
               inspectDoc(frame.contentDocument || (frame.contentWindow && frame.contentWindow.document), matches, seen);
             } catch (err) {}
           }
         }
-        const composer = composerCandidates()[0] || document;
         const matches = [];
-        for (const frame of walk(composer).filter((node) => (node.tagName || '').toLowerCase() === 'iframe' && visible(node))) {
-          try {
-            inspectDoc(frame.contentDocument || (frame.contentWindow && frame.contentWindow.document), matches);
-          } catch (err) {}
+        const roots = composerCandidates();
+        if (!roots.length) roots.push(document);
+        const seenFrames = new Set();
+        const seenFields = new Set();
+        for (const root of roots) {
+          for (const frame of walk(root).filter((node) => (node.tagName || '').toLowerCase() === 'iframe' && visible(node))) {
+            if (seenFrames.has(frame)) continue;
+            seenFrames.add(frame);
+            try {
+              inspectDoc(frame.contentDocument || (frame.contentWindow && frame.contentWindow.document), matches);
+            } catch (err) {}
+          }
         }
-        for (const el of walk(composer).filter((node) => (node.isContentEditable || /^(textarea)$/i.test(node.tagName || '')) && visible(node))) {
-          const hint = clean(`${el.placeholder || ''} ${el.getAttribute('aria-label') || ''} ${el.getAttribute('name') || ''} ${el.getAttribute('title') || ''}`).toLowerCase();
-          const rect = el.getBoundingClientRect();
-          if (hint.includes('subject') || rect.height < 70) continue;
-          addIfMatch(matches, 'body_value', el.value || '');
-          addIfMatch(matches, 'body_text', el.innerText || el.textContent || '');
-          addIfMatch(matches, 'body_html', el.innerHTML || '');
+        for (const root of roots) {
+          for (const el of walk(root).filter((node) => (node.isContentEditable || /^(textarea)$/i.test(node.tagName || '')) && visible(node))) {
+            if (seenFields.has(el)) continue;
+            seenFields.add(el);
+            const hint = clean(`${el.placeholder || ''} ${el.getAttribute('aria-label') || ''} ${el.getAttribute('name') || ''} ${el.getAttribute('title') || ''}`).toLowerCase();
+            const rect = el.getBoundingClientRect();
+            if (hint.includes('subject') || rect.height < 70) continue;
+            addIfMatch(matches, 'body_value', el.value || '');
+            addIfMatch(matches, 'body_text', el.innerText || el.textContent || '');
+            addIfMatch(matches, 'body_html', el.innerHTML || '');
+          }
         }
         return {placeholder, count: matches.length, matches};
         """,
@@ -4807,18 +5244,13 @@ def _verify_salesforce_email_ready_to_send(driver, order_id, subject, body, proc
     lower_body = body_text.lower()
     if SALESFORCE_COPYRIGHT_CANCEL_FROM_EMAIL.lower() not in from_text.lower():
         raise CopyrightCancelError(f"Salesforce From is not Orders before send. Current From: {from_text or 'blank'}")
+    placeholder_state = _salesforce_email_body_placeholder_state(driver, REASON_PLACEHOLDER_LABEL)
+    _validate_no_unresolved_email_placeholders(subject_text, body_text, body_placeholder_state=placeholder_state)
     lower_subject = subject_text.lower()
     if str(order_id) not in subject_text or any(marker not in lower_subject for marker in process.subject_markers):
         raise CopyrightCancelError(f"Salesforce subject is not ready before send. Current subject: {subject_text or 'blank'}")
     if _missing_body_markers(lower_body, process):
         raise CopyrightCancelError("Salesforce body is not ready before send; refusing to send a blank/bodyless email.")
-    if process.replace_body_placeholder_with_reason:
-        placeholder_state = _salesforce_email_body_placeholder_state(driver)
-        if "XXXXXX" in body_text or int(placeholder_state.get("count") or 0) > 0:
-            raise CopyrightCancelError(
-                "Salesforce body still contains XXXXXX before send; refusing to send. "
-                f"Placeholder state: {placeholder_state}"
-            )
     return state
 
 
@@ -4932,30 +5364,47 @@ def _prepare_and_maybe_send_salesforce_email(
     skip_from_selection=False,
     skip_ready_verify=False,
 ):
-    sf_handle = _open_salesforce_account(
-        driver,
-        crm_handle,
-        customer_email,
-        login_wait_seconds=login_wait_seconds,
-        order_id=order_id,
-    )
-    _verify_salesforce_email(driver, customer_email)
-    _click_salesforce_email(driver, customer_email)
-    _wait_for_email_composer(driver)
-    if skip_from_selection:
-        selected_from = _clean_text((_read_salesforce_email_state(driver) or {}).get("from", "")) or "Skipped From selection for inspection"
-    else:
-        selected_from = _set_salesforce_from_orders(driver)
-    time.sleep(1)
-    fill_result = _fill_salesforce_email_from_salesforce_template(
-        driver,
-        order_id=order_id,
-        process=process,
-        reason=reason,
-    )
-    email_state = fill_result.get("state") or _read_salesforce_email_state(driver)
-    subject = _clean_text(email_state.get("subject", ""))
-    body = _clean_text(email_state.get("body", ""))
+    preparation_retry_error = None
+    for attempt in range(2):
+        try:
+            sf_handle = _open_salesforce_account(
+                driver,
+                crm_handle,
+                customer_email,
+                login_wait_seconds=login_wait_seconds,
+                order_id=order_id,
+            )
+            _verify_salesforce_email(driver, customer_email)
+            _click_salesforce_email(driver, customer_email)
+            _wait_for_email_composer(driver)
+            if skip_from_selection:
+                selected_from = _clean_text((_read_salesforce_email_state(driver) or {}).get("from", "")) or "Skipped From selection for inspection"
+            else:
+                selected_from = _set_salesforce_from_orders(driver)
+            time.sleep(1)
+            fill_result = _fill_salesforce_email_from_salesforce_template(
+                driver,
+                order_id=order_id,
+                process=process,
+                reason=reason,
+            )
+            email_state = fill_result.get("state") or _read_salesforce_email_state(driver)
+            subject = _clean_text(email_state.get("subject", ""))
+            body = _clean_text(email_state.get("body", ""))
+            break
+        except Exception as exc:
+            if attempt:
+                raise
+            preparation_retry_error = str(exc)
+            try:
+                if driver.current_window_handle != crm_handle:
+                    driver.close()
+            except Exception:
+                pass
+            driver.switch_to.window(crm_handle)
+            driver.refresh()
+            _activate_crm_context(driver)
+            _wait_for_order_scope(driver, order_id=order_id, timeout=30)
     result = _send_salesforce_email(
         driver,
         dry_run=dry_run,
@@ -4972,6 +5421,8 @@ def _prepare_and_maybe_send_salesforce_email(
         "subject": subject,
         "process": process.key,
         "fill": fill_result,
+        "preparation_retried": bool(preparation_retry_error),
+        "first_preparation_error": preparation_retry_error,
         **result,
     }
 
@@ -5239,6 +5690,66 @@ def _salesforce_field_control(driver, label_text, selectors):
     )
 
 
+def _salesforce_order_search_dialog_visible(driver):
+    return bool(
+        driver.execute_script(
+            """
+            function clean(value) {
+              return (value || '').replace(/\\s+/g, ' ').trim();
+            }
+            function all(selector, root) {
+              const start = root || document;
+              const found = [];
+              const seen = new Set();
+              function add(node) {
+                if (node && !seen.has(node)) {
+                  seen.add(node);
+                  found.push(node);
+                }
+              }
+              function walk(node) {
+                if (!node) return;
+                try {
+                  if (node.querySelectorAll) {
+                    Array.from(node.querySelectorAll(selector)).forEach(add);
+                    Array.from(node.querySelectorAll('*')).forEach((child) => {
+                      if (child.shadowRoot) walk(child.shadowRoot);
+                    });
+                  }
+                } catch (err) {}
+                if (node.shadowRoot) walk(node.shadowRoot);
+              }
+              walk(start);
+              return found;
+            }
+            function visible(el) {
+              const rect = el.getBoundingClientRect();
+              const style = window.getComputedStyle(el);
+              return rect.width > 0 && rect.height > 0
+                && style.display !== 'none' && style.visibility !== 'hidden'
+                && rect.bottom > 0 && rect.top < window.innerHeight
+                && rect.right > 0 && rect.left < window.innerWidth;
+            }
+            function textOf(el) {
+              if (!el) return '';
+              const parts = [el.innerText, el.textContent];
+              try {
+                all('*', el).slice(0, 80).forEach((child) => {
+                  parts.push(child.innerText, child.textContent);
+                  if (child.getAttribute) {
+                    parts.push(child.getAttribute('title'), child.getAttribute('aria-label'));
+                  }
+                });
+              } catch (err) {}
+              return clean(parts.filter(Boolean).join(' '));
+            }
+            return all('[role=dialog],section,div')
+              .some((el) => visible(el) && /(Advanced Search|Search Orders)/i.test(textOf(el)));
+            """
+        )
+    )
+
+
 def _fill_salesforce_case_order_lookup(driver, order_id):
     field = _salesforce_field_control(driver, "Order Number", "input,button,[role=combobox],.slds-combobox__input")
     if field is None:
@@ -5293,42 +5804,14 @@ def _fill_salesforce_case_order_lookup(driver, order_id):
                 && rect.bottom > 0 && rect.top < window.innerHeight
                 && rect.right > 0 && rect.left < window.innerWidth;
             }
-            const nodes = all('lightning-base-combobox-item,[role=option],li,a,button,div,span');
-            const exactOptions = nodes
-              .filter((el) => {
-                if (!visible(el)) return false;
-                const text = clean(`${el.innerText || ''} ${el.textContent || ''} ${el.getAttribute('title') || ''} ${el.getAttribute('aria-label') || ''}`);
-                if (!text.includes(orderId) || text.includes('show more results')) return false;
-                const rect = el.getBoundingClientRect();
-                return rect.width > 60 && rect.height > 12;
-              })
-              .sort((a, b) => {
-                const at = clean(a.innerText || a.textContent || '');
-                const bt = clean(b.innerText || b.textContent || '');
-                const ar = a.getBoundingClientRect();
-                const br = b.getBoundingClientRect();
-                const aRole = /option/i.test(a.getAttribute('role') || '') || /combobox-item|listbox/i.test(String(a.className || '')) || (a.tagName || '').toLowerCase() === 'lightning-base-combobox-item' ? 0 : 1;
-                const bRole = /option/i.test(b.getAttribute('role') || '') || /combobox-item|listbox/i.test(String(b.className || '')) || (b.tagName || '').toLowerCase() === 'lightning-base-combobox-item' ? 0 : 1;
-                if (aRole !== bRole) return aRole - bRole;
-                const aExact = at.split(/\\s+/).includes(orderId) ? 0 : 1;
-                const bExact = bt.split(/\\s+/).includes(orderId) ? 0 : 1;
-                if (aExact !== bExact) return aExact - bExact;
-                return (br.width * br.height) - (ar.width * ar.height);
-              });
-            if (exactOptions.length) {
-              const option = exactOptions[0];
-              const clickable = option.closest('lightning-base-combobox-item,[role=option],a,li,button') || option;
-              clickable.scrollIntoView({block: 'center', inline: 'center'});
-              return clickable;
-            }
+            // Quick lookup suggestions match Salesforce Order Number. They do
+            // not prove that the record belongs to this CRM order, so never
+            // select one here. Advanced Search is mandatory because it exposes
+            // the authoritative Printfly Order Id column.
             return null;
             """,
             str(order_id),
         )
-        if option is not None:
-            if _click_element_center(driver, option):
-                time.sleep(0.8)
-                return "selected"
         more = driver.execute_script(
             """
             const orderId = String(arguments[0] || '').trim().toLowerCase();
@@ -5360,9 +5843,116 @@ def _fill_salesforce_case_order_lookup(driver, order_id):
             str(order_id),
         )
         if more is not None:
-            if _click_element_center(driver, more):
-                time.sleep(0.8)
-                return "advanced"
+            for activate_more in ("enter", "events", "center"):
+                try:
+                    if activate_more == "enter":
+                        field.send_keys(Keys.ENTER)
+                    elif activate_more == "events":
+                        driver.execute_script(
+                            """
+                            const option = arguments[0];
+                            const target = option.closest('lightning-base-combobox-item,[role=option],a,li,button') || option;
+                            target.scrollIntoView({block: 'center', inline: 'center'});
+                            for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+                              target.dispatchEvent(new MouseEvent(type, {bubbles: true, cancelable: true, view: window}));
+                            }
+                            """,
+                            more,
+                        )
+                    elif not _click_element_center(driver, more):
+                        continue
+                except Exception:
+                    continue
+                deadline_open = time.monotonic() + 5
+                while time.monotonic() < deadline_open:
+                    if _salesforce_order_search_dialog_visible(driver):
+                        return "advanced"
+                    time.sleep(0.25)
+        search_button = driver.execute_script(
+            """
+            const field = arguments[0];
+            function clean(value) {
+              return (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+            }
+            function all(selector, root) {
+              const start = root || document;
+              const found = [];
+              const seen = new Set();
+              function add(node) {
+                if (node && !seen.has(node)) {
+                  seen.add(node);
+                  found.push(node);
+                }
+              }
+              function walk(node) {
+                if (!node) return;
+                try {
+                  if (node.querySelectorAll) {
+                    Array.from(node.querySelectorAll(selector)).forEach(add);
+                    Array.from(node.querySelectorAll('*')).forEach((child) => {
+                      if (child.shadowRoot) walk(child.shadowRoot);
+                    });
+                  }
+                } catch (err) {}
+                if (node.shadowRoot) walk(node.shadowRoot);
+              }
+              walk(start);
+              return found;
+            }
+            function visible(el) {
+              const rect = el.getBoundingClientRect();
+              const style = window.getComputedStyle(el);
+              return rect.width > 0 && rect.height > 0
+                && style.display !== 'none' && style.visibility !== 'hidden'
+                && rect.bottom > 0 && rect.top < window.innerHeight
+                && rect.right > 0 && rect.left < window.innerWidth;
+            }
+            const form = field.closest('.slds-form-element, lightning-input-field, .uiInput, .forcePageBlockSectionRow')
+              || field.parentElement
+              || document;
+            const fr = field.getBoundingClientRect();
+            const controls = all('button,a,[role=button],lightning-button-icon,lightning-icon,.slds-input__icon', form)
+              .filter((el) => {
+                if (!visible(el) || el === field) return false;
+                const text = clean(`${el.innerText || ''} ${el.value || ''} ${el.getAttribute('title') || ''} ${el.getAttribute('aria-label') || ''} ${el.getAttribute('alternative-text') || ''} ${el.getAttribute('icon-name') || ''}`);
+                const rect = el.getBoundingClientRect();
+                const searchText = text.includes('search') || text.includes('lookup') || text.includes('utility:search');
+                const besideLookup = rect.left >= fr.right - 12
+                  && rect.left <= fr.right + 80
+                  && Math.abs((rect.top + rect.height / 2) - (fr.top + fr.height / 2)) < 36;
+                return searchText || besideLookup;
+              })
+              .sort((a, b) => {
+                const ar = a.getBoundingClientRect();
+                const br = b.getBoundingClientRect();
+                const ad = Math.abs(ar.left - fr.right) + Math.abs((ar.top + ar.height / 2) - (fr.top + fr.height / 2));
+                const bd = Math.abs(br.left - fr.right) + Math.abs((br.top + br.height / 2) - (fr.top + fr.height / 2));
+                return ad - bd;
+              });
+            const target = controls[0];
+            if (!target) return null;
+            const clickable = target.closest('button,a,[role=button]') || target;
+            clickable.scrollIntoView({block: 'center', inline: 'center'});
+            return clickable;
+            """,
+            field,
+        )
+        if search_button is not None:
+            if _click_element_center(driver, search_button):
+                deadline_open = time.monotonic() + 5
+                while time.monotonic() < deadline_open:
+                    if _salesforce_order_search_dialog_visible(driver):
+                        return "advanced"
+                    time.sleep(0.25)
+        try:
+            field.send_keys(Keys.ENTER)
+            deadline_open = time.monotonic() + 3
+            while time.monotonic() < deadline_open:
+                if _salesforce_order_search_dialog_visible(driver):
+                    return "advanced"
+                time.sleep(0.25)
+        except Exception:
+            pass
         time.sleep(0.5)
     raise CopyrightCancelError(f'Salesforce order lookup did not show more results for "{order_id}".')
 
@@ -5376,6 +5966,31 @@ def _select_salesforce_advanced_search_order(driver, order_id):
             function clean(value) {
               return (value || '').replace(/\\s+/g, ' ').trim();
             }
+            function all(selector, root) {
+              const start = root || document;
+              const found = [];
+              const seen = new Set();
+              function add(node) {
+                if (node && !seen.has(node)) {
+                  seen.add(node);
+                  found.push(node);
+                }
+              }
+              function walk(node) {
+                if (!node) return;
+                try {
+                  if (node.querySelectorAll) {
+                    Array.from(node.querySelectorAll(selector)).forEach(add);
+                    Array.from(node.querySelectorAll('*')).forEach((child) => {
+                      if (child.shadowRoot) walk(child.shadowRoot);
+                    });
+                  }
+                } catch (err) {}
+                if (node.shadowRoot) walk(node.shadowRoot);
+              }
+              walk(start);
+              return found;
+            }
             function visible(el) {
               const rect = el.getBoundingClientRect();
               const style = window.getComputedStyle(el);
@@ -5384,42 +5999,224 @@ def _select_salesforce_advanced_search_order(driver, order_id):
                 && rect.bottom > 0 && rect.top < window.innerHeight
                 && rect.right > 0 && rect.left < window.innerWidth;
             }
-            const root = Array.from(document.querySelectorAll('[role=dialog],section,div'))
-              .filter((el) => visible(el) && /Advanced Search/i.test(el.innerText || ''))
-              .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0] || document;
-            const rows = Array.from(root.querySelectorAll('tr,[role=row]')).filter(visible);
+            function textOf(el) {
+              if (!el) return '';
+              const parts = [
+                el.innerText,
+                el.textContent,
+                el.value,
+                el.getAttribute && el.getAttribute('title'),
+                el.getAttribute && el.getAttribute('aria-label'),
+                el.getAttribute && el.getAttribute('data-value')
+              ];
+              try {
+                all('*', el).slice(0, 120).forEach((child) => {
+                  parts.push(child.innerText, child.textContent, child.value);
+                  if (child.getAttribute) {
+                    parts.push(child.getAttribute('title'), child.getAttribute('aria-label'), child.getAttribute('data-value'));
+                  }
+                });
+              } catch (err) {}
+              return clean(parts.filter(Boolean).join(' '));
+            }
+            function orderMatches(text) {
+              const value = String(text || '');
+              const compact = value.replace(/\\D+/g, ' ');
+              const normalized = value.replace(/^0+/, '');
+              return normalized === orderId || new RegExp(`(^|\\\\D)0*${orderId}(\\\\D|$)`).test(value)
+                || compact.split(/\\s+/).some((part) => part.replace(/^0+/, '') === orderId);
+            }
+            function selectDatatableRow(row, reference) {
+              const rowText = textOf(row);
+              const firstCell = all('td,th,[role=gridcell]', row)[0] || row;
+              const input = all('input[type=radio],input[type=checkbox]', firstCell)[0] || all('input[type=radio],input[type=checkbox]', row)[0];
+              const label = input && input.id ? all(`label[for="${CSS.escape(input.id)}"]`, firstCell)[0] || all(`label[for="${CSS.escape(input.id)}"]`, row)[0] : null;
+              const faux = (label ? all('.slds-radio_faux,.slds-radio--faux', label)[0] : null)
+                || all('.slds-radio_faux,.slds-radio--faux', firstCell)[0]
+                || all('.slds-radio_faux,.slds-radio--faux', row)[0];
+              if (input) {
+                try { input.click(); } catch (err) {}
+                try { input.focus(); } catch (err) {}
+                try { input.checked = true; } catch (err) {}
+                try { input.dispatchEvent(new KeyboardEvent('keydown', {key: ' ', code: 'Space', bubbles: true, cancelable: true})); } catch (err) {}
+                try { input.dispatchEvent(new KeyboardEvent('keyup', {key: ' ', code: 'Space', bubbles: true, cancelable: true})); } catch (err) {}
+                try { input.dispatchEvent(new Event('input', {bubbles: true})); } catch (err) {}
+                try { input.dispatchEvent(new Event('change', {bubbles: true})); } catch (err) {}
+              }
+              if (label) {
+                try { label.click(); } catch (err) {}
+              }
+              const clickTarget = faux || label || input || firstCell;
+              const rect = clickTarget.getBoundingClientRect();
+              return {
+                row_text: rowText || textOf(reference) || '',
+                row_key: row.getAttribute('data-row-key-value') || '',
+                click_point: {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2},
+                datatable_row: true
+              };
+            }
+            const directOrderCells = all('[data-label="Printfly Order Id"],[data-col-key-value*="Printfly_Order_Id"]')
+              .filter((cell) => {
+                const value = `${cell.getAttribute('data-cell-value') || ''} ${textOf(cell)}`;
+                return visible(cell) && orderMatches(value);
+              })
+              .sort((a, b) => {
+                const ar = a.getBoundingClientRect();
+                const br = b.getBoundingClientRect();
+                const aPrintfly = /Printfly Order Id/i.test(`${a.getAttribute('data-label') || ''} ${a.getAttribute('data-col-key-value') || ''}`) ? 0 : 1;
+                const bPrintfly = /Printfly Order Id/i.test(`${b.getAttribute('data-label') || ''} ${b.getAttribute('data-col-key-value') || ''}`) ? 0 : 1;
+                if (aPrintfly !== bPrintfly) return aPrintfly - bPrintfly;
+                return (ar.width * ar.height) - (br.width * br.height);
+              });
+            for (const cell of directOrderCells) {
+              const row = cell.closest('tr[role=row],.slds-hint-parent');
+              if (row) {
+                const result = selectDatatableRow(row, cell);
+                result.printfly_order_id = orderId;
+                result.match_source = 'printfly-order-id-column';
+                return result;
+              }
+            }
+            const root = all('[role=dialog],section,div')
+              .filter((el) => visible(el) && /(Advanced Search|Search Orders|Order Number)/i.test(textOf(el)))
+              .sort((a, b) => {
+                const at = textOf(a);
+                const bt = textOf(b);
+                const ar = a.getBoundingClientRect();
+                const br = b.getBoundingClientRect();
+                const aHasTable = /Printfly Order Id/i.test(at) ? 0 : 1;
+                const bHasTable = /Printfly Order Id/i.test(bt) ? 0 : 1;
+                if (aHasTable !== bHasTable) return aHasTable - bHasTable;
+                return (br.width * br.height) - (ar.width * ar.height);
+              })[0] || document;
+            const grids = all('table[role=grid]', root)
+              .filter((grid) => visible(grid) && orderMatches(textOf(grid)))
+              .sort((a, b) => {
+                const ar = a.getBoundingClientRect();
+                const br = b.getBoundingClientRect();
+                const aSelected = Number(a.getAttribute('data-num-selected-rows') || 0) > 0 ? 0 : 1;
+                const bSelected = Number(b.getAttribute('data-num-selected-rows') || 0) > 0 ? 0 : 1;
+                if (aSelected !== bSelected) return aSelected - bSelected;
+                return (br.width * br.height) - (ar.width * ar.height);
+              });
+            for (const grid of grids) {
+              const gridRows = all('tr[role=row],.slds-hint-parent', grid).filter((row) => visible(row) && !/HEADER/i.test(row.getAttribute('data-row-key-value') || ''));
+              for (const row of gridRows) {
+                const orderCell = all('[data-label="Printfly Order Id"],[data-col-key-value*="Printfly_Order_Id"]', row)
+                  .find((cell) => orderMatches(textOf(cell)) || orderMatches(cell.getAttribute('data-cell-value') || ''));
+                if (orderCell) {
+                  const result = selectDatatableRow(row, orderCell);
+                  result.printfly_order_id = orderId;
+                  result.match_source = 'printfly-order-id-column';
+                  return result;
+                }
+              }
+            }
+            function radioPointFor(reference, row) {
+              const refRect = reference.getBoundingClientRect();
+              const rowRect = row ? row.getBoundingClientRect() : refRect;
+              const cy = refRect.top + refRect.height / 2;
+              const rowCenter = rowRect.top + rowRect.height / 2;
+              const sameRow = all('*', root)
+                .map((el) => ({el, rect: el.getBoundingClientRect()}))
+                .filter((item) => {
+                  if (!visible(item.el)) return false;
+                  const center = item.rect.top + item.rect.height / 2;
+                  return item.rect.width > 8
+                    && item.rect.height > 8
+                    && Math.abs(center - rowCenter) < 24
+                    && item.rect.left < refRect.left;
+                })
+                .sort((a, b) => a.rect.left - b.rect.left);
+              if (sameRow.length) {
+                return {x: sameRow[0].rect.left + 18, y: cy};
+              }
+              return {x: rowRect.left + 24, y: cy};
+            }
+            const exactCells = all('[data-label="Printfly Order Id"],[data-col-key-value*="Printfly_Order_Id"]', root)
+              .filter((el) => {
+                if (!visible(el)) return false;
+                const tag = (el.tagName || '').toLowerCase();
+                const direct = clean(el.innerText || el.textContent);
+                if (tag === 'span' && direct.replace(/^0+/, '') !== orderId) return false;
+                return orderMatches(textOf(el));
+              })
+              .sort((a, b) => {
+                const at = textOf(a);
+                const bt = textOf(b);
+                const aExact = at.replace(/^0+/, '') === orderId ? 0 : 1;
+                const bExact = bt.replace(/^0+/, '') === orderId ? 0 : 1;
+                if (aExact !== bExact) return aExact - bExact;
+                const ar = a.getBoundingClientRect();
+                const br = b.getBoundingClientRect();
+                return (ar.width * ar.height) - (br.width * br.height);
+              });
+            for (const cell of exactCells) {
+              const cr = cell.getBoundingClientRect();
+              const cy = cr.top + cr.height / 2;
+              const radios = all('input[type=radio],input[type=checkbox],[role=radio],.slds-radio_faux,.slds-radio--faux,.slds-radio__label,.slds-radio,.slds-checkbox_faux', root)
+                .filter((el) => {
+                  if (!visible(el)) return false;
+                  const rr = el.getBoundingClientRect();
+                  const ry = rr.top + rr.height / 2;
+                  return Math.abs(ry - cy) < 28 && rr.left < cr.left;
+                })
+                .sort((a, b) => {
+                  const ar = a.getBoundingClientRect();
+                  const br = b.getBoundingClientRect();
+                  return Math.abs(ar.right - cr.left) - Math.abs(br.right - cr.left);
+              });
+              const row = cell.closest('tr,[role=row],.slds-hint-parent') || cell.parentElement || cell;
+              const clickPoint = radioPointFor(cell, row);
+              const input = (row ? all('input[type=radio],input[type=checkbox]', row)[0] : null)
+                || all('input[type=radio],input[type=checkbox]', root)[0];
+              if (input) {
+                try { input.click(); } catch (err) {}
+                try { input.checked = true; } catch (err) {}
+                try { input.dispatchEvent(new Event('input', {bubbles: true})); } catch (err) {}
+                try { input.dispatchEvent(new Event('change', {bubbles: true})); } catch (err) {}
+                return {row_text: textOf(row) || textOf(cell), dom_selected: true, click_point: clickPoint, printfly_order_id: orderId, match_source: 'printfly-order-id-column'};
+              }
+              return {row_text: textOf(row) || textOf(cell), click_point: clickPoint, printfly_order_id: orderId, match_source: 'printfly-order-id-column'};
+            }
+            const rows = all('tr,[role=row],.slds-hint-parent', root).filter(visible);
             let headerTexts = [];
-            const headerRow = rows.find((row) => /Printfly Order Id/i.test(row.innerText || ''));
+            const headerRow = rows.find((row) => /Printfly Order Id/i.test(textOf(row)));
             if (headerRow) {
-              headerTexts = Array.from(headerRow.querySelectorAll('th,[role=columnheader],td'))
-                .map((cell) => clean(cell.innerText || cell.textContent).toLowerCase());
+              headerTexts = all('th,[role=columnheader],td', headerRow)
+                .map((cell) => textOf(cell).toLowerCase());
             }
             const printflyIndex = headerTexts.findIndex((text) => text.includes('printfly order id'));
             for (const row of rows) {
-              const rowText = clean(row.innerText || row.textContent);
+              const rowText = textOf(row);
               if (!rowText || /Printfly Order Id/i.test(rowText)) continue;
-              const cells = Array.from(row.querySelectorAll('td,[role=gridcell]'));
-              const candidates = [];
-              if (printflyIndex >= 0 && cells[printflyIndex]) {
-                candidates.push(clean(cells[printflyIndex].innerText || cells[printflyIndex].textContent));
+              const cells = all('td,[role=gridcell]', row);
+              if (printflyIndex < 0 || !cells[printflyIndex] || !orderMatches(textOf(cells[printflyIndex]))) continue;
+              const input = all('input[type=radio],input[type=checkbox]', row)[0] || all('input[type=radio],input[type=checkbox]', root)[0];
+              if (input) {
+                try { input.click(); } catch (err) {}
+                try { input.checked = true; } catch (err) {}
+                try { input.dispatchEvent(new Event('input', {bubbles: true})); } catch (err) {}
+                try { input.dispatchEvent(new Event('change', {bubbles: true})); } catch (err) {}
+                const rr = row.getBoundingClientRect();
+                return {row_text: rowText, dom_selected: true, click_point: radioPointFor(row, row), printfly_order_id: orderId, match_source: 'printfly-order-id-column'};
               }
-              candidates.push(rowText);
-              const match = candidates.some((text) => {
-                const normalized = String(text || '').replace(/^0+/, '');
-                return normalized === orderId || new RegExp(`(^|\\\\D)0*${orderId}(\\\\D|$)`).test(text);
-              });
-              if (!match) continue;
-              const radio = row.querySelector('input[type=radio],input[type=checkbox],[role=radio],.slds-radio_faux,.slds-checkbox_faux');
-              const target = radio || row;
-              target.scrollIntoView({block: 'center', inline: 'center'});
-              target.click();
-              return {row_text: rowText};
+              const rr = row.getBoundingClientRect();
+              return {row_text: rowText, click_point: radioPointFor(row, row), printfly_order_id: orderId, match_source: 'printfly-order-id-column'};
+            }
+            const rootText = textOf(root);
+            if (new RegExp(`1 result found for ["“]${orderId}["”]`, 'i').test(rootText) || rootText.includes(`1 result found for "${orderId}"`)) {
+              return null;
             }
             return null;
             """,
             str(order_id),
         )
         if selected:
+            click_point = selected.get("click_point") if isinstance(selected, dict) else None
+            if click_point:
+                _click_viewport_point(driver, click_point.get("x"), click_point.get("y"))
+                time.sleep(0.8)
             break
         time.sleep(0.5)
     else:
@@ -5433,6 +6230,31 @@ def _select_salesforce_advanced_search_order(driver, order_id):
                 function clean(value) {
                   return (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
                 }
+                function all(selector, root) {
+                  const start = root || document;
+                  const found = [];
+                  const seen = new Set();
+                  function add(node) {
+                    if (node && !seen.has(node)) {
+                      seen.add(node);
+                      found.push(node);
+                    }
+                  }
+                  function walk(node) {
+                    if (!node) return;
+                    try {
+                      if (node.querySelectorAll) {
+                        Array.from(node.querySelectorAll(selector)).forEach(add);
+                        Array.from(node.querySelectorAll('*')).forEach((child) => {
+                          if (child.shadowRoot) walk(child.shadowRoot);
+                        });
+                      }
+                    } catch (err) {}
+                    if (node.shadowRoot) walk(node.shadowRoot);
+                  }
+                  walk(start);
+                  return found;
+                }
                 function visible(el) {
                   const rect = el.getBoundingClientRect();
                   const style = window.getComputedStyle(el);
@@ -5441,11 +6263,25 @@ def _select_salesforce_advanced_search_order(driver, order_id):
                     && rect.bottom > 0 && rect.top < window.innerHeight
                     && rect.right > 0 && rect.left < window.innerWidth;
                 }
-                const root = Array.from(document.querySelectorAll('[role=dialog],section,div'))
-                  .filter((el) => visible(el) && /Advanced Search/i.test(el.innerText || ''))
-                  .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0] || document;
-                const buttons = Array.from(root.querySelectorAll('button,a,[role=button],input'))
-                  .filter((el) => visible(el) && clean(`${el.innerText || ''} ${el.value || ''} ${el.getAttribute('aria-label') || ''}`) === 'select')
+                const root = all('[role=dialog],section,div')
+                  .filter((el) => visible(el) && /(Advanced Search|Search Orders|Order Number)/i.test(el.innerText || ''))
+                  .sort((a, b) => {
+                    const at = a.innerText || '';
+                    const bt = b.innerText || '';
+                    const ar = a.getBoundingClientRect();
+                    const br = b.getBoundingClientRect();
+                    const aHasTable = /Printfly Order Id/i.test(at) ? 0 : 1;
+                    const bHasTable = /Printfly Order Id/i.test(bt) ? 0 : 1;
+                    if (aHasTable !== bHasTable) return aHasTable - bHasTable;
+                    return (br.width * br.height) - (ar.width * ar.height);
+                  })[0] || document;
+                const buttons = all('button,a,[role=button],input', root)
+                  .filter((el) => {
+                    if (!visible(el)) return false;
+                    if (el.disabled || clean(el.getAttribute('aria-disabled') || '') === 'true') return false;
+                    if (/disabled/i.test(String(el.className || ''))) return false;
+                    return clean(`${el.innerText || ''} ${el.value || ''} ${el.getAttribute('aria-label') || ''}`) === 'select';
+                  })
                   .sort((a, b) => {
                     const ar = a.getBoundingClientRect();
                     const br = b.getBoundingClientRect();
@@ -5459,8 +6295,11 @@ def _select_salesforce_advanced_search_order(driver, order_id):
             )
         )
         if clicked:
-            time.sleep(1)
-            return selected
+            deadline_closed = time.monotonic() + 5
+            while time.monotonic() < deadline_closed:
+                if not _salesforce_order_search_dialog_visible(driver):
+                    return selected
+                time.sleep(0.25)
         time.sleep(0.5)
     raise CopyrightCancelError("Salesforce Advanced Search Select button was not found.")
 
@@ -5669,7 +6508,9 @@ def _create_salesforce_refund_pending_case(driver, order_id, process=COPYRIGHT_C
     _click_salesforce_cases_new_button(driver)
     _wait_for_salesforce_new_case_form(driver)
     lookup_mode = _fill_salesforce_case_order_lookup(driver, order_id)
-    selected_order = str(order_id) if lookup_mode == "selected" else _select_salesforce_advanced_search_order(driver, order_id)
+    if lookup_mode != "advanced":
+        raise CopyrightCancelError("Salesforce Order Number lookup did not open Advanced Search.")
+    selected_order = _select_salesforce_advanced_search_order(driver, order_id)
     _set_salesforce_case_status(driver)
     _fill_salesforce_case_subject(driver, subject)
     _click_salesforce_case_save(driver)
@@ -5790,6 +6631,8 @@ def _cancel_sales_note(reason, process=COPYRIGHT_CANCEL_PROCESS):
     clean_reason = _clean_text(reason)
     if not clean_reason:
         raise CopyrightCancelError(_missing_reason_error(process))
+    if process.sales_note_template:
+        return process.sales_note_template.format(reason=clean_reason)
     return f"{clean_reason} {process.sales_note_reason_label}\n{process.sales_note_email_line}"
 
 
@@ -6104,13 +6947,106 @@ def _existing_refund_fee_amount(driver):
 
 def _read_order_refund_fee_amount(driver):
     state = _get_order_live_state(driver)
+    return _refund_fee_amount_from_order_state(state)
+
+
+def _refund_fee_amount_from_order_state(state):
     # Refund fee should offset the pre-tax customer charge: item subtotal plus shipping, excluding sales tax.
     subtotal = _parse_money(state.get("subtotal"))
     shipping = _parse_money(state.get("shipping_charges")).copy_abs()
     amount = (subtotal.copy_abs() + shipping).quantize(Decimal("0.01"))
     if amount <= 0:
-        raise CopyrightCancelError(f"Could not determine a positive CRM subtotal for the Refund fee. Order state: {state}")
+        raise CopyrightCancelError(
+            "Could not determine a positive CRM subtotal for the Refund fee. "
+            f"Subtotal: {_money_text(subtotal)}; shipping: {_money_text(shipping)}."
+        )
     return amount
+
+
+def _zero_charge_cancel_refund_result(dry_run=False):
+    return {
+        "refund_fee": {
+            "added": False,
+            "skipped": True,
+            "dry_run": bool(dry_run),
+            "amount": "0.00",
+            "reason": "no_refundable_customer_charge",
+            "message": "Skipped Refund fee because the order has no refundable customer charge.",
+        },
+        "refund": {
+            "refunded": False,
+            "skipped": True,
+            "dry_run": bool(dry_run),
+            "prepared": False,
+            "refund_button_clicked": False,
+            "reason": "no_refundable_customer_charge",
+            "message": "Skipped payment refund because the order has no refundable customer charge.",
+        },
+    }
+
+
+def _crm_order_already_cancelled(driver):
+    try:
+        status_summary = _order_scope(
+            driver,
+            """
+            const values = [
+              s.orderStatusName,
+              s.statusName,
+              r.orderStatusName,
+              r.statusName,
+              (r.orderStatus || {}).statusName,
+              ((r.orderStatuses || [])[0] || {}).statusName,
+              ((r.status || [])[0] || {}).statusName
+            ];
+            const history = [];
+            for (const rows of [r.orderStatuses, r.status, r.statusHistory, r.orderStatusHistory]) {
+              if (!Array.isArray(rows)) continue;
+              for (const row of rows) {
+                history.push(row.statusName || row.name || row.status || '');
+              }
+            }
+            return {values, history};
+            """,
+        ) or {}
+    except Exception:
+        status_summary = {}
+    statuses = [
+        _clean_text(value).lower()
+        for value in ((status_summary.get("values") or []) + (status_summary.get("history") or []))
+        if _clean_text(value)
+    ]
+    if any(status in {"cancelled", "canceled", "cancel order", "order cancelled", "order canceled"} for status in statuses):
+        return True
+    try:
+        text = _clean_text(driver.execute_script("return document.body ? document.body.innerText : '';")).lower()
+    except Exception:
+        text = ""
+    return bool("cancelled" in text or "order cancelled" in text or "order canceled" in text)
+
+
+def _completed_stripe_refund_state(driver):
+    try:
+        state = _get_order_live_state(driver)
+    except Exception:
+        return {"refunded": False}
+    transactions = state.get("transactions") or []
+    stripe_total = Decimal("0.00")
+    refund_total = Decimal("0.00")
+    for transaction in transactions:
+        label = _clean_text(f"{transaction.get('tag', '')} {transaction.get('type', '')}").lower()
+        amount = _parse_money(transaction.get("amount"))
+        if amount > 0 and "stripe" in label:
+            stripe_total += amount
+        if amount < 0 and "refund" in label:
+            refund_total += amount.copy_abs()
+    refunded = bool(stripe_total > 0 and refund_total >= stripe_total)
+    return {
+        "refunded": refunded,
+        "stripe_total": _money_text(stripe_total),
+        "refund_total": _money_text(refund_total),
+        "order_state": state,
+    }
 
 
 def _add_refund_fee_to_original(driver, refund_amount=None):
@@ -6562,7 +7498,61 @@ def _cancel_and_refund_crm_order(driver, crm_handle, order_id, dry_run, click_re
     _wait_for_order_scope(driver, order_id=order_id)
     sales_note_result = _append_copyright_cancel_sales_note(driver, reason, dry_run=dry_run, process=process)
     payment = payment or _read_payment_summary(driver)
-    refund_fee_amount = _read_order_refund_fee_amount(driver)
+    completed_refund = _completed_stripe_refund_state(driver)
+    if not dry_run and completed_refund.get("refunded"):
+        return {
+            "payment": payment,
+            "sales_note": sales_note_result,
+            "cancel": {
+                "cancelled": False,
+                "skipped": True,
+                "dry_run": False,
+                "reason": "already_refunded",
+                "message": "Skipped CRM cancel/refund duplicate work because a matching Stripe refund is already recorded.",
+            },
+            "refund_fee": {
+                "added": False,
+                "skipped": True,
+                "dry_run": False,
+                "reason": "already_refunded",
+                "message": "Skipped adding Refund fee because the order already has a completed Stripe refund.",
+            },
+            "refund": {
+                "refunded": True,
+                "already_refunded": True,
+                "dry_run": False,
+                "prepared": False,
+                "refund_button_clicked": False,
+                **completed_refund,
+            },
+        }
+    order_state = _get_order_live_state(driver)
+    try:
+        refund_fee_amount = _refund_fee_amount_from_order_state(order_state)
+    except CopyrightCancelError:
+        refund_fee_amount = Decimal("0.00")
+    if refund_fee_amount <= 0:
+        if dry_run:
+            cancel_result = {"cancelled": False, "dry_run": True, "message": "Skipped order cancellation in dry-run mode."}
+        elif _crm_order_already_cancelled(driver):
+            cancel_result = {
+                "cancelled": False,
+                "skipped": True,
+                "dry_run": False,
+                "reason": "already_cancelled",
+                "message": "Skipped CRM cancellation because the order is already cancelled.",
+            }
+        else:
+            _cancel_original_order(driver)
+            cancel_result = {"cancelled": True, "dry_run": False}
+        zero_charge = _zero_charge_cancel_refund_result(dry_run=dry_run)
+        return {
+            "payment": payment,
+            "sales_note": sales_note_result,
+            "cancel": cancel_result,
+            "refund_fee": zero_charge["refund_fee"],
+            "refund": zero_charge["refund"],
+        }
     if dry_run:
         cancel_result = {"cancelled": False, "dry_run": True, "message": "Skipped order cancellation in dry-run mode."}
         refund_fee_result = {
@@ -6591,8 +7581,17 @@ def _cancel_and_refund_crm_order(driver, crm_handle, order_id, dry_run, click_re
             "refund": refund_result,
         }
     else:
-        _cancel_original_order(driver)
-        cancel_result = {"cancelled": True, "dry_run": False}
+        if _crm_order_already_cancelled(driver):
+            cancel_result = {
+                "cancelled": False,
+                "skipped": True,
+                "dry_run": False,
+                "reason": "already_cancelled",
+                "message": "Skipped CRM cancellation because the order is already cancelled.",
+            }
+        else:
+            _cancel_original_order(driver)
+            cancel_result = {"cancelled": True, "dry_run": False}
         refund_fee_result = _add_refund_fee_to_original(driver, refund_fee_amount)
     if _requires_salesforce_refund_case(payment):
         refund_result = {
@@ -7118,6 +8117,7 @@ def create_salesforce_refund_case_single_order(
     login_wait_seconds=0,
     keep_browser_open=False,
     keep_browser_open_on_error=False,
+    force_case=False,
 ):
     process = _cancel_process_for_key(process) if isinstance(process, str) else process
     order_id = _normalize_order_id(order_id)
@@ -7133,7 +8133,7 @@ def create_salesforce_refund_case_single_order(
         crm_handle = driver.current_window_handle
         contact = _wait_for_crm_contact_info(driver, order_id=order_id)
         payment = _read_payment_summary(driver)
-        if not _requires_salesforce_refund_case(payment):
+        if not force_case and not _requires_salesforce_refund_case(payment):
             raise CopyrightCancelError("Current payment method does not require a Salesforce refund-pending Case.")
         sf_handle = _open_salesforce_account(
             driver,
@@ -7159,6 +8159,7 @@ def create_salesforce_refund_case_single_order(
             "issue_type": process.issue_type,
             "contact": contact,
             "payment": payment,
+            "eligibility_overridden": bool(force_case),
             "salesforce_refund_case": refund_case,
         }
     except Exception:
@@ -7187,6 +8188,7 @@ def run_create_refund_case_order(args):
             login_wait_seconds=args.login_wait_seconds,
             keep_browser_open=args.keep_browser_open,
             keep_browser_open_on_error=args.keep_browser_open_on_error,
+            force_case=args.force_case,
         )
         _write_result(
             True,
@@ -7214,8 +8216,24 @@ def run_create_refund_case_order(args):
 
 
 def run_scan_sheet(result_file=None, include_error_rows=False):
-    spreadsheet, worksheet, headers, eligible, skipped = _scan_queue_rows(include_error_rows=include_error_rows)
-    missing_reason_error_count = _write_missing_reason_errors(worksheet, headers, skipped)
+    try:
+        spreadsheet, worksheet, headers, eligible, skipped = _scan_queue_rows(include_error_rows=include_error_rows)
+    except Exception as exc:
+        _write_result(
+            False,
+            f"Sheet scanner could not read the Google Sheet: {exc}",
+            result_file=result_file,
+            action="scan_sheet",
+            error_type=type(exc).__name__,
+            eligible_rows=[],
+            skipped_rows=[],
+        )
+        return 1
+
+    # A scan is strictly read-only.  In particular, do not fill the ERROR
+    # column for rows with a missing reason; the operator may only be
+    # inspecting the queue.
+    missing_reason_error_count = 0
     payload = {
         "spreadsheet_title": spreadsheet.title,
         "worksheet_title": worksheet.title,
@@ -7555,15 +8573,51 @@ def run_post_cancel_stock_slack_order(args):
 
 def run_process_queue(args):
     started = time.monotonic()
-    spreadsheet, worksheet, headers, eligible, skipped = _scan_queue_rows(include_error_rows=args.retry_errors)
-    missing_reason_error_count = _write_missing_reason_errors(worksheet, headers, skipped)
+    try:
+        spreadsheet, worksheet, headers, eligible, skipped = _scan_queue_rows(include_error_rows=args.retry_errors)
+    except Exception as exc:
+        _write_result(
+            False,
+            f"Sheet scanner could not read the Google Sheet: {exc}",
+            result_file=args.result_file,
+            action="process_queue",
+            dry_run=bool(args.dry_run),
+            error_type=type(exc).__name__,
+            processed=[],
+            failures=[],
+            skipped_rows=[],
+            duration_seconds=round(time.monotonic() - started, 2),
+        )
+        _hold_browser_after_result_if_requested(args)
+        return 1
+
+    # Dry runs must not modify the queue, including validation feedback in
+    # the ERROR column.  Live runs retain the existing operator feedback.
+    missing_reason_error_count = 0
+    if not args.dry_run:
+        missing_reason_error_count = _write_missing_reason_errors(worksheet, headers, skipped)
     limit = int(args.limit or 0)
     if limit > 0:
         eligible = eligible[:limit]
     processed = []
     failures = []
+    total_orders = len(eligible)
+    _publish_status(
+        "No eligible Sheets Scanner orders found." if total_orders == 0 else f"Found {total_orders} eligible Sheets Scanner order(s).",
+        stage="scanned",
+        current=0,
+        total=total_orders,
+    )
     # Clear queue cells only; keep any operator instructions in later columns fixed.
     for row in sorted(eligible, key=lambda item: item.row_number, reverse=True):
+        current_order = len(processed) + len(failures) + 1
+        _publish_status(
+            f"Processing Sheets Scanner order {row.order_id} ({current_order}/{total_orders}).",
+            stage="processing_order",
+            current=current_order,
+            total=total_orders,
+            order_id=row.order_id,
+        )
         try:
             if row.process_key == AUTO_SPLITTER_PROCESS.key:
                 details = process_auto_splitter_order(
@@ -7685,6 +8739,11 @@ def main(argv=None):
     parser.add_argument("--profile-dir", default="", help="Override the Chrome profile directory for this run.")
     parser.add_argument("--keep-browser-open", action="store_true", help="Leave Chrome open after the run for manual inspection.")
     parser.add_argument("--keep-browser-open-on-error", action="store_true", help="Leave Chrome open only when the run fails.")
+    parser.add_argument(
+        "--force-case",
+        action="store_true",
+        help="Explicit one-order recovery override: create the Salesforce refund case even when CRM has no eligible payment row.",
+    )
     parser.add_argument("--skip-from-selection", action="store_true", help="Inspection-only: do not change the Salesforce From field.")
     parser.add_argument("--skip-ready-verify", action="store_true", help="Inspection-only: do not enforce pre-send From/body verification.")
     parser.add_argument("--dry-run", action="store_true", default=PROCESSOR_DRY_RUN)

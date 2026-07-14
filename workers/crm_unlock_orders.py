@@ -224,12 +224,17 @@ def _crm_attempt_modes():
     return modes
 
 
-def _validate_runtime_config():
-    if not str(CRM_LOCKED_URL or "").strip():
-        raise RuntimeError("CRM_LOCKED_URL is empty in config.py.")
-    if "..." in str(CRM_LOCKED_URL):
+def _resolve_report_url(list_url=None):
+    return str(list_url or CRM_LOCKED_URL or "").strip()
+
+
+def _validate_runtime_config(list_url=None):
+    report_url = _resolve_report_url(list_url)
+    if not report_url:
+        raise RuntimeError("The CRM unlocker report URL is empty in config.py.")
+    if "..." in report_url:
         raise RuntimeError(
-            "CRM_LOCKED_URL in config.py still contains the placeholder token. Replace it with the full CRM locked-orders URL before running."
+            "The CRM unlocker report URL still contains a placeholder token. Replace it with the full CRM locked-orders URL before running."
         )
     if not str(CRM_LOGIN_URL or "").strip():
         raise RuntimeError("CRM_LOGIN_URL is empty in config.py.")
@@ -606,18 +611,26 @@ def wait_for_order_rows(driver, timeout=None, allow_no_orders=False):
     raise TimeoutException("No CRM order rows became available before the timeout expired.")
 
 
-def _open_locked_report_rows(driver):
+def _open_locked_report_rows(driver, list_url=None):
+    report_url = _resolve_report_url(list_url)
     print("Opening CRM report...")
-    safe_get_with_partial_load(driver, CRM_LOCKED_URL, "CRM report page")
+    safe_get_with_partial_load(driver, report_url, "CRM report page")
 
     if login_if_needed(driver):
-        safe_get_with_partial_load(driver, CRM_LOCKED_URL, "CRM report page after login")
+        safe_get_with_partial_load(driver, report_url, "CRM report page after login")
 
     try:
+        rows = wait_for_order_rows(driver, allow_no_orders=True)
+        if rows or _looks_like_no_orders_state(driver):
+            return rows
+        print("The locked-orders report was blank without a no-orders message; reloading once to confirm.")
+        safe_get_with_partial_load(driver, report_url, "CRM report blank-state recovery reload")
+        if login_if_needed(driver):
+            safe_get_with_partial_load(driver, report_url, "CRM report blank-state recovery after login")
         return wait_for_order_rows(driver, allow_no_orders=True)
     except TimeoutException as row_error:
         if login_if_needed(driver, context_message="Order rows were not available on the first pass."):
-            safe_get_with_partial_load(driver, CRM_LOCKED_URL, "CRM report page after login")
+            safe_get_with_partial_load(driver, report_url, "CRM report page after login")
             return wait_for_order_rows(driver, allow_no_orders=True)
         raise row_error
 
@@ -809,7 +822,7 @@ def verify_update_complete(driver, previous_order_count=None):
     raise TimeoutException("The CRM did not show the unlock success message before the timeout expired.")
 
 
-def _run_once(action, dry_run=False, headless_mode=True):
+def _run_once(action, dry_run=False, headless_mode=True, list_url=None):
     driver = None
     mode_name = "headless" if headless_mode else "visible"
     try:
@@ -832,7 +845,7 @@ def _run_once(action, dry_run=False, headless_mode=True):
 
         while True:
             refresh_passes += 1
-            rows = _open_locked_report_rows(driver)
+            rows = _open_locked_report_rows(driver, list_url=list_url)
 
             if not rows:
                 print("No CRM orders were detected in the report.")
@@ -923,19 +936,19 @@ def _run_once(action, dry_run=False, headless_mode=True):
         safe_driver_quit(driver, profile_path=PROFILE_PATH)
 
 
-def run(action, dry_run=False, visible=False):
+def run(action, dry_run=False, visible=False, list_url=None):
     started_at = time.monotonic()
     final_mode = bool(CRM_HEADLESS)
     final_error = None
     try:
-        _validate_runtime_config()
+        _validate_runtime_config(list_url=list_url)
 
         attempt_modes = [False] if visible else _crm_attempt_modes()
 
         errors = []
         for index, headless_mode in enumerate(attempt_modes, start=1):
             try:
-                result = _run_once(action, dry_run=dry_run, headless_mode=headless_mode)
+                result = _run_once(action, dry_run=dry_run, headless_mode=headless_mode, list_url=list_url)
                 if dry_run:
                     message = (
                         f"Dry run prepared {result['order_count']} orders and confirmed the Apply button was clickable; the Apply click was skipped."
@@ -995,10 +1008,11 @@ def parse_args(argv=None):
     parser.add_argument("--action", choices=["unlock_all"], required=True)
     parser.add_argument("--visible", action="store_true", help="Run Chrome visibly instead of headless for testing.")
     parser.add_argument("--dry-run", action="store_true", help="Prepare the unlock selection and confirm Apply is clickable without clicking Apply.")
+    parser.add_argument('--list-url', help='Override CRM_LOCKED_URL for a mode-specific unlock report.')
     return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
     options = parse_args()
     effective_dry_run = bool(options.dry_run or CONFIG_CRM_DRY_RUN)
-    sys.exit(run(options.action, dry_run=effective_dry_run, visible=bool(options.visible)))
+    sys.exit(run(options.action, dry_run=effective_dry_run, visible=bool(options.visible), list_url=options.list_url))

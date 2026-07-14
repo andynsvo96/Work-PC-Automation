@@ -277,8 +277,11 @@ def register_work_routes(
 
     def _crm_processing_filter_label(processing_filter):
         key = str(processing_filter or "").strip().lower()
+        key = key.replace("-", "_").replace(" ", "_")
         if key == "813":
             return "813"
+        if key == "high_value":
+            return "High Value"
         if key == "all":
             return "All"
         if key == "free":
@@ -299,8 +302,11 @@ def register_work_routes(
         state = state if isinstance(state, dict) else {}
         raw_filter = options.get("processing_filter")
         processing_filter = str(raw_filter if raw_filter is not None else state.get("processing_filter") or "rush").strip().lower()
-        if processing_filter not in {"rush", "free", "all", "813"}:
+        processing_filter = processing_filter.replace("-", "_").replace(" ", "_")
+        if processing_filter not in {"rush", "free", "all", "813", "high_value"}:
             processing_filter = "rush"
+        rush_like = processing_filter in {"rush", "high_value"}
+        unlocker_capable = rush_like or processing_filter == "free"
         mode_preferences = state.get("mode_preferences") if isinstance(state.get("mode_preferences"), dict) else {}
         mode_state = mode_preferences.get(processing_filter) if isinstance(mode_preferences.get(processing_filter), dict) else {}
         fallback_state = {**state, **mode_state}
@@ -341,7 +347,11 @@ def register_work_routes(
         elif processing_filter == "813":
             effective["stock_unlocker_enabled"] = False
             effective["product_separator_enabled"] = False
-        elif processing_filter != "rush":
+        elif processing_filter == "free":
+            effective["order_goods_enabled"] = False
+            effective["shipping_bypasser_enabled"] = False
+            effective["push_back_enabled"] = False
+        elif not unlocker_capable:
             effective["stock_unlocker_enabled"] = False
             effective["order_goods_enabled"] = False
             effective["shipping_bypasser_enabled"] = False
@@ -365,20 +375,22 @@ def register_work_routes(
 
     def _crm_processing_step_signature(effective):
         steps = []
+        processing_filter = effective.get("processing_filter")
+        rush_like = processing_filter in {"rush", "high_value"}
         if effective.get("address_validator_enabled"):
             steps.append("validator")
-        if effective.get("product_separator_enabled") and effective.get("processing_filter") != "813":
+        if effective.get("product_separator_enabled") and processing_filter != "813":
             steps.append("separator")
-        if effective.get("stock_unlocker_enabled") and effective.get("processing_filter") == "rush":
+        if effective.get("stock_unlocker_enabled") and (rush_like or processing_filter == "free"):
             steps.append("unlocker")
         if (
             effective.get("order_goods_enabled")
-            and effective.get("processing_filter") in {"rush", "813"}
+            and (rush_like or processing_filter == "813")
         ):
             steps.append("order_goods")
-        if effective.get("shipping_bypasser_enabled") and effective.get("processing_filter") in {"rush", "813"}:
+        if effective.get("shipping_bypasser_enabled") and (rush_like or processing_filter == "813"):
             steps.append("shipping_bypasser")
-        if effective.get("push_back_enabled") and effective.get("processing_filter") in {"rush", "813"}:
+        if effective.get("push_back_enabled") and (rush_like or processing_filter == "813"):
             steps.append("push_back")
         return steps
 
@@ -420,20 +432,22 @@ def register_work_routes(
         effective = _crm_processing_effective_options(options)
         advanced_mode = _crm_processing_advanced_mode(options)
         steps = []
+        processing_filter = effective.get("processing_filter")
+        rush_like = processing_filter in {"rush", "high_value"}
         if effective.get("address_validator_enabled"):
             steps.append("Validator")
-        if effective.get("product_separator_enabled") and effective.get("processing_filter") != "813":
+        if effective.get("product_separator_enabled") and processing_filter != "813":
             steps.append("Separator")
-        if effective.get("stock_unlocker_enabled") and effective.get("processing_filter") == "rush":
+        if effective.get("stock_unlocker_enabled") and (rush_like or processing_filter == "free"):
             steps.append("Unlocker")
         if (
             effective.get("order_goods_enabled")
-            and effective.get("processing_filter") in {"rush", "813"}
+            and (rush_like or processing_filter == "813")
         ):
             steps.append("Order Goods")
-        if effective.get("shipping_bypasser_enabled") and effective.get("processing_filter") in {"rush", "813"}:
+        if effective.get("shipping_bypasser_enabled") and (rush_like or processing_filter == "813"):
             steps.append("Shipping Bypasser")
-        if effective.get("push_back_enabled") and effective.get("processing_filter") in {"rush", "813"}:
+        if effective.get("push_back_enabled") and (rush_like or processing_filter == "813"):
             steps.append("Push Back")
         step_text = ", ".join(steps) if steps else "none selected"
         prefix = "Processing"
@@ -491,6 +505,12 @@ def register_work_routes(
     @app.route("/crm/process/813", methods=["POST", "GET"])
     def crm_process_813():
         return _start_crm_processing_mode("813")
+
+    @app.route("/crm/process/high-value", methods=["POST", "GET"])
+    @app.route("/crm/process/high_value", methods=["POST", "GET"])
+    @app.route("/crm/process/highvalue", methods=["POST", "GET"])
+    def crm_process_high_value():
+        return _start_crm_processing_mode("high_value")
 
     @app.route("/crm/process/status", methods=["GET"])
     def crm_process_status():
