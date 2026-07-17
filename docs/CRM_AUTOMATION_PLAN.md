@@ -104,10 +104,6 @@ crm_automation/
 All uppercase. Readable/writable via `/api/config` endpoint automatically.
 
 ```python
-# --- CRM Credentials ---
-CRM_USERNAME = "your.crm.username"
-CRM_PASSWORD = ""                          # Fill in before first run
-
 # --- CRM URLs ---
 CRM_LOGIN_URL = "https://crm2.legacy.printfly.com/login"
 CRM_REPORT_URL = "https://crm2.legacy.printfly.com/report/967?_token=..."  # Full URL here
@@ -423,15 +419,16 @@ def is_login_page(driver):
         return False
 
 def do_login(driver):
+    credential = read_windows_credential(CRM_CREDENTIAL_TARGET)
     email_field = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='email'], input[name='email']"))
     )
     email_field.clear()
-    email_field.send_keys(CRM_USERNAME)
+    email_field.send_keys(credential.username)
     
     password_field = driver.find_element(By.CSS_SELECTOR, "input[type='password']")
     password_field.clear()
-    password_field.send_keys(CRM_PASSWORD)
+    password_field.send_keys(credential.secret)
     
     login_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Login')]")
     login_btn.click()
@@ -461,7 +458,7 @@ Create requirements.txt with: selenium, webdriver-manager, flask, pystray, Pillo
 ```
 Write config.py following section 4.1 of the build plan exactly.
 All settings are uppercase constants.
-Leave CRM_PASSWORD empty string.
+Store the CRM login with `python manage_windows_credentials.py set crm`.
 Use the full report URL provided.
 ```
 

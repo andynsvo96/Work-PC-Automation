@@ -1,6 +1,9 @@
 <!doctype html>
 <html>
 <head>
+<meta name='theme-color' content='#2563eb'>
+<link rel='manifest' href='/static/manifest.webmanifest'>
+<link rel='icon' href='/static/automation-icon.svg' type='image/svg+xml'>
 <meta charset='utf-8'>
 <title>Automation Control Panel</title>
 <meta name='viewport' content='width=device-width, initial-scale=1'>
@@ -105,6 +108,39 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .countdown-clock{font-size:34px;font-weight:700;letter-spacing:.08em;font-family:Consolas,'Courier New',monospace}
 .countdown-bar{height:10px;border-radius:999px;background:#dbeafe;overflow:hidden;margin-top:8px}
 .countdown-bar-fill{height:100%;width:0%;background:linear-gradient(90deg,#f59e0b,#ef4444);transition:width .35s linear}
+.work-hours-card{overflow:hidden}
+.work-hours-heading-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.work-hours-title-actions{display:flex;align-items:center;justify-content:flex-end}
+.work-timer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:10px}
+.work-timer{position:relative;border:1px solid #cbd5e1;border-radius:12px;padding:14px;background:linear-gradient(145deg,#f8fafc,#fff);overflow:hidden}
+.work-timer::after{content:'';position:absolute;inset:auto -35% -65% 25%;height:120px;border-radius:999px;background:rgba(37,99,235,.08);pointer-events:none}
+.work-timer.remaining::after{background:rgba(14,165,233,.09)}
+.work-timer.live{border-color:#60a5fa;box-shadow:0 0 0 3px rgba(37,99,235,.08)}
+.work-timer.live::before{content:'';position:absolute;right:12px;top:12px;width:9px;height:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 0 rgba(34,197,94,.5);animation:workTimerPulse 1.5s ease-out infinite}
+.work-timer-label{position:relative;z-index:1;color:#475569;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.work-timer-value{position:relative;z-index:1;margin-top:5px;font:800 clamp(28px,4vw,42px)/1.05 Consolas,'Courier New',monospace;letter-spacing:.035em;color:#0f172a;font-variant-numeric:tabular-nums}
+.work-timer-note{position:relative;z-index:1;margin-top:7px;color:#64748b;font-size:12px}
+.work-hours-progress{height:8px;border-radius:999px;background:#e2e8f0;overflow:hidden;margin-top:12px}
+.work-hours-progress-fill{height:100%;width:0;background:linear-gradient(90deg,#2563eb,#38bdf8);transition:width .4s ease}
+.work-plan{border-top:1px solid #e2e8f0;margin-top:14px;padding-top:14px}
+.work-plan-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.work-plan-header h3{margin:0 0 3px}
+.work-plan-summary{font-weight:700;color:#1d4ed8;text-align:right}
+.work-cap-quick-setting{display:flex;align-items:center;gap:6px;padding:6px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc}
+.work-cap-quick-setting label{font-size:12px;font-weight:700;color:#475569;white-space:nowrap}
+.work-cap-quick-setting input{width:78px;padding:6px 7px;border:1px solid #94a3b8;border-radius:6px;background:#fff;font-weight:700}
+.work-cap-quick-setting input:focus{outline:2px solid rgba(37,99,235,.22);border-color:#2563eb}
+.work-plan-days{display:grid;grid-template-columns:repeat(7,minmax(100px,1fr));gap:8px}
+.work-day-toggle{min-height:112px;padding:10px;background:#fff;border-color:#cbd5e1;color:#334155;text-align:left;display:flex;flex-direction:column;gap:4px;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
+.work-day-toggle:hover{transform:translateY(-1px);border-color:#60a5fa;box-shadow:0 5px 14px rgba(15,23,42,.08)}
+.work-day-toggle.active{background:#eff6ff;border-color:#2563eb;color:#0f172a}
+.work-day-toggle.today{box-shadow:inset 0 0 0 1px #f59e0b}
+.work-day-name{font-weight:800}
+.work-day-date{font-size:11px;color:#64748b}
+.work-day-hours{margin-top:auto;font-size:15px;font-weight:800;color:#1d4ed8}
+.work-day-toggle:not(.active) .work-day-hours{color:#94a3b8}
+.work-day-state{font-size:11px;color:#64748b}
+@keyframes workTimerPulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}70%{box-shadow:0 0 0 8px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
 .temp-state-high{color:#c2410c;font-weight:700}
 .temp-state-danger{color:#b91c1c;font-weight:800;animation:tempAlertPulse 1.4s ease-in-out infinite}
 @keyframes tempAlertPulse{0%{opacity:1}50%{opacity:.72}100%{opacity:1}}
@@ -121,6 +157,13 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .tab-bar{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 12px}
 .tab-btn{background:#e2e8f0;border-color:#cbd5e1;color:#0f172a}
 .tab-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
+.tab-btn.platform-disabled{background:#f1f5f9;border-color:#cbd5e1;color:#94a3b8}
+.platform-capability-notice{display:none;margin:-4px 0 10px;border-color:#f59e0b;background:#fffbeb;color:#92400e;font-weight:700}
+.platform-capability-notice.active{display:block}
+.control-target{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:12px;font-weight:700;color:#334155}
+.control-target select{max-width:210px;padding:6px;font-size:12px}
+.hardware-summary{display:grid;grid-template-columns:repeat(4,minmax(135px,1fr));gap:8px;margin:10px 0}
+.hardware-summary .metric{min-width:0}
 .queue-tab-btn{margin-left:auto}
 .console-tab-btn{margin-left:0}
 .master-refresh-btn{background:#fff;border-color:#2563eb;color:#2563eb}
@@ -147,6 +190,8 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .queue-status.completed{color:#166534}
 .queue-status.failed,.queue-status.canceled{color:#b91c1c}
 .queue-cancel-btn{width:30px;height:30px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:999px}
+.queue-actions{display:flex;align-items:center;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+.queue-target-select{max-width:190px;font-size:12px;padding:5px}
 .queue-runs{grid-column:2 / -1;border-top:1px solid #e2e8f0;margin-top:4px;padding-top:6px;font-size:12px;color:#334155}
 .queue-runs table{width:100%;border-collapse:collapse}
 .queue-runs td,.queue-runs th{padding:4px 6px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}
@@ -155,11 +200,22 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .desktop-metrics-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:8px;margin:10px 0}
 .desktop-metric-value{font-size:20px;font-weight:700}
 .metrics-title-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
+.processing-report{border-top:1px solid #e2e8f0;margin-top:12px;padding-top:12px}
+.processing-report-header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.processing-report-header h3{margin:0}
+.processing-report-filters{display:flex;gap:6px;flex-wrap:wrap}
+.processing-report-filter.active{background:#2563eb;border-color:#2563eb;color:#fff}
+.processing-report-metrics{display:grid;grid-template-columns:repeat(4,minmax(135px,1fr));gap:8px;margin-bottom:8px}
+.processing-report-metric{border:1px solid #d9e2ec;border-radius:8px;padding:8px;background:#f8fafc}
+.processing-report-metric .k{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.04em}
+.processing-report-metric .v{font-size:18px;font-weight:700}
 .temp-unit-group{display:flex;align-items:center;gap:6px}
 .temp-btn.active{background:#2563eb;color:#fff;border-color:#2563eb}
 .metrics-path{margin:0 0 10px;word-break:break-all}
 @media (max-width:980px){.grid,.subgrid,.slack-day-message-panel{grid-template-columns:1fr}}
-@media (max-width:760px){.metrics,.desktop-metrics-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}}
+@media (max-width:980px){.work-plan-days{grid-template-columns:repeat(4,minmax(110px,1fr))}}
+@media (max-width:760px){.metrics,.desktop-metrics-grid,.processing-report-metrics,.work-timer-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}.work-plan-days{grid-template-columns:repeat(2,minmax(120px,1fr))}}
+@media (max-width:520px){.work-hours-title-actions{width:100%;justify-content:flex-end}.work-cap-quick-setting{justify-content:flex-end}.work-timer-grid{grid-template-columns:1fr}.work-plan-days{grid-template-columns:1fr 1fr}.work-timer-value{font-size:30px}}
 </style>
 </head>
 <body>
@@ -183,7 +239,9 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
   <button class='tab-btn queue-tab-btn' id='tabBtnQueue' onclick='toggleQueuePanel()'>Queue</button>
   <button class='tab-btn console-tab-btn' id='tabBtnConsole' onclick="setActiveTab('console')">Console</button>
   <button class='tab-btn master-refresh-btn' id='masterRefreshBtn' onclick='refreshAllStatuses(this)'>Refresh All</button>
+  <label class='control-target'>Control target <select id='controlTargetSelect' onchange='changeControlTarget(this.value)'><option value=''>Any available computer</option></select></label>
 </div>
+<div id='platformCapabilityNotice' class='notice platform-capability-notice'>Windows only</div>
 
 <div id='queuePanel' class='queue-panel'>
   <div class='queue-header'>
@@ -191,7 +249,8 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
     <div class='row' style='margin-bottom:0'>
       <span class='muted' id='queueSummaryText'>Queue loading...</span>
       <button class='secondary tiny' onclick='loadQueue(true)'>Refresh Queue</button>
-      <button class='secondary tiny' onclick='clearFinishedQueueTasks()'>Clear All</button>
+      <button class='secondary tiny' id='queueClearFinishedBtn' onclick='clearFinishedQueueTasks()'>Clear All</button>
+      <button class='secondary tiny' id='queueResumeBtn' style='display:none' onclick='resumeSharedQueue()'>Resume After Review</button>
       <button class='danger tiny' onclick='cancelAllQueueTasks()'>Cancel All Tasks</button>
     </div>
   </div>
@@ -231,6 +290,52 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
         <button class='secondary' id='slackLunchToggleBtn' onclick='toggleSlackLunch(this)'>Slack Lunch (1 Hour)</button>
         <span class='muted' id='slackLunchStatusText'>Lunch timer not active.</span>
       </div>
+    </div>
+  </div>
+
+  <div class='card work-hours-card' style='margin-top:14px'>
+    <div class='card-title-row'>
+      <div>
+        <div class='work-hours-heading-row'>
+          <h2>Weekly Work Hours</h2>
+          <span class='badge' id='workClockStateBadge'>Loading</span>
+        </div>
+        <div class='muted' id='workHoursRangeText'>Current Sunday-Saturday work week</div>
+      </div>
+      <div class='work-hours-title-actions'>
+        <div class='work-cap-quick-setting'>
+          <label for='weeklyCapHoursInput'>Weekly Cap</label>
+          <input id='weeklyCapHoursInput' type='number' min='1' max='168' step='0.25' inputmode='decimal' aria-label='Weekly hours cap'>
+          <button class='secondary tiny' id='weeklyCapHoursSaveBtn' type='button' onclick='saveWeeklyHoursCap(this)'>Apply</button>
+        </div>
+      </div>
+    </div>
+    <div class='work-timer-grid'>
+      <div class='work-timer' id='weeklyAccumulatedTimerCard'>
+        <div class='work-timer-label'>Accumulated This Week</div>
+        <div class='work-timer-value' id='weeklyAccumulatedTimer'>00:00:00</div>
+        <div class='work-timer-note' id='weeklyAccumulatedNote'>Loading tracked hours...</div>
+      </div>
+      <div class='work-timer remaining' id='weeklyRemainingTimerCard'>
+        <div class='work-timer-label'>Hours Left Until Cap</div>
+        <div class='work-timer-value' id='weeklyRemainingTimer'>00:00:00</div>
+        <div class='work-timer-note' id='weeklyRemainingNote'>Loading weekly cap...</div>
+      </div>
+    </div>
+    <div class='work-hours-progress' title='Progress toward weekly cap'>
+      <div class='work-hours-progress-fill' id='workHoursProgressFill'></div>
+    </div>
+
+    <div class='work-plan'>
+      <div class='work-plan-header'>
+        <div>
+          <h3>Weekly Prediction</h3>
+          <div class='muted'>Toggle the days you plan to work. Remaining paid hours are divided evenly across enabled days.</div>
+        </div>
+        <div class='work-plan-summary' id='workPlanSummary'>Loading prediction...</div>
+      </div>
+      <div class='work-plan-days' id='workPredictionDays' aria-label='Planned work days from Sunday through Saturday'></div>
+      <div class='muted' id='workPlanBreakNote' style='margin-top:8px'></div>
     </div>
   </div>
 
@@ -285,7 +390,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       <details class='section-note'>
         <summary>Read More</summary>
         <div class='section-note-body'>
-          <p>The mode dropdown here only affects Automate Processing steps. Rush and High Value can run Validator, Separator, Unlocker, Order Goods, Bypasser, and Push Back. Free Ship can run Validator, Separator, and its own Stock Unlocker list. 813 uses its own CRM lists and runs without Unlocker or Separator. All runs Validator and Separator.</p>
+          <p>The mode dropdown here only affects Automate Processing steps. Rush and High Value can run Validator, Separator, Unlocker, Order Goods, Bypasser, and Push Back. Free Ship can run Validator, Separator, Unlocker, and Order Goods. ALL can run Validator, Separator, Unlocker, and Order Goods. 813 uses its own CRM lists and runs without Unlocker or Separator.</p>
           <p>Home Assistant / Alexa endpoints: /crm/process/rush, /crm/process/high-value, /crm/process/free-ship, /crm/process/all, and /crm/process/813. The original /crm/process endpoint still runs whatever is currently selected above.</p>
         </div>
       </details>
@@ -328,6 +433,49 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
     <div class='notice' id='crmProcessingStatusText' style='display:none'>Automate Processing status loading...</div>
     <div class='muted' id='crmProcessingRuntimeText'>No automated processing runs yet.</div>
     <div class='muted' id='crmProcessingSelectionText'>Selected automations: loading...</div>
+    <div class='processing-report'>
+      <div class='processing-report-header'>
+        <div>
+          <h3>Quick Report</h3>
+          <div class='muted'>Orders, errors, and total automation time by processing tool.</div>
+        </div>
+        <div class='processing-report-filters' aria-label='Processing report period'>
+          <button class='secondary tiny processing-report-filter active' data-period='daily' onclick="setCrmProcessingReportPeriod('daily')">Daily</button>
+          <button class='secondary tiny processing-report-filter' data-period='weekly' onclick="setCrmProcessingReportPeriod('weekly')">Weekly</button>
+          <button class='secondary tiny processing-report-filter' data-period='monthly' onclick="setCrmProcessingReportPeriod('monthly')">Monthly</button>
+          <button class='secondary tiny processing-report-filter' data-period='all' onclick="setCrmProcessingReportPeriod('all')">All Time</button>
+        </div>
+      </div>
+      <div class='processing-report-metrics'>
+        <div class='processing-report-metric'>
+          <div class='k'>Orders Processed</div>
+          <div class='v' id='crmProcessingReportOrders'>0</div>
+        </div>
+        <div class='processing-report-metric'>
+          <div class='k'>Time Saved</div>
+          <div class='v' id='crmProcessingReportTime'>0s</div>
+        </div>
+        <div class='processing-report-metric'>
+          <div class='k'>Total Errors</div>
+          <div class='v' id='crmProcessingReportErrors'>0</div>
+        </div>
+        <div class='processing-report-metric'>
+          <div class='k'>Automation Runs</div>
+          <div class='v' id='crmProcessingReportRuns'>0</div>
+        </div>
+      </div>
+      <div class='tbl-wrap'>
+        <table class='tbl'>
+          <thead><tr><th>Automation</th><th>Orders Processed</th><th>Time Saved</th><th>Errors</th><th>Runs</th></tr></thead>
+          <tbody id='crmProcessingReportRows'><tr><td colspan='5' class='muted'>Processing report loading...</td></tr></tbody>
+        </table>
+      </div>
+      <div class='muted' id='crmProcessingReportRangeText' style='margin-top:6px'>Time saved is the total runtime recorded across the selected automations.</div>
+      <div id='crmProcessingErrorMoreRow' style='display:none;align-items:center;justify-content:flex-end;gap:8px;margin-top:10px'>
+        <span class='bad' id='crmProcessingErrorMoreSummary'></span>
+        <button class='secondary tiny' type='button' onclick='openCrmProcessingErrorsDialog()'>View more</button>
+      </div>
+    </div>
   </div>
 
   <div class='card' style='margin-top:14px'>
@@ -591,6 +739,16 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
     </div>
     <div class='muted' id='crmAddressReportDialogSummary'>No report loaded.</div>
     <pre id='crmAddressReportDialogBody' style='white-space:pre-wrap;max-height:420px;overflow:auto;margin-top:12px'></pre>
+  </div>
+</dialog>
+<dialog id='crmProcessingErrorsDialog' style='max-width:820px;width:min(820px, calc(100vw - 32px));border:none;border-radius:14px;padding:0;'>
+  <div class='card' style='margin:0'>
+    <div class='row' style='justify-content:space-between;align-items:center'>
+      <h3 style='margin:0'>Automate Processing Errors</h3>
+      <button class='secondary' onclick='closeCrmProcessingErrorsDialog()'>Close</button>
+    </div>
+    <div class='muted' id='crmProcessingErrorsDialogSummary'>No errors loaded.</div>
+    <div id='crmProcessingErrorsDialogBody' style='max-height:480px;overflow:auto;margin-top:12px'></div>
   </div>
 </dialog>
 <dialog id='crmAddressRulesDialog' style='max-width:1160px;width:min(1160px, calc(100vw - 32px));border:none;border-radius:14px;padding:0;'>
@@ -872,6 +1030,31 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 
   <div class='card' style='margin-top:14px'>
     <div class='card-title-row'>
+      <h2>Hardware &amp; Automation Workers</h2>
+      <button class='secondary tiny' type='button' onclick='loadNodeRuntime(true)'>Auto-detect Again</button>
+    </div>
+    <div id='nodeHardwareSummary' class='hardware-summary'></div>
+    <div class='subgrid'>
+      <div class='field'>
+        <label for='workerModeSelect'>Worker Mode</label>
+        <select id='workerModeSelect' onchange='syncWorkerModeControls()'>
+          <option value='auto'>Auto-detect</option>
+          <option value='manual'>Manual override</option>
+        </select>
+      </div>
+      <div class='field'>
+        <label for='manualWorkerCountInput'>Manual Workers</label>
+        <input id='manualWorkerCountInput' type='number' min='1' max='8' step='1' value='1'>
+      </div>
+    </div>
+    <div class='notice' id='workerRecommendationText'>Detecting this computer...</div>
+    <div class='row'>
+      <button type='button' onclick='saveWorkerSettings(this)'>Save Worker Mode</button>
+    </div>
+  </div>
+
+  <div class='card' style='margin-top:14px'>
+    <div class='card-title-row'>
       <h2>CRM Settings</h2>
       <details class='section-note'>
         <summary>Read More</summary>
@@ -936,6 +1119,7 @@ let activeTab = 'automation';
 let queueVisible = false;
 let queuePayload = null;
 let queueExpandedTaskId = null;
+let nodeRuntimePayload = null;
 let queueDragTaskId = null;
 let settingsSaveTimer = null;
 let settingsSavePromise = Promise.resolve();
@@ -960,6 +1144,11 @@ const DEFAULT_TEMP_THRESHOLDS_C = {
 let temperatureUnit = loadTemperatureUnitPreference();
 let tempThresholdsC = loadTemperatureThresholdsPreference();
 let manualAutoOutTouched = false;
+let workHoursStatusPayload = null;
+let workHoursTickTimer = null;
+const WORK_PLAN_STORAGE_PREFIX = 'automation.workPlan.';
+const WORK_PLAN_DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const workPlanMemory = {};
 let powerCountdownPayload = null;
 let powerCountdownTickTimer = null;
 let slackLunchPayload = null;
@@ -969,6 +1158,7 @@ let consoleLastPayload = null;
 let crmProcessingStatusPayload = null;
 let crmProcessingPollTimer = null;
 let crmProcessingPollIntervalMs = 0;
+let crmProcessingReportPeriod = 'daily';
 let crmStatusPayload = null;
 let crmPollTimer = null;
 const CRM_HISTORY_PAGE_SIZE = 6;
@@ -994,6 +1184,7 @@ let crmAddressHistoryShowDiff = false;
 let crmAddressMode = 'single';
 let crmAddressModeDirty = false;
 const CRM_PROCESSING_STEP_LABELS = {
+  mass_emailer: 'Sheets Scanner',
   address_validator_batch: 'Address Validator (Batch)',
   product_separator: 'Product Separator',
   stock_unlocker: 'Stock Unlocker',
@@ -1023,6 +1214,7 @@ const CRM_LINK_SETTING_KEYS = [
   'CRM_LOGIN_URL',
   'CRM_LOCKED_URL',
   'CRM_UNLOCKER_FREE_URL',
+  'CRM_UNLOCKER_ALL_URL',
   'CRM_SHIPPING_FREE_URL',
   'CRM_SHIPPING_RUSH_URL',
   'CRM_SHIPPING_ALL_URL',
@@ -1031,6 +1223,8 @@ const CRM_LINK_SETTING_KEYS = [
   'CRM_813_ORDER_GOODS_URL',
   'CRM_813_BYPASS_URL',
   'CRM_ORDER_GOODS_RUSH_URL',
+  'CRM_ORDER_GOODS_FREE_URL',
+  'CRM_ORDER_GOODS_ALL_URL',
   'CRM_ORDER_GOODS_HIGH_VALUE_URL',
   'CRM_SHIPPING_BYPASS_URL',
   'CRM_SHIPPING_BYPASS_HIGH_VALUE_URL',
@@ -1051,6 +1245,7 @@ const CRM_LINK_LABEL_OVERRIDES = {
   CRM_LOGIN_URL: 'CRM Login',
   CRM_LOCKED_URL: 'Unlocker List',
   CRM_UNLOCKER_FREE_URL: 'Unlocker Free List',
+  CRM_UNLOCKER_ALL_URL: 'Unlocker All List',
   CRM_SHIPPING_FREE_URL: 'Validator Free List',
   CRM_SHIPPING_RUSH_URL: 'Validator Rush List',
   CRM_SHIPPING_ALL_URL: 'Validator All List',
@@ -1059,6 +1254,8 @@ const CRM_LINK_LABEL_OVERRIDES = {
   CRM_813_ORDER_GOODS_URL: '813 Order Goods List',
   CRM_813_BYPASS_URL: '813 Bypasser List',
   CRM_ORDER_GOODS_RUSH_URL: 'Order Goods Rush List',
+  CRM_ORDER_GOODS_FREE_URL: 'Order Goods Free List',
+  CRM_ORDER_GOODS_ALL_URL: 'Order Goods All List',
   CRM_ORDER_GOODS_HIGH_VALUE_URL: 'Order Goods High Value List',
   CRM_SHIPPING_BYPASS_URL: 'Bypasser Rush List',
   CRM_SHIPPING_BYPASS_HIGH_VALUE_URL: 'Bypasser High Value List',
@@ -1079,7 +1276,7 @@ const CRM_LINK_LABEL_OVERRIDES = {
 const CRM_LINK_SETTING_GROUPS = [
   {
     title: 'Free',
-    keys: ['CRM_SHIPPING_FREE_URL', 'PRODUCT_SEPARATOR_LIST_URL_FREE', 'CRM_UNLOCKER_FREE_URL'],
+    keys: ['CRM_SHIPPING_FREE_URL', 'PRODUCT_SEPARATOR_LIST_URL_FREE', 'CRM_UNLOCKER_FREE_URL', 'CRM_ORDER_GOODS_FREE_URL'],
   },
   {
     title: 'Rush',
@@ -1091,7 +1288,7 @@ const CRM_LINK_SETTING_GROUPS = [
   },
   {
     title: 'All',
-    keys: ['CRM_SHIPPING_ALL_URL', 'PRODUCT_SEPARATOR_LIST_URL_ALL'],
+    keys: ['CRM_SHIPPING_ALL_URL', 'PRODUCT_SEPARATOR_LIST_URL_ALL', 'CRM_UNLOCKER_ALL_URL', 'CRM_ORDER_GOODS_ALL_URL'],
   },
   {
     title: '813',
@@ -1116,7 +1313,11 @@ function isCrmRushLikeProcessingFilter(value) {
 
 function canCrmProcessingFilterRunUnlocker(value) {
   const key = normalizeCrmProcessingFilter(value);
-  return isCrmRushLikeProcessingFilter(key) || key === 'free';
+  return isCrmRushLikeProcessingFilter(key) || key === 'free' || key === 'all';
+}
+
+function canCrmProcessingFilterRunOrderGoods(value) {
+  return CRM_PROCESSING_FILTER_SEQUENCE.includes(normalizeCrmProcessingFilter(value));
 }
 
 function formatCrmProcessingStepLabel(stepKey) {
@@ -1142,14 +1343,15 @@ function normalizeCrmProcessingStepList(stepList, state = {}) {
   const processingFilter = normalizeCrmProcessingFilter(state && state.processing_filter);
   const rushLike = isCrmRushLikeProcessingFilter(processingFilter);
   const unlockerCapable = canCrmProcessingFilterRunUnlocker(processingFilter);
+  const canRunOrderGoods = canCrmProcessingFilterRunOrderGoods(processingFilter);
   const canRunOrderSupport = rushLike || processingFilter === '813';
-  const orderGoodsEnabled = state && canRunOrderSupport && state.order_goods_enabled;
+  const orderGoodsEnabled = state && canRunOrderGoods && state.order_goods_enabled;
   const shippingBypasserEnabled = state && canRunOrderSupport && state.shipping_bypasser_enabled;
   const pushBackEnabled = state && canRunOrderSupport && state.push_back_enabled;
   const source = Array.isArray(stepList) && stepList.length > 0
     ? stepList
     : [
-      processingFilter === 'all' || (state && state.address_validator_enabled) ? 'address_validator_batch' : '',
+      state && state.address_validator_enabled ? 'address_validator_batch' : '',
       state && processingFilter !== '813' && state.product_separator_enabled !== false ? 'product_separator' : '',
       state && state.stock_unlocker_enabled && unlockerCapable ? 'stock_unlocker' : '',
       orderGoodsEnabled ? 'order_goods' : '',
@@ -1169,8 +1371,8 @@ function crmProcessingAvailableStepsForFilter(processingFilter) {
   const steps = ['address_validator_batch'];
   if (filter !== '813') steps.push('product_separator');
   if (canCrmProcessingFilterRunUnlocker(filter)) steps.push('stock_unlocker');
+  if (canCrmProcessingFilterRunOrderGoods(filter)) steps.push('order_goods');
   if (rushLike || filter === '813') {
-    steps.push('order_goods');
     steps.push('shipping_bypasser');
     steps.push('push_back');
   }
@@ -1183,9 +1385,9 @@ function crmProcessingBulkPayload(processingFilter, enabled) {
   const canRunOrderSupport = rushLike || filter === '813';
   return {
     stock_unlocker_enabled: enabled && canCrmProcessingFilterRunUnlocker(filter),
-    address_validator_enabled: enabled || filter === 'all',
+    address_validator_enabled: enabled,
     product_separator_enabled: enabled && filter !== '813',
-    order_goods_enabled: enabled && canRunOrderSupport,
+    order_goods_enabled: enabled && canCrmProcessingFilterRunOrderGoods(filter),
     shipping_bypasser_enabled: enabled && canRunOrderSupport,
     push_back_enabled: enabled && canRunOrderSupport,
     processing_filter: filter,
@@ -1210,6 +1412,124 @@ function currentCrmProcessingOrderProgressLabel() {
   }
   const label = String(progress.label || '').trim();
   return /^\d+\s*\/\s*\d+$/.test(label) ? label.replace(/\s+/g, '') : '';
+}
+
+function setCrmProcessingReportPeriod(period) {
+  const normalized = ['daily', 'weekly', 'monthly', 'all'].includes(period) ? period : 'daily';
+  crmProcessingReportPeriod = normalized;
+  renderCrmProcessingReport(crmProcessingStatusPayload);
+}
+
+function renderCrmProcessingReport(payload) {
+  const report = payload && payload.report ? payload.report : {};
+  const periods = report && report.periods ? report.periods : {};
+  const period = periods[crmProcessingReportPeriod] || {};
+  const rows = Array.isArray(period.rows) ? period.rows : [];
+  const periodLabels = {
+    daily: 'Today',
+    weekly: 'Current week',
+    monthly: 'Current month',
+    all: 'All tracked time',
+  };
+  document.querySelectorAll('.processing-report-filter').forEach((button) => {
+    button.classList.toggle('active', button.dataset.period === crmProcessingReportPeriod);
+  });
+  document.getElementById('crmProcessingReportOrders').textContent = String(Number(period.total_orders_processed || 0));
+  document.getElementById('crmProcessingReportTime').textContent = fmtDuration(Number(period.total_duration_seconds || 0));
+  document.getElementById('crmProcessingReportErrors').textContent = String(Number(period.total_errors || 0));
+  document.getElementById('crmProcessingReportRuns').textContent = String(Number(period.total_runs || 0));
+
+  const rowsEl = document.getElementById('crmProcessingReportRows');
+  if (rowsEl) {
+    rowsEl.innerHTML = rows.length
+      ? rows.map((row) => {
+        const errorCount = Number(row && row.error_count || 0);
+        return `<tr><td>${esc(row && row.label ? row.label : CRM_PROCESSING_STEP_LABELS[row && row.key] || '-')}</td><td>${esc(String(Number(row && row.orders_processed || 0)))}</td><td>${esc(fmtDuration(Number(row && row.duration_seconds || 0)))}</td><td class='${errorCount > 0 ? 'bad' : ''}'>${esc(String(errorCount))}</td><td>${esc(String(Number(row && row.run_count || 0)))}</td></tr>`;
+      }).join('')
+      : "<tr><td colspan='5' class='muted'>No processing report data for this period yet.</td></tr>";
+  }
+
+  const rangeEl = document.getElementById('crmProcessingReportRangeText');
+  if (rangeEl) {
+    let trackingText = '';
+    if (crmProcessingReportPeriod === 'all' && report.tracking_started_at) {
+      trackingText = ` Tracking began ${fmtDateTime(report.tracking_started_at)}.`;
+    }
+    rangeEl.textContent = `${periodLabels[crmProcessingReportPeriod] || 'Selected period'}. Time saved is the total runtime recorded across the selected automations.${trackingText}`;
+  }
+  renderCrmProcessingErrorMore(payload);
+}
+
+function crmProcessingErrorGroups(payload = crmProcessingStatusPayload) {
+  const state = payload && payload.state ? payload.state : {};
+  const rows = Array.isArray(state.last_step_results) ? state.last_step_results : [];
+  return rows.map((row) => {
+    const sourceErrors = Array.isArray(row && row.errors) ? row.errors : [];
+    const hasRecordedError = !Boolean(row && row.success) || Number(row && row.error_count || 0) > 0;
+    const errors = sourceErrors.length > 0
+      ? sourceErrors
+      : (hasRecordedError ? [{
+          order_id: '',
+          status: 'Needs attention',
+          message: row && row.message ? row.message : 'Automation needs attention.',
+        }] : []);
+    return {
+      key: String(row && row.key || ''),
+      label: row && row.label ? row.label : CRM_PROCESSING_STEP_LABELS[row && row.key] || 'Automation',
+      errors,
+    };
+  }).filter((group) => group.errors.length > 0);
+}
+
+function renderCrmProcessingErrorMore(payload) {
+  const row = document.getElementById('crmProcessingErrorMoreRow');
+  const summary = document.getElementById('crmProcessingErrorMoreSummary');
+  if (!row || !summary) return;
+  const running = Boolean(payload && payload.running);
+  const groups = running ? [] : crmProcessingErrorGroups(payload);
+  const errorCount = groups.reduce((total, group) => total + group.errors.length, 0);
+  row.style.display = errorCount > 0 ? 'flex' : 'none';
+  summary.textContent = errorCount > 0
+    ? `${errorCount} error${errorCount === 1 ? '' : 's'} in the latest run.`
+    : '';
+}
+
+function openCrmProcessingErrorsDialog() {
+  const dialog = document.getElementById('crmProcessingErrorsDialog');
+  const summary = document.getElementById('crmProcessingErrorsDialogSummary');
+  const body = document.getElementById('crmProcessingErrorsDialogBody');
+  if (!dialog || !summary || !body) return;
+  const groups = crmProcessingErrorGroups();
+  const errorCount = groups.reduce((total, group) => total + group.errors.length, 0);
+  summary.textContent = errorCount > 0
+    ? `${errorCount} error${errorCount === 1 ? '' : 's'} grouped into ${groups.length} automation categor${groups.length === 1 ? 'y' : 'ies'}.`
+    : 'No errors were recorded for the latest Automate Processing run.';
+  body.innerHTML = groups.length > 0
+    ? groups.map((group) => {
+        const items = group.errors.map((error) => {
+          const orderId = String(error && error.order_id || '').trim();
+          const status = String(error && error.status || 'Needs attention').trim();
+          const message = String(error && error.message || 'Automation needs attention.').trim();
+          const orderText = orderId ? `<strong>Order ${esc(orderId)}</strong> — ` : '';
+          return `<li style='margin:0 0 8px'>${orderText}<span class='bad'>${esc(status)}</span>: ${esc(message)}</li>`;
+        }).join('');
+        return `<section style='border-top:1px solid #e2e8f0;padding-top:10px;margin-top:10px'><h4 style='margin:0 0 8px'>${esc(group.label)}</h4><ol style='margin:0;padding-left:22px'>${items}</ol></section>`;
+      }).join('')
+    : "<div class='muted'>No errors recorded.</div>";
+  if (typeof dialog.showModal === 'function') {
+    dialog.showModal();
+  } else {
+    const lines = groups.flatMap((group) => [
+      group.label,
+      ...group.errors.map((error) => `- ${error.order_id ? `Order ${error.order_id}: ` : ''}${error.status || 'Needs attention'}: ${error.message || ''}`),
+    ]);
+    alert(`Automate Processing Errors\n\n${lines.join('\n') || 'No errors recorded.'}`);
+  }
+}
+
+function closeCrmProcessingErrorsDialog() {
+  const dialog = document.getElementById('crmProcessingErrorsDialog');
+  if (dialog && dialog.open && typeof dialog.close === 'function') dialog.close();
 }
 
 function stripDuplicateCrmProcessingProgress(message, progressLabel) {
@@ -1352,9 +1672,35 @@ function syncSlackDayMessagePanels(day) {
   });
 }
 
+let appCsrfToken = null;
+
+async function ensureAppCsrfToken() {
+  if (appCsrfToken) return appCsrfToken;
+  const response = await fetch('/api/auth/status');
+  const status = await response.json().catch(() => ({}));
+  if (status.pin_required && !status.authenticated) {
+    window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
+    throw new Error('App PIN required.');
+  }
+  appCsrfToken = status.csrf_token || null;
+  return appCsrfToken;
+}
+
 async function api(path, opts = {}) {
-  const r = await fetch(path, opts);
+  const requestOptions = {...opts};
+  const method = String(requestOptions.method || 'GET').toUpperCase();
+  const controlTarget = String(localStorage.getItem('automationControlTargetNode') || '').trim();
+  requestOptions.headers = {...(requestOptions.headers || {})};
+  if (controlTarget) requestOptions.headers['X-Automation-Target-Node'] = controlTarget;
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    const token = await ensureAppCsrfToken();
+    if (token) requestOptions.headers['X-CSRF-Token'] = token;
+  }
+  const r = await fetch(path, requestOptions);
   const d = await r.json().catch(() => ({ success: false, message: 'Invalid JSON response' }));
+  if (r.status === 401) {
+    window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
+  }
   if (!r.ok) throw new Error((d && d.message) || 'Request failed');
   if (d && d.queue_task) setTimeout(() => { loadQueue(false); }, 0);
   return d;
@@ -1475,6 +1821,15 @@ function renderQueue(payload) {
   }
 
   const summary = document.getElementById('queueSummaryText');
+  const sharedMode = String(queuePayload.mode || '').toLowerCase() === 'shared';
+  const coordinator = queuePayload.coordinator || {};
+  renderControlTargetNodes(Array.isArray(queuePayload.nodes) ? queuePayload.nodes : []);
+  applyPlatformCapabilities();
+  const clearButton = document.getElementById('queueClearFinishedBtn');
+  if (clearButton) clearButton.style.display = sharedMode ? 'none' : '';
+  const resumeButton = document.getElementById('queueResumeBtn');
+  const resumeNeeded = sharedMode && !coordinator.eligible && /pause|manual review|interrupted/i.test(String(coordinator.block_reason || ''));
+  if (resumeButton) resumeButton.style.display = resumeNeeded ? '' : 'none';
   if (summary) {
     const queuedCount = Number(queuePayload.queued_count || 0);
     const idleCount = Number(queuePayload.idle_count || 0);
@@ -1483,7 +1838,9 @@ function renderQueue(payload) {
     const runningProgress = runningIsProcessing ? '' : queueTaskProgressLabel(running);
     const runningMessage = running && running.message ? String(running.message) : '';
     const runningDetail = [runningProgress, runningMessage].filter(Boolean).join(' | ');
-    summary.textContent = running
+    summary.textContent = coordinator.block_reason && !coordinator.eligible
+      ? `Queue locked: ${coordinator.block_reason}`
+      : running
       ? `Running: ${running.label || 'Automation'}${runningDetail ? ` | ${runningDetail}` : ''} | ${queuedCount} waiting | ${idleCount} idle`
       : (queuedCount || idleCount ? `${queuedCount} waiting | ${idleCount} idle` : 'No waiting tasks');
   }
@@ -1498,35 +1855,100 @@ function renderQueue(payload) {
   root.innerHTML = tasks.map((task) => {
     const status = String(task.status || '').toLowerCase();
     const canCancel = status === 'queued' || status === 'running' || status === 'idle';
-    const canDelete = status === 'completed' || status === 'failed';
-    const draggable = status === 'queued';
+    const canDelete = !sharedMode && (status === 'completed' || status === 'failed');
+    const draggable = !sharedMode && status === 'queued';
     const dragGlyph = draggable ? '&#8942;&#8942;' : '';
     const pos = status === 'queued' && task.position ? `#${task.position} ` : '';
     const details = task.details ? ` | ${task.details}` : '';
+    const source = task.source_display_name
+      ? ` | ${task.source_icon || '💻'} From ${task.source_display_name}`
+      : '';
+    const runner = task.runner_icon && task.claimed_by_node
+      ? ` | ${task.runner_icon} Running on ${task.claimed_by_node}`
+      : '';
     const advanced = task.advanced_summary ? ` | ${task.advanced_summary}` : '';
     const isProcessingTask = String(task.label || '').toLowerCase().includes('processing');
     const orderProgressLabel = isProcessingTask ? currentCrmProcessingOrderProgressLabel() : '';
     const messageText = isProcessingTask
       ? stripDuplicateCrmProcessingProgress(status === 'idle' ? '' : (task.message || ''), orderProgressLabel)
-      : (status === 'idle' ? '' : (task.message || ''));
+      : (task.waiting_reason || (status === 'idle' ? '' : (task.message || '')));
     const progressLabel = isProcessingTask ? '' : queueTaskProgressLabel(task);
     const progressText = progressLabel && !String(messageText).includes(progressLabel) ? ` | ${progressLabel}` : '';
     const msg = messageText ? ` | ${messageText}` : '';
     const canExpand = task.queue_mode === 'repeat';
     const expanded = canExpand && queueExpandedTaskId === task.id;
+    const targetOptions = sharedMode && status === 'queued'
+      ? [
+          `<option value='' ${task.target_node ? '' : 'selected'}>Any eligible computer</option>`,
+          ...(Array.isArray(queuePayload.nodes) ? queuePayload.nodes.map((node) => {
+            const selected = String(task.target_node || '') === String(node.node_key || '') ? 'selected' : '';
+            const state = node.online ? 'online' : 'offline';
+            return `<option value='${esc(node.node_key || '')}' ${selected}>${esc(node.os_icon || '💻')} ${esc(node.display_name || node.node_key || 'Computer')} (${state})</option>`;
+          }) : []),
+        ].join('')
+      : '';
+    const targetControl = targetOptions
+      ? `<select class='queue-target-select' title='Safely reassign without changing FIFO position' onchange="reassignQueueTask('${esc(task.id || '')}', this.value)">${targetOptions}</select>`
+      : '';
     return `
       <div class='queue-item ${esc(status)}' data-task-id='${esc(task.id || '')}' draggable='${draggable ? 'true' : 'false'}'
         ondragstart='handleQueueDragStart(event)' ondragover='handleQueueDragOver(event)' ondrop='handleQueueDrop(event)' ondragend='handleQueueDragEnd(event)'>
         <div class='queue-drag'>${dragGlyph}</div>
         <div ${canExpand ? `onclick="toggleQueueRunHistory('${esc(task.id || '')}')" style='cursor:pointer' title='Open repeat run history'` : ''}>
           <div class='queue-title'>${esc(pos)}${esc(task.label || 'Automation Task')}</div>
-          <div class='queue-meta'>${esc(task.category || 'Automation')}${esc(details)}${esc(advanced)} | ${esc(queueTimeText(task))}${esc(progressText)}${esc(msg)}</div>
+          <div class='queue-meta'>${esc(task.category || 'Automation')}${esc(details)}${esc(advanced)}${esc(source)}${esc(runner)} | ${esc(queueTimeText(task))}${esc(progressText)}${esc(msg)}</div>
         </div>
         <div class='queue-status ${esc(status)}'>${esc(queueStatusLabel(status))}</div>
-        ${canCancel ? `<button class='danger queue-cancel-btn' title='Cancel task' aria-label='Cancel task' onclick="cancelQueueTask('${esc(task.id || '')}')">X</button>` : (canDelete ? `<button class='secondary tiny' title='Delete queue entry' onclick="deleteQueueTask('${esc(task.id || '')}')">Delete</button>` : "<span></span>")}
+        <div class='queue-actions'>${targetControl}${canCancel ? `<button class='danger queue-cancel-btn' title='Cancel task' aria-label='Cancel task' onclick="cancelQueueTask('${esc(task.id || '')}')">X</button>` : (canDelete ? `<button class='secondary tiny' title='Delete queue entry' onclick="deleteQueueTask('${esc(task.id || '')}')">Delete</button>` : "<span></span>")}</div>
         ${expanded ? `<div class='queue-runs'>${queueRunHistoryHtml(task)}</div>` : ''}
       </div>`;
   }).join('');
+}
+
+function renderControlTargetNodes(nodes) {
+  const select = document.getElementById('controlTargetSelect');
+  if (!select) return;
+  const saved = String(localStorage.getItem('automationControlTargetNode') || '').trim();
+  select.innerHTML = `<option value=''>Any available computer</option>` + nodes.map((node) => {
+    const online = node.online ? 'online' : 'offline';
+    const selected = saved === String(node.node_key || '') ? 'selected' : '';
+    return `<option value='${esc(node.node_key || '')}' ${selected}>${esc(node.os_icon || '💻')} ${esc(node.display_name || node.node_key || 'Computer')} (${online})</option>`;
+  }).join('');
+}
+
+async function changeControlTarget(nodeKey) {
+  const value = String(nodeKey || '').trim();
+  if (value) localStorage.setItem('automationControlTargetNode', value);
+  else localStorage.removeItem('automationControlTargetNode');
+  applyPlatformCapabilities();
+  await reloadAll();
+}
+
+async function reassignQueueTask(taskId, targetNode) {
+  try {
+    const d = await api(`/api/queue/${encodeURIComponent(taskId)}/reassign`, {
+      method: 'POST',
+      body: JSON.stringify({target_node: targetNode || null}),
+    });
+    renderQueue(d);
+  } catch (e) {
+    alert('Safe reassignment failed: ' + e.message);
+    await loadQueue(false);
+  }
+}
+
+async function resumeSharedQueue() {
+  const note = window.prompt('Describe what you checked in the CRM before resuming the queue:');
+  if (!note) return;
+  try {
+    const d = await api('/api/queue/resume', {
+      method: 'POST',
+      body: JSON.stringify({review_note: note}),
+    });
+    renderQueue(d);
+  } catch (e) {
+    alert('Queue resume failed: ' + e.message);
+  }
 }
 
 async function loadQueue(showBusy = false) {
@@ -1837,6 +2259,113 @@ function setCrmAutoSplitterLocalMessage(headline, detail = '') {
 }
 function setCrmAddressStatusText(msg) { const el = document.getElementById('crmAddressStatusText'); if (el) el.textContent = msg; }
 
+function localPlatformCapabilities() {
+  const targetNode = String(localStorage.getItem('automationControlTargetNode') || '').trim();
+  if (targetNode && queuePayload && Array.isArray(queuePayload.nodes)) {
+    const selected = queuePayload.nodes.find((node) => String(node.node_key || '') === targetNode);
+    if (selected && selected.capabilities) return selected.capabilities;
+  }
+  const platform = nodeRuntimePayload && nodeRuntimePayload.platform ? nodeRuntimePayload.platform : {};
+  return platform && platform.capabilities ? platform.capabilities : {};
+}
+
+function platformFeatureAvailable(name) {
+  const capabilities = localPlatformCapabilities();
+  return capabilities[name] !== false;
+}
+
+function applyPlatformCapabilities() {
+  const windowsOnly = nodeRuntimePayload && nodeRuntimePayload.windows_only_message
+    ? nodeRuntimePayload.windows_only_message
+    : 'Windows only';
+  const mappings = [
+    ['tabBtnMetrics', 'metrics'],
+    ['tabBtnPower', 'system_power'],
+  ];
+  for (const [buttonId, capability] of mappings) {
+    const button = document.getElementById(buttonId);
+    if (!button) continue;
+    const disabled = !platformFeatureAvailable(capability);
+    button.classList.toggle('platform-disabled', disabled);
+    button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    button.title = disabled ? windowsOnly : '';
+  }
+}
+
+function syncWorkerModeControls() {
+  const modeSelect = document.getElementById('workerModeSelect');
+  const manualInput = document.getElementById('manualWorkerCountInput');
+  const mode = modeSelect ? String(modeSelect.value || 'auto') : 'auto';
+  if (manualInput) manualInput.disabled = mode !== 'manual';
+  const crmInput = document.getElementById('crmSettingsParallelWorkersInput');
+  if (crmInput) {
+    crmInput.disabled = mode !== 'manual';
+    crmInput.title = mode === 'manual' ? '' : 'Auto-detect controls worker count for this computer.';
+    if (mode !== 'manual' && nodeRuntimePayload && nodeRuntimePayload.worker_settings) {
+      crmInput.value = String(nodeRuntimePayload.worker_settings.effective_workers || 1);
+    }
+  }
+}
+
+function renderNodeRuntime(payload) {
+  nodeRuntimePayload = payload || {};
+  const platform = nodeRuntimePayload.platform || {};
+  const settings = nodeRuntimePayload.worker_settings || {};
+  const recommendation = settings.recommendation || {};
+  const git = nodeRuntimePayload.git || {};
+  const summary = document.getElementById('nodeHardwareSummary');
+  if (summary) {
+    const rows = [
+      ['Computer', platform.node_name || '-'],
+      ['Platform', `${platform.os_display_name || '-'} / ${platform.architecture || '-'}`],
+      ['CPU', `${platform.physical_cores || '-'} physical / ${platform.logical_cores || '-'} logical`],
+      ['Memory', `${platform.available_ram_gb || 0} GB available / ${platform.total_ram_gb || 0} GB`],
+    ];
+    summary.innerHTML = rows.map(([key, value]) => `<div class='metric'><div class='k'>${esc(key)}</div><div class='v'>${esc(value)}</div></div>`).join('');
+  }
+  const modeSelect = document.getElementById('workerModeSelect');
+  const manualInput = document.getElementById('manualWorkerCountInput');
+  if (modeSelect) modeSelect.value = settings.mode === 'manual' ? 'manual' : 'auto';
+  if (manualInput) manualInput.value = String(settings.manual_workers || 1);
+  const note = document.getElementById('workerRecommendationText');
+  if (note) {
+    const commitText = git.short_commit ? ` Git ${git.short_commit}${git.dirty ? ' (local changes)' : ''}.` : '';
+    note.textContent = `Recommended ${recommendation.recommended_workers || settings.effective_workers || 1} worker(s); effective ${settings.effective_workers || 1}. CPU cap ${recommendation.cpu_cap || '-'}, total-RAM cap ${recommendation.total_memory_cap || '-'}, available-RAM cap ${recommendation.available_memory_cap || '-'}.${commitText}`;
+  }
+  applyPlatformCapabilities();
+  syncWorkerModeControls();
+}
+
+async function loadNodeRuntime(showBusy = false) {
+  const note = document.getElementById('workerRecommendationText');
+  if (showBusy && note) note.textContent = 'Auto-detecting this computer...';
+  try {
+    const payload = await api('/api/node-runtime');
+    renderNodeRuntime(payload);
+    return payload;
+  } catch (error) {
+    if (note) note.textContent = 'Hardware detection failed: ' + error.message;
+    return null;
+  }
+}
+
+async function saveWorkerSettings(button = null) {
+  return withButtonBusy(button, 'Saving...', async () => {
+    const modeSelect = document.getElementById('workerModeSelect');
+    const manualInput = document.getElementById('manualWorkerCountInput');
+    const payload = await api('/api/worker-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        worker_mode: modeSelect ? modeSelect.value : 'auto',
+        manual_workers: normalizeCrmParallelWorkers(manualInput ? manualInput.value : 1),
+      }),
+    });
+    renderNodeRuntime(payload);
+    setStatus(payload.message || 'Worker settings saved.', 'settings');
+  });
+}
+
 function storageGet(key) {
   try { return window.localStorage.getItem(key); } catch (_) { return null; }
 }
@@ -2063,6 +2592,18 @@ function renderTemperatureGauges(payload) {
 }
 
 function setActiveTab(tabName) {
+  const requestedCapability = tabName === 'metrics' ? 'metrics' : (tabName === 'power' ? 'system_power' : null);
+  if (requestedCapability && !platformFeatureAvailable(requestedCapability)) {
+    const notice = document.getElementById('platformCapabilityNotice');
+    if (notice) {
+      notice.textContent = 'Windows only';
+      notice.classList.add('active');
+    }
+    setStatus('Windows only');
+    return;
+  }
+  const capabilityNotice = document.getElementById('platformCapabilityNotice');
+  if (capabilityNotice) capabilityNotice.classList.remove('active');
   activeTab = ['automation', 'processing', 'console', 'development', 'metrics', 'power', 'settings'].includes(tabName) ? tabName : 'automation';
   const isAutomation = activeTab === 'automation';
   const isProcessing = activeTab === 'processing';
@@ -2316,6 +2857,12 @@ async function loadDesktopServerRuntime(showBusy = true) {
 }
 
 async function loadDesktopMetrics(showBusy = true) {
+  if (!platformFeatureAvailable('metrics')) {
+    setMetricsStatus('Windows only');
+    const errorEl = document.getElementById('metricsErrorText');
+    if (errorEl) errorEl.textContent = 'Windows only';
+    return null;
+  }
   if (showBusy) {
     setMetricsStatus('Desktop metrics status: refreshing...');
   }
@@ -2589,6 +3136,10 @@ async function toggleSlackLunchTest(button = null) {
 }
 
 async function loadPowerStatus(showBusy = true) {
+  if (!platformFeatureAvailable('system_power')) {
+    setPowerStatus('Windows only');
+    return null;
+  }
   if (showBusy) {
     setPowerStatus('System power status: refreshing...');
   }
@@ -2713,7 +3264,7 @@ async function callPowerEndpoint(path, button = null, busyLabel = 'Automation un
   return withButtonBusy(button, busyLabel, async () => {
   let resultMsg = '';
   try {
-    const d = await api(path, { method: 'GET' });
+    const d = await api(path, { method: 'POST' });
     resultMsg = d.message || (path + ' OK');
   } catch (e) {
     resultMsg = path + ' failed: ' + e.message;
@@ -2869,6 +3420,338 @@ function renderHoursTable(state) {
     }
   }
   renderSyncHistory(state);
+}
+
+function parseWorkWeekDate(dateIso) {
+  const match = String(dateIso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const value = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(value.getTime()) ? null : value;
+}
+
+function workDateIso(dateValue) {
+  const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function workWeekDates(weekStartIso) {
+  const start = parseWorkWeekDate(weekStartIso);
+  if (!start) return [];
+  return WORK_PLAN_DAY_NAMES.map((name, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return { name, date, dateIso: workDateIso(date) };
+  });
+}
+
+function workPlanStorageKey(weekStartIso) {
+  return WORK_PLAN_STORAGE_PREFIX + String(weekStartIso || 'current');
+}
+
+function defaultWorkPlanDates(weekStartIso) {
+  const todayIso = workDateIso(new Date());
+  return new Set(workWeekDates(weekStartIso).filter((day) => day.dateIso >= todayIso).map((day) => day.dateIso));
+}
+
+function loadWorkPlanDates(weekStartIso) {
+  const defaults = defaultWorkPlanDates(weekStartIso);
+  if (Array.isArray(workPlanMemory[weekStartIso])) return new Set(workPlanMemory[weekStartIso]);
+  try {
+    const stored = JSON.parse(localStorage.getItem(workPlanStorageKey(weekStartIso)) || 'null');
+    if (!stored || !Array.isArray(stored.enabled_dates)) return defaults;
+    const validDates = new Set(workWeekDates(weekStartIso).map((day) => day.dateIso));
+    const enabledDates = stored.enabled_dates.map(String).filter((dateIso) => validDates.has(dateIso));
+    workPlanMemory[weekStartIso] = enabledDates;
+    return new Set(enabledDates);
+  } catch (_error) {
+    return defaults;
+  }
+}
+
+function saveWorkPlanDates(weekStartIso, enabledDates) {
+  workPlanMemory[weekStartIso] = Array.from(enabledDates).sort();
+  try {
+    localStorage.setItem(workPlanStorageKey(weekStartIso), JSON.stringify({
+      week_start: weekStartIso,
+      enabled_dates: workPlanMemory[weekStartIso],
+    }));
+  } catch (_error) {
+    // Local storage can be unavailable in locked-down browser sessions; the planner still works for this page load.
+  }
+}
+
+function formatWorkTimer(hours) {
+  const totalSeconds = Math.max(0, Math.floor((Number(hours) || 0) * 3600));
+  const hourPart = Math.floor(totalSeconds / 3600);
+  const minutePart = Math.floor((totalSeconds % 3600) / 60);
+  const secondPart = totalSeconds % 60;
+  return `${String(hourPart).padStart(2, '0')}:${String(minutePart).padStart(2, '0')}:${String(secondPart).padStart(2, '0')}`;
+}
+
+function formatWorkHoursMinutes(hours) {
+  const totalMinutes = Math.max(0, Math.round((Number(hours) || 0) * 60));
+  const hourPart = Math.floor(totalMinutes / 60);
+  const minutePart = totalMinutes % 60;
+  if (hourPart <= 0) return `${minutePart}m`;
+  return `${hourPart}h ${String(minutePart).padStart(2, '0')}m`;
+}
+
+function liveWorkHoursSnapshot(payload) {
+  const state = payload && payload.state ? payload.state : {};
+  const autoClock = payload && payload.auto_clock ? payload.auto_clock : {};
+  const baselineHours = Math.max(0, Number(state.total_paid_hours) || 0);
+  const capHours = Math.max(0, Number(payload && payload.cap_hours) || 0);
+  const capped = Boolean(payload && payload.capped);
+  const active = state && state.active_shift && typeof state.active_shift === 'object' ? state.active_shift : null;
+  const clockInMs = active && active.clock_in_at ? new Date(active.clock_in_at).getTime() : NaN;
+  const activeDay = active && active.date && state.days && state.days[active.date] ? state.days[active.date] : {};
+  const isActive = Boolean(active && Number.isFinite(clockInMs) && !(activeDay && activeDay.clock_out_at));
+  const grossActiveHours = isActive ? Math.max(0, (Date.now() - clockInMs) / 3600000) : 0;
+  const breakMinutes = Math.max(0, Number(
+    autoClock.break_minutes != null ? autoClock.break_minutes : payload && payload.break_minutes
+  ) || 0);
+  const breakAfterHours = Math.max(0, Number(autoClock.break_applies_after_hours) || 4);
+  const activePaidHours = isActive
+    ? Math.max(0, grossActiveHours - (grossActiveHours > breakAfterHours ? breakMinutes / 60 : 0))
+    : 0;
+  const accumulatedHours = baselineHours + activePaidHours;
+  const remainingHours = capped ? Math.max(0, capHours - accumulatedHours) : null;
+  return {
+    state,
+    active,
+    isActive,
+    clockInMs,
+    baselineHours,
+    activePaidHours,
+    accumulatedHours,
+    remainingHours,
+    capHours,
+    capped,
+    breakMinutes,
+    breakAfterHours,
+  };
+}
+
+function ensureWorkPlanDayButtons(payload, force = false) {
+  const container = document.getElementById('workPredictionDays');
+  const state = payload && payload.state ? payload.state : {};
+  const weekStartIso = String(state.week_start || '');
+  if (!container || !weekStartIso) return;
+  if (!force && container.dataset.weekStart === weekStartIso && container.children.length === 7) return;
+
+  container.innerHTML = '';
+  container.dataset.weekStart = weekStartIso;
+  const todayIso = workDateIso(new Date());
+  for (const day of workWeekDates(weekStartIso)) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'work-day-toggle';
+    button.dataset.date = day.dateIso;
+    button.setAttribute('aria-pressed', 'false');
+    button.title = `Toggle ${day.name} in the weekly work prediction`;
+    if (day.dateIso === todayIso) button.classList.add('today');
+
+    const name = document.createElement('span');
+    name.className = 'work-day-name';
+    name.textContent = day.name;
+    const date = document.createElement('span');
+    date.className = 'work-day-date';
+    date.textContent = day.date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + (day.dateIso === todayIso ? ' • Today' : '');
+    const hours = document.createElement('span');
+    hours.className = 'work-day-hours';
+    hours.textContent = 'Loading';
+    const stateText = document.createElement('span');
+    stateText.className = 'work-day-state';
+    stateText.textContent = 'Tap to toggle';
+    button.append(name, date, hours, stateText);
+    button.addEventListener('click', () => toggleWorkPlanDay(day.dateIso));
+    container.appendChild(button);
+  }
+}
+
+function toggleWorkPlanDay(dateIso) {
+  const payload = workHoursStatusPayload;
+  const state = payload && payload.state ? payload.state : {};
+  const weekStartIso = String(state.week_start || '');
+  if (!weekStartIso) return;
+  const enabledDates = loadWorkPlanDates(weekStartIso);
+  if (enabledDates.has(dateIso)) enabledDates.delete(dateIso);
+  else enabledDates.add(dateIso);
+  saveWorkPlanDates(weekStartIso, enabledDates);
+  updateWorkHoursVisual();
+}
+
+function ensureWeeklyCapInputWiring() {
+  const input = document.getElementById('weeklyCapHoursInput');
+  if (!input || input.dataset.bound === '1') return;
+  input.addEventListener('input', () => {
+    input.dataset.dirty = '1';
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    saveWeeklyHoursCap(document.getElementById('weeklyCapHoursSaveBtn'));
+  });
+  input.dataset.bound = '1';
+}
+
+async function saveWeeklyHoursCap(button = null) {
+  return withButtonBusy(button, 'Saving...', async () => {
+    const input = document.getElementById('weeklyCapHoursInput');
+    const capHours = Number(input && input.value);
+    if (!Number.isFinite(capHours) || capHours <= 0 || capHours > 168) {
+      setStatus('Weekly cap must be a number greater than 0 and no more than 168 hours.');
+      if (input) input.focus();
+      return;
+    }
+
+    try {
+      await settingsSavePromise.catch(() => null);
+      const result = await api('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: { WORK_CLOCK_CAP_HOURS: capHours } }),
+      });
+      if (input) {
+        input.value = String(capHours);
+        input.dataset.dirty = '0';
+      }
+      const settingsInput = fieldMap.WORK_CLOCK_CAP_HOURS;
+      if (settingsInput) settingsInput.value = String(capHours);
+      syncLastConfigGroupsFromValues({ WORK_CLOCK_CAP_HOURS: capHours });
+      await loadStatus(false);
+      setStatus(`Weekly hours cap updated to ${formatWorkHoursMinutes(capHours)}. ${result.message || ''}`.trim());
+    } catch (error) {
+      setStatus('Weekly cap update failed: ' + error.message);
+    }
+  });
+}
+
+function updateWorkPlanVisual(snapshot) {
+  const payload = workHoursStatusPayload;
+  const state = snapshot && snapshot.state ? snapshot.state : {};
+  const weekStartIso = String(state.week_start || '');
+  const summary = document.getElementById('workPlanSummary');
+  const breakNote = document.getElementById('workPlanBreakNote');
+  if (!weekStartIso) {
+    if (summary) summary.textContent = 'Prediction unavailable';
+    if (breakNote) breakNote.textContent = '';
+    return;
+  }
+
+  ensureWorkPlanDayButtons(payload);
+  const enabledDates = loadWorkPlanDates(weekStartIso);
+  const enabledCount = enabledDates.size;
+  const perDayHours = snapshot.capped && enabledCount > 0 ? snapshot.remainingHours / enabledCount : null;
+  const todayIso = workDateIso(new Date());
+  document.querySelectorAll('#workPredictionDays .work-day-toggle').forEach((button) => {
+    const dateIso = String(button.dataset.date || '');
+    const enabled = enabledDates.has(dateIso);
+    const hours = button.querySelector('.work-day-hours');
+    const stateText = button.querySelector('.work-day-state');
+    button.classList.toggle('active', enabled);
+    button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    if (hours) {
+      hours.textContent = enabled
+        ? (snapshot.capped ? formatWorkHoursMinutes(perDayHours) : 'No cap')
+        : 'Off';
+    }
+    if (stateText) {
+      stateText.textContent = enabled
+        ? (dateIso === todayIso && snapshot.isActive ? 'Paid time from now' : 'Remaining paid target')
+        : 'Not planned';
+    }
+  });
+
+  if (!snapshot.capped) {
+    if (summary) summary.textContent = 'Enable capped mode for predictions';
+    if (breakNote) breakNote.textContent = 'The prediction calculator needs WORK_CLOCK_CAPPED enabled.';
+  } else if (snapshot.remainingHours <= 0) {
+    if (summary) summary.textContent = 'Weekly cap reached';
+    if (breakNote) breakNote.textContent = `You have reached the ${formatWorkHoursMinutes(snapshot.capHours)} weekly cap.`;
+  } else if (enabledCount <= 0) {
+    if (summary) summary.textContent = 'Select at least one work day';
+    if (breakNote) breakNote.textContent = `${formatWorkHoursMinutes(snapshot.remainingHours)} remains before the weekly cap.`;
+  } else {
+    if (summary) summary.textContent = `${enabledCount} day${enabledCount === 1 ? '' : 's'} • ${formatWorkHoursMinutes(perDayHours)} each`;
+    if (breakNote) {
+      const breakRule = snapshot.breakMinutes > 0 && perDayHours > snapshot.breakAfterHours
+        ? ` Plan an additional ${snapshot.breakMinutes}m unpaid break on days over ${formatWorkHoursMinutes(snapshot.breakAfterHours)}.`
+        : '';
+      breakNote.textContent = `${formatWorkHoursMinutes(snapshot.remainingHours)} paid time remains.${breakRule}`;
+    }
+  }
+}
+
+function updateWorkHoursVisual() {
+  const payload = workHoursStatusPayload;
+  const accumulatedEl = document.getElementById('weeklyAccumulatedTimer');
+  const remainingEl = document.getElementById('weeklyRemainingTimer');
+  if (!payload) {
+    if (accumulatedEl) accumulatedEl.textContent = '--:--:--';
+    if (remainingEl) remainingEl.textContent = '--:--:--';
+    return;
+  }
+
+  const snapshot = liveWorkHoursSnapshot(payload);
+  const accumulatedCard = document.getElementById('weeklyAccumulatedTimerCard');
+  const remainingCard = document.getElementById('weeklyRemainingTimerCard');
+  const accumulatedNote = document.getElementById('weeklyAccumulatedNote');
+  const remainingNote = document.getElementById('weeklyRemainingNote');
+  const stateBadge = document.getElementById('workClockStateBadge');
+  const rangeText = document.getElementById('workHoursRangeText');
+  const progress = document.getElementById('workHoursProgressFill');
+  const capInput = document.getElementById('weeklyCapHoursInput');
+
+  if (accumulatedEl) accumulatedEl.textContent = formatWorkTimer(snapshot.accumulatedHours);
+  if (remainingEl) remainingEl.textContent = snapshot.capped ? formatWorkTimer(snapshot.remainingHours) : 'NO CAP';
+  if (capInput && capInput.dataset.dirty !== '1') capInput.value = String(snapshot.capHours);
+  if (accumulatedCard) accumulatedCard.classList.toggle('live', snapshot.isActive);
+  if (remainingCard) remainingCard.classList.toggle('live', snapshot.isActive && snapshot.capped && snapshot.remainingHours > 0);
+  if (stateBadge) stateBadge.textContent = snapshot.isActive ? 'Clocked In • Live' : 'Clocked Out • Paused';
+  if (accumulatedNote) {
+    accumulatedNote.textContent = snapshot.isActive
+      ? `Live paid-hours estimate since ${new Date(snapshot.clockInMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+      : 'Paused at the latest saved or synced total';
+  }
+  if (remainingNote) {
+    remainingNote.textContent = snapshot.capped
+      ? `${formatWorkHoursMinutes(snapshot.accumulatedHours)} of ${formatWorkHoursMinutes(snapshot.capHours)} accumulated`
+      : 'Weekly capped mode is currently disabled';
+  }
+  if (progress) {
+    const percentage = snapshot.capped && snapshot.capHours > 0
+      ? Math.max(0, Math.min(100, (snapshot.accumulatedHours / snapshot.capHours) * 100))
+      : 0;
+    progress.style.width = `${percentage.toFixed(2)}%`;
+  }
+
+  const weekDates = workWeekDates(snapshot.state.week_start);
+  if (rangeText && weekDates.length === 7) {
+    const first = weekDates[0].date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    const last = weekDates[6].date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    rangeText.textContent = `${first} - ${last}`;
+  }
+  updateWorkPlanVisual(snapshot);
+}
+
+function setWorkHoursStatusPayload(payload) {
+  const previousWeek = workHoursStatusPayload && workHoursStatusPayload.state
+    ? String(workHoursStatusPayload.state.week_start || '')
+    : '';
+  const nextWeek = payload && payload.state ? String(payload.state.week_start || '') : '';
+  workHoursStatusPayload = payload || null;
+  ensureWorkPlanDayButtons(workHoursStatusPayload, previousWeek !== nextWeek);
+  updateWorkHoursVisual();
+}
+
+function startWorkHoursTimer() {
+  if (workHoursTickTimer) clearInterval(workHoursTickTimer);
+  workHoursTickTimer = setInterval(updateWorkHoursVisual, 250);
 }
 
 function renderAutoClockInfo(payload) {
@@ -3324,12 +4207,14 @@ function collectConfigValues() {
 function collectCrmPreferenceValues() {
   const batchInput = document.getElementById('crmSettingsBatchSizeInput');
   const parallelInput = document.getElementById('crmSettingsParallelWorkersInput');
-  return {
-    address: {
-      batch_size: normalizeCrmBatchPreferenceInput(batchInput ? batchInput.value : 0),
-      parallel_workers: normalizeCrmParallelWorkers(parallelInput ? parallelInput.value : 1),
-    },
+  const address = {
+    batch_size: normalizeCrmBatchPreferenceInput(batchInput ? batchInput.value : 0),
   };
+  const modeSelect = document.getElementById('workerModeSelect');
+  if (!modeSelect || modeSelect.value === 'manual') {
+    address.parallel_workers = normalizeCrmParallelWorkers(parallelInput ? parallelInput.value : 1);
+  }
+  return { address };
 }
 
 function syncLastConfigGroupsFromValues(values) {
@@ -3605,17 +4490,16 @@ function renderCrmProcessingSelectionButtons(state = {}) {
   };
   const rushLike = isCrmRushLikeProcessingFilter(processingFilter);
   const unlockerCapable = canCrmProcessingFilterRunUnlocker(processingFilter);
+  const canRunOrderGoods = canCrmProcessingFilterRunOrderGoods(processingFilter);
   const canRunOrderSupport = rushLike || processingFilter === '813';
   const canRunSeparator = processingFilter !== '813';
   if (addressBtn) {
     const enabled = selectedSteps.includes('address_validator_batch');
     addressBtn.classList.toggle('active', enabled);
-    addressBtn.disabled = processingFilter === 'all';
+    addressBtn.disabled = false;
     addressBtn.classList.remove('processing-disabled');
     addressBtn.textContent = 'Validator';
-    addressBtn.title = processingFilter === 'all'
-      ? 'All mode always includes Address Validator.'
-      : 'Toggle batch Address Validator in Automate Processing.';
+    addressBtn.title = 'Toggle batch Address Validator in Automate Processing.';
   }
   if (separatorBtn) {
     const enabled = selectedSteps.includes('product_separator');
@@ -3634,18 +4518,16 @@ function renderCrmProcessingSelectionButtons(state = {}) {
     unlockBtn.disabled = !unlockerCapable;
     unlockBtn.textContent = 'Unlocker';
     unlockBtn.title = !unlockerCapable
-      ? `Unlocker is available in Rush, High Value, and Free modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
+      ? `Unlocker is available in Rush, High Value, Free, and ALL modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
       : 'Toggle Stock Unlocker in Automate Processing.';
   }
   if (orderGoodsBtn) {
     const enabled = selectedSteps.includes('order_goods');
     orderGoodsBtn.classList.toggle('active', enabled);
-    orderGoodsBtn.classList.toggle('processing-disabled', !canRunOrderSupport);
-    orderGoodsBtn.disabled = !canRunOrderSupport;
+    orderGoodsBtn.classList.toggle('processing-disabled', !canRunOrderGoods);
+    orderGoodsBtn.disabled = !canRunOrderGoods;
     orderGoodsBtn.textContent = 'Order Goods';
-    orderGoodsBtn.title = !canRunOrderSupport
-      ? `Order Goods is available in Rush, High Value, and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
-      : 'Toggle Order Goods in Automate Processing.';
+    orderGoodsBtn.title = 'Toggle Order Goods in Automate Processing.';
   }
   if (shippingBypasserBtn) {
     const enabled = selectedSteps.includes('shipping_bypasser');
@@ -3745,6 +4627,7 @@ function renderCrmProcessingStatus(payload) {
   document.getElementById('crmProcessingStatusText').textContent = headline;
   document.getElementById('crmProcessingRuntimeText').textContent = runtimeTextWithTiming;
   document.getElementById('crmProcessingSelectionText').textContent = `Automate selection: ${selectionText}`;
+  renderCrmProcessingReport(payload);
   renderCrmProcessingSelectionButtons({ ...state, processing_filter: processingFilter });
   if (runBtn) {
     restoreStoppableButton(runBtn);
@@ -3768,23 +4651,24 @@ async function persistCrmProcessingSelection(payload, statusFallback) {
 async function toggleCrmProcessingSelection(stepKey) {
   const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
   const processingFilter = normalizeCrmProcessingFilter(state.processing_filter);
-  if (stepKey === 'address_validator_batch' && processingFilter === 'all') {
-    setStatus('All mode always includes Address Validator.');
-    return;
-  }
   const rushLike = isCrmRushLikeProcessingFilter(processingFilter);
   const unlockerCapable = canCrmProcessingFilterRunUnlocker(processingFilter);
+  const canRunOrderGoods = canCrmProcessingFilterRunOrderGoods(processingFilter);
   const canRunOrderSupport = rushLike || processingFilter === '813';
   if (stepKey === 'stock_unlocker' && !unlockerCapable) {
-    setStatus('Unlocker is available in Rush, High Value, and Free modes.');
+    setStatus('Unlocker is available in Rush, High Value, Free, and ALL modes.');
     return;
   }
   if (stepKey === 'product_separator' && processingFilter === '813') {
     setStatus('Separator is disabled in 813 mode.');
     return;
   }
-  if ((stepKey === 'order_goods' || stepKey === 'shipping_bypasser' || stepKey === 'push_back') && !canRunOrderSupport) {
-    const label = stepKey === 'order_goods' ? 'Order Goods' : (stepKey === 'shipping_bypasser' ? 'Shipping Bypasser' : 'Push Back');
+  if (stepKey === 'order_goods' && !canRunOrderGoods) {
+    setStatus('Order Goods is available in every processing mode.');
+    return;
+  }
+  if ((stepKey === 'shipping_bypasser' || stepKey === 'push_back') && !canRunOrderSupport) {
+    const label = stepKey === 'shipping_bypasser' ? 'Shipping Bypasser' : 'Push Back';
     setStatus(`${label} is available in Rush, High Value, and 813 modes.`);
     return;
   }
@@ -3982,12 +4866,13 @@ async function startCrmProcessingRun(button = null) {
   const processingFilter = normalizeCrmProcessingFilter(state.processing_filter);
   const rushLike = isCrmRushLikeProcessingFilter(processingFilter);
   const unlockerCapable = canCrmProcessingFilterRunUnlocker(processingFilter);
+  const canRunOrderGoods = canCrmProcessingFilterRunOrderGoods(processingFilter);
   const canRunOrderSupport = rushLike || processingFilter === '813';
   const payload = {
     stock_unlocker_enabled: unlockerCapable ? Boolean(state.stock_unlocker_enabled) : false,
-    address_validator_enabled: processingFilter === 'all' ? true : Boolean(state.address_validator_enabled),
+    address_validator_enabled: Boolean(state.address_validator_enabled),
     product_separator_enabled: processingFilter === '813' ? false : state.product_separator_enabled !== false,
-    order_goods_enabled: canRunOrderSupport ? Boolean(state.order_goods_enabled) : false,
+    order_goods_enabled: canRunOrderGoods ? Boolean(state.order_goods_enabled) : false,
     shipping_bypasser_enabled: canRunOrderSupport ? Boolean(state.shipping_bypasser_enabled) : false,
     push_back_enabled: canRunOrderSupport ? Boolean(state.push_back_enabled) : false,
     processing_filter: processingFilter,
@@ -4004,7 +4889,7 @@ async function startCrmProcessingRun(button = null) {
     return;
   }
   if (processingFilter === 'all') {
-    const confirmed = window.confirm('ALL mode will run the selected Address Validator and Product Separator steps against their configured queues/lists. Stock Unlocker, Order Goods, Bypasser, and Push Back will not run. Continue?');
+    const confirmed = window.confirm('ALL mode will run the selected Validator, Separator, Unlocker, and Order Goods steps against their configured queues/lists. Bypasser and Push Back will not run. Continue?');
     if (!confirmed) {
       setStatus('ALL mode Automate Processing canceled.');
       return;
@@ -6061,11 +6946,13 @@ async function loadStatus(setStatusText = true) {
     const hrs = st && st.total_paid_hours != null ? fmtHours(st.total_paid_hours) : '0.00';
     const summary = 'Week hours: ' + hrs + ' | Auto clock-out: ' + auto;
     if (setStatusText) setStatus(summary);
+    setWorkHoursStatusPayload(d);
     renderHoursTable(st);
     renderAutoClockInfo(autoPayload);
     return { summary, autoPayload };
   } catch (e) {
     if (setStatusText) setStatus('Status load failed: ' + e.message);
+    if (!workHoursStatusPayload) setWorkHoursStatusPayload(null);
     renderHoursTable(null);
     renderAutoClockInfo(null);
     return { summary: 'Status load failed', autoPayload: null, error: e };
@@ -6102,7 +6989,7 @@ async function callEndpoint(path, button = null, busyLabel = 'Automation underwa
   return withStopButton(button, async () => {
   let resultMsg = '';
   try {
-    const d = await api(path, { method: 'GET' });
+    const d = await api(path, { method: 'POST' });
     resultMsg = d.message || (path + ' OK');
   } catch (e) {
     resultMsg = path + ' failed: ' + e.message;
@@ -6154,11 +7041,13 @@ async function saveConfig() {
 
 async function reloadAll() {
   ensureManualAutoOutInputWiring();
+  ensureWeeklyCapInputWiring();
   ensureCrmAutoSplitterInputWiring();
   syncCrmProcessingAdvancedControls();
   ensurePowerScheduleDefaults();
   renderTemperatureThresholdSettings();
   renderTemperatureGauges(desktopMetricsLastPayload || {});
+  await loadNodeRuntime(false);
   await loadStatus();
   await loadCrmProcessingStatus(false);
   await loadCrmStatus(false);
@@ -6184,13 +7073,16 @@ async function refreshAllStatuses(button = null) {
 }
 
 if (!UI_OPENED_FROM_FILE) {
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/service-worker.js').catch(() => {});
   ensureManualAutoOutInputWiring();
+  ensureWeeklyCapInputWiring();
   ensureCrmAutoSplitterInputWiring();
   syncCrmProcessingAdvancedControls();
   ensurePowerScheduleDefaults();
   setTemperatureUnit(temperatureUnit);
   renderCrmAddressModeControls();
   reloadAll();
+  startWorkHoursTimer();
   startDesktopMetricsTimer();
   setInterval(() => {
     loadStatus(false);
@@ -6204,9 +7096,13 @@ if (!UI_OPENED_FROM_FILE) {
     loadCrmAddressStatus(false);
     loadSlackLunchStatus(false);
     loadPowerStatus(false);
+    loadNodeRuntime(false);
     loadQueue(false);
   }, 30000);
   setInterval(() => {
+    if (activeTab === 'automation' || (workHoursStatusPayload && workHoursStatusPayload.state && workHoursStatusPayload.state.active_shift)) {
+      loadStatus(false);
+    }
     if (powerCountdownPayload && powerCountdownPayload.active) {
       loadPowerStatus(false);
     }

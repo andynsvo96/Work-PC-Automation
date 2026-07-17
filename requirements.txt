@@ -5,3 +5,7 @@ pystray
 Pillow
 gspread
 google-auth
+psutil
+keyring
+cryptography
+pyobjc-framework-Cocoa; sys_platform == "darwin"

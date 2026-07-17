@@ -11,6 +11,7 @@ import logging
 import math
 import os
 import re
+import secrets
 import shutil
 import socket
 import struct
@@ -26,17 +27,25 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, redirect, request, session, url_for
 import pystray
 from PIL import Image, ImageDraw
 
 from automation_audit import AUDIT_LOG_FILE, log_automation_event, log_automation_result
+from app_security import load_app_security
 import config as config_module
+from credential_store import SHARED_QUEUE_CREDENTIAL_TARGET, credential_exists
+from node_preferences import load_node_preferences, update_node_preferences
+from platform_runtime import get_platform_snapshot, resolve_worker_count
 from runtime_paths import STATE_DIR, log_file as runtime_log_file
 from runtime_paths import resolve_runtime_file, result_file, state_file
 from routes.system_routes import register_system_routes
 from routes.work_routes import register_work_routes
+from shared_queue import SharedQueueBlocked, SharedQueueConfig, SupabaseQueueClient
+from shared_queue_runtime import SharedQueueRuntime
 from slack_message_rotation import select_slack_day_message
+from task_registry import TaskRegistry
+from version_state import get_git_version_state
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.py")
@@ -82,6 +91,7 @@ CRM_MAX_RETRIES = 2
 CRM_RETRY_DELAY_SECONDS = 3
 CRM_ACTION_TIMEOUT = 15
 CRM_UNLOCKER_FREE_URL = str(getattr(config_module, "CRM_UNLOCKER_FREE_URL", "") or "").strip()
+CRM_UNLOCKER_ALL_URL = str(getattr(config_module, "CRM_UNLOCKER_ALL_URL", "") or "").strip()
 CRM_SHIPPING_ALL_URL = str(getattr(config_module, "CRM_SHIPPING_ALL_URL", "") or "").strip()
 CRM_SHIPPING_HIGH_VALUE_URL = str(getattr(config_module, "CRM_SHIPPING_HIGH_VALUE_URL", "") or "").strip()
 CRM_SHIPPING_813_URL = str(getattr(config_module, "CRM_SHIPPING_813_URL", "") or "").strip()
@@ -89,6 +99,8 @@ CRM_813_VALIDATOR_URL = str(getattr(config_module, "CRM_813_VALIDATOR_URL", CRM_
 CRM_813_ORDER_GOODS_URL = str(getattr(config_module, "CRM_813_ORDER_GOODS_URL", "") or "").strip()
 CRM_813_BYPASS_URL = str(getattr(config_module, "CRM_813_BYPASS_URL", "") or "").strip()
 CRM_ORDER_GOODS_HIGH_VALUE_URL = str(getattr(config_module, "CRM_ORDER_GOODS_HIGH_VALUE_URL", "") or "").strip()
+CRM_ORDER_GOODS_FREE_URL = str(getattr(config_module, "CRM_ORDER_GOODS_FREE_URL", "") or "").strip()
+CRM_ORDER_GOODS_ALL_URL = str(getattr(config_module, "CRM_ORDER_GOODS_ALL_URL", "") or "").strip()
 CRM_SHIPPING_BYPASS_HIGH_VALUE_URL = str(getattr(config_module, "CRM_SHIPPING_BYPASS_HIGH_VALUE_URL", "") or "").strip()
 CRM_PUSH_BACK_HIGH_VALUE_URL = str(getattr(config_module, "CRM_PUSH_BACK_HIGH_VALUE_URL", "") or "").strip()
 PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE = str(getattr(config_module, "PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE", "") or "").strip()
@@ -112,11 +124,28 @@ CRM_SHARED_MAX_PARALLEL_WORKERS = 8
 CRM_ORDER_GOODS_MAX_PARALLEL_WORKERS = CRM_SHARED_MAX_PARALLEL_WORKERS
 CRM_ADDRESS_REPORT_MAX_ITEMS = 500
 CRM_MASS_EMAILER_TIMEOUT_SECONDS = 2 * 60 * 60
-SERVER_BIND_HOST = "0.0.0.0"
+REMOTE_ACCESS_MODE = str(getattr(config_module, "AUTOMATION_REMOTE_ACCESS_MODE", "local") or "local").strip().lower()
+if REMOTE_ACCESS_MODE not in {"local", "tailscale"}:
+    REMOTE_ACCESS_MODE = "local"
+APP_PIN_REQUIRED = bool(getattr(config_module, "AUTOMATION_APP_PIN_REQUIRED", REMOTE_ACCESS_MODE == "tailscale"))
+SERVER_BIND_HOST = "127.0.0.1" if REMOTE_ACCESS_MODE == "tailscale" else "0.0.0.0"
 SERVER_PORT = 5123
 SERVER_STARTED_AT = datetime.now()
+AUTOMATION_QUEUE_MODE = str(getattr(config_module, "AUTOMATION_QUEUE_MODE", "local") or "local").strip().lower()
+if AUTOMATION_QUEUE_MODE not in {"local", "shared"}:
+    AUTOMATION_QUEUE_MODE = "local"
 
 app = Flask(__name__)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=REMOTE_ACCESS_MODE == "tailscale",
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+)
+app_security_config = None
+app_security_initialization_error = None
+app_login_attempts = {}
+app_login_lock = threading.RLock()
 clock_lock = threading.Lock()
 state_lock = threading.Lock()
 config_lock = threading.Lock()
@@ -318,6 +347,9 @@ automation_queue_condition = threading.Condition(automation_queue_lock)
 automation_queue_tasks = []
 automation_queue_worker_started = False
 automation_queue_current_task_id = None
+automation_task_registry = TaskRegistry()
+shared_queue_runtime = None
+shared_queue_initialization_error = None
 DAY_NAMES = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
 AUTOMATION_TEST_CATALOG = [
     {"id": "paycom_in", "label": "Paycom In (Dry Run)", "kind": "paycom", "action": "in", "default": True},
@@ -1349,6 +1381,129 @@ def get_server_runtime_payload():
     }
 
 
+def _strict_queue_commit():
+    git_state = get_git_version_state(SCRIPT_DIR)
+    version_block_reason = str(os.environ.get("AUTOMATION_VERSION_BLOCK_REASON") or "").strip()
+    if version_block_reason:
+        raise SharedQueueBlocked(version_block_reason)
+    if not git_state.get("available"):
+        raise SharedQueueBlocked(str(git_state.get("error") or "Git version is unavailable."))
+    if git_state.get("dirty"):
+        raise SharedQueueBlocked("Strict version gate: commit or discard local code changes before running shared tasks.")
+    if git_state.get("relation") != "current":
+        raise SharedQueueBlocked(
+            f"Strict version gate: this checkout is {git_state.get('relation') or 'not current'} versus origin/main."
+        )
+    return str(git_state.get("commit"))
+
+
+def _shared_queue_capabilities():
+    return get_platform_snapshot().capabilities
+
+
+def _shared_queue_node_status():
+    snapshot = get_platform_snapshot()
+    status = {
+        "captured_at": datetime.now().isoformat(),
+        "server_started_at": SERVER_STARTED_AT.isoformat(),
+        "platform": snapshot.to_dict(),
+        "power": get_power_countdown_payload(),
+    }
+    if snapshot.capabilities.get("metrics"):
+        status["metrics"] = read_desktop_metrics()
+    else:
+        status["metrics"] = {"success": False, "available": False, "message": "Windows only"}
+    return status
+
+
+def get_shared_node_runtime_status(node_key):
+    runtime = shared_queue_runtime or (initialize_shared_queue_runtime() if AUTOMATION_QUEUE_MODE == "shared" else None)
+    if runtime is None:
+        return None
+    normalized = str(node_key or "").strip().lower()
+    if not normalized:
+        return None
+    try:
+        for node in runtime.client.list_nodes():
+            if str(node.get("node_key") or "").strip().lower() == normalized:
+                try:
+                    seen_at = datetime.fromisoformat(str(node.get("last_seen_at") or "").replace("Z", "+00:00"))
+                    now = datetime.now(seen_at.tzinfo) if seen_at.tzinfo else datetime.now()
+                    node["online"] = (now - seen_at).total_seconds() <= 30 and bool(node.get("enabled", True))
+                except (TypeError, ValueError):
+                    node["online"] = False
+                return node
+    except Exception as exc:
+        logger.warning("Could not load shared node status for %s: %s", normalized, exc)
+    return None
+
+
+def initialize_shared_queue_runtime():
+    global shared_queue_runtime, shared_queue_initialization_error
+    if AUTOMATION_QUEUE_MODE != "shared":
+        return None
+    if shared_queue_runtime is not None:
+        return shared_queue_runtime
+    try:
+        config = SharedQueueConfig.from_keychain()
+        runtime = SharedQueueRuntime(
+            SupabaseQueueClient(config),
+            automation_task_registry,
+            commit_provider=_strict_queue_commit,
+            capabilities_provider=_shared_queue_capabilities,
+            node_status_provider=_shared_queue_node_status,
+        )
+        runtime.start()
+        shared_queue_runtime = runtime
+        shared_queue_initialization_error = None
+        logger.info("Shared Supabase queue enabled for node %s.", config.node_key)
+        return runtime
+    except Exception as exc:
+        shared_queue_initialization_error = str(exc)
+        logger.error("Shared queue is fail-closed: %s", exc)
+        return None
+
+
+def _shared_queue_state_payload():
+    if shared_queue_runtime is not None:
+        return shared_queue_runtime.state()
+    return {
+        "mode": AUTOMATION_QUEUE_MODE,
+        "connected": False,
+        "eligible": AUTOMATION_QUEUE_MODE == "local",
+        "block_reason": shared_queue_initialization_error,
+        "configured": credential_exists(SHARED_QUEUE_CREDENTIAL_TARGET),
+    }
+
+
+def get_node_runtime_payload():
+    snapshot = get_platform_snapshot()
+    preferences = load_node_preferences()
+    workers = resolve_worker_count(
+        preferences.get("worker_mode"),
+        preferences.get("manual_workers"),
+        snapshot=snapshot,
+    )
+    git_state = get_git_version_state(SCRIPT_DIR)
+    version_block_reason = str(os.environ.get("AUTOMATION_VERSION_BLOCK_REASON") or "").strip()
+    version_eligible = bool(
+        git_state.get("available")
+        and not git_state.get("dirty")
+        and git_state.get("relation") == "current"
+        and not version_block_reason
+    )
+    return {
+        "success": True,
+        "platform": snapshot.to_dict(),
+        "worker_settings": workers,
+        "git": git_state,
+        "version_eligible": version_eligible,
+        "version_block_reason": version_block_reason or None,
+        "windows_only_message": "Windows only",
+        "queue": _shared_queue_state_payload(),
+    }
+
+
 def _normalize_inline_text(value):
     return " ".join(str(value or "").replace("\xa0", " ").split())
 
@@ -1389,9 +1544,10 @@ def _apply_runtime_config_from_module():
     global WORK_CLOCK_RESET_ON_FRIDAY_CLOCK_OUT, WORK_CLOCK_SYNC_FROM_PAYCOM
     global WORK_CLOCK_SYNC_BEFORE_CLOCK_IN, WORK_CLOCK_SYNC_AFTER_CLOCK_OUT
     global WORK_STATE_FILE, CRM_MAX_RETRIES, CRM_RETRY_DELAY_SECONDS, CRM_ACTION_TIMEOUT
-    global CRM_UNLOCKER_FREE_URL
+    global CRM_UNLOCKER_FREE_URL, CRM_UNLOCKER_ALL_URL
     global CRM_SHIPPING_ALL_URL, CRM_SHIPPING_HIGH_VALUE_URL, CRM_SHIPPING_813_URL, CRM_813_VALIDATOR_URL
     global CRM_813_ORDER_GOODS_URL, CRM_813_BYPASS_URL, CRM_ORDER_GOODS_HIGH_VALUE_URL
+    global CRM_ORDER_GOODS_FREE_URL, CRM_ORDER_GOODS_ALL_URL
     global CRM_SHIPPING_BYPASS_HIGH_VALUE_URL, CRM_PUSH_BACK_HIGH_VALUE_URL
     global PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE
     global CRM_PUSH_BACK_RUSH_URL, CRM_PUSH_BACK_813_URL
@@ -1434,12 +1590,15 @@ def _apply_runtime_config_from_module():
     CRM_813_ORDER_GOODS_URL = str(getattr(config_module, "CRM_813_ORDER_GOODS_URL", CRM_813_ORDER_GOODS_URL) or "").strip()
     CRM_813_BYPASS_URL = str(getattr(config_module, "CRM_813_BYPASS_URL", CRM_813_BYPASS_URL) or "").strip()
     CRM_ORDER_GOODS_HIGH_VALUE_URL = str(getattr(config_module, "CRM_ORDER_GOODS_HIGH_VALUE_URL", CRM_ORDER_GOODS_HIGH_VALUE_URL) or "").strip()
+    CRM_ORDER_GOODS_FREE_URL = str(getattr(config_module, "CRM_ORDER_GOODS_FREE_URL", CRM_ORDER_GOODS_FREE_URL) or "").strip()
+    CRM_ORDER_GOODS_ALL_URL = str(getattr(config_module, "CRM_ORDER_GOODS_ALL_URL", CRM_ORDER_GOODS_ALL_URL) or "").strip()
     CRM_SHIPPING_BYPASS_HIGH_VALUE_URL = str(getattr(config_module, "CRM_SHIPPING_BYPASS_HIGH_VALUE_URL", CRM_SHIPPING_BYPASS_HIGH_VALUE_URL) or "").strip()
     CRM_PUSH_BACK_HIGH_VALUE_URL = str(getattr(config_module, "CRM_PUSH_BACK_HIGH_VALUE_URL", CRM_PUSH_BACK_HIGH_VALUE_URL) or "").strip()
     PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE = str(getattr(config_module, "PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE", PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE) or "").strip()
     CRM_PUSH_BACK_RUSH_URL = str(getattr(config_module, "CRM_PUSH_BACK_RUSH_URL", CRM_PUSH_BACK_RUSH_URL) or "").strip()
     CRM_PUSH_BACK_813_URL = str(getattr(config_module, "CRM_PUSH_BACK_813_URL", CRM_PUSH_BACK_813_URL) or "").strip()
     CRM_UNLOCKER_FREE_URL = str(getattr(config_module, "CRM_UNLOCKER_FREE_URL", CRM_UNLOCKER_FREE_URL) or "").strip()
+    CRM_UNLOCKER_ALL_URL = str(getattr(config_module, "CRM_UNLOCKER_ALL_URL", CRM_UNLOCKER_ALL_URL) or "").strip()
     CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS = max(
         0,
         int(getattr(config_module, "CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS", CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS)),
@@ -1454,6 +1613,29 @@ def reload_runtime_config():
 
 def _automation_queue_now_iso():
     return datetime.now().isoformat()
+
+
+def _automation_request_client_os():
+    try:
+        user_agent = str(request.headers.get("Sec-CH-UA-Platform") or request.headers.get("User-Agent") or "").lower()
+    except RuntimeError:
+        user_agent = ""
+    if "android" in user_agent:
+        return "android"
+    if "windows" in user_agent:
+        return "windows"
+    if "mac" in user_agent or "darwin" in user_agent:
+        return "macos"
+    return get_platform_snapshot().os_name
+
+
+def _automation_client_visual(os_name):
+    normalized = str(os_name or "unknown").lower()
+    return {
+        "source_os": normalized,
+        "source_icon": {"windows": "🪟", "macos": "🍎", "android": "🤖"}.get(normalized, "💻"),
+        "source_display_name": {"windows": "Windows", "macos": "Mac", "android": "Android tablet"}.get(normalized, normalized.title()),
+    }
 
 
 def _automation_queue_parse_datetime(value):
@@ -1591,6 +1773,7 @@ def _automation_queue_task_payload(task):
         payload["live_status"] = live_status
         if live_status.get("progress"):
             payload["progress"] = live_status.get("progress")
+    payload.update(_automation_client_visual(task.get("requested_client_os")))
     return payload
 
 
@@ -1640,6 +1823,39 @@ def _automation_queue_snapshot_locked():
 
 
 def get_automation_queue_payload():
+    if AUTOMATION_QUEUE_MODE == "shared":
+        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
+        if runtime is None:
+            return {
+                "success": False,
+                "mode": "shared",
+                "message": shared_queue_initialization_error or "Shared queue is not configured.",
+                "running": None,
+                "queued": [],
+                "idle": [],
+                "history": [],
+                "tasks": [],
+                "queued_count": 0,
+                "idle_count": 0,
+                "running_count": 0,
+            }
+        try:
+            return runtime.snapshot()
+        except Exception as exc:
+            return {
+                "success": False,
+                "mode": "shared",
+                "message": str(exc),
+                "coordinator": runtime.state(),
+                "running": None,
+                "queued": [],
+                "idle": [],
+                "history": [],
+                "tasks": [],
+                "queued_count": 0,
+                "idle_count": 0,
+                "running_count": 0,
+            }
     with automation_queue_lock:
         return _automation_queue_snapshot_locked()
 
@@ -1821,10 +2037,16 @@ def enqueue_automation(
     scheduled_for=None,
     automation_signature=None,
     advanced_summary=None,
+    task_type=None,
+    task_arguments=None,
+    target_node=None,
+    required_capability=None,
 ):
+    startup_block = str(os.environ.get("AUTOMATION_VERSION_BLOCK_REASON") or "").strip()
+    if startup_block:
+        return False, f"Safe Sync & Start blocked automation: {startup_block}", None
     if not callable(fn):
         return False, "Queued automation needs a callable task.", None
-    _ensure_automation_queue_worker()
     mode = str(queue_mode or "normal").strip().lower()
     if mode not in {"normal", "repeat", "scheduled"}:
         mode = "normal"
@@ -1834,6 +2056,35 @@ def enqueue_automation(
     scheduled_dt = _automation_queue_parse_datetime(scheduled_for)
     if mode == "scheduled" and scheduled_dt is None:
         return False, "Scheduled queue task needs a valid time.", None
+    if AUTOMATION_QUEUE_MODE == "shared":
+        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
+        if runtime is None:
+            return False, shared_queue_initialization_error or "Shared queue is not configured.", None
+        if not str(task_type or "").strip():
+            return False, "This automation has not been registered for safe cross-device execution.", None
+        if required_capability == "system_power" and not target_node:
+            target_node = runtime.client.config.node_key
+        try:
+            task = runtime.enqueue(
+                label=str(label or "Automation Task"),
+                category=str(category or "Automation"),
+                task_type=str(task_type),
+                arguments=task_arguments if isinstance(task_arguments, dict) else {},
+                target_node=target_node,
+                required_capability=required_capability,
+                details=str(details or "").strip() or None,
+                queue_mode=mode,
+                available_at=scheduled_dt.astimezone().isoformat() if scheduled_dt else None,
+                repeat_interval_minutes=repeat_interval_minutes,
+                requested_client_os=_automation_request_client_os(),
+            )
+        except Exception as exc:
+            return False, str(exc), None
+        position = task.get("sequence") if isinstance(task, dict) else None
+        msg = f"Queued {label} in the shared queue" + (f" as sequence {position}." if position else ".")
+        log_automation_event("automation.queue", "QUEUED", msg, source="server.py")
+        return True, msg, task
+    _ensure_automation_queue_worker()
     now_iso = _automation_queue_now_iso()
     status = "queued"
     next_run_at = None
@@ -1866,6 +2117,7 @@ def enqueue_automation(
         "message": message,
         "success": None,
         "cancel_requested": False,
+        "requested_client_os": _automation_request_client_os(),
         "fn": fn,
         "status_fn": status_fn if callable(status_fn) else None,
     }
@@ -1890,6 +2142,16 @@ def cancel_automation_queue_task(task_id):
     task_id = str(task_id or "").strip()
     if not task_id:
         return False, "Missing queue task ID."
+    if AUTOMATION_QUEUE_MODE == "shared":
+        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
+        if runtime is None:
+            return False, shared_queue_initialization_error or "Shared queue is not configured."
+        try:
+            runtime.client.cancel(task_id)
+            runtime.wake()
+            return True, "Cancel request sent to the shared queue."
+        except Exception as exc:
+            return False, str(exc)
     running_cancel = False
     with automation_queue_condition:
         task = next((item for item in automation_queue_tasks if item.get("id") == task_id), None)
@@ -1915,6 +2177,21 @@ def cancel_automation_queue_task(task_id):
 
 
 def cancel_all_automation_queue_tasks():
+    if AUTOMATION_QUEUE_MODE == "shared":
+        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
+        if runtime is None:
+            return False, shared_queue_initialization_error or "Shared queue is not configured."
+        canceled = 0
+        try:
+            rows = runtime.client.snapshot()
+            for task in rows:
+                if task.get("status") in {"queued", "running"}:
+                    runtime.client.cancel(task.get("id"))
+                    canceled += 1
+            runtime.wake()
+            return True, f"Sent {canceled} shared queue cancel request{'s' if canceled != 1 else ''}."
+        except Exception as exc:
+            return False, str(exc)
     running_cancel = False
     canceled_count = 0
     with automation_queue_condition:
@@ -1945,6 +2222,8 @@ def delete_automation_queue_task(task_id):
     task_id = str(task_id or "").strip()
     if not task_id:
         return False, "Missing queue task ID."
+    if AUTOMATION_QUEUE_MODE == "shared":
+        return False, "Shared queue history is retained as an audit record. Use Clear Finished when archival is configured."
     with automation_queue_condition:
         task = next((item for item in automation_queue_tasks if item.get("id") == task_id), None)
         if not task:
@@ -1957,6 +2236,8 @@ def delete_automation_queue_task(task_id):
 
 
 def clear_finished_automation_queue_tasks():
+    if AUTOMATION_QUEUE_MODE == "shared":
+        return False, "Shared queue history is retained as an audit record."
     with automation_queue_condition:
         before = len(automation_queue_tasks)
         automation_queue_tasks[:] = [
@@ -1969,6 +2250,8 @@ def clear_finished_automation_queue_tasks():
 
 
 def reorder_automation_queue(task_ids):
+    if AUTOMATION_QUEUE_MODE == "shared":
+        return False, "Shared queue order is strict FIFO and cannot be reordered.", get_automation_queue_payload()
     desired = [str(value or "").strip() for value in (task_ids if isinstance(task_ids, list) else [])]
     desired = [value for value in desired if value]
     with automation_queue_condition:
@@ -1989,6 +2272,35 @@ def reorder_automation_queue(task_ids):
         payload = _automation_queue_snapshot_locked()
     log_automation_event("automation.queue", "REORDERED", "Queued task order updated.", source="server.py")
     return True, "Queue order updated.", payload
+
+
+def reassign_automation_queue_task(task_id, target_node=None):
+    if AUTOMATION_QUEUE_MODE != "shared":
+        return False, "Safe reassignment is available only in shared queue mode."
+    runtime = shared_queue_runtime or initialize_shared_queue_runtime()
+    if runtime is None:
+        return False, shared_queue_initialization_error or "Shared queue is not configured."
+    try:
+        runtime.client.reassign(str(task_id), target_node)
+        runtime.wake()
+        target_text = str(target_node or "").strip() or "any eligible computer"
+        return True, f"Task safely reassigned to {target_text}; its FIFO position was preserved."
+    except Exception as exc:
+        return False, str(exc)
+
+
+def resume_shared_queue_after_review(review_note):
+    if AUTOMATION_QUEUE_MODE != "shared":
+        return False, "The local queue is not paused by shared leases."
+    runtime = shared_queue_runtime or initialize_shared_queue_runtime()
+    if runtime is None:
+        return False, shared_queue_initialization_error or "Shared queue is not configured."
+    try:
+        runtime.client.resume_after_review(review_note)
+        runtime.wake()
+        return True, "Shared queue resumed after manual review."
+    except Exception as exc:
+        return False, str(exc)
 
 
 def _wait_for_status_completion(status_payload_fn, fallback_message="Queued task started."):
@@ -2051,6 +2363,24 @@ def _force_stop_message(label):
 
 
 def _kill_process_tree(pid):
+    if os.name != "nt":
+        try:
+            import psutil
+
+            parent = psutil.Process(int(pid))
+            children = parent.children(recursive=True)
+            for process in children:
+                process.terminate()
+            parent.terminate()
+            _gone, alive = psutil.wait_procs(children + [parent], timeout=8)
+            for process in alive:
+                process.kill()
+            return True
+        except psutil.NoSuchProcess:
+            return True
+        except Exception as e:
+            logger.warning("Could not force-stop process tree %s: %s", pid, e)
+            return False
     try:
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, text=True, timeout=10)
         return True
@@ -2708,28 +3038,34 @@ def _auto_clock_out_timer_callback():
     with state_lock:
         auto_clock_timer = None
 
-    def _queued_auto_clock_out():
-        if WORK_CLOCK_SYNC_FROM_PAYCOM:
-            _sync_paycom_hours_into_work_state("auto-clock-out-precheck", update_total_hours=True)
+    enqueue_automation(
+        "Automatic Work Clock Out",
+        "Communications",
+        _run_automatic_work_clock_out_queued,
+        task_type="communications.automatic_work_out",
+        task_arguments={},
+    )
 
-        with state_lock:
-            state = load_work_state()
-            active = state.get("active_shift") or {}
-            allowed, reason = _auto_clock_out_allowed_for_active_shift(active, state=state)
-            if not allowed:
-                if not _clear_closed_active_shift_locked(state):
-                    _clear_active_auto_clock_out_locked(state)
-                save_work_state(state)
-                refresh_tray_status_from_state(state)
-                msg = f"Skipped auto clock-out: {reason}"
-                _audit_result("work.auto_clock_out_timer", True, msg)
-                return True, msg
-        ok, msg = run_work("out", automatic=True)
-        if not ok:
-            notify_user("Work Auto Clock-Out Failed", msg)
-        return ok, msg
 
-    enqueue_automation("Automatic Work Clock Out", "Communications", _queued_auto_clock_out)
+def _run_automatic_work_clock_out_queued():
+    if WORK_CLOCK_SYNC_FROM_PAYCOM:
+        _sync_paycom_hours_into_work_state("auto-clock-out-precheck", update_total_hours=True)
+    with state_lock:
+        state = load_work_state()
+        active = state.get("active_shift") or {}
+        allowed, reason = _auto_clock_out_allowed_for_active_shift(active, state=state)
+        if not allowed:
+            if not _clear_closed_active_shift_locked(state):
+                _clear_active_auto_clock_out_locked(state)
+            save_work_state(state)
+            refresh_tray_status_from_state(state)
+            msg = f"Skipped auto clock-out: {reason}"
+            _audit_result("work.auto_clock_out_timer", True, msg)
+            return True, msg
+    ok, msg = run_work("out", automatic=True)
+    if not ok:
+        notify_user("Work Auto Clock-Out Failed", msg)
+    return ok, msg
 
 
 def schedule_auto_clock_out(auto_dt):
@@ -3483,23 +3819,36 @@ def _slack_lunch_return_timer_callback():
         day_name = lunch_break_state.get("day_name")
         _clear_lunch_break_timer_locked()
 
-    def _queued_lunch_return():
-        ok, msg = _run_slack_custom_when_available(
-            return_message,
-            wait_seconds=120,
-            force_test_url=force_test_url,
-        )
-        summary = msg
-        if isinstance(scheduled_at, datetime):
-            summary = (
-                f"{msg} (scheduled return at {scheduled_at.isoformat()}, "
-                f"day={day_name or 'unknown'}, channel={'test' if force_test_url else 'production'})"
-            )
-        _audit_result("slack.lunch.return", ok, summary)
-        notify_user("Slack Lunch Return", msg if ok else f"Failed: {msg}")
-        return ok, summary
+    arguments = {
+        "return_message": return_message,
+        "force_test_url": force_test_url,
+        "scheduled_at": scheduled_at.isoformat() if isinstance(scheduled_at, datetime) else None,
+        "day_name": day_name,
+    }
+    enqueue_automation(
+        "Slack Lunch Return",
+        "Communications",
+        lambda: _run_slack_lunch_return_queued(**arguments),
+        task_type="communications.slack_lunch_return",
+        task_arguments=arguments,
+    )
 
-    enqueue_automation("Slack Lunch Return", "Communications", _queued_lunch_return)
+
+def _run_slack_lunch_return_queued(return_message, force_test_url=False, scheduled_at=None, day_name=None):
+    ok, msg = _run_slack_custom_when_available(
+        return_message,
+        wait_seconds=120,
+        force_test_url=force_test_url,
+    )
+    summary = msg
+    if scheduled_at:
+        summary = (
+            f"{msg} (scheduled return at {scheduled_at}, "
+            f"day={day_name or 'unknown'}, channel={'test' if force_test_url else 'production'})"
+        )
+    _audit_result("slack.lunch.return", ok, summary)
+    notify_user("Slack Lunch Return", msg if ok else f"Failed: {msg}")
+    return ok, summary
 
 
 def _start_slack_lunch_break_locked(force_test_url=False):
@@ -4263,6 +4612,15 @@ def _normalize_crm_single_order_id(raw):
 
 
 CRM_PROCESSING_FILTERS = ("rush", "free", "all", "813", "high_value")
+CRM_PROCESSING_REPORT_STEPS = (
+    "mass_emailer",
+    "address_validator_batch",
+    "product_separator",
+    "stock_unlocker",
+    "order_goods",
+    "shipping_bypasser",
+    "push_back",
+)
 CRM_PROCESSING_GLOBAL_PREF_KEYS = ()
 CRM_PROCESSING_MODE_PREF_KEYS = (
     "stock_unlocker_enabled",
@@ -4286,7 +4644,11 @@ def _crm_processing_filter_is_rush_like(value):
 
 
 def _crm_processing_filter_supports_unlocker(value):
-    return _normalize_crm_shipping_filter(value) in {"rush", "high_value", "free"}
+    return _normalize_crm_shipping_filter(value) in {"rush", "high_value", "free", "all"}
+
+
+def _crm_processing_filter_supports_order_goods(value):
+    return _normalize_crm_shipping_filter(value) in set(CRM_PROCESSING_FILTERS)
 
 
 def _normalize_crm_address_action(value):
@@ -4355,20 +4717,19 @@ def _normalize_crm_processing_enabled(value, default=False):
 
 def _default_crm_processing_mode_preferences(processing_filter):
     key = _normalize_crm_shipping_filter(processing_filter or "rush")
-    rush_like = _crm_processing_filter_is_rush_like(key)
     defaults = {
         "stock_unlocker_enabled": _crm_processing_filter_supports_unlocker(key),
         "address_validator_enabled": True,
         "product_separator_enabled": key != "813",
-        "order_goods_enabled": rush_like or key == "813",
+        "order_goods_enabled": _crm_processing_filter_supports_order_goods(key),
         "shipping_bypasser_enabled": key == "813",
         "push_back_enabled": False,
     }
     if key == "all":
         defaults.update(
             {
-                "stock_unlocker_enabled": False,
-                "order_goods_enabled": False,
+                "stock_unlocker_enabled": True,
+                "order_goods_enabled": True,
                 "shipping_bypasser_enabled": False,
                 "push_back_enabled": False,
             }
@@ -4377,7 +4738,7 @@ def _default_crm_processing_mode_preferences(processing_filter):
         defaults.update(
             {
                 "stock_unlocker_enabled": True,
-                "order_goods_enabled": False,
+                "order_goods_enabled": True,
                 "shipping_bypasser_enabled": False,
                 "push_back_enabled": False,
             }
@@ -4400,16 +4761,12 @@ def _sanitize_crm_processing_mode_preferences(processing_filter, values=None):
         if pref_key in source:
             prefs[pref_key] = _normalize_crm_processing_enabled(source.get(pref_key), default=prefs.get(pref_key))
     if key == "all":
-        prefs["address_validator_enabled"] = True
-        prefs["stock_unlocker_enabled"] = False
-        prefs["order_goods_enabled"] = False
         prefs["shipping_bypasser_enabled"] = False
         prefs["push_back_enabled"] = False
     elif key == "813":
         prefs["stock_unlocker_enabled"] = False
         prefs["product_separator_enabled"] = False
     elif key == "free":
-        prefs["order_goods_enabled"] = False
         prefs["shipping_bypasser_enabled"] = False
         prefs["push_back_enabled"] = False
     elif not _crm_processing_filter_is_rush_like(key):
@@ -4468,14 +4825,14 @@ def _crm_processing_step_label(step_key):
 def _crm_processing_selected_steps_from_state(state):
     steps = []
     processing_filter = _normalize_crm_shipping_filter(state.get("processing_filter"))
-    if processing_filter == "all" or _normalize_crm_processing_enabled(state.get("address_validator_enabled"), default=True):
+    if _normalize_crm_processing_enabled(state.get("address_validator_enabled"), default=True):
         steps.append("address_validator_batch")
     if processing_filter != "813" and _normalize_crm_processing_enabled(state.get("product_separator_enabled"), default=True):
         steps.append("product_separator")
     rush_like = _crm_processing_filter_is_rush_like(processing_filter)
     if _crm_processing_filter_supports_unlocker(processing_filter) and _normalize_crm_processing_enabled(state.get("stock_unlocker_enabled"), default=True):
         steps.append("stock_unlocker")
-    if (rush_like or processing_filter == "813") and _normalize_crm_processing_enabled(state.get("order_goods_enabled"), default=True):
+    if _crm_processing_filter_supports_order_goods(processing_filter) and _normalize_crm_processing_enabled(state.get("order_goods_enabled"), default=True):
         steps.append("order_goods")
     if (rush_like or processing_filter == "813") and _normalize_crm_processing_enabled(state.get("shipping_bypasser_enabled"), default=False):
         steps.append("shipping_bypasser")
@@ -4497,8 +4854,16 @@ def _crm_processing_address_list_url_for_filter(processing_filter):
 
 def _crm_processing_mode_list_url_for_step(processing_filter, step_key):
     normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-    if normalized_filter == "free" and step_key == "stock_unlocker":
-        return str(CRM_UNLOCKER_FREE_URL or "").strip() or None
+    if normalized_filter == "free":
+        if step_key == "stock_unlocker":
+            return str(CRM_UNLOCKER_FREE_URL or "").strip() or None
+        if step_key == "order_goods":
+            return str(CRM_ORDER_GOODS_FREE_URL or "").strip() or None
+    if normalized_filter == "all":
+        if step_key == "stock_unlocker":
+            return str(CRM_UNLOCKER_ALL_URL or "").strip() or None
+        if step_key == "order_goods":
+            return str(CRM_ORDER_GOODS_ALL_URL or "").strip() or None
     if normalized_filter == "high_value":
         if step_key == "address_validator_batch":
             return str(CRM_SHIPPING_HIGH_VALUE_URL or "").strip() or None
@@ -4537,8 +4902,16 @@ def _crm_processing_push_back_list_url_for_filter(processing_filter):
 
 def _crm_processing_mode_url_config_key_for_step(processing_filter, step_key):
     normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-    if normalized_filter == "free" and step_key == "stock_unlocker":
-        return "CRM_UNLOCKER_FREE_URL"
+    if normalized_filter == "free":
+        if step_key == "stock_unlocker":
+            return "CRM_UNLOCKER_FREE_URL"
+        if step_key == "order_goods":
+            return "CRM_ORDER_GOODS_FREE_URL"
+    if normalized_filter == "all":
+        if step_key == "stock_unlocker":
+            return "CRM_UNLOCKER_ALL_URL"
+        if step_key == "order_goods":
+            return "CRM_ORDER_GOODS_ALL_URL"
     if normalized_filter == "high_value":
         if step_key == "address_validator_batch":
             return "CRM_SHIPPING_HIGH_VALUE_URL"
@@ -4569,6 +4942,7 @@ def _crm_processing_813_url_config_key_for_step(step_key):
 def _default_crm_processing_state():
     return {
         "free_unlocker_mode_available": True,
+        "expanded_unlocker_order_goods_modes_available": True,
         "stock_unlocker_enabled": True,
         "address_validator_enabled": True,
         "product_separator_enabled": True,
@@ -4589,6 +4963,10 @@ def _default_crm_processing_state():
         "last_step_results": [],
         "total_runs": 0,
         "run_history": [],
+        "report_sheet_scanner_available": True,
+        "report_tracking_started_at": None,
+        "report_totals": {},
+        "report_daily": {},
     }
 
 
@@ -4597,6 +4975,220 @@ def ensure_crm_processing_state_file():
         return
     with open(CRM_PROCESSING_STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(_default_crm_processing_state(), f, indent=2)
+
+
+def _crm_processing_infer_step_metrics(item):
+    item = item if isinstance(item, dict) else {}
+    message = str(item.get("message") or "")
+    lowered = message.lower()
+    order_count = None
+
+    ratio_match = re.search(r"\bcompleted\s+\d+\s*/\s*(\d+)\s+(?:live\s+)?order", message, flags=re.I)
+    if ratio_match:
+        order_count = max(0, int(ratio_match.group(1)))
+    if order_count is None:
+        for pattern in (
+            r"\bprocessed\s+(\d+)\s+order",
+            r"\bchecked\s+(\d+)\s+order",
+            r"\bunlocked\s+(\d+)\s+order",
+            r"\bfound\s+(\d+)\s+order",
+        ):
+            match = re.search(pattern, message, flags=re.I)
+            if match:
+                order_count = max(0, int(match.group(1)))
+                break
+    if order_count is None and "no order" in lowered:
+        order_count = 0
+    if order_count is None:
+        order_count = max(0, int(_safe_float(item.get("order_count"), 0)))
+
+    error_count = None
+    for pattern in (
+        r"\b(\d+)\s+order\(s\)\s+(?:need|needs|needed)\s+attention",
+        r"\b(\d+)\s+order\(s\)\s+require(?:s|d)?\s+manual\s+review",
+        r"\b(\d+)\s+order\(s\)\s+failed",
+        r"\b(\d+)\s+error",
+    ):
+        match = re.search(pattern, message, flags=re.I)
+        if match:
+            error_count = max(0, int(match.group(1)))
+            break
+    if error_count is None:
+        error_count = max(0, int(_safe_float(item.get("error_count"), 0)))
+    if not item.get("success") and error_count <= 0:
+        error_count = 1
+
+    successful_order_count = max(0, order_count - min(order_count, error_count))
+    return {
+        "order_count": order_count,
+        "successful_order_count": successful_order_count,
+        "error_count": error_count,
+    }
+
+
+def _crm_processing_step_metrics(step_key, payload, success, message=""):
+    payload = payload if isinstance(payload, dict) else {}
+    order_ids = _extract_crm_order_ids(payload)
+    result_rows = []
+    if step_key == "address_validator_batch":
+        result_rows = _extract_crm_address_report(payload)
+    elif step_key == "product_separator":
+        result_rows = _build_crm_product_separator_order_results(payload)
+    elif step_key == "stock_unlocker":
+        result_rows = _normalize_crm_stock_order_results(
+            [],
+            order_ids,
+            bool(success),
+            str(message or payload.get("message") or ""),
+        )
+    elif step_key == "order_goods":
+        result_rows = _build_crm_order_goods_order_results(payload)
+    elif step_key == "shipping_bypasser":
+        result_rows = _build_crm_shipping_bypasser_order_results(payload)
+    elif step_key == "push_back":
+        result_rows = _build_crm_push_back_order_results(payload)
+
+    order_outcomes = {}
+    anonymous_results = []
+    for row in result_rows if isinstance(result_rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        order_id = _normalize_crm_single_order_id(row.get("order_id"))
+        status_text = str(row.get("status") or "").lower()
+        row_success = bool(row.get("success")) and not bool(row.get("manual_review_required"))
+        row_error = (
+            not bool(row.get("success"))
+            or bool(row.get("manual_review_required"))
+            or "partial" in status_text
+            or "attention" in status_text
+        )
+        if order_id:
+            outcome = order_outcomes.setdefault(order_id, {"success": False, "error": False})
+            outcome["success"] = bool(outcome["success"] or row_success)
+            outcome["error"] = bool(outcome["error"] or row_error)
+        else:
+            anonymous_results.append({"success": row_success, "error": row_error})
+
+    order_count = max(
+        _extract_crm_order_count(payload),
+        len(order_ids),
+        len(order_outcomes) + len(anonymous_results),
+    )
+    successful_order_count = sum(1 for outcome in order_outcomes.values() if outcome["success"])
+    successful_order_count += sum(1 for outcome in anonymous_results if outcome["success"])
+    error_count = sum(1 for outcome in order_outcomes.values() if outcome["error"])
+    error_count += sum(1 for outcome in anonymous_results if outcome["error"])
+
+    if not result_rows and order_count > 0:
+        successful_order_count = order_count if success else 0
+        error_count = 0 if success else order_count
+    elif order_count > len(order_outcomes) + len(anonymous_results):
+        unclassified_count = order_count - len(order_outcomes) - len(anonymous_results)
+        if success:
+            successful_order_count += unclassified_count
+        else:
+            error_count += unclassified_count
+    if not success and order_count <= 0 and error_count <= 0:
+        error_count = 1
+
+    return {
+        "order_count": max(0, order_count),
+        "successful_order_count": max(0, min(order_count, successful_order_count)),
+        "error_count": max(0, error_count),
+    }
+
+
+def _normalize_crm_processing_error_details(items):
+    rows = items if isinstance(items, list) else []
+    cleaned = []
+    seen = set()
+    for item in rows[:100]:
+        if not isinstance(item, dict):
+            continue
+        order_id = _normalize_crm_single_order_id(item.get("order_id"))
+        status = str(item.get("status") or "Needs attention").strip() or "Needs attention"
+        message = str(item.get("message") or "").strip()
+        outcome = str(item.get("outcome") or "").strip()
+        if not message:
+            message = outcome or status
+        detail_key = (order_id or "", status, message)
+        if detail_key in seen:
+            continue
+        seen.add(detail_key)
+        cleaned.append(
+            {
+                "order_id": order_id,
+                "status": status,
+                "message": message,
+                "outcome": outcome,
+            }
+        )
+    return cleaned
+
+
+def _crm_processing_step_error_details(step_key, payload, success, message=""):
+    payload = payload if isinstance(payload, dict) else {}
+    if step_key == "address_validator_batch":
+        result_rows = _extract_crm_address_report(payload)
+    elif step_key == "product_separator":
+        result_rows = _build_crm_product_separator_order_results(payload)
+    elif step_key == "stock_unlocker":
+        result_rows = _normalize_crm_stock_order_results(
+            payload.get("order_results"),
+            _extract_crm_order_ids(payload),
+            bool(success),
+            str(message or payload.get("message") or ""),
+        )
+    elif step_key == "order_goods":
+        result_rows = _build_crm_order_goods_order_results(payload)
+    elif step_key == "shipping_bypasser":
+        result_rows = _build_crm_shipping_bypasser_order_results(payload)
+    elif step_key == "push_back":
+        result_rows = _build_crm_push_back_order_results(payload)
+    else:
+        result_rows = []
+
+    details = []
+    for row in result_rows if isinstance(result_rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        status = str(row.get("status") or "").strip()
+        status_key = status.lower()
+        needs_attention = (
+            not bool(row.get("success"))
+            or bool(row.get("manual_review_required"))
+            or "partial" in status_key
+            or "attention" in status_key
+            or "manual review" in status_key
+            or "error" in status_key
+        )
+        if not needs_attention:
+            continue
+        detail_message = str(row.get("message") or row.get("outcome") or row.get("resolution") or "").strip()
+        warnings = row.get("warnings") if isinstance(row.get("warnings"), list) else []
+        warning_text = "; ".join(str(item).strip() for item in warnings if str(item).strip())
+        if warning_text and warning_text not in detail_message:
+            detail_message = f"{detail_message} Warnings: {warning_text}".strip()
+        details.append(
+            {
+                "order_id": row.get("order_id"),
+                "status": status or ("Manual review" if row.get("manual_review_required") else "Needs attention"),
+                "message": detail_message or str(message or payload.get("message") or "Automation needs attention."),
+                "outcome": row.get("outcome") or row.get("resolution"),
+            }
+        )
+
+    if not details and not success:
+        fallback_order_ids = _extract_crm_order_ids(payload)
+        details.append(
+            {
+                "order_id": fallback_order_ids[0] if len(fallback_order_ids) == 1 else None,
+                "status": "Needs attention",
+                "message": str(message or payload.get("message") or "Automation needs attention."),
+                "outcome": payload.get("resolution") or payload.get("outcome"),
+            }
+        )
+    return _normalize_crm_processing_error_details(details)
 
 
 def _normalize_crm_processing_step_results(items):
@@ -4608,23 +5200,243 @@ def _normalize_crm_processing_step_results(items):
         step_key = str(item.get("key") or "").strip()
         if step_key not in {"mass_emailer", "address_validator_batch", "product_separator", "stock_unlocker", "order_goods", "shipping_bypasser", "push_back"}:
             continue
+        metrics = _crm_processing_infer_step_metrics(item)
         cleaned.append(
             {
                 "key": step_key,
                 "label": _crm_processing_step_label(step_key),
                 "success": bool(item.get("success")),
+                "order_count": metrics["order_count"],
+                "successful_order_count": metrics["successful_order_count"],
+                "error_count": metrics["error_count"],
                 "duration_seconds": _normalize_duration_seconds(item.get("duration_seconds")),
                 "stage_timings": _normalize_stage_timings(item.get("stage_timings")),
                 "message": str(item.get("message") or ""),
+                "errors": _normalize_crm_processing_error_details(item.get("errors")),
             }
         )
+        if (not cleaned[-1]["success"] or cleaned[-1]["error_count"] > 0) and not cleaned[-1]["errors"]:
+            cleaned[-1]["errors"] = _normalize_crm_processing_error_details(
+                [
+                    {
+                        "status": "Needs attention",
+                        "message": cleaned[-1]["message"] or "Automation needs attention.",
+                    }
+                ]
+            )
     return cleaned
+
+
+def _empty_crm_processing_report_row(step_key):
+    return {
+        "key": step_key,
+        "label": _crm_processing_step_label(step_key),
+        "orders_processed": 0,
+        "successful_orders": 0,
+        "error_count": 0,
+        "duration_seconds": 0.0,
+        "run_count": 0,
+    }
+
+
+def _normalize_crm_processing_report_rows(raw_rows):
+    source = raw_rows if isinstance(raw_rows, dict) else {}
+    cleaned = {}
+    for step_key in CRM_PROCESSING_REPORT_STEPS:
+        raw = source.get(step_key) if isinstance(source.get(step_key), dict) else {}
+        row = _empty_crm_processing_report_row(step_key)
+        row["orders_processed"] = max(0, int(_safe_float(raw.get("orders_processed"), 0)))
+        row["successful_orders"] = max(0, int(_safe_float(raw.get("successful_orders"), 0)))
+        row["successful_orders"] = min(row["orders_processed"], row["successful_orders"])
+        row["error_count"] = max(0, int(_safe_float(raw.get("error_count"), 0)))
+        row["duration_seconds"] = max(0.0, _safe_float(raw.get("duration_seconds"), 0))
+        row["run_count"] = max(0, int(_safe_float(raw.get("run_count"), 0)))
+        cleaned[step_key] = row
+    return cleaned
+
+
+def _add_crm_processing_report_step(rows, result):
+    if not isinstance(result, dict):
+        return
+    step_key = str(result.get("key") or "").strip()
+    if step_key not in CRM_PROCESSING_REPORT_STEPS:
+        return
+    row = rows.setdefault(step_key, _empty_crm_processing_report_row(step_key))
+    row["orders_processed"] += max(0, int(_safe_float(result.get("order_count"), 0)))
+    row["successful_orders"] += max(0, int(_safe_float(result.get("successful_order_count"), 0)))
+    row["error_count"] += max(0, int(_safe_float(result.get("error_count"), 0)))
+    row["duration_seconds"] += max(0.0, _safe_float(result.get("duration_seconds"), 0))
+    row["run_count"] += 1
+
+
+def _crm_processing_report_from_history(history):
+    totals = _normalize_crm_processing_report_rows({})
+    daily = {}
+    tracking_started_at = None
+    for entry in reversed(history if isinstance(history, list) else []):
+        if not isinstance(entry, dict):
+            continue
+        timestamp = str(entry.get("timestamp") or "").strip()
+        try:
+            day_key = datetime.fromisoformat(timestamp).date().isoformat()
+        except Exception:
+            continue
+        if tracking_started_at is None or timestamp < tracking_started_at:
+            tracking_started_at = timestamp
+        day_rows = daily.setdefault(day_key, _normalize_crm_processing_report_rows({}))
+        for result in _normalize_crm_processing_step_results(entry.get("step_results")):
+            _add_crm_processing_report_step(totals, result)
+            _add_crm_processing_report_step(day_rows, result)
+    return totals, daily, tracking_started_at
+
+
+def _crm_processing_sheet_scanner_history_results():
+    if not os.path.exists(CRM_MASS_EMAILER_STATE_FILE):
+        return []
+    try:
+        with open(CRM_MASS_EMAILER_STATE_FILE, "r", encoding="utf-8-sig") as handle:
+            state = json.load(handle)
+    except Exception:
+        return []
+    history = state.get("run_history") if isinstance(state, dict) and isinstance(state.get("run_history"), list) else []
+    results = []
+    for entry in reversed(history[:20]):
+        if not isinstance(entry, dict):
+            continue
+        action = str(entry.get("action") or "process_queue").strip().lower()
+        if action in {"scan", "scan_sheet"} or bool(entry.get("dry_run")):
+            continue
+        timestamp = str(entry.get("timestamp") or "").strip()
+        try:
+            datetime.fromisoformat(timestamp)
+        except Exception:
+            continue
+        successful_count = max(0, int(_safe_float(entry.get("order_count"), 0)))
+        error_count = max(0, int(_safe_float(entry.get("failure_count"), 0)))
+        if not entry.get("success") and successful_count <= 0 and error_count <= 0:
+            error_count = 1
+        results.append(
+            (
+                timestamp,
+                {
+                    "key": "mass_emailer",
+                    "success": bool(entry.get("success")),
+                    "order_count": successful_count + error_count,
+                    "successful_order_count": successful_count,
+                    "error_count": error_count,
+                    "duration_seconds": _normalize_duration_seconds(entry.get("duration_seconds")),
+                    "message": str(entry.get("message") or ""),
+                },
+            )
+        )
+    return results
+
+
+def _normalize_crm_processing_report_daily(raw_daily):
+    source = raw_daily if isinstance(raw_daily, dict) else {}
+    cleaned = {}
+    for raw_day, raw_rows in source.items():
+        try:
+            day_key = datetime.fromisoformat(str(raw_day)).date().isoformat()
+        except Exception:
+            continue
+        cleaned[day_key] = _normalize_crm_processing_report_rows(raw_rows)
+    return cleaned
+
+
+def _add_crm_processing_report_result_at(state, timestamp, result):
+    totals = _normalize_crm_processing_report_rows(state.get("report_totals"))
+    daily = _normalize_crm_processing_report_daily(state.get("report_daily"))
+    try:
+        day_key = datetime.fromisoformat(str(timestamp)).date().isoformat()
+    except Exception:
+        day_key = datetime.now().date().isoformat()
+    day_rows = daily.setdefault(day_key, _normalize_crm_processing_report_rows({}))
+    _add_crm_processing_report_step(totals, result)
+    _add_crm_processing_report_step(day_rows, result)
+    state["report_totals"] = totals
+    state["report_daily"] = daily
+    current_tracking = str(state.get("report_tracking_started_at") or "").strip()
+    timestamp_text = str(timestamp)
+    if not current_tracking or timestamp_text < current_tracking:
+        state["report_tracking_started_at"] = timestamp_text
+
+
+def _append_crm_processing_report(state, timestamp, step_results):
+    for result in _normalize_crm_processing_step_results(step_results):
+        _add_crm_processing_report_result_at(state, timestamp, result)
+
+
+def _record_crm_processing_report_result(timestamp, result):
+    ensure_crm_processing_state_file()
+    with crm_processing_state_lock:
+        state = load_crm_processing_state()
+        _add_crm_processing_report_result_at(state, timestamp, result)
+        save_crm_processing_state(state)
+
+
+def _crm_processing_report_summary(rows):
+    normalized = _normalize_crm_processing_report_rows(rows)
+    ordered_rows = [normalized[step_key] for step_key in CRM_PROCESSING_REPORT_STEPS]
+    for row in ordered_rows:
+        row["duration_seconds"] = round(row["duration_seconds"], 1)
+    return {
+        "rows": ordered_rows,
+        "total_orders_processed": sum(row["orders_processed"] for row in ordered_rows),
+        "total_successful_orders": sum(row["successful_orders"] for row in ordered_rows),
+        "total_errors": sum(row["error_count"] for row in ordered_rows),
+        "total_duration_seconds": round(sum(row["duration_seconds"] for row in ordered_rows), 1),
+        "total_runs": sum(row["run_count"] for row in ordered_rows),
+    }
+
+
+def _build_crm_processing_report(state, now=None):
+    now = now or datetime.now()
+    daily = _normalize_crm_processing_report_daily(state.get("report_daily"))
+    today = now.date()
+    week_start = today - timedelta(days=today.weekday())
+    month_start = today.replace(day=1)
+
+    def _rows_for_period(start_date):
+        rows = _normalize_crm_processing_report_rows({})
+        for day_key, day_rows in daily.items():
+            try:
+                day_value = datetime.fromisoformat(day_key).date()
+            except Exception:
+                continue
+            if start_date <= day_value <= today:
+                for step_key in CRM_PROCESSING_REPORT_STEPS:
+                    source = day_rows.get(step_key) or {}
+                    target = rows[step_key]
+                    for field in ("orders_processed", "successful_orders", "error_count", "duration_seconds", "run_count"):
+                        target[field] += source.get(field, 0)
+        return rows
+
+    return {
+        "tracking_started_at": state.get("report_tracking_started_at"),
+        "periods": {
+            "daily": _crm_processing_report_summary(_rows_for_period(today)),
+            "weekly": _crm_processing_report_summary(_rows_for_period(week_start)),
+            "monthly": _crm_processing_report_summary(_rows_for_period(month_start)),
+            "all": _crm_processing_report_summary(state.get("report_totals")),
+        },
+    }
+
+
+def _crm_processing_state_for_response(state):
+    public_state = dict(state or {})
+    public_state.pop("report_totals", None)
+    public_state.pop("report_daily", None)
+    return public_state
 
 
 def load_crm_processing_state():
     state = _default_crm_processing_state()
     loaded_has_mode_preferences = False
     loaded_free_unlocker_mode_available = False
+    loaded_expanded_modes_available = False
+    loaded_has_processing_report = False
+    loaded_has_sheet_scanner_report = False
     if os.path.exists(CRM_PROCESSING_STATE_FILE):
         try:
             with open(CRM_PROCESSING_STATE_FILE, "r", encoding="utf-8-sig") as f:
@@ -4632,6 +5444,9 @@ def load_crm_processing_state():
             if isinstance(loaded, dict):
                 loaded_has_mode_preferences = isinstance(loaded.get("mode_preferences"), dict)
                 loaded_free_unlocker_mode_available = bool(loaded.get("free_unlocker_mode_available"))
+                loaded_expanded_modes_available = bool(loaded.get("expanded_unlocker_order_goods_modes_available"))
+                loaded_has_processing_report = "report_totals" in loaded
+                loaded_has_sheet_scanner_report = bool(loaded.get("report_sheet_scanner_available"))
                 state.update(loaded)
         except Exception as e:
             logger.warning("Could not read %s: %s", CRM_PROCESSING_STATE_FILE, e)
@@ -4652,7 +5467,17 @@ def load_crm_processing_state():
         free_preferences = dict(raw_mode_preferences.get("free") or {})
         free_preferences["stock_unlocker_enabled"] = True
         raw_mode_preferences["free"] = free_preferences
+    if loaded_has_mode_preferences and not loaded_expanded_modes_available:
+        raw_mode_preferences = dict(raw_mode_preferences)
+        free_preferences = dict(raw_mode_preferences.get("free") or {})
+        free_preferences["order_goods_enabled"] = True
+        raw_mode_preferences["free"] = free_preferences
+        all_preferences = dict(raw_mode_preferences.get("all") or {})
+        all_preferences["stock_unlocker_enabled"] = True
+        all_preferences["order_goods_enabled"] = True
+        raw_mode_preferences["all"] = all_preferences
     state["free_unlocker_mode_available"] = True
+    state["expanded_unlocker_order_goods_modes_available"] = True
     state["mode_preferences"] = _normalize_crm_processing_mode_preferences(
         raw_mode_preferences,
         migrated_filter=state["processing_filter"] if not loaded_has_mode_preferences else None,
@@ -4683,6 +5508,20 @@ def load_crm_processing_state():
         row["message"] = str(row.get("message") or "")
         cleaned_history.append(row)
     state["run_history"] = cleaned_history
+    if loaded_has_processing_report:
+        state["report_totals"] = _normalize_crm_processing_report_rows(state.get("report_totals"))
+        state["report_daily"] = _normalize_crm_processing_report_daily(state.get("report_daily"))
+    else:
+        report_totals, report_daily, tracking_started_at = _crm_processing_report_from_history(cleaned_history)
+        state["report_totals"] = report_totals
+        state["report_daily"] = report_daily
+        state["report_tracking_started_at"] = tracking_started_at
+    if not loaded_has_sheet_scanner_report:
+        for scanner_timestamp, scanner_result in _crm_processing_sheet_scanner_history_results():
+            _add_crm_processing_report_result_at(state, scanner_timestamp, scanner_result)
+    state["report_sheet_scanner_available"] = True
+    tracking_started_at = str(state.get("report_tracking_started_at") or "").strip()
+    state["report_tracking_started_at"] = tracking_started_at or None
     return state
 
 
@@ -4797,7 +5636,11 @@ def _build_crm_processing_summary(step_results):
     results = _normalize_crm_processing_step_results(step_results)
     if not results:
         return False, "Automate Processing did not run any automation."
-    failed = [item for item in results if not item.get("success")]
+    failed = [
+        item
+        for item in results
+        if not item.get("success") or item.get("error_count", 0) > 0 or item.get("errors")
+    ]
     if not failed:
         labels = ", ".join(item["label"] for item in results)
         return True, f"Automate Processing completed successfully: {labels}."
@@ -4841,6 +5684,7 @@ def _persist_crm_processing_run_result(success, message, selected_steps, step_re
         }
         history = state.get("run_history") if isinstance(state.get("run_history"), list) else []
         state["run_history"] = [entry] + history[:19]
+        _append_crm_processing_report(state, timestamp, normalized_results)
         save_crm_processing_state(state)
 
     return state
@@ -5404,11 +6248,14 @@ def _sync_crm_stock_parallel_worker_preferences(parallel_workers):
 
 
 def _saved_crm_automation_parallel_workers(default=1):
-    ensure_crm_address_state_file()
-    with crm_address_state_lock:
-        state = load_crm_address_state()
+    preferences = load_node_preferences()
+    resolved = resolve_worker_count(
+        preferences.get("worker_mode"),
+        preferences.get("manual_workers", default),
+        snapshot=get_platform_snapshot(),
+    )
     return _normalize_crm_positive_int(
-        state.get("saved_parallel_workers"),
+        resolved.get("effective_workers"),
         default=default,
         minimum=1,
         maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
@@ -8208,6 +9055,21 @@ def _persist_crm_mass_emailer_run_result(ok, message, payload, dry_run=True):
         state["total_runs"] = max(0, int(_safe_float(state.get("total_runs"), 0))) + 1
         if action != "scan_sheet" and not dry_run:
             state["total_orders_processed"] = max(0, int(_safe_float(state.get("total_orders_processed"), 0))) + counts["order_count"]
+            try:
+                _record_crm_processing_report_result(
+                    timestamp,
+                    {
+                        "key": "mass_emailer",
+                        "success": bool(ok),
+                        "order_count": counts["order_count"] + counts["failure_count"],
+                        "successful_order_count": counts["order_count"],
+                        "error_count": counts["failure_count"],
+                        "duration_seconds": duration_seconds,
+                        "message": str(message),
+                    },
+                )
+            except Exception as e:
+                logger.warning("Could not update Processing Quick Report with Sheets Scanner result: %s", e)
         history = state.get("run_history") if isinstance(state.get("run_history"), list) else []
         state["run_history"] = _normalize_crm_mass_emailer_history([entry] + history[:19])
         save_crm_mass_emailer_state(state)
@@ -8387,14 +9249,16 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
             "key": step_key,
             "label": _crm_processing_step_label(step_key),
             "success": bool(ok),
+            **_crm_processing_step_metrics(step_key, payload, ok, message),
             "stage_timings": _normalize_stage_timings(payload.get("stage_timings") if isinstance(payload, dict) else []),
             "message": str(message),
+            "errors": _crm_processing_step_error_details(step_key, payload, ok, message),
         }
 
     if step_key == "order_goods":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
         list_url = _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
-        if normalized_filter in {"813", "high_value"} and not list_url:
+        if normalized_filter in {"813", "high_value", "free", "all"} and not list_url:
             message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
             return {
                 "key": step_key,
@@ -8434,8 +9298,10 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
             "key": step_key,
             "label": _crm_processing_step_label(step_key),
             "success": bool(ok),
+            **_crm_processing_step_metrics(step_key, payload, ok, message),
             "stage_timings": _normalize_stage_timings(payload.get("stage_timings") if isinstance(payload, dict) else []),
             "message": str(message),
+            "errors": _crm_processing_step_error_details(step_key, payload, ok, message),
         }
 
     if step_key == "shipping_bypasser":
@@ -8484,8 +9350,10 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
             "key": step_key,
             "label": _crm_processing_step_label(step_key),
             "success": bool(ok),
+            **_crm_processing_step_metrics(step_key, payload, ok, message),
             "stage_timings": _normalize_stage_timings(payload.get("stage_timings") if isinstance(payload, dict) else []),
             "message": str(message),
+            "errors": _crm_processing_step_error_details(step_key, payload, ok, message),
         }
 
     if step_key == "push_back":
@@ -8549,15 +9417,17 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
             "key": step_key,
             "label": _crm_processing_step_label(step_key),
             "success": bool(ok),
+            **_crm_processing_step_metrics(step_key, payload, ok, message),
             "stage_timings": _normalize_stage_timings(payload.get("stage_timings") if isinstance(payload, dict) else []),
             "message": str(message),
+            "errors": _crm_processing_step_error_details(step_key, payload, ok, message),
         }
 
     if step_key == "stock_unlocker":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
         list_url = _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
-        if normalized_filter == "free" and not list_url:
-            message = "CRM_UNLOCKER_FREE_URL is empty in config.py."
+        if normalized_filter in {"free", "all"} and not list_url:
+            message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
             return {
                 "key": step_key,
                 "label": _crm_processing_step_label(step_key),
@@ -8581,7 +9451,9 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
             "key": step_key,
             "label": _crm_processing_step_label(step_key),
             "success": bool(ok),
+            **_crm_processing_step_metrics(step_key, payload, ok, message),
             "message": str(message),
+            "errors": _crm_processing_step_error_details(step_key, payload, ok, message),
         }
 
     normalized_filter = _normalize_crm_shipping_filter(processing_filter)
@@ -8649,8 +9521,10 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
         "key": step_key,
         "label": _crm_processing_step_label(step_key),
         "success": bool(ok),
+        **_crm_processing_step_metrics(step_key, payload, ok, message),
         "stage_timings": _normalize_stage_timings(payload.get("stage_timings") if isinstance(payload, dict) else []),
         "message": str(message),
+        "errors": _crm_processing_step_error_details(step_key, payload, ok, message),
     }
 
 
@@ -8821,11 +9695,14 @@ def get_crm_processing_status_payload():
         runtime["currentOrderProgress"] = None
     else:
         runtime["currentOrderProgress"] = _crm_processing_current_order_progress(runtime.get("currentStep"))
+    if isinstance(runtime.get("stateSnapshot"), dict):
+        runtime["stateSnapshot"] = _crm_processing_state_for_response(runtime.get("stateSnapshot"))
     return {
         "success": True,
         "running": bool(runtime.get("running")),
         "runtime": runtime,
-        "state": state,
+        "state": _crm_processing_state_for_response(state),
+        "report": _build_crm_processing_report(state),
     }
 
 
@@ -8833,7 +9710,11 @@ def get_crm_processing_state_payload():
     ensure_crm_processing_state_file()
     with crm_processing_state_lock:
         state = load_crm_processing_state()
-    return {"success": True, "state": state}
+    return {
+        "success": True,
+        "state": _crm_processing_state_for_response(state),
+        "report": _build_crm_processing_report(state),
+    }
 
 
 def run_work(action, automatic=False):
@@ -9287,7 +10168,14 @@ def _power_countdown_timer_callback():
         notify_user(f"{label} Countdown {'OK' if ok else 'Failed'}", msg)
         return ok, msg
 
-    enqueue_automation(f"{_power_action_label(action)} Countdown Action", "System Power", _queued_power_countdown_action)
+    enqueue_automation(
+        f"{_power_action_label(action)} Countdown Action",
+        "System Power",
+        _queued_power_countdown_action,
+        task_type="system.power",
+        task_arguments={"action": action},
+        required_capability="system_power",
+    )
 
 
 def schedule_power_countdown(action, delay_seconds):
@@ -9338,6 +10226,43 @@ def cancel_power_countdown(audit=True):
     if audit:
         _audit_result("pc.countdown.cancel", True, msg)
     return True, msg
+
+
+def cancel_scheduled_power_tasks():
+    cancel_power_countdown(audit=False)
+    try:
+        target_node = str(request.headers.get("X-Automation-Target-Node") or "").strip()
+    except RuntimeError:
+        target_node = ""
+    canceled = 0
+    if AUTOMATION_QUEUE_MODE == "shared":
+        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
+        if runtime is None:
+            return False, shared_queue_initialization_error or "Shared queue is not configured."
+        try:
+            for task in runtime.client.snapshot():
+                if task.get("status") != "queued" or task.get("category") != "System Power":
+                    continue
+                if task.get("queue_mode") != "scheduled":
+                    continue
+                if target_node and str(task.get("target_node") or "") != target_node:
+                    continue
+                runtime.client.cancel(task.get("id"))
+                canceled += 1
+            runtime.wake()
+        except Exception as exc:
+            return False, str(exc)
+    else:
+        with automation_queue_condition:
+            for task in list(automation_queue_tasks):
+                if task.get("status") != "idle" or task.get("category") != "System Power":
+                    continue
+                if task.get("queue_mode") != "scheduled":
+                    continue
+                automation_queue_tasks.remove(task)
+                canceled += 1
+            automation_queue_condition.notify_all()
+    return True, f"Canceled {canceled} scheduled power task{'s' if canceled != 1 else ''}."
 
 
 def _launch_subprocess_async(cmd, automation_name):
@@ -9517,6 +10442,44 @@ def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enab
     return _wait_for_status_completion(get_crm_processing_status_payload, msg)
 
 
+def _run_system_power_task(action):
+    if not get_platform_snapshot().capabilities.get("system_power"):
+        return False, "Windows only"
+    action = str(action or "").strip().lower()
+    cancel_power_countdown(audit=False)
+    if action == "restart_explorer":
+        return trigger_pc_restart_explorer()
+    time.sleep(1)
+    return _dispatch_power_action(action)
+
+
+def register_shared_queue_task_executors():
+    """Register every serializable task supported by this app version."""
+    registrations = {
+        "communications.paycom_clock": run_clock,
+        "communications.slack": run_slack,
+        "communications.slack_lunch": start_slack_lunch_break,
+        "communications.slack_lunch_return": _run_slack_lunch_return_queued,
+        "communications.work": run_work,
+        "communications.work_sync": run_work_sync,
+        "communications.automatic_work_out": _run_automatic_work_clock_out_queued,
+        "development.test_suite": lambda selected_tests=None: run_automation_test_suite(selected_tests)[:2],
+        "crm.stock_unlocker": run_crm_run_queued,
+        "crm.address_validator": run_crm_address_run_queued,
+        "crm.order_goods": run_crm_order_goods_run_queued,
+        "crm.shipping_bypasser": run_crm_shipping_bypasser_run_queued,
+        "crm.product_separator": run_crm_product_separator_run_queued,
+        "crm.auto_splitter": run_crm_auto_splitter_run_queued,
+        "crm.mass_emailer": run_crm_mass_emailer_run_queued,
+        "crm.processing": run_crm_processing_run_queued,
+        "system.power": _run_system_power_task,
+    }
+    for task_type, executor in registrations.items():
+        if not automation_task_registry.has(task_type):
+            automation_task_registry.register(task_type, executor)
+    return tuple(automation_task_registry.task_types())
+
+
 def _load_config_assignment_keys():
     try:
         src = open(CONFIG_FILE, "r", encoding="utf-8-sig").read()
@@ -9688,6 +10651,128 @@ def _run_async_with_notification(title, fn):
     threading.Thread(target=worker, daemon=True).start()
 
 
+def initialize_app_security():
+    global app_security_config, app_security_initialization_error
+    if app.secret_key and (not APP_PIN_REQUIRED or app_security_config is not None):
+        return app_security_config
+    if not APP_PIN_REQUIRED:
+        app.secret_key = secrets.token_hex(32)
+        return None
+    try:
+        app_security_config = load_app_security()
+        app.secret_key = app_security_config.session_secret
+        app_security_initialization_error = None
+    except Exception as exc:
+        app_security_initialization_error = str(exc)
+        app.secret_key = secrets.token_hex(32)
+        logger.error("App PIN access is fail-closed: %s", exc)
+    return app_security_config
+
+
+def _login_client_key():
+    forwarded = str(request.headers.get("X-Forwarded-For") or "").split(",", 1)[0].strip()
+    return forwarded or str(request.remote_addr or "unknown")
+
+
+def _login_retry_after(client_key):
+    now = time.monotonic()
+    with app_login_lock:
+        attempts = [stamp for stamp in app_login_attempts.get(client_key, []) if now - stamp < 300]
+        app_login_attempts[client_key] = attempts
+        if len(attempts) < 5:
+            return 0
+        return max(1, int(60 - (now - attempts[-1])))
+
+
+@app.before_request
+def enforce_app_access_security():
+    if not APP_PIN_REQUIRED:
+        return None
+    initialize_app_security()
+    public_paths = {"/health", "/login", "/api/auth/login", "/api/auth/status"}
+    if request.path in public_paths:
+        return None
+    if app_security_config is None:
+        message = app_security_initialization_error or "App PIN security is not configured."
+        return jsonify({"success": False, "message": message}), 503
+    if not session.get("app_authenticated"):
+        if request.path.startswith("/api/"):
+            return jsonify({"success": False, "message": "App PIN required."}), 401
+        return redirect(url_for("login_page", next=request.full_path if request.path != "/" else "/ui"))
+    if request.method == "GET" and request.url_rule and "POST" in request.url_rule.methods:
+        if request.endpoint not in {"api_config"}:
+            return jsonify({"success": False, "message": "Use POST for actions when remote access is enabled."}), 405
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        expected = str(session.get("csrf_token") or "")
+        supplied = str(request.headers.get("X-CSRF-Token") or "")
+        if not expected or not supplied or not secrets.compare_digest(expected, supplied):
+            return jsonify({"success": False, "message": "Security token missing or expired. Refresh the page."}), 403
+    return None
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    return response
+
+
+@app.route("/login", methods=["GET"])
+def login_page():
+    if not APP_PIN_REQUIRED:
+        return redirect("/ui")
+    next_path = request.args.get("next") or "/ui"
+    html = """<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>Automation Login</title><style>body{font-family:system-ui;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;min-height:100vh;margin:0}.card{width:min(360px,88vw);background:#1e293b;padding:28px;border-radius:16px;box-shadow:0 20px 50px #0008}input,button{box-sizing:border-box;width:100%;font-size:18px;padding:12px;border-radius:9px;margin-top:12px}button{background:#2563eb;color:white;border:0;font-weight:700}.error{color:#fca5a5;min-height:24px}</style></head>
+<body><form class='card' id='loginForm'><h1>Automation Control Board</h1><p>Enter the shared app PIN.</p><input id='pin' inputmode='numeric' pattern='[0-9]*' minlength='6' maxlength='12' type='password' autocomplete='current-password' required autofocus><button>Unlock</button><p class='error' id='error'></p></form>
+<script>const nextPath=__NEXT__;document.getElementById('loginForm').addEventListener('submit',async(e)=>{e.preventDefault();const error=document.getElementById('error');error.textContent='Checking…';const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:document.getElementById('pin').value})});const d=await r.json().catch(()=>({message:'Login failed'}));if(r.ok){location.href=nextPath}else{error.textContent=d.message||'Login failed'}});</script></body></html>"""
+    safe_next = next_path if str(next_path).startswith("/") and not str(next_path).startswith("//") else "/ui"
+    return Response(html.replace("__NEXT__", json.dumps(safe_next)), mimetype="text/html")
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_auth_login():
+    initialize_app_security()
+    if app_security_config is None:
+        return jsonify({"success": False, "message": app_security_initialization_error or "PIN unavailable."}), 503
+    client_key = _login_client_key()
+    retry_after = _login_retry_after(client_key)
+    if retry_after:
+        return jsonify({"success": False, "message": f"Too many attempts. Try again in {retry_after} seconds."}), 429
+    data = request.get_json(silent=True) or {}
+    if not app_security_config.verify_pin(data.get("pin")):
+        with app_login_lock:
+            app_login_attempts.setdefault(client_key, []).append(time.monotonic())
+        return jsonify({"success": False, "message": "Incorrect app PIN."}), 401
+    with app_login_lock:
+        app_login_attempts.pop(client_key, None)
+    session.clear()
+    session.permanent = True
+    session["app_authenticated"] = True
+    session["csrf_token"] = secrets.token_urlsafe(32)
+    return jsonify({"success": True, "csrf_token": session["csrf_token"]})
+
+
+@app.route("/api/auth/status", methods=["GET"])
+def api_auth_status():
+    authenticated = bool(not APP_PIN_REQUIRED or session.get("app_authenticated"))
+    return jsonify(
+        {
+            "success": True,
+            "pin_required": APP_PIN_REQUIRED,
+            "authenticated": authenticated,
+            "csrf_token": session.get("csrf_token") if authenticated else None,
+        }
+    )
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_auth_logout():
+    session.clear()
+    return jsonify({"success": True, "message": "Signed out."})
+
+
 def open_control_panel():
     try:
         webbrowser.open(f"http://127.0.0.1:{SERVER_PORT}/ui")
@@ -9698,6 +10783,15 @@ def open_control_panel():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
+
+
+@app.route("/service-worker.js", methods=["GET"])
+def service_worker():
+    script = "self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));"
+    response = Response(script, mimetype="application/javascript")
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Service-Worker-Allowed"] = "/"
+    return response
 
 
 @app.route("/", methods=["GET"])
@@ -9722,6 +10816,37 @@ def api_server_runtime():
         return jsonify(get_server_runtime_payload())
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/api/node-runtime", methods=["GET"])
+def api_node_runtime():
+    try:
+        return jsonify(get_node_runtime_payload())
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/api/worker-settings", methods=["POST"])
+def api_worker_settings():
+    data = request.get_json(silent=True) or {}
+    try:
+        preferences = update_node_preferences(
+            {
+                "worker_mode": data.get("worker_mode"),
+                "manual_workers": data.get("manual_workers"),
+            }
+        )
+        if preferences.get("worker_mode") == "manual":
+            update_crm_address_preferences(parallel_workers=preferences.get("manual_workers"))
+        payload = get_node_runtime_payload()
+        payload["message"] = (
+            f"Worker mode set to Auto ({payload['worker_settings']['effective_workers']} recommended)."
+            if preferences.get("worker_mode") == "auto"
+            else f"Manual worker override set to {preferences.get('manual_workers')}."
+        )
+        return jsonify(payload)
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 400
 
 
 @app.route("/api/console", methods=["GET"])
@@ -9780,6 +10905,24 @@ def api_queue_reorder():
     return jsonify(payload), (200 if ok else 400)
 
 
+@app.route("/api/queue/<task_id>/reassign", methods=["POST"])
+def api_queue_reassign(task_id):
+    data = request.get_json(silent=True) or {}
+    ok, msg = reassign_automation_queue_task(task_id, data.get("target_node") or data.get("targetNode"))
+    payload = get_automation_queue_payload()
+    payload.update({"success": ok, "message": msg})
+    return jsonify(payload), (200 if ok else 400)
+
+
+@app.route("/api/queue/resume", methods=["POST"])
+def api_queue_resume():
+    data = request.get_json(silent=True) or {}
+    ok, msg = resume_shared_queue_after_review(data.get("review_note") or data.get("reviewNote"))
+    payload = get_automation_queue_payload()
+    payload.update({"success": ok, "message": msg})
+    return jsonify(payload), (200 if ok else 400)
+
+
 @app.route("/automation/force-stop", methods=["POST", "GET"])
 def automation_force_stop():
     ok, msg = force_stop_automation()
@@ -9792,6 +10935,7 @@ def _resolve_chrome_executable():
         env_path,
         shutil.which("chrome.exe"),
         shutil.which("chrome"),
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         os.path.join(os.environ.get("PROGRAMFILES", ""), "Google", "Chrome", "Application", "chrome.exe"),
         os.path.join(os.environ.get("PROGRAMFILES(X86)", ""), "Google", "Chrome", "Application", "chrome.exe"),
         os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
@@ -9995,6 +11139,9 @@ register_system_routes(
     schedule_power_at_datetime=schedule_power_at_datetime,
     resolve_power_schedule_datetime=_resolve_power_schedule_datetime,
     safe_float=_safe_float,
+    platform_capabilities=lambda: get_platform_snapshot().capabilities,
+    get_shared_node_status=get_shared_node_runtime_status,
+    cancel_scheduled_power_tasks=cancel_scheduled_power_tasks,
 )
 
 
@@ -10043,7 +11190,7 @@ def _restart_server_process():
     try:
         create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         hidden_launcher = os.path.join(SCRIPT_DIR, "start_server_hidden.vbs")
-        if os.path.exists(hidden_launcher):
+        if os.name == "nt" and os.path.exists(hidden_launcher):
             subprocess.Popen(
                 ["wscript.exe", hidden_launcher],
                 cwd=SCRIPT_DIR,
@@ -10051,11 +11198,14 @@ def _restart_server_process():
             )
             return True, "Server restart requested (hidden launcher)."
 
-        python_exe = _resolve_windowless_python()
-        script = os.path.abspath(__file__)
-        cmd = [python_exe, script] + list(sys.argv[1:])
-        subprocess.Popen(cmd, cwd=SCRIPT_DIR, creationflags=create_no_window)
-        return True, "Server restart requested (windowless python)."
+        python_exe = _resolve_windowless_python() if os.name == "nt" else sys.executable
+        sync_script = os.path.join(SCRIPT_DIR, "safe_sync.py")
+        cmd = [python_exe, sync_script, "start"]
+        process_options = {"cwd": SCRIPT_DIR, "creationflags": create_no_window}
+        if os.name != "nt":
+            process_options["start_new_session"] = True
+        subprocess.Popen(cmd, **process_options)
+        return True, "Safe Sync & Start restart requested."
     except Exception as e:
         return False, f"Server restart failed: {e}"
 
@@ -10104,24 +11254,45 @@ def on_exit(icon, _item=None):
     cancel_power_countdown(audit=False)
     cancel_slack_lunch_break(audit=False)
     close_desktop_metrics_runtime()
+    if shared_queue_runtime is not None:
+        shared_queue_runtime.stop()
     icon.stop()
     os._exit(0)
 
 
 def kill_existing_server(port=SERVER_PORT):
     try:
-        result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True)
-        for line in result.stdout.splitlines():
-            if f":{port}" in line and "LISTENING" in line:
-                pid = int(line.strip().split()[-1])
-                if pid != os.getpid():
-                    subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+        import psutil
+
+        candidate_pids = {
+            connection.pid
+            for connection in psutil.net_connections(kind="tcp")
+            if connection.pid
+            and connection.status == psutil.CONN_LISTEN
+            and connection.laddr
+            and connection.laddr.port == int(port)
+        }
+        for pid in candidate_pids:
+            if pid == os.getpid():
+                continue
+            process = psutil.Process(pid)
+            command = " ".join(process.cmdline())
+            if "server.py" not in command or SCRIPT_DIR.lower() not in command.lower():
+                logger.error("Port %s is occupied by an unrelated process %s; it was not stopped.", port, pid)
+                continue
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except psutil.TimeoutExpired:
+                process.kill()
     except Exception as e:
         logger.warning("Could not check for existing server: %s", e)
 
 
 if __name__ == "__main__":
     reload_runtime_config()
+    register_shared_queue_task_executors()
+    initialize_shared_queue_runtime()
     ensure_crm_state_file()
     ensure_crm_processing_state_file()
     kill_existing_server()

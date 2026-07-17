@@ -22,6 +22,11 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
+try:
+    import psutil
+except Exception:
+    psutil = None
+
 from automation_audit import log_automation_result
 from runtime_paths import SCREENSHOTS_DIR, result_file, state_file
 
@@ -256,6 +261,18 @@ def safe_take_screenshot(driver, name, timeout=8, screenshots_dir=None):
 
 
 def _kill_process(pid):
+    if os.name != "nt":
+        if psutil is None:
+            return False, "psutil is required to terminate Chrome on this platform."
+        try:
+            process = psutil.Process(int(pid))
+            process.terminate()
+            process.wait(timeout=8)
+            return True, ""
+        except psutil.NoSuchProcess:
+            return True, "Process was already stopped."
+        except Exception as err:
+            return False, str(err)
     try:
         result = subprocess.run(
             ["taskkill", "/F", "/PID", str(pid)],
@@ -302,6 +319,22 @@ def _collect_chrome_process_entries_with_wmic():
                 entries.append((current_pid.strip(), (current_cmd or "").strip()))
             current_pid = None
             current_cmd = None
+    return entries
+
+
+def _collect_chrome_process_entries_with_psutil():
+    if psutil is None:
+        return None
+    entries = []
+    for process in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            name = str(process.info.get("name") or "").lower()
+            if "chrome" not in name and "google chrome" not in name:
+                continue
+            cmdline = " ".join(str(value) for value in (process.info.get("cmdline") or []))
+            entries.append((str(process.info.get("pid")), cmdline))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
     return entries
 
 
@@ -382,8 +415,11 @@ def _chrome_cmdline_uses_profile(cmdline, profile_path):
 def kill_stale_chrome(profile_path, profile_label="automation"):
     """Kill Chrome processes tied to the given Selenium profile path only."""
     try:
-        entries = _collect_chrome_process_entries_with_wmic()
-        source_name = "wmic"
+        entries = _collect_chrome_process_entries_with_psutil()
+        source_name = "psutil"
+        if entries is None:
+            entries = _collect_chrome_process_entries_with_wmic()
+            source_name = "wmic"
         if entries is None:
             entries = _collect_chrome_process_entries_with_powershell()
             source_name = "powershell/cim"

@@ -69,14 +69,52 @@ def register_work_routes(
                 return value
         return None
 
-    def _queue_response(label, category, fn, status_payload_fn=None, queue_details=None, queue_options=None):
+    def _queue_response(
+        label,
+        category,
+        fn,
+        status_payload_fn=None,
+        queue_details=None,
+        queue_options=None,
+        task_type=None,
+        task_arguments=None,
+        required_capability=None,
+        target_node=None,
+    ):
         queue_options = queue_options if isinstance(queue_options, dict) else {}
+        shared_defaults = {
+            "Paycom Clock In": ("communications.paycom_clock", {"action": "in", "dry_run": False}),
+            "Paycom Clock Out": ("communications.paycom_clock", {"action": "out", "dry_run": False}),
+            "Paycom Clock In Dry Run": ("communications.paycom_clock", {"action": "in", "dry_run": True}),
+            "Paycom Clock Out Dry Run": ("communications.paycom_clock", {"action": "out", "dry_run": True}),
+            "Slack In": ("communications.slack", {"action": "in"}),
+            "Slack Out": ("communications.slack", {"action": "out"}),
+            "Slack Lunch Start": ("communications.slack_lunch", {"force_test_url": False}),
+            "Slack Lunch Test Start": ("communications.slack_lunch", {"force_test_url": True}),
+            "Work In": ("communications.work", {"action": "in", "automatic": False}),
+            "Work Out": ("communications.work", {"action": "out", "automatic": False}),
+            "Sync Paycom Hours": ("communications.work_sync", {}),
+            "Stock Unlocker": ("crm.stock_unlocker", {"dry_run": False}),
+            "Stock Unlocker Dry Run": ("crm.stock_unlocker", {"dry_run": True}),
+        }
+        default_descriptor = shared_defaults.get(label)
+        if default_descriptor and not task_type:
+            task_type, task_arguments = default_descriptor
+        if required_capability is None and str(task_type or "").startswith("crm."):
+            required_capability = "crm"
+        if target_node is None:
+            requested_target = str(request.headers.get("X-Automation-Target-Node") or "").strip()
+            target_node = requested_target if requested_target and requested_target.lower() != "any" else None
         ok, msg, task = enqueue_automation(
             label,
             category,
             fn,
             details=queue_details,
             status_fn=status_payload_fn if callable(status_payload_fn) else None,
+            task_type=task_type,
+            task_arguments=task_arguments if isinstance(task_arguments, dict) else {},
+            required_capability=required_capability,
+            target_node=target_node,
             **queue_options,
         )
         payload = status_payload_fn() if callable(status_payload_fn) else {"success": True}
@@ -116,6 +154,8 @@ def register_work_routes(
             "Automation Test Suite",
             "Development",
             lambda: run_automation_test_suite(selected)[:2],
+            task_type="development.test_suite",
+            task_arguments={"selected_tests": selected},
         )
 
     @app.route("/slack/in", methods=["POST", "GET"])
@@ -306,7 +346,7 @@ def register_work_routes(
         if processing_filter not in {"rush", "free", "all", "813", "high_value"}:
             processing_filter = "rush"
         rush_like = processing_filter in {"rush", "high_value"}
-        unlocker_capable = rush_like or processing_filter == "free"
+        unlocker_capable = rush_like or processing_filter in {"free", "all"}
         mode_preferences = state.get("mode_preferences") if isinstance(state.get("mode_preferences"), dict) else {}
         mode_state = mode_preferences.get(processing_filter) if isinstance(mode_preferences.get(processing_filter), dict) else {}
         fallback_state = {**state, **mode_state}
@@ -339,16 +379,12 @@ def register_work_routes(
             "processing_filter": processing_filter,
         }
         if processing_filter == "all":
-            effective["address_validator_enabled"] = True
-            effective["stock_unlocker_enabled"] = False
-            effective["order_goods_enabled"] = False
             effective["shipping_bypasser_enabled"] = False
             effective["push_back_enabled"] = False
         elif processing_filter == "813":
             effective["stock_unlocker_enabled"] = False
             effective["product_separator_enabled"] = False
         elif processing_filter == "free":
-            effective["order_goods_enabled"] = False
             effective["shipping_bypasser_enabled"] = False
             effective["push_back_enabled"] = False
         elif not unlocker_capable:
@@ -381,11 +417,11 @@ def register_work_routes(
             steps.append("validator")
         if effective.get("product_separator_enabled") and processing_filter != "813":
             steps.append("separator")
-        if effective.get("stock_unlocker_enabled") and (rush_like or processing_filter == "free"):
+        if effective.get("stock_unlocker_enabled") and (rush_like or processing_filter in {"free", "all"}):
             steps.append("unlocker")
         if (
             effective.get("order_goods_enabled")
-            and (rush_like or processing_filter == "813")
+            and (rush_like or processing_filter in {"free", "all", "813"})
         ):
             steps.append("order_goods")
         if effective.get("shipping_bypasser_enabled") and (rush_like or processing_filter == "813"):
@@ -438,11 +474,11 @@ def register_work_routes(
             steps.append("Validator")
         if effective.get("product_separator_enabled") and processing_filter != "813":
             steps.append("Separator")
-        if effective.get("stock_unlocker_enabled") and (rush_like or processing_filter == "free"):
+        if effective.get("stock_unlocker_enabled") and (rush_like or processing_filter in {"free", "all"}):
             steps.append("Unlocker")
         if (
             effective.get("order_goods_enabled")
-            and (rush_like or processing_filter == "813")
+            and (rush_like or processing_filter in {"free", "all", "813"})
         ):
             steps.append("Order Goods")
         if effective.get("shipping_bypasser_enabled") and (rush_like or processing_filter == "813"):
@@ -468,6 +504,8 @@ def register_work_routes(
             lambda: run_crm_processing_run_queued(**options),
             get_crm_processing_status_payload,
             queue_options=_crm_processing_queue_options(queue_source),
+            task_type="crm.processing",
+            task_arguments=options,
         )
 
     def _crm_processing_mode_options(processing_filter):
@@ -485,6 +523,8 @@ def register_work_routes(
             lambda: run_crm_processing_run_queued(**options),
             get_crm_processing_status_payload,
             queue_options=_crm_processing_queue_options(queue_source),
+            task_type="crm.processing",
+            task_arguments=options,
         )
 
     @app.route("/crm/process/rush", methods=["POST", "GET"])
@@ -703,6 +743,8 @@ def register_work_routes(
             lambda: run_crm_mass_emailer_run_queued(action="process_queue", dry_run=False, **options),
             get_crm_mass_emailer_status_payload,
             queue_details=_crm_mass_emailer_queue_details(options),
+            task_type="crm.mass_emailer",
+            task_arguments={"action": "process_queue", "dry_run": False, **options},
         )
 
     @app.route("/crm/mass-emailer/dry-run", methods=["POST", "GET"])
@@ -715,6 +757,8 @@ def register_work_routes(
             lambda: run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, **options),
             get_crm_mass_emailer_status_payload,
             queue_details=_crm_mass_emailer_queue_details(options),
+            task_type="crm.mass_emailer",
+            task_arguments={"action": "process_queue", "dry_run": True, **options},
         )
 
     @app.route("/crm/mass-emailer/scan", methods=["POST", "GET"])
@@ -727,6 +771,8 @@ def register_work_routes(
             lambda: run_crm_mass_emailer_run_queued(action="scan_sheet", dry_run=True, **options),
             get_crm_mass_emailer_status_payload,
             queue_details=_crm_mass_emailer_queue_details(options),
+            task_type="crm.mass_emailer",
+            task_arguments={"action": "scan_sheet", "dry_run": True, **options},
         )
 
     @app.route("/crm/mass-emailer/status", methods=["GET"])
@@ -750,6 +796,8 @@ def register_work_routes(
             "Processing",
             lambda: run_crm_address_run_queued(dry_run=False, **options),
             get_crm_address_status_payload,
+            task_type="crm.address_validator",
+            task_arguments={"dry_run": False, **options},
         )
 
     @app.route("/crm/address-validator/dry-run", methods=["POST", "GET"])
@@ -760,6 +808,8 @@ def register_work_routes(
             "Processing",
             lambda: run_crm_address_run_queued(dry_run=True, **options),
             get_crm_address_status_payload,
+            task_type="crm.address_validator",
+            task_arguments={"dry_run": True, **options},
         )
 
     @app.route("/crm/address-validator/status", methods=["GET"])
@@ -806,6 +856,8 @@ def register_work_routes(
             "Processing",
             lambda: run_crm_order_goods_run_queued(dry_run=False, **options),
             get_crm_order_goods_status_payload,
+            task_type="crm.order_goods",
+            task_arguments={"dry_run": False, **options},
         )
 
     @app.route("/crm/order-goods/dry-run", methods=["POST", "GET"])
@@ -816,6 +868,8 @@ def register_work_routes(
             "Processing",
             lambda: run_crm_order_goods_run_queued(dry_run=True, **options),
             get_crm_order_goods_status_payload,
+            task_type="crm.order_goods",
+            task_arguments={"dry_run": True, **options},
         )
 
     @app.route("/crm/order-goods/status", methods=["GET"])
@@ -831,6 +885,8 @@ def register_work_routes(
             "Processing",
             lambda: run_crm_shipping_bypasser_run_queued(dry_run=False, **options),
             get_crm_shipping_bypasser_status_payload,
+            task_type="crm.shipping_bypasser",
+            task_arguments={"dry_run": False, **options},
         )
 
     @app.route("/crm/shipping-bypasser/dry-run", methods=["POST", "GET"])
@@ -842,6 +898,8 @@ def register_work_routes(
             "Processing",
             lambda: run_crm_shipping_bypasser_run_queued(dry_run=True, **options),
             get_crm_shipping_bypasser_status_payload,
+            task_type="crm.shipping_bypasser",
+            task_arguments={"dry_run": True, **options},
         )
 
     @app.route("/crm/shipping-bypasser/status", methods=["GET"])
@@ -878,6 +936,8 @@ def register_work_routes(
             "Processing",
             lambda: run_crm_product_separator_run_queued(dry_run=False, **options),
             get_crm_product_separator_status_payload,
+            task_type="crm.product_separator",
+            task_arguments={"dry_run": False, **options},
         )
 
     @app.route("/crm/product-separator/dry-run", methods=["POST", "GET"])
@@ -891,6 +951,8 @@ def register_work_routes(
             "Processing",
             lambda: run_crm_product_separator_run_queued(dry_run=True, **options),
             get_crm_product_separator_status_payload,
+            task_type="crm.product_separator",
+            task_arguments={"dry_run": True, **options},
         )
 
     @app.route("/crm/product-separator/status", methods=["GET"])
@@ -909,6 +971,8 @@ def register_work_routes(
             lambda: run_crm_auto_splitter_run_queued(dry_run=False, **options),
             get_crm_auto_splitter_status_payload,
             queue_details=_crm_auto_splitter_queue_details(options),
+            task_type="crm.auto_splitter",
+            task_arguments={"dry_run": False, **options},
         )
 
     @app.route("/crm/auto-splitter/dry-run", methods=["POST", "GET"])
@@ -920,6 +984,8 @@ def register_work_routes(
             lambda: run_crm_auto_splitter_run_queued(dry_run=True, **options),
             get_crm_auto_splitter_status_payload,
             queue_details=_crm_auto_splitter_queue_details(options),
+            task_type="crm.auto_splitter",
+            task_arguments={"dry_run": True, **options},
         )
 
     @app.route("/crm/auto-splitter/status", methods=["GET"])

@@ -357,7 +357,7 @@ def set_composer_message(driver, composer, message):
     time.sleep(0.15)
 
     try:
-        composer.send_keys(Keys.CONTROL, "a")
+        composer.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
         composer.send_keys(Keys.BACKSPACE)
     except Exception:
         pass
@@ -403,7 +403,7 @@ def submit_message(driver, composer, message):
         return True
 
     try:
-        composer.send_keys(Keys.CONTROL, Keys.ENTER)
+        composer.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, Keys.ENTER)
         time.sleep(0.8)
         after_second = _composer_text(driver, composer)
         if target and target not in after_second:

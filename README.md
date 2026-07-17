@@ -1,6 +1,6 @@
 # Work PC Automation
 
-Local Windows automation dashboard for coordinating work-day routines, CRM order workflows, Slack status updates, Paycom time tracking, desktop power timers, and optional system metrics from one private control panel.
+Cross-platform Windows/macOS automation dashboard for coordinating work-day routines, CRM order workflows, Slack status updates, Paycom time tracking, and one private control panel. Desktop power and hardware metrics remain Windows-only.
 
 The app runs as a local Flask server with a browser control panel and a tray icon. Worker scripts handle the browser automation through Selenium, while the server coordinates scheduling, locks, retries, runtime state, result history, stage timing, and audit logging.
 
@@ -17,6 +17,7 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - Records automation results in a shared audit log.
 - Keeps local state, result JSON, screenshots, logs, debug output, and cloned browser profiles under ignored runtime folders.
 - Supports hidden startup through a Windows Script Host launcher.
+- Supports Safe Sync & Start on both operating systems, a macOS LaunchAgent, a Supabase-backed global FIFO queue, and a PIN-protected Android control board over Tailscale.
 
 ## Project Layout
 
@@ -27,6 +28,9 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - `automation_runtime.py` - shared Selenium/runtime helpers.
 - `runtime_paths.py` - centralized paths for ignored local runtime artifacts.
 - `automation_audit.py` - audit log helpers.
+- `credential_store.py` / `manage_credentials.py` - Windows Credential Manager and macOS Keychain integration.
+- `shared_queue.py` / `shared_queue_runtime.py` - encrypted Supabase queue and node lease coordination.
+- `safe_sync.py` - non-destructive Git fetch/fast-forward/version gate startup.
 - `slack_message_rotation.py` - alternating Slack message state logic.
 - `config.example.py` - safe template for local runtime settings.
 - `docs/` - fuller system guide and CRM automation notes.
@@ -48,21 +52,31 @@ This repo intentionally does not commit real credentials, browser sessions, logs
    Copy-Item config.example.py config.py
    ```
 
-3. Fill in `config.py` with local-only values such as Paycom PIN, Slack channel URLs, CRM credentials, and CRM report URLs.
+3. Fill in `config.py` with non-secret local values such as Slack channel URLs and CRM report URLs.
 
-4. Start the server:
+4. Store login secrets in Windows Credential Manager (the prompts do not echo passwords):
+
+   ```powershell
+   python manage_windows_credentials.py set paycom
+   python manage_windows_credentials.py set crm
+   python manage_windows_credentials.py set sanmar
+   python manage_windows_credentials.py set salesforce
+   python manage_windows_credentials.py set google_sheets
+   ```
+
+5. Start the server:
 
    ```powershell
    python server.py
    ```
 
-5. Open the local UI:
+6. Open the local UI:
 
    ```text
    http://127.0.0.1:5123/ui
    ```
 
-For hidden startup on Windows, use `start_server_hidden.vbs`.
+For hidden startup on Windows, use `start_server_hidden.vbs`; it now performs Safe Sync & Start. For macOS and Android/Tailscale onboarding, follow [`docs/MAC_AND_TABLET_SETUP.md`](docs/MAC_AND_TABLET_SETUP.md).
 
 ## Runtime Files
 
@@ -96,6 +110,6 @@ python -m compileall automation_audit.py automation_runtime.py server.py slack_m
 
 ## Notes
 
-This project is designed for a single trusted Windows workstation. Treat `config.py` and browser profile directories as sensitive because they may contain credentials, active sessions, or private operational URLs.
+Login secrets are stored as Generic Credentials for the current Windows user under the `WorkAutomation/*` targets. `config.py` and browser profile directories can still contain private operational URLs and active sessions, so they remain ignored and should not be force-added to Git.
 
 For deeper implementation details, see `docs/AUTOMATION_SYSTEM_GUIDE.md`.

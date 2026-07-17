@@ -43,11 +43,7 @@ from config import (
     SANMAR_PROFILE_DIR,
     SANMAR_URL,
 )
-try:
-    from config import SANMAR_PASSWORD, SANMAR_USERNAME
-except ImportError:
-    SANMAR_USERNAME = ""
-    SANMAR_PASSWORD = ""
+from credential_store import SANMAR_CREDENTIAL_TARGET, read_windows_credential
 from crm_validate_address import (
     ALLOWED_SHIPPING_LIST_ROW_DESCRIPTION,
     _batch_collection_limit,
@@ -220,6 +216,7 @@ SANMAR_PRODUCT_COLOR_ALIASES = {
     ("LST402", "PNKRASPBERRYHTHR"): ["Pink Raspberry Heather"],
     ("LST402", "PONDBLUEHTHR"): ["Pond Blue Heather"],
     ("LST402", "PONDBLUHTHR"): ["Pond Blue Heather"],
+    ("K700", "RIVERBLNV"): ["River Blue Navy"],
 }
 SANMAR_KNOWN_COLOR_NAMES = (
     "Deep Red/ White",
@@ -1535,9 +1532,8 @@ def _sanmar_login_url():
 
 
 def _sanmar_login_credentials():
-    username = str(os.environ.get("SANMAR_USERNAME") or SANMAR_USERNAME or "").strip()
-    password = str(os.environ.get("SANMAR_PASSWORD") or SANMAR_PASSWORD or "")
-    return username, password
+    credential = read_windows_credential(SANMAR_CREDENTIAL_TARGET)
+    return credential.username.strip(), credential.secret
 
 
 def _click_sanmar_autofilled_login(driver, timeout=8):
@@ -1676,7 +1672,11 @@ def _ensure_sanmar_logged_in(driver):
     if not confirmed:
         if state.get("needsTwoFactor"):
             raise RuntimeError("SanMar login needs email verification. Use Open SanMar Cart to complete verification, then rerun Shipping Bypasser.")
-        raise RuntimeError("SanMar login was not confirmed as EZONLINE1. Set SANMAR_USERNAME and SANMAR_PASSWORD in config.py or use Open SanMar Cart to sign in, then rerun Shipping Bypasser.")
+        raise RuntimeError(
+            "SanMar login was not confirmed as EZONLINE1. Check the "
+            f"'{SANMAR_CREDENTIAL_TARGET}' Windows credential or use Open SanMar Cart to sign in, "
+            "then rerun Shipping Bypasser."
+        )
     return True
 
 
@@ -2201,7 +2201,7 @@ def _search_sanmar_product(driver, search_id, click_inventory_button=False, expe
             time.sleep(0.2)
     if input_el is None:
         raise RuntimeError("SanMar search input was not found.")
-    input_el.send_keys(Keys.CONTROL, "a")
+    input_el.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
     input_el.send_keys(search_id)
     input_el.send_keys(Keys.ENTER)
     deadline = time.time() + 20

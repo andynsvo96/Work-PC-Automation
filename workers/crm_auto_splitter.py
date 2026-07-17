@@ -57,6 +57,7 @@ AUTOMATION_NAME = "crm.auto_splitter"
 SOURCE = "crm_auto_splitter.py"
 DEFAULT_MINIMUM_SPLIT_TABS = 10
 DEFAULT_MAX_TABS_PER_SPLIT = DEFAULT_MINIMUM_SPLIT_TABS
+AUTO_SPLITTER_SCRIPT_TIMEOUT_SECONDS = 5 * 60
 ORDER_SAVE_TIMEOUT_SECONDS = 300
 COPY_QUOTE_BASE_TIMEOUT_SECONDS = 90
 COPY_QUOTE_SECONDS_PER_DESIGN = 6
@@ -162,7 +163,7 @@ def _build_splitter_driver(profile, visible=False):
         headless_mode=headless,
         page_load_strategy="eager",
         page_load_timeout=PROCESSOR_PAGE_LOAD_TIMEOUT,
-        script_timeout=PROCESSOR_ACTION_TIMEOUT,
+        script_timeout=max(PROCESSOR_ACTION_TIMEOUT, AUTO_SPLITTER_SCRIPT_TIMEOUT_SECONDS),
     )
 
 
@@ -2677,6 +2678,7 @@ def run_split_order(
         if attach_browser:
             parallel_workers = 1
             driver = build_attached_chrome_driver(debugger_address=debugger_address)
+            driver.set_script_timeout(max(PROCESSOR_ACTION_TIMEOUT, AUTO_SPLITTER_SCRIPT_TIMEOUT_SECONDS))
         else:
             kill_stale_chrome(profile, profile_label="CRM auto splitter")
             if not dry_run and divisions is not None and int(parallel_workers or 1) > 1:

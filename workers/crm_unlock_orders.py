@@ -43,11 +43,10 @@ from config import (
     CRM_HEADLESS,
     CRM_LOGIN_URL,
     CRM_PAGE_LOAD_TIMEOUT,
-    CRM_PASSWORD,
     CRM_PROFILE_DIR,
     CRM_LOCKED_URL,
-    CRM_USERNAME,
 )
+from credential_store import CRM_CREDENTIAL_TARGET, read_windows_credential
 
 configure_console_utf8()
 
@@ -238,8 +237,7 @@ def _validate_runtime_config(list_url=None):
         )
     if not str(CRM_LOGIN_URL or "").strip():
         raise RuntimeError("CRM_LOGIN_URL is empty in config.py.")
-    if not str(CRM_USERNAME or "").strip():
-        raise RuntimeError("CRM_USERNAME is empty in config.py.")
+    read_windows_credential(CRM_CREDENTIAL_TARGET)
 
 
 def _wait_for_any(root, selectors, timeout=None, condition="visible"):
@@ -545,16 +543,15 @@ def is_login_page(driver):
 
 
 def do_login(driver):
-    if not str(CRM_PASSWORD or ""):
-        raise RuntimeError("CRM_PASSWORD is empty in config.py, so the CRM login step cannot complete.")
+    credential = read_windows_credential(CRM_CREDENTIAL_TARGET)
 
     username_field = _wait_for_any(driver, LOGIN_USERNAME_SELECTORS, condition="clickable")
     username_field.clear()
-    username_field.send_keys(CRM_USERNAME)
+    username_field.send_keys(credential.username)
 
     password_field = _wait_for_any(driver, LOGIN_PASSWORD_SELECTORS, condition="clickable")
     password_field.clear()
-    password_field.send_keys(CRM_PASSWORD)
+    password_field.send_keys(credential.secret)
 
     login_button = _wait_for_any(driver, LOGIN_BUTTON_SELECTORS, condition="clickable")
     _click_with_fallback(driver, login_button)
@@ -716,7 +713,7 @@ def choose_unlock_status(driver, panel):
         pass
 
     _click_with_fallback(driver, preview_input)
-    preview_input.send_keys(Keys.CONTROL, "a")
+    preview_input.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
     preview_input.send_keys(Keys.DELETE)
     print("Typing unlock status into the Order Preview field...")
     preview_input.send_keys(UNLOCK_OPTION_TEXT)

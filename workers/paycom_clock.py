@@ -31,10 +31,10 @@ from automation_runtime import (
     write_result_payload,
 )
 from config import (
-    PIN,
     PAYCOM_URL,
     PAYCOM_DRY_RUN as CONFIG_PAYCOM_DRY_RUN,
 )
+from credential_store import PAYCOM_CREDENTIAL_TARGET, read_windows_credential
 
 configure_console_utf8()
 
@@ -221,8 +221,9 @@ def _run_once(action, effective_dry_run, profile_path, headless_mode):
         ], timeout=3)
         if pin_field:
             print("Entering PIN...")
+            pin = read_windows_credential(PAYCOM_CREDENTIAL_TARGET).secret
             pin_field.clear()
-            pin_field.send_keys(PIN)
+            pin_field.send_keys(pin)
 
         # Click Log In
         login_btn = find_visible(driver, [
