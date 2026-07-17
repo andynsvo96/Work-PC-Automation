@@ -136,7 +136,7 @@ def _validate_runtime_config(list_url=None):
         return target_url
     lowered_url = target_url.lower()
     if "shippingcharges%5blow%5d=1" not in lowered_url and "shippingcharges[low]=1" not in lowered_url:
-        raise RuntimeError("Order Goods is Rush-only; the configured list URL must be a Rush CRM list.")
+        raise RuntimeError("The default Order Goods list must be a Rush CRM list.")
     return target_url
 
 
@@ -1229,7 +1229,7 @@ def _choose_stock_unlock_status_from_control(driver, control):
     typed = _set_stock_unlock_control_text(driver, control, STOCK_UNLOCK_STATUS)
     if not typed:
         try:
-            control.send_keys(Keys.CONTROL, "a")
+            control.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
             control.send_keys(Keys.DELETE)
         except Exception:
             try:

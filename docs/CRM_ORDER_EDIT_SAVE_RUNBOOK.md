@@ -58,11 +58,9 @@ Do not build a new automation as a single giant script if it needs to run from t
    Copy-Item config.example.py config.py
    ```
 
-3. Fill in `config.py`:
+3. Fill in non-secret CRM settings in `config.py`:
 
    ```python
-   CRM_USERNAME = "your username"
-   CRM_PASSWORD = "your password"
    CRM_LOGIN_URL = "https://crm2.legacy.printfly.com/login"
    CRM_PROFILE_DIR = "chrome_profile_crm"
    CRM_HEADLESS = True
@@ -73,15 +71,25 @@ Do not build a new automation as a single giant script if it needs to run from t
    PROCESSOR_ORDER_URL_TEMPLATE = "https://crm2.legacy.printfly.com/order/{order_id}"
    ```
 
-4. Fill the needed list/report URLs for the workflow:
+4. Store the CRM login in Windows Credential Manager:
+
+   ```powershell
+   python manage_windows_credentials.py set crm
+   ```
+
+5. Fill the needed list/report URLs for the workflow:
 
    ```python
    CRM_LOCKED_URL = ""
+   CRM_UNLOCKER_FREE_URL = ""
+   CRM_UNLOCKER_ALL_URL = ""
    CRM_SHIPPING_FREE_URL = ""
    CRM_SHIPPING_RUSH_URL = ""
    CRM_SHIPPING_ALL_URL = ""
    CRM_SHIPPING_813_URL = ""
    CRM_ORDER_GOODS_RUSH_URL = ""
+   CRM_ORDER_GOODS_FREE_URL = ""
+   CRM_ORDER_GOODS_ALL_URL = ""
    CRM_813_ORDER_GOODS_URL = ""
    CRM_SHIPPING_BYPASS_URL = ""
    CRM_PUSH_BACK_RUSH_URL = ""
@@ -653,7 +661,7 @@ Use a queue wrapper for user-triggered dashboard actions so overlapping CRM acti
 - After important saves, refresh and verify the data persisted.
 - Stop for manual review when CRM displays a red error popup or a warning not explicitly handled.
 - Do not click refund/payment controls unless the task explicitly requires it and the selector is very narrow.
-- Keep credentials and report URLs in local `config.py`, not committed docs.
+- Keep login credentials in Windows Credential Manager. Keep private report URLs in ignored local `config.py`.
 - On another computer, run visible mode first to confirm selectors and login.
 
 ## Troubleshooting

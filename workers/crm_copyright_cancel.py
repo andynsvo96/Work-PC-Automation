@@ -45,15 +45,12 @@ from automation_runtime import (
 from config import (
     CONTENT_VIOLATION_CANCEL_ISSUE_TYPE,
     COPYRIGHT_CANCEL_ISSUE_TYPE,
-    CRM_PASSWORD,
-    CRM_USERNAME,
     GOOGLE_SHEET_ERROR_COLUMN,
     GOOGLE_SHEET_ID,
     GOOGLE_SHEET_ISSUE_TYPE_COLUMN,
     GOOGLE_SHEET_ORDER_REFERENCE_COLUMN,
     GOOGLE_SHEET_REASON_COLUMN,
     GOOGLE_SHEET_WORKSHEET,
-    GOOGLE_SHEETS_CREDENTIALS_FILE,
     PROCESSOR_ACTION_TIMEOUT,
     PROCESSOR_DRY_RUN,
     PROCESSOR_HEADLESS,
@@ -65,11 +62,16 @@ from config import (
     SALESFORCE_COPYRIGHT_CANCEL_TEMPLATE,
     SALESFORCE_CONTENT_VIOLATION_CANCEL_TEMPLATE,
     SALESFORCE_EMAIL_TEMPLATE_FILE,
-    SALESFORCE_PASSWORD,
-    SALESFORCE_USERNAME,
 )
 import config as _config
 from runtime_paths import STATE_DIR, resolve_runtime_file
+from credential_store import (
+    CRM_CREDENTIAL_TARGET,
+    GOOGLE_SHEETS_CREDENTIAL_TARGET,
+    SALESFORCE_CREDENTIAL_TARGET,
+    read_json_credential,
+    read_windows_credential,
+)
 from workers.crm_auto_splitter import (
     ANGULAR_APPLY_JS,
     SplitterError,
@@ -385,13 +387,6 @@ def _normalize_order_id(value):
     return match.group(1)
 
 
-def _resolve_credentials_path():
-    path = GOOGLE_SHEETS_CREDENTIALS_FILE
-    if os.path.isabs(path):
-        return path
-    return os.path.join(PROJECT_ROOT, path)
-
-
 def _resolve_email_template_path():
     path = SALESFORCE_EMAIL_TEMPLATE_FILE
     return resolve_runtime_file(path, STATE_DIR)
@@ -435,11 +430,9 @@ def _load_gspread():
 
 
 def _open_sheet():
-    creds_path = _resolve_credentials_path()
-    if not os.path.exists(creds_path):
-        raise CopyrightCancelError(f"Google Sheets credential file was not found: {creds_path}")
     gspread = _load_gspread()
-    client = gspread.service_account(filename=creds_path)
+    credentials = read_json_credential(GOOGLE_SHEETS_CREDENTIAL_TARGET)
+    client = gspread.service_account_from_dict(credentials)
     spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
     worksheet = spreadsheet.worksheet(GOOGLE_SHEET_WORKSHEET)
     return spreadsheet, worksheet
@@ -508,7 +501,9 @@ def _scan_queue_rows(include_error_rows=False):
 
 def _write_sheet_error(worksheet, headers, row_number, message):
     index = headers.index(GOOGLE_SHEET_ERROR_COLUMN)
-    worksheet.update_cell(row_number, index + 1, str(message or "")[:500])
+    lines = [line.strip() for line in str(message or "").splitlines() if line.strip()]
+    concise_message = lines[0] if lines else ""
+    worksheet.update_cell(row_number, index + 1, concise_message[:500])
 
 
 def _write_missing_reason_errors(worksheet, headers, skipped_rows):
@@ -1097,7 +1092,7 @@ def _fill_crm_login_with_selenium(driver, username, password):
     for element, value in ((username_input, username), (password_input, password)):
         try:
             element.click()
-            element.send_keys(Keys.CONTROL, "a")
+            element.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
             element.send_keys(value)
         except Exception:
             return False
@@ -1148,8 +1143,9 @@ def _login_to_crm_if_needed(driver, target_url, login_wait_seconds=0):
     if not _is_crm_login_page(driver):
         return False
 
-    username = str(CRM_USERNAME or "").strip()
-    password = str(CRM_PASSWORD or "")
+    credential = read_windows_credential(CRM_CREDENTIAL_TARGET)
+    username = credential.username.strip()
+    password = credential.secret
     if username and password:
         _fill_crm_login_with_selenium(driver, username, password)
         driver.execute_script(
@@ -1540,14 +1536,15 @@ def _fill_salesforce_login_with_autofill(driver):
     try:
         username_input.click()
         time.sleep(0.3)
-        configured_username = str(SALESFORCE_USERNAME or "").strip()
-        configured_password = str(SALESFORCE_PASSWORD or "")
+        credential = read_windows_credential(SALESFORCE_CREDENTIAL_TARGET, required=False)
+        configured_username = credential.username.strip() if credential else ""
+        configured_password = credential.secret if credential else ""
         if configured_username:
-            username_input.send_keys(Keys.CONTROL, "a")
+            username_input.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
             username_input.send_keys(configured_username)
             if configured_password and password_input is not None:
                 password_input.click()
-                password_input.send_keys(Keys.CONTROL, "a")
+                password_input.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
                 password_input.send_keys(configured_password)
             return has_login_values()
 
@@ -1614,11 +1611,12 @@ def _attempt_salesforce_login(driver, timeout=45):
         if _is_salesforce_login_approval_page(driver):
             _wait_for_salesforce_login_approval(driver, timeout=max(timeout, 90))
             return True
-        if not str(SALESFORCE_USERNAME or "").strip() and not str(SALESFORCE_PASSWORD or ""):
+        if read_windows_credential(SALESFORCE_CREDENTIAL_TARGET, required=False) is None:
             raise CopyrightCancelError(
-                "Salesforce credentials are blank in config.py and Chrome autofill did not populate the login form."
+                f"Salesforce credential '{SALESFORCE_CREDENTIAL_TARGET}' is missing from Windows "
+                "Credential Manager and Chrome autofill did not populate the login form."
             )
-        raise CopyrightCancelError("Salesforce login fields could not be filled from configured credentials.")
+        raise CopyrightCancelError("Salesforce login fields could not be filled from Windows Credential Manager.")
     clicked = _click_salesforce_login_with_selenium(driver)
     if not clicked:
         clicked = _click_exact_visible_text(driver, "Log In")
@@ -1965,7 +1963,7 @@ def _scroll_salesforce_email_composer_to_top(driver):
         )
         if click_info:
             time.sleep(0.1)
-            driver.switch_to.active_element.send_keys(Keys.CONTROL, Keys.HOME)
+            driver.switch_to.active_element.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, Keys.HOME)
             time.sleep(0.1)
             driver.switch_to.active_element.send_keys(Keys.PAGE_UP)
             time.sleep(0.1)
@@ -5759,7 +5757,7 @@ def _fill_salesforce_case_order_lookup(driver, order_id):
     try:
         field.clear()
     except Exception:
-        field.send_keys(Keys.CONTROL, "a")
+        field.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
         field.send_keys(Keys.BACKSPACE)
     field.send_keys(str(order_id))
     time.sleep(1)

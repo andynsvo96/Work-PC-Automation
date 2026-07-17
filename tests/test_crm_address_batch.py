@@ -55,6 +55,156 @@ class ChromeProfileRuntimeTests(unittest.TestCase):
 
 
 class CrmCopyrightCancelTests(unittest.TestCase):
+    def test_salesforce_contact_is_accepted_as_account_link_alias(self):
+        contact_driver = mock.Mock()
+        contact_driver.execute_script.return_value = {
+            "customer_name": "Steve Eiken",
+            "email": "eikensj@comcast.net",
+            "salesforce_visible": True,
+            "salesforce_label": "Salesforce Contact",
+            "panel_text": "Steve Eiken Salesforce Contact eikensj@comcast.net",
+        }
+        click_driver = mock.Mock()
+        click_driver.execute_script.return_value = True
+        href_driver = mock.Mock()
+        href_driver.execute_script.return_value = "https://printfly.lightning.force.com/one/one.app#/sObject/0034600000zEutDAAS/view"
+
+        with mock.patch.object(crm_copyright_cancel, "_activate_crm_context"), \
+             mock.patch.object(crm_copyright_cancel, "_wait_for_order_scope"):
+            contact = crm_copyright_cancel._get_crm_contact_info(contact_driver)
+            crm_copyright_cancel._click_salesforce_account(click_driver, order_id="4845038", timeout=1)
+            href = crm_copyright_cancel._salesforce_account_href(href_driver, order_id="4845038")
+
+        self.assertEqual(contact["salesforce_label"], "Salesforce Contact")
+        self.assertIn("0034600000zEutDAAS", href)
+        contact_script = contact_driver.execute_script.call_args.args[0].lower()
+        self.assertIn("getboundingclientrect", contact_script)
+        self.assertIn("visibility !== 'hidden'", contact_script)
+        for driver in (contact_driver, click_driver, href_driver):
+            script = driver.execute_script.call_args.args[0].lower()
+            self.assertIn("salesforce account", script)
+            self.assertIn("salesforce contact", script)
+
+    def test_salesforce_draft_preparation_refreshes_once_before_send(self):
+        driver = mock.Mock(current_window_handle="salesforce")
+        fill = {
+            "state": {
+                "subject": "RushOrderTees Order #4845038- A Copyrighted Element Removed",
+                "body": "Prepared body",
+            }
+        }
+        with ExitStack() as stack:
+            open_account = stack.enter_context(
+                mock.patch.object(crm_copyright_cancel, "_open_salesforce_account", side_effect=["sf-1", "sf-2"])
+            )
+            verify = stack.enter_context(
+                mock.patch.object(
+                    crm_copyright_cancel,
+                    "_verify_salesforce_email",
+                    side_effect=[crm_copyright_cancel.CopyrightCancelError("Salesforce page stalled"), True],
+                )
+            )
+            stack.enter_context(mock.patch.object(crm_copyright_cancel, "_click_salesforce_email"))
+            stack.enter_context(mock.patch.object(crm_copyright_cancel, "_wait_for_email_composer"))
+            stack.enter_context(mock.patch.object(crm_copyright_cancel, "_set_salesforce_from_orders", return_value="Orders"))
+            stack.enter_context(
+                mock.patch.object(crm_copyright_cancel, "_fill_salesforce_email_from_salesforce_template", return_value=fill)
+            )
+            send = stack.enter_context(
+                mock.patch.object(crm_copyright_cancel, "_send_salesforce_email", return_value={"sent": True})
+            )
+            stack.enter_context(mock.patch.object(crm_copyright_cancel, "_activate_crm_context"))
+            scope = stack.enter_context(mock.patch.object(crm_copyright_cancel, "_wait_for_order_scope"))
+            stack.enter_context(mock.patch.object(crm_copyright_cancel.time, "sleep"))
+
+            result = crm_copyright_cancel._prepare_and_maybe_send_salesforce_email(
+                driver,
+                "crm",
+                "4845038",
+                "customer@example.com",
+                dry_run=False,
+                process=crm_copyright_cancel.COPYRIGHT_REMOVAL_PROCESS,
+                reason="Nike",
+            )
+
+        self.assertEqual(open_account.call_count, 2)
+        self.assertEqual(verify.call_count, 2)
+        driver.refresh.assert_called_once_with()
+        scope.assert_called_once_with(driver, order_id="4845038", timeout=30)
+        send.assert_called_once()
+        self.assertTrue(result["preparation_retried"])
+        self.assertIn("stalled", result["first_preparation_error"])
+
+    def test_contact_panel_timeout_refreshes_once_then_retries(self):
+        driver = mock.Mock()
+        contact = {"email": "customer@example.com", "salesforce_visible": True}
+        with mock.patch.object(crm_copyright_cancel.time, "monotonic", side_effect=[0, 0, 1, 1, 1]), \
+             mock.patch.object(crm_copyright_cancel.time, "sleep"), \
+             mock.patch.object(crm_copyright_cancel, "_activate_crm_context"), \
+             mock.patch.object(crm_copyright_cancel, "_wait_for_order_scope") as scope, \
+             mock.patch.object(
+                 crm_copyright_cancel,
+                 "_get_crm_contact_info",
+                 side_effect=[crm_copyright_cancel.CopyrightCancelError("contact panel incomplete"), contact],
+             ) as get_contact:
+            result = crm_copyright_cancel._wait_for_crm_contact_info(driver, order_id="4845038", timeout=0.1)
+
+        self.assertEqual(result, contact)
+        driver.refresh.assert_called_once_with()
+        self.assertEqual(get_contact.call_count, 2)
+        self.assertIn(mock.call(driver, order_id="4845038", timeout=30), scope.call_args_list)
+
+    def test_salesforce_account_click_timeout_refreshes_crm_once_then_retries(self):
+        class SwitchTo:
+            def __init__(self, driver):
+                self.driver = driver
+
+            def window(self, handle):
+                self.driver.current_window_handle = handle
+
+        class Driver:
+            def __init__(self):
+                self.current_window_handle = "crm"
+                self.window_handles = ["crm"]
+                self.switch_to = SwitchTo(self)
+                self.refresh_count = 0
+
+            def refresh(self):
+                self.refresh_count += 1
+
+        driver = Driver()
+        timeout_error = crm_copyright_cancel.CopyrightCancelError(
+            "Salesforce Account/Contact link did not become clickable before timeout. Last error: None"
+        )
+        with ExitStack() as stack:
+            activate = stack.enter_context(mock.patch.object(crm_copyright_cancel, "_activate_crm_context"))
+            scope = stack.enter_context(mock.patch.object(crm_copyright_cancel, "_wait_for_order_scope"))
+            stack.enter_context(mock.patch.object(crm_copyright_cancel, "_salesforce_account_href", return_value=""))
+            click = stack.enter_context(
+                mock.patch.object(crm_copyright_cancel, "_click_salesforce_account", side_effect=[timeout_error, None])
+            )
+            stack.enter_context(
+                mock.patch.object(crm_copyright_cancel, "_switch_to_new_or_changed_tab", return_value="salesforce")
+            )
+            stack.enter_context(mock.patch.object(crm_copyright_cancel, "_attempt_salesforce_login", return_value=False))
+            account_page = stack.enter_context(
+                mock.patch.object(crm_copyright_cancel, "_wait_for_salesforce_account_page", return_value=True)
+            )
+
+            handle = crm_copyright_cancel._open_salesforce_account(
+                driver,
+                "crm",
+                "customer@example.com",
+                order_id="4845038",
+            )
+
+        self.assertEqual(handle, "salesforce")
+        self.assertEqual(driver.refresh_count, 1)
+        self.assertEqual(click.call_count, 2)
+        self.assertGreaterEqual(activate.call_count, 3)
+        scope.assert_called_once_with(driver, order_id="4845038", timeout=30)
+        account_page.assert_called_once_with(driver, "customer@example.com", timeout=30)
+
     def test_copyright_cancel_sales_note_requires_reason(self):
         self.assertEqual(
             crm_copyright_cancel._copyright_cancel_sales_note("Trademark conflict"),
@@ -80,6 +230,112 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             ),
             "LA Dodgers Copyright\nEmailed txted",
         )
+
+    def test_salesforce_advanced_search_order_selection_uses_shadow_dom_scan(self):
+        outer = self
+
+        class Driver:
+            def __init__(self):
+                self.scripts = []
+
+            def execute_script(self, script, *args):
+                self.scripts.append(script)
+                outer.assertEqual(args, ("4812079",) if args else args)
+                if "click_point" in script and "function orderMatches(text)" in script:
+                    outer.assertIn("function all(selector, root)", script)
+                    outer.assertIn("child.shadowRoot", script)
+                    outer.assertIn("function textOf(el)", script)
+                    outer.assertIn("el.getAttribute && el.getAttribute('title')", script)
+                    outer.assertNotIn("all('[data-cell-value]", script)
+                    outer.assertNotIn("if (orderMatches(textOf(row)))", script)
+                    outer.assertNotIn("candidates.push(rowText)", script)
+                    return {
+                        "row_text": "Salesforce Order 05376876 Printfly Order Id 4812079",
+                        "click_point": {"x": 111, "y": 281},
+                        "printfly_order_id": "4812079",
+                        "match_source": "printfly-order-id-column",
+                    }
+                if "clean(`${el.innerText || ''} ${el.value || ''}" in script:
+                    outer.assertIn("function all(selector, root)", script)
+                    outer.assertIn("child.shadowRoot", script)
+                    return True
+                if "some((el) => visible(el) && /(Advanced Search|Search Orders)/i.test(textOf(el)))" in script:
+                    return False
+                if "screenX: window.screenX" in script:
+                    return {
+                        "screenX": 0,
+                        "screenY": 0,
+                        "outerWidth": 1920,
+                        "outerHeight": 1080,
+                        "innerWidth": 1904,
+                        "innerHeight": 985,
+                    }
+                outer.fail("Unexpected Salesforce script")
+
+            def execute_cdp_cmd(self, command, params):
+                outer.assertEqual(command, "Input.dispatchMouseEvent")
+                outer.assertIn(params["type"], {"mouseMoved", "mousePressed", "mouseReleased"})
+                return {}
+
+        driver = Driver()
+
+        selected = crm_copyright_cancel._select_salesforce_advanced_search_order(driver, "4812079")
+
+        self.assertEqual(
+            selected,
+            {
+                "row_text": "Salesforce Order 05376876 Printfly Order Id 4812079",
+                "click_point": {"x": 111, "y": 281},
+                "printfly_order_id": "4812079",
+                "match_source": "printfly-order-id-column",
+            },
+        )
+        self.assertEqual(len(driver.scripts), 4)
+
+    def test_salesforce_case_order_lookup_always_opens_advanced_search(self):
+        class Field:
+            def __init__(self):
+                self.keys = []
+
+            def click(self):
+                return None
+
+            def clear(self):
+                return None
+
+            def send_keys(self, *keys):
+                self.keys.append(keys)
+
+        class Driver:
+            def __init__(self):
+                self.scripts = []
+
+            def execute_script(self, script, *args):
+                self.scripts.append(script)
+                if "Quick lookup suggestions match Salesforce Order Number" in script:
+                    self.assert_quick_lookup_is_disabled(script)
+                    return None
+                if "text.includes('show more results')" in script:
+                    return object()
+                if "some((el) => visible(el) && /(Advanced Search|Search Orders)/i.test(textOf(el)))" in script:
+                    return True
+                raise AssertionError("Unexpected Salesforce lookup script")
+
+            @staticmethod
+            def assert_quick_lookup_is_disabled(script):
+                if "exactOptions" in script or 'return "selected"' in script:
+                    raise AssertionError("Quick Salesforce Order Number selection must remain disabled")
+
+        field = Field()
+        driver = Driver()
+        with mock.patch.object(crm_copyright_cancel, "_salesforce_field_control", return_value=field), mock.patch.object(
+            crm_copyright_cancel.time, "sleep"
+        ):
+            mode = crm_copyright_cancel._fill_salesforce_case_order_lookup(driver, "4812079")
+
+        self.assertEqual(mode, "advanced")
+        self.assertIn(("4812079",), field.keys)
+        self.assertTrue(any(crm_copyright_cancel.Keys.ENTER in keys for keys in field.keys))
 
     def test_hdd_emb_sales_notes_do_not_require_reason(self):
         self.assertEqual(
@@ -148,6 +404,75 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertEqual(len(eligible), 1)
         self.assertEqual(eligible[0].order_id, "1234567")
         self.assertEqual(eligible[0].process_key, "content_violation_cancel")
+
+    def test_sheet_scan_is_read_only_when_a_reason_is_missing(self):
+        headers = [
+            crm_copyright_cancel.GOOGLE_SHEET_ORDER_REFERENCE_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_ISSUE_TYPE_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_REASON_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_ERROR_COLUMN,
+        ]
+        worksheet = mock.Mock()
+        worksheet.get_all_values.return_value = [
+            headers,
+            ["https://crm2.legacy.printfly.com/order/1234567", crm_copyright_cancel.COPYRIGHT_CANCEL_ISSUE_TYPE, "", ""],
+        ]
+        spreadsheet = mock.Mock(title="Queue")
+        worksheet.title = "Sheet1"
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+            result_path = handle.name
+
+        try:
+            with mock.patch.object(crm_copyright_cancel, "_open_sheet", return_value=(spreadsheet, worksheet)):
+                exit_code = crm_copyright_cancel.run_scan_sheet(result_file=result_path)
+            payload = json.loads(Path(result_path).read_text(encoding="utf-8"))
+        finally:
+            Path(result_path).unlink(missing_ok=True)
+
+        self.assertEqual(exit_code, 0)
+        worksheet.update_cell.assert_not_called()
+        self.assertEqual(payload["missing_reason_error_count"], 0)
+
+    def test_sheet_scanner_dry_run_is_read_only_when_a_reason_is_missing(self):
+        headers = [
+            crm_copyright_cancel.GOOGLE_SHEET_ORDER_REFERENCE_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_ISSUE_TYPE_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_REASON_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_ERROR_COLUMN,
+        ]
+        worksheet = mock.Mock()
+        worksheet.get_all_values.return_value = [
+            headers,
+            ["https://crm2.legacy.printfly.com/order/1234567", crm_copyright_cancel.COPYRIGHT_CANCEL_ISSUE_TYPE, "", ""],
+        ]
+        spreadsheet = mock.Mock(title="Queue")
+        worksheet.title = "Sheet1"
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+            result_path = handle.name
+        args = mock.Mock(
+            retry_errors=False,
+            limit=0,
+            dry_run=True,
+            visible=False,
+            attach_browser=False,
+            debugger_address="127.0.0.1:9222",
+            login_wait_seconds=0,
+            skip_refund_click=False,
+            keep_browser_open=False,
+            keep_browser_open_on_error=False,
+            result_file=result_path,
+        )
+
+        try:
+            with mock.patch.object(crm_copyright_cancel, "_open_sheet", return_value=(spreadsheet, worksheet)):
+                exit_code = crm_copyright_cancel.run_process_queue(args)
+            payload = json.loads(Path(result_path).read_text(encoding="utf-8"))
+        finally:
+            Path(result_path).unlink(missing_ok=True)
+
+        self.assertEqual(exit_code, 0)
+        worksheet.update_cell.assert_not_called()
+        self.assertEqual(payload["missing_reason_error_count"], 0)
 
     def test_scan_queue_rows_accepts_copyright_reachout_with_reason(self):
         headers = [
@@ -259,6 +584,32 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertFalse(summary["local_inventory_only"])
         self.assertEqual(summary["unknown_ordered_tabs"], [])
 
+    def test_post_cancel_stock_summary_accepts_sanmar_bulk_stock_state_fallback(self):
+        scan = {
+            "tabs": [
+                {
+                    "tab_number": 1,
+                    "tab_name": "H-TabOne",
+                    "stock": {
+                        "state": "ordered_po_only",
+                        "stock_status_ordered": True,
+                        "has_po_row": True,
+                        "manual_order_vendor": "Sanmar (Bulk)",
+                        "manual_order_po": "H-TabOne-SM01",
+                        "manual_order_rows": [],
+                    },
+                },
+            ],
+        }
+
+        summary = crm_copyright_cancel._summarize_post_cancel_stock_scan(scan)
+
+        self.assertTrue(summary["stock_ordered"])
+        self.assertEqual(summary["outside_stock_rows"][0]["vendor"], "Sanmar (Bulk)")
+        self.assertEqual(summary["outside_stock_rows"][0]["po"], "H-TabOne-SM01")
+        self.assertEqual(summary["cancelled_channel_rows"][0]["vendor"], "Sanmar (Bulk)")
+        self.assertEqual(summary["unknown_ordered_tabs"], [])
+
     def test_post_cancel_stock_slack_posts_when_s_and_s_row_exists_with_unknown_ordered_tab(self):
         state = {
             "stock_ordered": True,
@@ -333,6 +684,29 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertEqual(skipped[0]["order_id"], "4785121")
         self.assertIn("Missing Reason", skipped[0]["reason"])
 
+    def test_scan_queue_rows_accepts_copyright_removal_with_reason(self):
+        headers = [
+            crm_copyright_cancel.GOOGLE_SHEET_ORDER_REFERENCE_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_ISSUE_TYPE_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_REASON_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_ERROR_COLUMN,
+        ]
+        worksheet = mock.Mock()
+        worksheet.get_all_values.return_value = [
+            headers,
+            ["https://crm2.legacy.printfly.com/order/4785121", crm_copyright_cancel.COPYRIGHT_REMOVAL_ISSUE_TYPE, "LA Dodgers", ""],
+        ]
+        spreadsheet = mock.Mock(title="Queue")
+
+        with mock.patch.object(crm_copyright_cancel, "_open_sheet", return_value=(spreadsheet, worksheet)):
+            _spreadsheet, _worksheet, _headers, eligible, skipped = crm_copyright_cancel._scan_queue_rows()
+
+        self.assertEqual(skipped, [])
+        self.assertEqual(len(eligible), 1)
+        self.assertEqual(eligible[0].process_key, "copyright_removal")
+        self.assertEqual(eligible[0].reason, "LA Dodgers")
+        self.assertFalse(eligible[0].process.cancel_and_refund)
+
     def test_process_queue_routes_auto_splitter_without_email_flow(self):
         headers = [
             crm_copyright_cancel.GOOGLE_SHEET_ORDER_REFERENCE_COLUMN,
@@ -391,6 +765,31 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         mock_process.assert_not_called()
         worksheet.batch_clear.assert_called_once_with(["A2:D2"])
         self.assertEqual(payload["processed"][0]["process"], "auto_splitter")
+
+    def test_sheet_error_only_writes_first_error_line(self):
+        headers = [
+            crm_copyright_cancel.GOOGLE_SHEET_ORDER_REFERENCE_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_ISSUE_TYPE_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_REASON_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_ERROR_COLUMN,
+        ]
+        worksheet = mock.Mock()
+
+        crm_copyright_cancel._write_sheet_error(
+            worksheet,
+            headers,
+            2,
+            "Auto-split failed for order 4859108: Message: script timeout\n"
+            "  (Session info: chrome=138.0)\n"
+            "Stacktrace:\n"
+            "long selenium stack trace",
+        )
+
+        worksheet.update_cell.assert_called_once_with(
+            2,
+            4,
+            "Auto-split failed for order 4859108: Message: script timeout",
+        )
 
     def test_process_queue_routes_manual_stock_order_without_email_flow(self):
         headers = [
@@ -511,6 +910,21 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertIn("<strong>LA Dodgers</strong>", rendered)
         self.assertNotIn("XXXXXX", rendered)
 
+    def test_named_reason_placeholder_body_html_bolds_reason(self):
+        body = "Hello,\n\nWhile reviewing your order we noticed that [REASON] is protected by copyright."
+
+        rendered = crm_copyright_cancel._html_with_bold_placeholder_reason(body, "LA Dodgers")
+
+        self.assertIn("<strong>LA Dodgers</strong>", rendered)
+        self.assertNotIn("[REASON]", rendered)
+
+    def test_named_order_placeholder_replacement(self):
+        subject = "RushOrderTees Order #[ORDER-NUMBER] - A Copyrighted Element Removed"
+
+        rendered = crm_copyright_cancel._replace_order_placeholders(subject, "4705293")
+
+        self.assertEqual(rendered, "RushOrderTees Order #4705293 - A Copyrighted Element Removed")
+
     def test_copyright_reachout_body_formatter_keeps_single_message(self):
         body = (
             "Font Size Hello, Thank you once again for placing your order with RushOrderTees! "
@@ -526,6 +940,28 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertEqual(formatted.count("XXXXXX"), 1)
         self.assertTrue(formatted.endswith("We appreciate your business."))
 
+    def test_copyright_removal_body_formatter_restores_template_paragraphs(self):
+        body = (
+            "Hello, Thank you once again for placing your order with RushOrderTees! "
+            "We wanted to let you know that in reviewing your t-shirt design, our team identified a copyrighted element, XXXXXX, "
+            "that could not be used. To ensure your order can move forward without delay, we have removed that element from the design. "
+            "Your updated design is now cleared and will proceed through production as planned. "
+            "If you would like to provide a replacement graphic or make any further changes, please let us know-we'll be happy to assist. "
+            "We are here to help if you have any additional questions. You can reach us at 800-620-1233. "
+            "Thank you for trusting the RushOrderTees.com team. We appreciate your business."
+        )
+
+        formatted = crm_copyright_cancel._format_placeholder_body_text(
+            body,
+            process=crm_copyright_cancel.COPYRIGHT_REMOVAL_PROCESS,
+        )
+
+        self.assertEqual(formatted.count("XXXXXX"), 1)
+        self.assertIn("Hello,\n\nThank you once again", formatted)
+        self.assertIn("RushOrderTees!\n\nWe wanted", formatted)
+        self.assertIn("from the design.\n\nYour updated design", formatted)
+        self.assertIn("800-620-1233.\n\nThank you", formatted)
+
     def test_send_ready_guard_rejects_hidden_body_placeholder(self):
         driver = mock.Mock()
         with mock.patch.object(
@@ -539,9 +975,9 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         ), mock.patch.object(
             crm_copyright_cancel,
             "_salesforce_email_body_placeholder_state",
-            return_value={"placeholder": "XXXXXX", "count": 1, "matches": [{"kind": "body_html"}]},
+            return_value={"placeholder": "[REASON]", "count": 1, "matches": [{"kind": "body_html"}]},
         ):
-            with self.assertRaisesRegex(crm_copyright_cancel.CopyrightCancelError, "still contains XXXXXX"):
+            with self.assertRaisesRegex(crm_copyright_cancel.CopyrightCancelError, "unresolved placeholder"):
                 crm_copyright_cancel._verify_salesforce_email_ready_to_send(
                     driver,
                     "4705293",
@@ -549,6 +985,72 @@ class CrmCopyrightCancelTests(unittest.TestCase):
                     "",
                     process=crm_copyright_cancel.COPYRIGHT_REACHOUT_PROCESS,
                 )
+
+    def test_send_ready_guard_rejects_subject_order_placeholder(self):
+        driver = mock.Mock()
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_read_salesforce_email_state",
+            return_value={
+                "from": crm_copyright_cancel.SALESFORCE_COPYRIGHT_CANCEL_FROM_EMAIL,
+                "subject": "RushOrderTees Order #[ORDER-NUMBER] - License Required",
+                "body": "While reviewing your order we noticed that TEST is protected by copyright.",
+            },
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_salesforce_email_body_placeholder_state",
+            return_value={"placeholder": "[REASON]", "count": 0, "matches": []},
+        ):
+            with self.assertRaisesRegex(crm_copyright_cancel.CopyrightCancelError, "subject: \\[ORDER-NUMBER\\]"):
+                crm_copyright_cancel._verify_salesforce_email_ready_to_send(
+                    driver,
+                    "4705293",
+                    "",
+                    "",
+                    process=crm_copyright_cancel.COPYRIGHT_REACHOUT_PROCESS,
+                )
+
+    def test_send_ready_guard_rejects_body_order_placeholder_and_legacy_placeholder(self):
+        driver = mock.Mock()
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_read_salesforce_email_state",
+            return_value={
+                "from": crm_copyright_cancel.SALESFORCE_COPYRIGHT_CANCEL_FROM_EMAIL,
+                "subject": "RushOrderTees Order #4705293 - License Required",
+                "body": "While reviewing your order we noticed that Order [ORDER-NUMBER] still has XXXXXX protected by copyright.",
+            },
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_salesforce_email_body_placeholder_state",
+            return_value={"placeholder": "[REASON]", "count": 0, "matches": []},
+        ):
+            with self.assertRaisesRegex(crm_copyright_cancel.CopyrightCancelError, "body: \\[ORDER-NUMBER\\], XXXXXX"):
+                crm_copyright_cancel._verify_salesforce_email_ready_to_send(
+                    driver,
+                    "4705293",
+                    "",
+                    "",
+                    process=crm_copyright_cancel.COPYRIGHT_REACHOUT_PROCESS,
+                )
+
+    def test_reason_replacement_refuses_keyboard_body_fallback(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = {"count": 0}
+
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_read_salesforce_email_state",
+            return_value={"body": "While reviewing your order we noticed that [REASON] is protected by copyright."},
+        ), mock.patch.object(crm_copyright_cancel, "_type_salesforce_body_with_keyboard") as mock_type:
+            with self.assertRaisesRegex(crm_copyright_cancel.CopyrightCancelError, "refusing to type or paste"):
+                crm_copyright_cancel._replace_salesforce_body_placeholder_with_reason(
+                    driver,
+                    "LA Dodgers",
+                    process=crm_copyright_cancel.COPYRIGHT_REACHOUT_PROCESS,
+                )
+
+        mock_type.assert_not_called()
 
     def test_clear_sheet_queue_row_only_clears_columns_a_to_d(self):
         worksheet = mock.Mock()
@@ -584,19 +1086,179 @@ class CrmCopyrightCancelTests(unittest.TestCase):
     def test_complicated_emb_template_search_uses_picker_match(self):
         queries = crm_copyright_cancel._template_search_queries(crm_copyright_cancel.COMPLICATED_EMB_TO_HDD_PROCESS)
 
-        self.assertEqual(queries[0], "NO REPLY - Complicated EMB to HDD")
-        self.assertIn("NO REPLY - Complicated EMB to HDD", queries)
+        self.assertEqual(queries[0], "[AUTO]")
+        self.assertIn("[AUTO] Complicated EMB to HDD", queries)
         self.assertIn("updated to ink printing", crm_copyright_cancel.COMPLICATED_EMB_TO_HDD_PROCESS.body_markers)
 
     def test_copyright_template_search_uses_exact_template_before_broad_keyword(self):
         cancel_queries = crm_copyright_cancel._template_search_queries(crm_copyright_cancel.COPYRIGHT_CANCEL_PROCESS)
         reachout_queries = crm_copyright_cancel._template_search_queries(crm_copyright_cancel.COPYRIGHT_REACHOUT_PROCESS)
+        removal_queries = crm_copyright_cancel._template_search_queries(crm_copyright_cancel.COPYRIGHT_REMOVAL_PROCESS)
 
-        self.assertEqual(cancel_queries[0], "CANCEL - Copyright")
-        self.assertEqual(reachout_queries[0], "ISSUE - Copyright")
+        self.assertEqual(cancel_queries[0], "[AUTO]")
+        self.assertEqual(reachout_queries[0], "[AUTO]")
+        self.assertEqual(removal_queries[0], "[AUTO]")
+        self.assertIn("[AUTO] Copyright Cancel", cancel_queries)
+        self.assertIn("[AUTO] Copyright Reachout", reachout_queries)
+        self.assertIn("[AUTO] Copyright Removal", removal_queries)
+        self.assertNotIn("NO REPLY - Removed Copyright", removal_queries)
+        self.assertNotIn("A Copyrighted Element Removed", removal_queries)
+        self.assertNotIn("Copyrighted Element Removed", removal_queries)
         self.assertIn("copyright", [query.lower() for query in cancel_queries[1:]])
         self.assertIn("copyright", [query.lower() for query in reachout_queries[1:]])
-        self.assertNotEqual(cancel_queries[0], reachout_queries[0])
+        self.assertIn("copyright", [query.lower() for query in removal_queries[1:]])
+        self.assertNotEqual(cancel_queries[1], reachout_queries[1])
+        self.assertTrue(crm_copyright_cancel.COPYRIGHT_CANCEL_PROCESS.replace_body_placeholder_with_reason)
+        self.assertTrue(crm_copyright_cancel.COPYRIGHT_REMOVAL_PROCESS.replace_body_placeholder_with_reason)
+
+    def test_template_appears_inserted_requires_expected_body_markers(self):
+        driver = mock.Mock()
+
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_read_salesforce_email_state",
+            return_value={
+                "subject": "RushOrderTees Order #XXXXXX - Additional Embroidery Request, additional balance",
+                "body": "This is the additional embroidery request template.",
+            },
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_read_salesforce_email_composer_text",
+            return_value="This is the additional embroidery request template.",
+        ):
+            inserted = crm_copyright_cancel._salesforce_template_appears_inserted(
+                driver,
+                crm_copyright_cancel.COPYRIGHT_CANCEL_PROCESS,
+            )
+
+        self.assertFalse(inserted)
+
+    def test_template_appears_inserted_accepts_expected_body_markers(self):
+        driver = mock.Mock()
+
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_read_salesforce_email_state",
+            return_value={
+                "subject": "RushOrderTees Order #XXXXXX - Refund has been issued",
+                "body": "While reviewing your order, we processed a refund back to your account.",
+            },
+        ), mock.patch.object(crm_copyright_cancel, "_read_salesforce_email_composer_text", return_value=""):
+            inserted = crm_copyright_cancel._salesforce_template_appears_inserted(
+                driver,
+                crm_copyright_cancel.COPYRIGHT_CANCEL_PROCESS,
+            )
+
+        self.assertTrue(inserted)
+
+    def test_cancel_and_refund_skips_duplicate_work_when_stripe_refund_exists(self):
+        driver = mock.Mock()
+        state = {
+            "transactions": [
+                {"amount": "205.60", "tag": "Stripe.com", "type": "Stripe.com"},
+                {"amount": "-205.60", "tag": "Refund", "type": "Refund"},
+            ],
+        }
+
+        with mock.patch.object(crm_copyright_cancel, "_activate_crm_context"), \
+             mock.patch.object(crm_copyright_cancel, "_wait_for_order_scope"), \
+             mock.patch.object(
+                 crm_copyright_cancel,
+                 "_append_copyright_cancel_sales_note",
+                 return_value={"already_present": True},
+             ), \
+             mock.patch.object(crm_copyright_cancel, "_get_order_live_state", return_value=state), \
+             mock.patch.object(
+                 crm_copyright_cancel,
+                 "_read_order_refund_fee_amount",
+                 side_effect=AssertionError("refund fee should not be recalculated"),
+             ):
+            result = crm_copyright_cancel._cancel_and_refund_crm_order(
+                driver,
+                "crm-window",
+                "4805418",
+                dry_run=False,
+                payment={"payment_type": "Stripe.com", "amount": "205.60"},
+                reason="University logos",
+            )
+
+        self.assertTrue(result["refund"]["already_refunded"])
+        self.assertEqual(result["cancel"]["reason"], "already_refunded")
+        self.assertEqual(result["refund_fee"]["reason"], "already_refunded")
+
+    def test_cancel_and_refund_skips_refund_work_for_zero_charge_order(self):
+        driver = mock.Mock()
+        state = {
+            "subtotal": 0,
+            "shipping_charges": "0.00",
+            "transactions": [],
+        }
+
+        with mock.patch.object(crm_copyright_cancel, "_activate_crm_context"), \
+             mock.patch.object(crm_copyright_cancel, "_wait_for_order_scope"), \
+             mock.patch.object(
+                 crm_copyright_cancel,
+                 "_append_copyright_cancel_sales_note",
+                 return_value={"updated": True},
+             ), \
+             mock.patch.object(crm_copyright_cancel, "_get_order_live_state", return_value=state), \
+             mock.patch.object(crm_copyright_cancel, "_crm_order_already_cancelled", return_value=False), \
+             mock.patch.object(crm_copyright_cancel, "_cancel_original_order", return_value={"cancelled": True}) as mock_cancel, \
+             mock.patch.object(
+                 crm_copyright_cancel,
+                 "_add_refund_fee_to_original",
+                 side_effect=AssertionError("refund fee should be skipped"),
+             ), \
+             mock.patch.object(
+                 crm_copyright_cancel,
+                 "_refund_via_stripe_payment_modal",
+                 side_effect=AssertionError("refund modal should be skipped"),
+             ):
+            result = crm_copyright_cancel._cancel_and_refund_crm_order(
+                driver,
+                "crm-window",
+                "4705293",
+                dry_run=False,
+                payment={"payment_type": "", "amount": "0.00"},
+                reason="copyright test",
+            )
+
+        mock_cancel.assert_called_once_with(driver)
+        self.assertTrue(result["cancel"]["cancelled"])
+        self.assertEqual(result["refund_fee"]["reason"], "no_refundable_customer_charge")
+        self.assertEqual(result["refund"]["reason"], "no_refundable_customer_charge")
+        self.assertNotIn("order_state", result["refund"])
+
+    def test_cancel_and_refund_zero_charge_skips_cancel_when_order_already_cancelled(self):
+        driver = mock.Mock()
+        state = {
+            "subtotal": 0,
+            "shipping_charges": "0.00",
+            "transactions": [],
+        }
+
+        with mock.patch.object(crm_copyright_cancel, "_activate_crm_context"), \
+             mock.patch.object(crm_copyright_cancel, "_wait_for_order_scope"), \
+             mock.patch.object(
+                 crm_copyright_cancel,
+                 "_append_copyright_cancel_sales_note",
+                 return_value={"already_present": True},
+             ), \
+             mock.patch.object(crm_copyright_cancel, "_get_order_live_state", return_value=state), \
+             mock.patch.object(crm_copyright_cancel, "_crm_order_already_cancelled", return_value=True), \
+             mock.patch.object(crm_copyright_cancel, "_cancel_original_order") as mock_cancel:
+            result = crm_copyright_cancel._cancel_and_refund_crm_order(
+                driver,
+                "crm-window",
+                "4705293",
+                dry_run=False,
+                payment={"payment_type": "", "amount": "0.00"},
+                reason="copyright test",
+            )
+
+        mock_cancel.assert_not_called()
+        self.assertEqual(result["cancel"]["reason"], "already_cancelled")
+        self.assertEqual(result["refund_fee"]["reason"], "no_refundable_customer_charge")
 
     def test_append_sales_note_does_not_copy_rendered_history(self):
         driver = mock.Mock()
@@ -623,6 +1285,14 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertIn("const existingDraft = String(r.addSalesNotes || '').trim();", update_script)
         self.assertNotIn("r.salesNotes", update_script)
         self.assertNotIn("r.filteredSalesNotes", update_script)
+
+    def test_copyright_removal_sales_note_uses_removed_reason_format(self):
+        note = crm_copyright_cancel._cancel_sales_note(
+            "LA Dodgers",
+            process=crm_copyright_cancel.COPYRIGHT_REMOVAL_PROCESS,
+        )
+
+        self.assertEqual(note, "Removed LA Dodgers copyright\nemailed")
 
     def test_prepare_no_cancel_applies_issue_copyright_status_for_reachout(self):
         driver = mock.Mock()
@@ -730,6 +1400,18 @@ class CrmCopyrightCancelTests(unittest.TestCase):
 
 
 class CrmUnlockOrdersTests(unittest.TestCase):
+    def test_blank_locked_report_reloads_once_before_returning_no_orders(self):
+        driver = mock.Mock()
+        with mock.patch.object(crm_unlock_orders, "safe_get_with_partial_load") as safe_get, \
+             mock.patch.object(crm_unlock_orders, "login_if_needed", return_value=False), \
+             mock.patch.object(crm_unlock_orders, "wait_for_order_rows", side_effect=[[], []]) as rows, \
+             mock.patch.object(crm_unlock_orders, "_looks_like_no_orders_state", return_value=False):
+            result = crm_unlock_orders._open_locked_report_rows(driver)
+
+        self.assertEqual(result, [])
+        self.assertEqual(rows.call_count, 2)
+        self.assertEqual(safe_get.call_count, 2)
+
     def test_verify_update_complete_extends_wait_while_apply_is_in_progress(self):
         clock = {"now": 100.0}
         sleep_calls = []
@@ -938,6 +1620,19 @@ class CrmPushBackTests(unittest.TestCase):
 
 
 class ShippingBypasserTests(unittest.TestCase):
+    def test_crm_readiness_refreshes_once_before_reopening_order(self):
+        driver = mock.Mock()
+        with mock.patch.object(
+            crm_shipping_bypasser,
+            "_wait_for_order_goods_page_ready",
+            side_effect=[False, True],
+        ) as ready, mock.patch.object(crm_shipping_bypasser.time, "sleep"):
+            result = crm_shipping_bypasser._require_crm_order_ready_once_with_refresh(driver, "4845038")
+
+        self.assertTrue(result)
+        driver.refresh.assert_called_once_with()
+        self.assertEqual(ready.call_count, 2)
+
     def test_clickable_text_finder_includes_angular_edit_order_controls(self):
         driver = mock.Mock()
         driver.execute_script.return_value = None
@@ -1428,6 +2123,26 @@ class ShippingBypasserTests(unittest.TestCase):
             )
         )
 
+    def test_sanmar_k700_river_blue_navy_variant_matches_sanmar_label(self):
+        product = {
+            "product_id": "K700",
+            "product_name": "Port Authority Shirt Collar Polo",
+        }
+        aliases = crm_shipping_bypasser._sanmar_color_alias_labels("RiverBlNv", product=product)
+
+        self.assertIn("River Blue Navy", aliases)
+        self.assertIn(
+            "River Blue Navy",
+            crm_shipping_bypasser._sanmar_color_label_options("RiverBlNv", product=product),
+        )
+        self.assertTrue(
+            crm_shipping_bypasser._cart_color_matches(
+                "River Blue Navy",
+                "RiverBlNv",
+                product=product,
+            )
+        )
+
     def test_sanmar_true_navy_j_navy_alias_is_limited_to_4528(self):
         self.assertNotIn("J. Navy", crm_shipping_bypasser._sanmar_color_alias_labels("TRUE NAVY"))
         self.assertFalse(
@@ -1528,6 +2243,120 @@ class ShippingBypasserTests(unittest.TestCase):
                 product=product,
             )
         )
+
+    def test_bella_canvas_3413_crm_colors_match_available_sanmar_colors(self):
+        product = {
+            "product_id": "3413C",
+            "product_name": "Bella + Canvas Tri-Blend T-Shirt",
+        }
+        cases = {
+            "AQUA TRIBLEND": "Aqua Triblend",
+            "ATH GREY TRBLND": "Athletic Grey Triblend",
+            "BERRY TRIBLEND": "Berry Triblend",
+            "BLK HTHR TRIBLND": "Black Heather Triblend",
+            "BLUE TRBLND": "Blue Triblend",
+            "BROWN TRIBLEND": "Brown Triblend",
+            "Blue Storm Triblend": "Blue Storm Triblend",
+            "Brick Triblend": "Brick Triblend",
+            "CARDINAL TRBLND": "Cardinal Triblend",
+            "CHAR-BLACK TRIB": "Charcoal-Black Triblend",
+            "CLAY TRIBLEND": "Clay Triblend",
+            "Cement Triblend": "Cement Triblend",
+            "Charity Pink Triblend": "Charity Pink Triblend",
+            "DENIM TRIBLEND": "Denim Triblend",
+            "Dark Lavender Triblend": "Dark Lavender Triblend",
+            "Dusty Blue Triblend": "Dusty Blue Triblend",
+            "EMERALD TRIBLEND": "Emerald Triblend",
+            "GRASS GRN TRBLND": "Grass Green Triblend",
+            "GREEN TRIBLEND": "Green Triblend",
+            "GREY TRIBLEND": "Grey Triblend",
+            "ICE BLUE TRIBLND": "Ice Blue Triblend",
+            "Kelly Triblend": "Kelly Triblend",
+            "Lilac Triblend": "Lilac Triblend",
+            "MAROON TRIBLEND": "Maroon Triblend",
+            "MAUVE TRIBLEND": "Mauve Triblend",
+            "Military Green Triblend": "Military Green Triblend",
+            "MINT TRIBLEND": "Mint Triblend",
+            "Mustard Triblend": "Mustard Triblend",
+            "NAVY TRIBLEND": "Navy Triblend",
+            "OATMEAL TRIBLEND": "Oatmeal Triblend",
+            "OLIVE TRIBLEND": "Olive Triblend",
+            "ORANGE TRIBLEND": "Orange Triblend",
+            "Orchid Triblend": "Orchid Triblend",
+            "PEACH TRIBLEND": "Peach Triblend",
+            "PURPLE TRIBLEND": "Purple Triblend",
+            "Pale Yellow Triblend": "Pale Yellow Triblend",
+            "Pink Triblend": "Pink Triblend",
+            "RED TRIBLEND": "Red Triblend",
+            "SD DARK GRY TRBL": "Solid Dark Grey Triblend",
+            "SEA GREEN TRBLND": "Sea Green Triblend",
+            "SLD BLK TRIBLEND": "Solid Black Triblend",
+            "SOLID NVY TRBLND": "Solid Navy Triblend",
+            "SOLID RED TRIBLN": "Solid Red Triblend",
+            "SOLID WHT TRBLND": "Solid White Triblend",
+            "STEEL BLU TRBLND": "Steel Blue Triblend",
+            "Solid Asphalt Triblend": "Solid Asphalt Triblend",
+            "Solid Blue Triblend": "Solid Blue Triblend",
+            "Solid Carolina Blue Triblend": "Solid Carolina Blue Triblend",
+            "Solid Forest Triblend": "Solid Forest Triblend",
+            "Solid Kelly Triblend": "Solid Kelly Triblend",
+            "Solid Maroon Triblend": "Solid Maroon Triblend",
+            "Solid Natural Triblend": "Solid Natural Triblend",
+            "Solid Orange Triblend": "Solid Orange Triblend",
+            "Solid Silver Triblend": "Solid Silver Triblend",
+            "Solid Slate Triblend": "Solid Slate Triblend",
+            "Solid Team Purple Triblend": "Solid Team Purple Triblend",
+            "Solid True Royal Triblend": "Solid True Royal Triblend",
+            "Storm Triblend": "Storm Triblend",
+            "Sunset Triblend": "Sunset Triblend",
+            "TEAL TRIBLEND": "Teal Triblend",
+            "TRUE ROYAL TRBLN": "True Royal Triblend",
+            "Tan Triblend": "Tan Triblend",
+            "WHITE FLECK TRIBLD": "White Fleck Triblend",
+            "YLLW GLD TRBLND": "Yellow Gold Triblend",
+        }
+
+        for crm_color, sanmar_color in cases.items():
+            with self.subTest(crm_color=crm_color):
+                self.assertIn(
+                    sanmar_color,
+                    crm_shipping_bypasser._sanmar_color_label_options(crm_color, product=product),
+                )
+                self.assertTrue(
+                    crm_shipping_bypasser._cart_color_matches(
+                        sanmar_color,
+                        crm_color,
+                        product=product,
+                    )
+                )
+
+        unsupported = (
+            "Espresso Triblend",
+            "Sand Dune Triblend",
+            "Solid Gold Triblend",
+            "Spring Green Triblend",
+        )
+        for crm_color in unsupported:
+            with self.subTest(crm_color=crm_color):
+                self.assertEqual(
+                    crm_shipping_bypasser._sanmar_color_alias_labels(crm_color, product=product),
+                    [],
+                )
+
+        false_matches = (
+            ("Green Triblend", "SEA GREEN TRBLND"),
+            ("Blue Storm Triblend", "Storm Triblend"),
+            ("Oatmeal Triblend", "TEAL TRIBLEND"),
+        )
+        for sanmar_color, crm_color in false_matches:
+            with self.subTest(sanmar_color=sanmar_color, crm_color=crm_color):
+                self.assertFalse(
+                    crm_shipping_bypasser._cart_color_matches(
+                        sanmar_color,
+                        crm_color,
+                        product=product,
+                    )
+                )
 
     def test_bella_canvas_heather_columbia_blue_abbreviation_matches_sanmar(self):
         product = {
@@ -1922,6 +2751,72 @@ class ShippingBypasserTests(unittest.TestCase):
         self.assertIn("customer PO H-AlexHorn366", summary)
         self.assertIn("https://www.sanmar.com/checkout/submission?orderCode=90223234", summary)
 
+    def test_shipping_bypasser_history_tab_summary_includes_recovered_already_ordered_confirmation(self):
+        rows = server._build_crm_shipping_bypasser_order_results(
+            {
+                "success": True,
+                "order_ids": ["4809107"],
+                "report": [
+                    {
+                        "order_id": "4809107",
+                        "success": True,
+                        "outcome": "already_stock_ordered",
+                        "message": "Skipped because stock is already ordered for this tab.",
+                        "stock_tab_index": 1,
+                        "stock_tab_count": 2,
+                        "stock_tab_label": "H-DouglasROM156 1 - QTY: 1",
+                        "sanmar_confirmation": {
+                            "po": "H-DouglasROM156",
+                            "url": "https://www.sanmar.com/checkout/submission?orderCode=91124708",
+                        },
+                    },
+                ],
+            }
+        )
+
+        summary = server._crm_shipping_bypasser_history_tab_summary(rows)
+
+        self.assertIn("customer PO H-DouglasROM156", summary)
+        self.assertIn("https://www.sanmar.com/checkout/submission?orderCode=91124708", summary)
+
+    def test_shipping_bypasser_historical_confirmation_recovers_failed_submission_confirmation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "crm_state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "run_history": [
+                            {
+                                "automation_key": "shipping_bypasser",
+                                "dry_run": False,
+                                "order_results": [
+                                    {
+                                        "order_id": "4809107",
+                                        "success": False,
+                                        "outcome": "pending_sanmar_submitted_crm_record_failed",
+                                        "sanmar_confirmation": {
+                                            "po": "H-DouglasROM156",
+                                            "url": "https://www.sanmar.com/checkout/submission?orderCode=91124708",
+                                        },
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            confirmation = crm_shipping_bypasser._historical_shipping_bypass_confirmation(
+                "H-DouglasROM156",
+                state_path=str(state_path),
+            )
+
+        self.assertEqual(
+            confirmation["url"],
+            "https://www.sanmar.com/checkout/submission?orderCode=91124708",
+        )
+
     def test_shipping_bypasser_history_message_stays_compact_for_ui(self):
         verbose = (
             "Shipping Bypasser processed 4 order(s) and 8 stock tab(s) across 2 CRM list refresh pass(es). "
@@ -2073,6 +2968,35 @@ class ShippingBypasserTests(unittest.TestCase):
 
 
 class CrmAutoSplitterTests(unittest.TestCase):
+    @mock.patch.object(crm_auto_splitter, "build_chrome_driver")
+    def test_splitter_driver_uses_five_minute_script_timeout(self, mock_build_driver):
+        crm_auto_splitter._build_splitter_driver("splitter-profile", visible=False)
+
+        self.assertEqual(
+            mock_build_driver.call_args.kwargs["script_timeout"],
+            5 * 60,
+        )
+
+    def test_original_scan_refreshes_once_when_tabs_are_initially_missing(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = ""
+        design = {"tab_number": 1, "design_name": "Recovered", "quantity": 1, "stock": {}}
+        with mock.patch.object(crm_auto_splitter.time, "monotonic", side_effect=[0, 100, 100, 200]), \
+             mock.patch.object(crm_auto_splitter, "_visible_design_tab_numbers", return_value=[]), \
+             mock.patch.object(crm_auto_splitter, "_design_total_tab_numbers_from_page_text", side_effect=[[], [1]]), \
+             mock.patch.object(crm_auto_splitter, "_wait_for_crm_context"), \
+             mock.patch.object(crm_auto_splitter, "_click_design_tab", return_value=True), \
+             mock.patch.object(crm_auto_splitter, "_scan_current_design_detail", return_value=design), \
+             mock.patch.object(crm_auto_splitter, "_extract_order_totals_from_text", return_value={}), \
+             mock.patch.object(crm_auto_splitter, "_summarize_original_stock", return_value={}), \
+             mock.patch.object(crm_auto_splitter, "_subcontractor_from_page_text", return_value=""), \
+             mock.patch.object(crm_auto_splitter._product_separator, "_order_stock_status_from_text", return_value={}):
+            result = crm_auto_splitter._scan_original_order(driver, expected_tab_count=1)
+
+        driver.refresh.assert_called_once_with()
+        self.assertEqual(result["detected_tab_count"], 1)
+        self.assertEqual(result["designs"][0]["design_name"], "Recovered")
+
     def test_cancel_confirmation_accepts_crm_cancel_order_status(self):
         self.assertTrue(crm_auto_splitter._is_cancel_order_status("Cancel Order"))
         self.assertTrue(crm_auto_splitter._is_cancel_order_status("Cancelled"))
@@ -2117,6 +3041,67 @@ class CrmAutoSplitterTests(unittest.TestCase):
     def test_auto_divisions_reject_orders_at_or_under_limit(self):
         with self.assertRaises(crm_auto_splitter.SplitterError):
             crm_auto_splitter._auto_divisions_for_tab_count(10)
+
+    def test_header_only_stock_ordered_does_not_require_stock_routing_review(self):
+        stock_summary = crm_auto_splitter._summarize_original_stock(
+            [
+                {
+                    "tab_number": 1,
+                    "design_id": "13000001",
+                    "design_name": "H-Test001",
+                    "stock": {
+                        "state": "ordered_header_only",
+                        "stock_status_ordered": True,
+                        "has_po_row": False,
+                        "manual_order_vendor": "",
+                        "manual_order_po": "",
+                        "manual_order_rows": [],
+                    },
+                }
+            ]
+        )
+
+        routing = crm_auto_splitter._planned_stock_routing(stock_summary, subcontractor="")
+
+        self.assertEqual(stock_summary["unknown_ordered_tabs"], [])
+        self.assertEqual([item["tab_number"] for item in stock_summary["header_only_ordered_tabs"]], [1])
+        self.assertEqual(routing["action"], "header_only_no_transfer")
+        self.assertEqual(routing["reason"], "stock_ordered_header_only")
+
+    def test_manual_order_rows_parse_sanmar_bulk_vendor_label(self):
+        rows = crm_product_separator._manual_order_rows_from_text(
+            "PO Vendor Order # Order Date\nSanmar (Bulk) H-AmyeRushin761-WJ01 62552 07/06/2026"
+        )
+
+        self.assertEqual(rows[0]["vendor"], "Sanmar")
+        self.assertEqual(rows[0]["po"], "H-AmyeRushin761-WJ01")
+        self.assertEqual(rows[0]["vendor_order_number"], "62552")
+
+    def test_incomplete_manual_order_stock_still_requires_stock_routing_review(self):
+        stock_summary = crm_auto_splitter._summarize_original_stock(
+            [
+                {
+                    "tab_number": 1,
+                    "design_id": "13000001",
+                    "design_name": "H-Test001",
+                    "stock": {
+                        "state": "ordered_po_only",
+                        "stock_status_ordered": False,
+                        "has_po_row": True,
+                        "manual_order_vendor": "S&S Activewear",
+                        "manual_order_po": "",
+                        "manual_order_rows": [],
+                    },
+                }
+            ]
+        )
+
+        routing = crm_auto_splitter._planned_stock_routing(stock_summary, subcontractor="")
+
+        self.assertEqual(stock_summary["header_only_ordered_tabs"], [])
+        self.assertEqual([item["tab_number"] for item in stock_summary["unknown_ordered_tabs"]], [1])
+        self.assertEqual(routing["action"], "manual_review")
+        self.assertEqual(routing["reason"], "stock_ordered_vendor_po_unknown")
 
     def test_scan_original_order_can_infer_tabs_from_total_markers(self):
         driver = mock.Mock()
@@ -2305,6 +3290,13 @@ class CrmAutoSplitterTests(unittest.TestCase):
 
 
 class CrmProductSeparatorTests(unittest.TestCase):
+    def test_crm_context_timeout_refreshes_only_once_before_error(self):
+        driver = mock.Mock()
+        with self.assertRaises(crm_product_separator.ProductSeparatorError):
+            crm_product_separator._wait_for_crm_context(driver, timeout=0)
+
+        driver.refresh.assert_called_once_with()
+
     def _product_separator_mixed_scan(self):
         return {
             "order_id": "4600001",
@@ -3785,6 +4777,29 @@ class CrmProductSeparatorTests(unittest.TestCase):
 
 
 class CrmAddressBatchWorkerTests(unittest.TestCase):
+    def test_address_timeout_reloads_order_once_then_retries(self):
+        driver = mock.Mock()
+        recovered = {
+            "order_id": "4845038",
+            "success": True,
+            "message": "Recovered.",
+            "manual_review_required": False,
+            "resolution": "validated",
+        }
+        with mock.patch.object(
+            crm_validate_address,
+            "_evaluate_and_resolve_order",
+            side_effect=[crm_validate_address.TimeoutException("validator timed out"), recovered],
+        ) as evaluate, mock.patch.object(crm_validate_address, "safe_get_with_partial_load") as safe_get, \
+             mock.patch.object(crm_validate_address, "login_if_needed", return_value=False), \
+             mock.patch.object(crm_validate_address, "_elapsed_seconds", return_value=1.0):
+            payload = crm_validate_address._run_once_with_driver(driver, order_id="4845038")
+
+        self.assertTrue(payload["success"])
+        self.assertTrue(payload["report"][0]["retried_after_timeout"])
+        self.assertEqual(evaluate.call_count, 2)
+        safe_get.assert_called_once()
+
     @mock.patch.object(crm_validate_address.time, "sleep")
     @mock.patch.object(crm_validate_address, "_wait_for_target_order_open")
     @mock.patch.object(crm_validate_address, "login_if_needed", return_value=False)
@@ -3932,6 +4947,44 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
         self.assertTrue(crm_validate_address._is_highway_address(address["address"]))
         self.assertTrue(crm_validate_address._allow_override_after_no_candidates(address))
+
+    def test_us_highway_without_house_number_is_not_missing_street_number(self):
+        address = {
+            "address": "US Highway 19",
+            "city": "Chiefland",
+            "state": "Florida",
+            "zip": "32626",
+        }
+
+        self.assertTrue(crm_validate_address._is_highway_address(address["address"]))
+        self.assertFalse(crm_validate_address._is_missing_street_number(address["address"]))
+        self.assertTrue(crm_validate_address._allow_override_after_no_candidates(address))
+
+    def test_abbreviated_us_route_without_house_number_is_not_missing_street_number(self):
+        address = {
+            "address": "U.S. Hwy 19",
+            "city": "Chiefland",
+            "state": "Florida",
+            "zip": "32626",
+        }
+
+        self.assertTrue(crm_validate_address._is_highway_address(address["address"]))
+        self.assertFalse(crm_validate_address._is_missing_street_number(address["address"]))
+        self.assertTrue(crm_validate_address._allow_override_after_no_candidates(address))
+
+    def test_letter_prefixed_rural_highway_address_has_house_number(self):
+        address = {
+            "address": "N8008 US-12",
+            "city": "Elkhorn",
+            "state": "Wisconsin",
+            "zip": "53121",
+        }
+
+        self.assertEqual(crm_validate_address._house_token(address["address"]), "N8008")
+        self.assertEqual(crm_validate_address._street_core(address["address"]), "US 12")
+        self.assertTrue(crm_validate_address._is_highway_address(address["address"]))
+        self.assertFalse(crm_validate_address._is_missing_street_number(address["address"]))
+        self.assertTrue(crm_validate_address._looks_like_street_portion(address["address"]))
 
     def test_email_like_shipping_address_is_not_treated_as_street(self):
         address = {
@@ -4194,6 +5247,46 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
         self.assertTrue(crm_validate_address._address_cont_looks_like_street_fragment(address_fields))
 
+    def test_rewrite_split_street_fragment_clears_preserved_address_cont(self):
+        initial = {
+            "recipient": "Example Recipient",
+            "address": "2265",
+            "address_cont": "Lake Crest Ct.",
+            "city": "Martinez",
+            "state": "California",
+            "zip": "94553",
+        }
+        fixed = {
+            **initial,
+            "address": "2265 Lake Crest Ct.",
+            "address_cont": "",
+        }
+        address_field = object()
+        address_cont_field = object()
+        city_field = object()
+
+        warnings = []
+        with mock.patch.object(crm_validate_address, "_extract_current_address", side_effect=[dict(initial), dict(fixed)]):
+            with mock.patch.object(
+                crm_validate_address,
+                "_find_address_form_input",
+                side_effect=[address_field, address_cont_field, city_field],
+            ):
+                with mock.patch.object(crm_validate_address, "_set_input_value") as mock_set:
+                    with mock.patch.object(crm_validate_address.time, "sleep"):
+                        current, preserved = crm_validate_address._rewrite_address_fields_if_needed(
+                            object(),
+                            warnings,
+                            preserved_address_cont="Lake Crest Ct.",
+                        )
+
+        self.assertEqual(current["address"], "2265 Lake Crest Ct.")
+        self.assertEqual(current["address_cont"], "")
+        self.assertEqual(preserved, "")
+        mock_set.assert_any_call(address_field, "2265 Lake Crest Ct.")
+        mock_set.assert_any_call(address_cont_field, "")
+        self.assertTrue(any("main address only contained the house number" in item for item in warnings))
+
     def test_recover_misaligned_street_address_moves_street_from_address_cont(self):
         recovered = crm_validate_address._recover_misaligned_street_address(
             {
@@ -4246,6 +5339,77 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         self.assertIsNotNone(best)
         self.assertEqual(best["option"]["text"], "Example Resident - 123 W Example St Apt 2D New York NY 10034")
         self.assertTrue(best["assessment"]["secondary_match"])
+
+    def test_pick_existing_address_preserves_bare_canadian_address_cont(self):
+        address = {
+            "address": "42 Grenfell Dr",
+            "address_cont": "218",
+            "city": "Wabush",
+            "state": "Newfoundland And Labrador",
+            "zip": "A0R 1B0",
+        }
+        options = [
+            {"text": "Megan Smith - 42 Grenfell Dr Wabush NL, A0R 1B0", "preferred_all_caps": False},
+            {"text": "Megan Smith - 42 Grenfell Dr 218 Wabush NL, A0R 1B0", "preferred_all_caps": False},
+        ]
+
+        best = crm_validate_address._pick_existing_address_option(address, options)
+
+        self.assertIsNotNone(best)
+        self.assertEqual(best["option"]["text"], "Megan Smith - 42 Grenfell Dr 218 Wabush NL, A0R 1B0")
+        self.assertTrue(best["assessment"]["secondary_match"])
+
+    def test_address_cont_preservation_accepts_punctuated_rural_route(self):
+        self.assertTrue(
+            crm_validate_address._address_cont_value_preserved("RR 2", "R.R. 2")
+        )
+
+    def test_pick_existing_address_preserves_punctuated_rural_route(self):
+        address = {
+            "address": "420 Holmes Street",
+            "address_cont": "RR 2",
+            "city": "Clinton",
+            "state": "Ontario",
+            "zip": "N0M 1L0",
+        }
+        options = [
+            {"text": "Nancy Mayhew - 420 HOLMES STREET CENTRAL HURON ON, N0M 1L0", "preferred_all_caps": True},
+            {"text": "Nancy Mayhew - 420 HOLMES STREET R.R. 2 CENTRAL HURON ON, N0M 1L0", "preferred_all_caps": True},
+        ]
+
+        best = crm_validate_address._pick_existing_address_option(address, options)
+
+        self.assertIsNotNone(best)
+        self.assertEqual(best["option"]["text"], "Nancy Mayhew - 420 HOLMES STREET R.R. 2 CENTRAL HURON ON, N0M 1L0")
+        self.assertTrue(best["assessment"]["secondary_match"])
+
+    def test_pick_existing_address_accepts_matching_apo_without_house_number(self):
+        address = {
+            "recipient": "Javier Almeidaluera",
+            "address": "CLB31, UPR 38463, Box 162",
+            "address_cont": "CLB31, UPR 38463, Box 162",
+            "city": "FPO",
+            "state": "Armed Forces Pacific",
+            "zip": "96384-6301",
+        }
+        options = [
+            {
+                "text": "Javier Almeidaluera - CLB-31/USMC - CLB31, UPR 38463, Box 162 FPO AP, 96384-6301",
+                "preferred_all_caps": False,
+            },
+            {
+                "text": "Javier Almeidaluera - USMC/CLB-31 - CLB31, UPR 38463, Box 162 CLB31, UPR 38463, Box 162 FPO AP, 96384-6301",
+                "preferred_all_caps": False,
+            },
+        ]
+
+        best = crm_validate_address._pick_existing_address_option(address, options)
+
+        self.assertIsNotNone(best)
+        self.assertEqual(best["option"]["text"], options[1]["text"])
+        self.assertTrue(best["assessment"]["military_without_house_match"])
+        self.assertTrue(best["assessment"]["required_match"])
+        self.assertNotIn("address_number", best["assessment"]["mismatch_fields"])
 
     def test_pick_existing_address_can_rescue_missing_street_number(self):
         address = {
@@ -4870,6 +6034,27 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         self.assertEqual(mock_persist.call_count, 1)
         self.assertTrue(any("Persisted the override through the CRM modal service" in item for item in warnings))
 
+    def test_save_shipping_transaction_can_accept_success_banner(self):
+        driver = mock.Mock()
+        shipping_modal = object()
+        save_button = object()
+
+        with mock.patch.object(crm_validate_address, "_wait_for_final_save_button", return_value=save_button):
+            with mock.patch.object(crm_validate_address, "_click_with_fallback") as mock_click:
+                with mock.patch.object(crm_validate_address, "_body_text", return_value="Shipping Transaction added successfully"):
+                    with mock.patch.object(crm_validate_address, "_shipping_panel_has_valid_address", return_value=False):
+                        with mock.patch.object(crm_validate_address, "safe_get_with_partial_load") as mock_reload:
+                            crm_validate_address._save_shipping_transaction(
+                                driver,
+                                shipping_modal,
+                                "4832341",
+                                dry_run=False,
+                                accept_success_banner=True,
+                            )
+
+        mock_click.assert_called_once_with(driver, save_button)
+        mock_reload.assert_not_called()
+
     def test_free_po_box_override_uses_scope_send_when_ui_state_is_missing(self):
         driver = object()
         shipping_modal = object()
@@ -4918,6 +6103,75 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         mock_ensure.assert_called_once_with(driver, shipping_modal, mock.ANY, dry_run=False)
         mock_save.assert_called_once_with(driver, shipping_modal, "4605090", False, use_scope_send=True)
 
+    def test_valid_split_street_address_is_rewritten_instead_of_skipped(self):
+        driver = object()
+        shipping_modal = object()
+        address = {
+            "recipient": "Example Recipient",
+            "address": "2265",
+            "address_cont": "LAKE CREST CT.",
+            "city": "MARTINEZ",
+            "state": "California",
+            "zip": "94553",
+        }
+        fixed_address = {
+            **address,
+            "address": "2265 LAKE CREST CT.",
+            "address_cont": "",
+        }
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(crm_validate_address, "_open_target_order", return_value="4832907"))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_extract_shipping_panel_address", return_value=dict(address)))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_shipping_panel_has_valid_address", return_value=True))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_open_shipping_editor", return_value=shipping_modal))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_extract_current_address", return_value=dict(address)))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_address_is_valid", return_value=True))
+            stack.enter_context(
+                mock.patch.object(
+                    crm_validate_address,
+                    "_ensure_recipient_present",
+                    side_effect=[
+                        (True, dict(address)),
+                        (True, dict(fixed_address)),
+                        (True, dict(fixed_address)),
+                    ],
+                )
+            )
+            stack.enter_context(mock.patch.object(crm_validate_address, "_collect_existing_address_options", return_value=[]))
+            mock_try_existing = stack.enter_context(mock.patch.object(crm_validate_address, "_try_resolve_with_existing_address", return_value=None))
+            mock_rewrite = stack.enter_context(
+                mock.patch.object(
+                    crm_validate_address,
+                    "_rewrite_address_fields_if_needed",
+                    return_value=(dict(fixed_address), ""),
+                )
+            )
+            stack.enter_context(mock.patch.object(crm_validate_address, "_find_visible_element", return_value=None))
+            stack.enter_context(
+                mock.patch.object(
+                    crm_validate_address,
+                    "_prepare_shipping_form_for_save",
+                    return_value=(None, dict(fixed_address), ""),
+                )
+            )
+            mock_save = stack.enter_context(mock.patch.object(crm_validate_address, "_save_shipping_transaction"))
+
+            result = crm_validate_address._evaluate_and_resolve_order(
+                driver,
+                order_id="4832907",
+                dry_run=False,
+                shipping_filter="free",
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["outcome"], "already_valid")
+        self.assertEqual(result["final_address"]["address"], "2265 LAKE CREST CT.")
+        self.assertEqual(result["final_address"]["address_cont"], "")
+        mock_rewrite.assert_called()
+        mock_try_existing.assert_not_called()
+        mock_save.assert_called_once_with(driver, shipping_modal, "4832907", False)
+
     def test_apo_psc_address_bypasses_street_number_guard_and_overrides(self):
         driver = object()
         shipping_modal = object()
@@ -4964,7 +6218,65 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "apo_override_saved")
         self.assertEqual(result["resolution"], "apo_override")
         mock_ensure.assert_called_once_with(driver, shipping_modal, mock.ANY, dry_run=False)
-        mock_save.assert_called_once_with(driver, shipping_modal, "4717598", False, use_scope_send=True)
+        mock_save.assert_called_once_with(
+            driver,
+            shipping_modal,
+            "4717598",
+            False,
+            use_scope_send=True,
+            accept_success_banner=True,
+        )
+
+    def test_apo_address_uses_matching_existing_address_before_override(self):
+        driver = object()
+        shipping_modal = object()
+        address = {
+            "recipient": "Javier Almeidaluera",
+            "address": "CLB31, UPR 38463, Box 162",
+            "address_cont": "CLB31, UPR 38463, Box 162",
+            "city": "FPO",
+            "state": "Armed Forces Pacific",
+            "zip": "96384-6301",
+        }
+        option = {
+            "text": "Javier Almeidaluera - USMC/CLB-31 - CLB31, UPR 38463, Box 162 CLB31, UPR 38463, Box 162 FPO AP, 96384-6301",
+            "preferred_all_caps": False,
+        }
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(crm_validate_address, "_open_target_order", return_value="4832341"))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_extract_shipping_panel_address", return_value=dict(address)))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_shipping_panel_has_valid_address", return_value=False))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_open_shipping_editor", return_value=shipping_modal))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_extract_current_address", return_value=dict(address)))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_address_is_valid", return_value=False))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_ensure_recipient_present", return_value=(True, dict(address))))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_collect_existing_address_options", return_value=[option]))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_select_existing_address_option_by_text", return_value=True))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_wait_for_address_valid", return_value=True))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_persist_validated_address_via_modal_scope", return_value={"ok": True}))
+            stack.enter_context(
+                mock.patch.object(
+                    crm_validate_address,
+                    "_prepare_shipping_form_for_save",
+                    return_value=(None, dict(address), address["address_cont"]),
+                )
+            )
+            mock_save = stack.enter_context(mock.patch.object(crm_validate_address, "_save_shipping_transaction"))
+            mock_apply_override = stack.enter_context(mock.patch.object(crm_validate_address, "_apply_override"))
+
+            result = crm_validate_address._evaluate_and_resolve_order(
+                driver,
+                order_id="4832341",
+                dry_run=False,
+                shipping_filter="rush",
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["outcome"], "existing_address_saved")
+        self.assertEqual(result["resolution"], "existing_address")
+        mock_apply_override.assert_not_called()
+        mock_save.assert_called_once_with(driver, shipping_modal, "4832341", False, use_scope_send=True)
 
     def test_attempt_validation_candidate_selection_accepts_final_save_ready(self):
         warnings = []
@@ -5388,6 +6700,7 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertIn("4", args)
 
     @mock.patch.object(server, "_audit_result")
+    @mock.patch.object(server, "_record_crm_processing_report_result")
     @mock.patch.object(server, "save_crm_mass_emailer_state")
     @mock.patch.object(server, "load_crm_mass_emailer_state")
     @mock.patch.object(server, "ensure_crm_mass_emailer_state_file")
@@ -5396,6 +6709,7 @@ class CrmAddressServerTests(unittest.TestCase):
         _mock_ensure_state_file,
         mock_load_state,
         _mock_save_state,
+        _mock_processing_report,
         _mock_audit_result,
     ):
         mock_load_state.return_value = server._default_crm_mass_emailer_state()
@@ -5439,6 +6753,37 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertEqual(details[1]["status"], "Needs attention")
         self.assertEqual(details[1]["function_label"], "Copyright - Cancel")
         self.assertEqual(details[1]["message"], "Google Sheet error text.")
+        _mock_processing_report.assert_called_once()
+
+    def test_mass_emailer_history_keeps_same_order_failures_for_different_sheet_rows(self):
+        payload = {
+            "success": False,
+            "message": "Processed 0 sheet scanner row(s); 2 failed.",
+            "action": "process_queue",
+            "dry_run": False,
+            "failures": [
+                {
+                    "row_number": 3,
+                    "order_id": "4705293",
+                    "issue_type": "Copyright - Cancel",
+                    "process": "copyright_cancel",
+                    "error": "Refund fee skipped.",
+                },
+                {
+                    "row_number": 2,
+                    "order_id": "4705293",
+                    "issue_type": "Copyright Removal",
+                    "process": "copyright_removal",
+                    "error": "Removal template missing.",
+                },
+            ],
+        }
+
+        details = server._crm_mass_emailer_order_details_from_payload(payload)
+
+        self.assertEqual(len(details), 2)
+        self.assertEqual([item["function_label"] for item in details], ["Copyright - Cancel", "Copyright Removal"])
+        self.assertEqual([item["message"] for item in details], ["Refund fee skipped.", "Removal template missing."])
 
     @mock.patch.object(server, "_run_script")
     def test_order_goods_worker_defaults_to_continuous_rush_dry_run(self, mock_run_script):
@@ -5559,6 +6904,17 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertIn("--dry-run", args)
         self.assertIn("--visible", args)
         self.assertTrue(mock_run_script.call_args.kwargs["show_terminal"])
+
+    @mock.patch.object(server, "_run_script")
+    def test_stock_unlocker_worker_passes_mode_specific_list_url(self, mock_run_script):
+        mock_run_script.return_value = (True, "ok", {"success": True, "message": "ok"})
+        list_url = "https://crm.example/report/free-unlocker"
+
+        ok, _message, _payload = server._execute_crm_worker(list_url=list_url)
+
+        self.assertTrue(ok)
+        args = mock_run_script.call_args.args[1]
+        self.assertEqual(args[args.index("--list-url") + 1], list_url)
 
     @mock.patch.object(server, "_persist_crm_order_goods_run_result", return_value={})
     @mock.patch.object(server, "_finish_crm_order_goods_runtime")
@@ -6027,7 +7383,30 @@ class CrmAddressServerTests(unittest.TestCase):
             ["address_validator_batch", "product_separator", "stock_unlocker", "order_goods"],
         )
 
-    def test_processing_free_mode_disables_rush_only_steps(self):
+    def test_processing_high_value_uses_rush_like_steps(self):
+        state = {
+            "processing_filter": "high_value",
+            "address_validator_enabled": True,
+            "product_separator_enabled": True,
+            "stock_unlocker_enabled": True,
+            "order_goods_enabled": True,
+            "shipping_bypasser_enabled": True,
+            "push_back_enabled": True,
+        }
+
+        self.assertEqual(
+            server._crm_processing_selected_steps_from_state(state),
+            [
+                "address_validator_batch",
+                "product_separator",
+                "stock_unlocker",
+                "order_goods",
+                "shipping_bypasser",
+                "push_back",
+            ],
+        )
+
+    def test_processing_free_mode_enables_unlocker_and_order_goods(self):
         with tempfile.TemporaryDirectory() as tmp:
             state_path = Path(tmp) / "crm_processing_state.json"
             with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
@@ -6042,9 +7421,83 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertTrue(state["address_validator_enabled"])
         self.assertTrue(state["product_separator_enabled"])
-        self.assertFalse(state["stock_unlocker_enabled"])
-        self.assertFalse(state["order_goods_enabled"])
-        self.assertEqual(server._crm_processing_selected_steps_from_state(state), ["address_validator_batch", "product_separator"])
+        self.assertTrue(state["stock_unlocker_enabled"])
+        self.assertTrue(state["order_goods_enabled"])
+        self.assertEqual(
+            server._crm_processing_selected_steps_from_state(state),
+            ["address_validator_batch", "product_separator", "stock_unlocker", "order_goods"],
+        )
+
+    def test_processing_free_unlocker_uses_free_report_url(self):
+        list_url = "https://crm.example/report/free-unlocker"
+        with mock.patch.object(server, "CRM_UNLOCKER_FREE_URL", list_url):
+            self.assertEqual(
+                server._crm_processing_mode_list_url_for_step("free", "stock_unlocker"),
+                list_url,
+            )
+
+    def test_processing_free_order_goods_uses_free_report_url(self):
+        list_url = "https://crm.example/report/free-order-goods"
+        with mock.patch.object(server, "CRM_ORDER_GOODS_FREE_URL", list_url):
+            self.assertEqual(
+                server._crm_processing_mode_list_url_for_step("free", "order_goods"),
+                list_url,
+            )
+
+    def test_processing_free_order_goods_reports_missing_mode_link(self):
+        with mock.patch.object(server, "CRM_ORDER_GOODS_FREE_URL", ""):
+            result = server._run_crm_processing_step("order_goods", "free")
+
+        self.assertFalse(result["success"])
+        self.assertIn("CRM_ORDER_GOODS_FREE_URL is empty", result["message"])
+
+    def test_processing_state_migrates_existing_free_mode_to_unlocker_enabled(self):
+        saved_state = server._default_crm_processing_state()
+        saved_state.pop("free_unlocker_mode_available", None)
+        saved_state["mode_preferences"]["free"]["stock_unlocker_enabled"] = False
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "crm_processing_state.json"
+            state_path.write_text(json.dumps(saved_state), encoding="utf-8")
+            with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
+                state = server.load_crm_processing_state()
+
+        self.assertTrue(state["free_unlocker_mode_available"])
+        self.assertTrue(state["mode_preferences"]["free"]["stock_unlocker_enabled"])
+
+    def test_processing_state_migrates_new_free_and_all_steps_to_enabled(self):
+        saved_state = server._default_crm_processing_state()
+        saved_state.pop("expanded_unlocker_order_goods_modes_available", None)
+        saved_state["mode_preferences"]["free"]["order_goods_enabled"] = False
+        saved_state["mode_preferences"]["all"]["stock_unlocker_enabled"] = False
+        saved_state["mode_preferences"]["all"]["order_goods_enabled"] = False
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "crm_processing_state.json"
+            state_path.write_text(json.dumps(saved_state), encoding="utf-8")
+            with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
+                state = server.load_crm_processing_state()
+
+        self.assertTrue(state["expanded_unlocker_order_goods_modes_available"])
+        self.assertTrue(state["mode_preferences"]["free"]["order_goods_enabled"])
+        self.assertTrue(state["mode_preferences"]["all"]["stock_unlocker_enabled"])
+        self.assertTrue(state["mode_preferences"]["all"]["order_goods_enabled"])
+
+    @mock.patch.object(server, "_finish_crm_runtime")
+    @mock.patch.object(server, "_persist_crm_run_result", return_value={})
+    @mock.patch.object(server, "_run_crm_unlock_with_retry", return_value=(True, "ok", {"success": True}))
+    @mock.patch.object(server, "_start_crm_runtime")
+    def test_processing_free_unlocker_step_passes_free_report_to_worker(
+        self,
+        _mock_start,
+        mock_run_unlocker,
+        _mock_persist,
+        _mock_finish,
+    ):
+        list_url = "https://crm.example/report/free-unlocker"
+        with mock.patch.object(server, "CRM_UNLOCKER_FREE_URL", list_url):
+            result = server._run_crm_processing_step("stock_unlocker", "free")
+
+        self.assertTrue(result["success"])
+        mock_run_unlocker.assert_called_once_with(dry_run=False, list_url=list_url)
 
     def test_processing_switch_to_rush_preserves_selected_steps(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -6190,6 +7643,208 @@ class CrmAddressServerTests(unittest.TestCase):
 
         self.assertFalse(state["run_history"][0]["success"])
         self.assertEqual(state["run_history"][0]["selected_steps"], ["stock_unlocker"])
+
+    def test_processing_step_metrics_count_orders_and_order_errors(self):
+        payload = {
+            "success": False,
+            "order_count": 3,
+            "order_ids": ["4410001", "4410002", "4410003"],
+            "report": [
+                {"order_id": "4410001", "success": True, "outcome": "order_goods_clicked"},
+                {"order_id": "4410002", "success": False, "outcome": "order_goods_locked"},
+                {"order_id": "4410003", "success": True, "outcome": "already_stock_ordered"},
+            ],
+        }
+
+        metrics = server._crm_processing_step_metrics(
+            "order_goods",
+            payload,
+            False,
+            "Order Goods processed 3 order(s); 1 needs attention.",
+        )
+
+        self.assertEqual(metrics["order_count"], 3)
+        self.assertEqual(metrics["successful_order_count"], 2)
+        self.assertEqual(metrics["error_count"], 1)
+
+    def test_processing_step_error_details_keep_each_failed_order(self):
+        payload = {
+            "success": False,
+            "order_count": 3,
+            "order_ids": ["4410001", "4410002", "4410003"],
+            "report": [
+                {
+                    "order_id": "4410001",
+                    "success": True,
+                    "outcome": "order_goods_clicked",
+                    "message": "Ordered successfully.",
+                },
+                {
+                    "order_id": "4410002",
+                    "success": False,
+                    "outcome": "order_goods_locked",
+                    "message": "The order is locked.",
+                },
+                {
+                    "order_id": "4410003",
+                    "success": False,
+                    "outcome": "missing_due_date",
+                    "message": "The due date is missing.",
+                },
+            ],
+        }
+
+        details = server._crm_processing_step_error_details(
+            "order_goods",
+            payload,
+            False,
+            "2 order(s) need attention.",
+        )
+
+        self.assertEqual([item["order_id"] for item in details], ["4410002", "4410003"])
+        self.assertEqual(
+            [item["message"] for item in details],
+            ["The order is locked.", "The due date is missing."],
+        )
+
+    def test_processing_summary_treats_recorded_order_errors_as_attention(self):
+        success, message = server._build_crm_processing_summary(
+            [
+                {
+                    "key": "shipping_bypasser",
+                    "success": True,
+                    "order_count": 2,
+                    "successful_order_count": 1,
+                    "error_count": 1,
+                    "errors": [
+                        {
+                            "order_id": "4410002",
+                            "status": "Partially successful",
+                            "message": "One stock tab needs attention.",
+                        }
+                    ],
+                    "message": "One order partially succeeded.",
+                }
+            ]
+        )
+
+        self.assertFalse(success)
+        self.assertIn("Shipping Bypasser", message)
+
+    def test_processing_report_filters_daily_weekly_monthly_and_all_time(self):
+        state = server._default_crm_processing_state()
+        server._append_crm_processing_report(
+            state,
+            "2026-07-16T09:00:00",
+            [
+                {
+                    "key": "address_validator_batch",
+                    "success": True,
+                    "order_count": 4,
+                    "error_count": 1,
+                    "duration_seconds": 30,
+                    "message": "Processed 4 order(s). 1 order(s) need attention.",
+                }
+            ],
+        )
+        server._append_crm_processing_report(
+            state,
+            "2026-07-14T09:00:00",
+            [
+                {
+                    "key": "stock_unlocker",
+                    "success": True,
+                    "order_count": 2,
+                    "error_count": 0,
+                    "duration_seconds": 10,
+                    "message": "Unlocked 2 orders successfully.",
+                }
+            ],
+        )
+        server._append_crm_processing_report(
+            state,
+            "2026-06-30T09:00:00",
+            [
+                {
+                    "key": "order_goods",
+                    "success": False,
+                    "order_count": 5,
+                    "error_count": 2,
+                    "duration_seconds": 50,
+                    "message": "Processed 5 order(s). 2 order(s) need attention.",
+                }
+            ],
+        )
+
+        report = server._build_crm_processing_report(state, now=server.datetime(2026, 7, 16, 12, 0, 0))
+
+        self.assertEqual(report["periods"]["daily"]["total_orders_processed"], 4)
+        self.assertEqual(report["periods"]["weekly"]["total_orders_processed"], 6)
+        self.assertEqual(report["periods"]["monthly"]["total_orders_processed"], 6)
+        self.assertEqual(report["periods"]["all"]["total_orders_processed"], 11)
+        self.assertEqual(report["periods"]["all"]["total_errors"], 3)
+        self.assertEqual(report["periods"]["all"]["total_duration_seconds"], 90.0)
+
+    def test_processing_status_payload_includes_quick_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "crm_processing_state.json"
+            with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
+                server.ensure_crm_processing_state_file()
+                payload = server.get_crm_processing_status_payload()
+
+        self.assertIn("report", payload)
+        self.assertEqual(set(payload["report"]["periods"]), {"daily", "weekly", "monthly", "all"})
+        self.assertEqual(len(payload["report"]["periods"]["all"]["rows"]), 7)
+
+    def test_processing_report_backfills_live_sheet_scanner_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            processing_path = Path(tmp) / "crm_processing_state.json"
+            scanner_path = Path(tmp) / "crm_mass_emailer_state.json"
+            processing_path.write_text(json.dumps(server._default_crm_processing_state() | {
+                "report_sheet_scanner_available": False,
+            }), encoding="utf-8")
+            scanner_path.write_text(
+                json.dumps(
+                    {
+                        "run_history": [
+                            {
+                                "timestamp": "2026-07-16T09:00:00",
+                                "success": False,
+                                "action": "process_queue",
+                                "dry_run": False,
+                                "order_count": 3,
+                                "failure_count": 1,
+                                "duration_seconds": 25.5,
+                                "message": "Processed 3 rows; 1 failed.",
+                            },
+                            {
+                                "timestamp": "2026-07-16T08:00:00",
+                                "success": True,
+                                "action": "process_queue",
+                                "dry_run": True,
+                                "order_count": 9,
+                                "failure_count": 0,
+                                "duration_seconds": 99,
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(processing_path)), \
+                 mock.patch.object(server, "CRM_MASS_EMAILER_STATE_FILE", str(scanner_path)):
+                state = server.load_crm_processing_state()
+                report = server._build_crm_processing_report(
+                    state,
+                    now=server.datetime(2026, 7, 16, 12, 0, 0),
+                )
+
+        scanner_row = next(row for row in report["periods"]["daily"]["rows"] if row["key"] == "mass_emailer")
+        self.assertEqual(scanner_row["orders_processed"], 4)
+        self.assertEqual(scanner_row["successful_orders"], 3)
+        self.assertEqual(scanner_row["error_count"], 1)
+        self.assertEqual(scanner_row["duration_seconds"], 25.5)
+        self.assertEqual(scanner_row["run_count"], 1)
 
     def test_processing_rush_can_run_unlocker_and_order_goods_without_validator(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -6350,7 +8005,8 @@ class CrmAddressServerTests(unittest.TestCase):
             results = crm_shipping_bypasser._run_order_with_drivers(crm_driver, sanmar_driver, "4638803", dry_run=False)
 
         mock_open.assert_called_once()
-        mock_ready.assert_called_once()
+        self.assertEqual(mock_ready.call_count, 2)
+        crm_driver.refresh.assert_called_once_with()
         mock_process.assert_not_called()
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0]["success"])
@@ -6652,7 +8308,7 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertIn("4636204 tab 2 of 2", mock_notify.call_args.args[1])
         self.assertIn("H-TabTwo", mock_notify.call_args.args[1])
 
-    def test_processing_all_mode_forces_validator_only(self):
+    def test_processing_all_mode_can_disable_validator_and_run_other_steps(self):
         with tempfile.TemporaryDirectory() as tmp:
             state_path = Path(tmp) / "crm_processing_state.json"
             with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
@@ -6666,11 +8322,36 @@ class CrmAddressServerTests(unittest.TestCase):
                 )
 
         self.assertTrue(ok)
-        self.assertTrue(state["address_validator_enabled"])
+        self.assertFalse(state["address_validator_enabled"])
         self.assertFalse(state["product_separator_enabled"])
-        self.assertFalse(state["stock_unlocker_enabled"])
-        self.assertFalse(state["order_goods_enabled"])
-        self.assertEqual(server._crm_processing_selected_steps_from_state(state), ["address_validator_batch"])
+        self.assertTrue(state["stock_unlocker_enabled"])
+        self.assertTrue(state["order_goods_enabled"])
+        self.assertEqual(
+            server._crm_processing_selected_steps_from_state(state),
+            ["stock_unlocker", "order_goods"],
+        )
+
+    def test_processing_all_unlocker_and_order_goods_use_all_report_urls(self):
+        unlocker_url = "https://crm.example/report/all-unlocker"
+        order_goods_url = "https://crm.example/report/all-order-goods"
+        with mock.patch.object(server, "CRM_UNLOCKER_ALL_URL", unlocker_url), mock.patch.object(
+            server, "CRM_ORDER_GOODS_ALL_URL", order_goods_url
+        ):
+            self.assertEqual(
+                server._crm_processing_mode_list_url_for_step("all", "stock_unlocker"),
+                unlocker_url,
+            )
+            self.assertEqual(
+                server._crm_processing_mode_list_url_for_step("all", "order_goods"),
+                order_goods_url,
+            )
+
+    def test_processing_all_unlocker_reports_missing_mode_link(self):
+        with mock.patch.object(server, "CRM_UNLOCKER_ALL_URL", ""):
+            result = server._run_crm_processing_step("stock_unlocker", "all")
+
+        self.assertFalse(result["success"])
+        self.assertIn("CRM_UNLOCKER_ALL_URL is empty", result["message"])
 
     @mock.patch.object(server, "_finish_crm_address_runtime")
     @mock.patch.object(server, "_persist_crm_address_run_result", return_value={})
@@ -6707,6 +8388,12 @@ class CrmAddressServerTests(unittest.TestCase):
         with mock.patch.object(crm_validate_address, "CRM_SHIPPING_ALL_URL", all_url):
             self.assertEqual(crm_validate_address._normalize_shipping_filter("all"), "all")
             self.assertEqual(crm_validate_address._shipping_list_url_for_filter("all"), all_url)
+
+    def test_worker_high_value_shipping_filter_uses_high_value_url(self):
+        high_value_url = "https://crm.example/report/high-value"
+        with mock.patch.object(crm_validate_address, "CRM_SHIPPING_HIGH_VALUE_URL", high_value_url):
+            self.assertEqual(crm_validate_address._normalize_shipping_filter("high-value"), "high_value")
+            self.assertEqual(crm_validate_address._shipping_list_url_for_filter("high_value"), high_value_url)
 
     @mock.patch.object(server, "log_automation_event")
     @mock.patch.object(server.time, "sleep")

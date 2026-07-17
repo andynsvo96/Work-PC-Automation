@@ -55,11 +55,10 @@ from config import (
     CRM_SHIPPING_URL,
     CRM_LOGIN_URL,
     CRM_PAGE_LOAD_TIMEOUT,
-    CRM_PASSWORD,
     CRM_PROFILE_DIR,
-    CRM_USERNAME,
 )
 from runtime_paths import GENERATED_PROFILES_DIR
+from credential_store import CRM_CREDENTIAL_TARGET, read_windows_credential
 
 configure_console_utf8()
 
@@ -516,8 +515,7 @@ def _validate_runtime_config(shipping_filter=None, list_url_override=None):
         raise RuntimeError("A CRM shipping filter URL is empty in config.py.")
     if not str(CRM_LOGIN_URL or "").strip():
         raise RuntimeError("CRM_LOGIN_URL is empty in config.py.")
-    if not str(CRM_USERNAME or "").strip():
-        raise RuntimeError("CRM_USERNAME is empty in config.py.")
+    read_windows_credential(CRM_CREDENTIAL_TARGET)
 
 
 def _order_ids_from_text(text):
@@ -5713,8 +5711,7 @@ def _field_value(driver, element):
 
 
 def do_login(driver):
-    if not str(CRM_PASSWORD or ""):
-        raise RuntimeError("CRM_PASSWORD is empty in config.py, so the CRM login step cannot complete.")
+    credential = read_windows_credential(CRM_CREDENTIAL_TARGET)
 
     username_field = _wait_for_any(driver, LOGIN_USERNAME_SELECTORS, condition="clickable")
     password_field = _wait_for_any(driver, LOGIN_PASSWORD_SELECTORS, condition="clickable")
@@ -5723,15 +5720,15 @@ def do_login(driver):
     current_username = _field_value(driver, username_field)
     current_password = _field_value(driver, password_field)
 
-    if not current_username or current_username.lower() != str(CRM_USERNAME or "").strip().lower():
-        username_field.send_keys(Keys.CONTROL, "a")
+    if not current_username or current_username.lower() != credential.username.strip().lower():
+        username_field.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
         username_field.send_keys(Keys.DELETE)
-        username_field.send_keys(CRM_USERNAME)
+        username_field.send_keys(credential.username)
 
     if not current_password:
-        password_field.send_keys(Keys.CONTROL, "a")
+        password_field.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
         password_field.send_keys(Keys.DELETE)
-        password_field.send_keys(CRM_PASSWORD)
+        password_field.send_keys(credential.secret)
 
     _click_with_fallback(driver, login_button)
     login_reclick_after = time.time() + 3
