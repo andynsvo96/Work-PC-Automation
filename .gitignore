@@ -2,6 +2,10 @@
 config.py
 keys/
 *.local.py
+*onboarding*.json
+*security-transfer*.json
+app-security*.json
+*queue-transfer*.json
 .env
 .env.*
 

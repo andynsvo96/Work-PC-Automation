@@ -2,8 +2,16 @@
 
 # Copy this file to config.py and fill in local values before running.
 
-# Your Paycom PIN.
-PIN = ""
+# Queue mode. Keep "local" until Supabase setup is complete on every computer,
+# then change this to "shared" on both Windows and macOS. Shared mode never
+# falls back to local execution when Supabase is unavailable.
+AUTOMATION_QUEUE_MODE = "local"
+
+# Remote control board access. With "tailscale", Flask listens only on
+# localhost and Tailscale Serve provides HTTPS to the tailnet. The app PIN is
+# required and must be installed with setup_app_security.py on both computers.
+AUTOMATION_REMOTE_ACCESS_MODE = "local"  # change to "tailscale" after setup
+AUTOMATION_APP_PIN_REQUIRED = AUTOMATION_REMOTE_ACCESS_MODE == "tailscale"
 
 # Paycom time clock URL.
 PAYCOM_URL = "https://www.paycomonline.net/v4/ee/web.php/timeclock/WEB04"
@@ -102,9 +110,9 @@ PAYCOM_WEEK_HOURS_REGEX_PATTERNS = [
 ]
 
 # CRM Automation Configuration
-CRM_USERNAME = ""
-CRM_PASSWORD = ""
-
+CRM_UNLOCKER_ALL_URL = ""
+CRM_ORDER_GOODS_FREE_URL = ""
+CRM_ORDER_GOODS_ALL_URL = ""
 CRM_LOGIN_URL = "https://crm2.legacy.printfly.com/login"
 CRM_LOCKED_URL = ""
 CRM_UNLOCKER_FREE_URL = ""  # Free-mode stock unlocker report.
@@ -126,8 +134,6 @@ CRM_PUSH_BACK_813_URL = ""
 SANMAR_URL = "https://www.sanmar.com/"
 SANMAR_CART_URL = "https://www.sanmar.com/cart"
 SANMAR_PROFILE_DIR = "chrome_profile_sanmar"
-SANMAR_USERNAME = ""
-SANMAR_PASSWORD = ""
 CRM_SHIPPING_URL = CRM_SHIPPING_FREE_URL
 CRM_SHIPPING_FILTER_DEFAULT = "free"
 
@@ -166,7 +172,6 @@ PROCESSOR_ACTION_TIMEOUT = CRM_ACTION_TIMEOUT
 PROCESSOR_DRY_RUN = True
 
 # Mass Emailer cancellation queue settings.
-GOOGLE_SHEETS_CREDENTIALS_FILE = r"C:\path\to\service-account.json"
 GOOGLE_SHEET_ID = ""
 GOOGLE_SHEET_WORKSHEET = "AUTOMATION"
 GOOGLE_SHEET_ORDER_REFERENCE_COLUMN = "Order # or CRM link"
@@ -184,8 +189,6 @@ MANUAL_STOCK_ORDER_ISSUE_TYPE = "Manual Stock Order"
 COPYRIGHT_REACHOUT_CRM_STATUS = "issue - copyright"
 
 # Salesforce email settings for Mass Emailer.
-SALESFORCE_USERNAME = ""
-SALESFORCE_PASSWORD = ""
 SALESFORCE_COPYRIGHT_CANCEL_FROM_EMAIL = "orders@example.com"
 SALESFORCE_COPYRIGHT_CANCEL_FROM_LABEL = "Orders <orders@example.com>"
 SALESFORCE_COPYRIGHT_CANCEL_TEMPLATE = "[AUTO] Copyright Cancel"

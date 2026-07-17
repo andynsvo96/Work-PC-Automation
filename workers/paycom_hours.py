@@ -44,13 +44,13 @@ from automation_runtime import (
     write_result_payload,
 )
 from config import (
-    PIN,
     PAYCOM_URL,
     PAYCOM_HOURS_URL,
     PAYCOM_WEEK_HOURS_REGEX_PATTERNS,
     WORK_CLOCK_BREAK_APPLIES_AFTER_HOURS,
     WORK_CLOCK_BREAK_MINUTES,
 )
+from credential_store import PAYCOM_CREDENTIAL_TARGET, read_windows_credential
 
 configure_console_utf8()
 
@@ -990,8 +990,9 @@ def _run_once(headless_mode):
         )
         if pin_field:
             print("Entering PIN for hours sync...")
+            pin = read_windows_credential(PAYCOM_CREDENTIAL_TARGET).secret
             pin_field.clear()
-            pin_field.send_keys(PIN)
+            pin_field.send_keys(pin)
 
         login_btn = find_visible(
             driver,
