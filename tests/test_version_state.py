@@ -28,6 +28,17 @@ class VersionStateTests(unittest.TestCase):
         self.assertEqual(payload["queue_protocol_version"], version_state.QUEUE_PROTOCOL_VERSION)
         self.assertIsInstance(payload["dirty"], bool)
 
+    def test_refresh_origin_main_fetches_without_changing_worktree(self):
+        with mock.patch("version_state._git") as git:
+            with mock.patch("version_state.get_git_version_state", return_value={"relation": "current"}) as state:
+                payload = version_state.refresh_origin_main(".", timeout=17)
+
+        fetch_call = git.call_args
+        self.assertEqual(fetch_call.args[1:], ("fetch", "--quiet", "--prune", "origin"))
+        self.assertEqual(fetch_call.kwargs["timeout"], 17)
+        state.assert_called_once()
+        self.assertEqual(payload, {"relation": "current"})
+
 
 if __name__ == "__main__":
     unittest.main()

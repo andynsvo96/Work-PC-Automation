@@ -100,6 +100,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .section-note-body p{margin:0 0 6px}
 .section-note-body p:last-child{margin-bottom:0}
 .notice{border:1px solid #cbd5e1;background:#f8fafc;border-radius:8px;padding:8px;margin:8px 0;font-size:13px}
+.version-gate-notice{display:none;border-color:#f59e0b;background:#fffbeb;color:#92400e;font-weight:700}
 .rule-check-cell{text-align:center;min-width:72px}
 .rule-check-cell input[type=checkbox]{width:16px;height:16px;accent-color:#2563eb}
 .rules-note{min-width:260px}
@@ -242,6 +243,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
   <label class='control-target'>Control target <select id='controlTargetSelect' onchange='changeControlTarget(this.value)'><option value=''>Any available computer</option></select></label>
 </div>
 <div id='platformCapabilityNotice' class='notice platform-capability-notice'>Windows only</div>
+<div id='versionGateNotice' class='notice version-gate-notice'></div>
 
 <div id='queuePanel' class='queue-panel'>
   <div class='queue-header'>
@@ -2313,6 +2315,14 @@ function renderNodeRuntime(payload) {
   const settings = nodeRuntimePayload.worker_settings || {};
   const recommendation = settings.recommendation || {};
   const git = nodeRuntimePayload.git || {};
+  const versionNotice = document.getElementById('versionGateNotice');
+  const versionBlocked = nodeRuntimePayload.version_eligible === false;
+  if (versionNotice) {
+    versionNotice.style.display = versionBlocked ? 'block' : 'none';
+    versionNotice.textContent = versionBlocked
+      ? (nodeRuntimePayload.version_block_reason || 'Update required. Run Safe Sync & Start before starting another automation.')
+      : '';
+  }
   const summary = document.getElementById('nodeHardwareSummary');
   if (summary) {
     const rows = [
