@@ -21,6 +21,16 @@ def _git_process_options():
     return {"creationflags": _GIT_CREATION_FLAGS}
 
 
+def _write_status(message):
+    stream = getattr(sys, "stdout", None)
+    if stream is None:
+        return
+    try:
+        print(message, file=stream)
+    except (AttributeError, OSError):
+        pass
+
+
 def _run(repo_dir, *args, timeout=120):
     result = subprocess.run(
         ["git", *args],
@@ -95,10 +105,10 @@ def main(argv=None):
     options = parser.parse_args(argv)
     repo_dir = os.path.abspath(options.repo)
     if options.action == "status":
-        print(get_git_version_state(repo_dir))
+        _write_status(get_git_version_state(repo_dir))
         return 0
     result = sync_repository(repo_dir, fetch=not options.no_fetch)
-    print(result.get("message") or "Safe Sync finished.")
+    _write_status(result.get("message") or "Safe Sync finished.")
     if options.action == "start":
         _start_server(repo_dir, result.get("message") if result.get("blocked") else "")
     return 0 if result.get("success") else 2
