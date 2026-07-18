@@ -6,6 +6,10 @@ import safe_sync
 
 
 class SafeSyncTests(unittest.TestCase):
+    def test_status_output_is_safe_without_a_console(self):
+        with mock.patch.object(safe_sync.sys, "stdout", None):
+            safe_sync._write_status("hidden launcher")
+
     def test_git_uses_background_creation_flags_when_available(self):
         completed = subprocess.CompletedProcess(["git"], 0, stdout="ok\n", stderr="")
         with mock.patch("safe_sync.subprocess.run", return_value=completed) as run:
