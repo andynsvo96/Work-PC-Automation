@@ -7,6 +7,15 @@ import subprocess
 
 
 QUEUE_PROTOCOL_VERSION = 1
+_GIT_CREATION_FLAGS = (
+    getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+)
+
+
+def _git_process_options():
+    if not _GIT_CREATION_FLAGS:
+        return {}
+    return {"creationflags": _GIT_CREATION_FLAGS}
 
 
 def _git(repo_dir, *args, timeout=10):
@@ -16,6 +25,7 @@ def _git(repo_dir, *args, timeout=10):
         capture_output=True,
         text=True,
         timeout=timeout,
+        **_git_process_options(),
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "Git command failed.").strip()
@@ -61,12 +71,14 @@ def get_git_version_state(repo_dir):
                     cwd=repo_dir,
                     capture_output=True,
                     timeout=10,
+                    **_git_process_options(),
                 ).returncode == 0
                 origin_is_ancestor = subprocess.run(
                     ["git", "merge-base", "--is-ancestor", origin_commit, commit],
                     cwd=repo_dir,
                     capture_output=True,
                     timeout=10,
+                    **_git_process_options(),
                 ).returncode == 0
                 payload["relation"] = "behind" if head_is_ancestor else ("ahead" if origin_is_ancestor else "diverged")
         except Exception:

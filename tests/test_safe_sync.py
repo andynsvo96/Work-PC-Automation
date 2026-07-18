@@ -1,3 +1,4 @@
+import subprocess
 import unittest
 from unittest import mock
 
@@ -5,6 +6,19 @@ import safe_sync
 
 
 class SafeSyncTests(unittest.TestCase):
+    def test_git_uses_background_creation_flags_when_available(self):
+        completed = subprocess.CompletedProcess(["git"], 0, stdout="ok\n", stderr="")
+        with mock.patch("safe_sync.subprocess.run", return_value=completed) as run:
+            self.assertEqual(safe_sync._run(".", "status"), (0, "ok"))
+
+        if safe_sync._GIT_CREATION_FLAGS:
+            self.assertEqual(
+                run.call_args.kwargs.get("creationflags"),
+                safe_sync._GIT_CREATION_FLAGS,
+            )
+        else:
+            self.assertNotIn("creationflags", run.call_args.kwargs)
+
     @mock.patch("safe_sync.get_git_version_state")
     def test_dirty_tree_is_blocked_without_fetch(self, mock_state):
         mock_state.return_value = {"available": True, "dirty": True, "relation": "current"}
