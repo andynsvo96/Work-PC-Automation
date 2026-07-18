@@ -1735,9 +1735,35 @@ def _automation_client_visual(os_name):
     normalized = str(os_name or "unknown").lower()
     return {
         "source_os": normalized,
-        "source_icon": {"windows": "🪟", "macos": "🍎", "android": "🤖"}.get(normalized, "💻"),
+        "source_icon": {"windows": "windows", "macos": "macos", "android": "android"}.get(normalized, "computer"),
         "source_display_name": {"windows": "Windows", "macos": "Mac", "android": "Android tablet"}.get(normalized, normalized.title()),
     }
+
+
+def _resolve_automatic_control_target(runtime, requested_target=None, client_os=None):
+    """Lock desktop callers to their OS node; Android may choose either node."""
+    normalized_os = str(client_os or _automation_request_client_os() or "unknown").strip().lower()
+    requested = str(requested_target or "").strip() or None
+    if normalized_os not in {"windows", "macos"}:
+        return requested
+
+    local_key = str(runtime.client.config.node_key or "").strip()
+    if normalized_os == get_platform_snapshot().os_name and local_key:
+        return local_key
+
+    try:
+        candidates = [
+            node for node in runtime.client.list_nodes()
+            if str(node.get("os_name") or "").strip().lower() == normalized_os
+            and bool(node.get("enabled", True))
+        ]
+        if candidates:
+            candidates.sort(key=lambda node: str(node.get("last_seen_at") or ""), reverse=True)
+            return str(candidates[0].get("node_key") or "").strip() or requested
+    except Exception as exc:
+        logger.warning("Could not resolve automatic %s control target: %s", normalized_os, exc)
+    display_os = "Windows" if normalized_os == "windows" else "Mac"
+    raise SharedQueueBlocked(f"No registered {display_os} node is available for automatic targeting.")
 
 
 def _automation_queue_parse_datetime(value):
@@ -2167,6 +2193,7 @@ def enqueue_automation(
         if required_capability == "system_power" and not target_node:
             target_node = runtime.client.config.node_key
         try:
+            target_node = _resolve_automatic_control_target(runtime, target_node)
             task = runtime.enqueue(
                 label=str(label or "Automation Task"),
                 category=str(category or "Automation"),
@@ -2339,7 +2366,16 @@ def delete_automation_queue_task(task_id):
 
 def clear_finished_automation_queue_tasks():
     if AUTOMATION_QUEUE_MODE == "shared":
-        return False, "Shared queue history is retained as an audit record."
+        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
+        if runtime is None:
+            return False, shared_queue_initialization_error or "Shared queue is not configured."
+        try:
+            result = runtime.client.clear_finished()
+            removed = int(result or 0)
+            runtime.wake()
+            return True, f"Cleared {removed} finished shared queue entr{'y' if removed == 1 else 'ies'}."
+        except Exception as exc:
+            return False, str(exc)
     with automation_queue_condition:
         before = len(automation_queue_tasks)
         automation_queue_tasks[:] = [
@@ -10792,6 +10828,7 @@ def _version_lock_allows_request(path):
         "/api/auth/logout",
         "/automation/force-stop",
         "/api/queue/cancel-all",
+        "/api/queue/clear-finished",
         "/pc/cancel-schedule",
         "/work/cancel-schedule",
         "/slack/lunch/cancel",
@@ -10949,7 +10986,19 @@ def api_server_runtime():
 @app.route("/api/node-runtime", methods=["GET"])
 def api_node_runtime():
     try:
-        return jsonify(get_node_runtime_payload())
+        payload = get_node_runtime_payload()
+        client_os = _automation_request_client_os()
+        payload["client_os"] = client_os
+        payload["control_target_locked"] = client_os in {"windows", "macos"}
+        runtime = shared_queue_runtime or (initialize_shared_queue_runtime() if AUTOMATION_QUEUE_MODE == "shared" else None)
+        payload["automatic_target_node"] = None
+        payload["control_target_error"] = None
+        if runtime is not None and payload["control_target_locked"]:
+            try:
+                payload["automatic_target_node"] = _resolve_automatic_control_target(runtime, client_os=client_os)
+            except SharedQueueBlocked as exc:
+                payload["control_target_error"] = str(exc)
+        return jsonify(payload)
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 
@@ -11022,7 +11071,7 @@ def api_queue_clear_finished():
     ok, msg = clear_finished_automation_queue_tasks()
     payload = get_automation_queue_payload()
     payload.update({"success": ok, "message": msg})
-    return jsonify(payload), 200
+    return jsonify(payload), (200 if ok else 400)
 
 
 @app.route("/api/queue/reorder", methods=["POST"])
@@ -11416,8 +11465,28 @@ def kill_existing_server(port=SERVER_PORT):
     except Exception as e:
         logger.warning("Could not check for existing server: %s", e)
 
+def _safe_sync_before_direct_start():
+    """Make a direct server.py launch as safe as the OS startup launchers."""
+    if str(os.environ.get("AUTOMATION_SAFE_SYNC_COMPLETED") or "").strip() == "1":
+        return
+    from safe_sync import sync_repository
+
+    result = sync_repository(SCRIPT_DIR)
+    message = str(result.get("message") or "").strip()
+    if result.get("updated"):
+        env = os.environ.copy()
+        env["AUTOMATION_SAFE_SYNC_COMPLETED"] = "1"
+        env.pop("AUTOMATION_VERSION_BLOCK_REASON", None)
+        os.execve(sys.executable, [sys.executable, os.path.abspath(__file__)], env)
+    if result.get("blocked"):
+        os.environ["AUTOMATION_VERSION_BLOCK_REASON"] = message or "Safe Sync could not verify the latest version."
+    else:
+        os.environ["AUTOMATION_SAFE_SYNC_COMPLETED"] = "1"
+
+
 
 if __name__ == "__main__":
+    _safe_sync_before_direct_start()
     reload_runtime_config()
     register_shared_queue_task_executors()
     start_version_monitor()

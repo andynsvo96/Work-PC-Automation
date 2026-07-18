@@ -90,6 +90,7 @@ def sync_repository(repo_dir, *, fetch=True):
 
 def _start_server(repo_dir, block_reason=""):
     env = os.environ.copy()
+    env["AUTOMATION_SAFE_SYNC_COMPLETED"] = "1"
     if block_reason:
         env["AUTOMATION_VERSION_BLOCK_REASON"] = block_reason
     python_executable = sys.executable

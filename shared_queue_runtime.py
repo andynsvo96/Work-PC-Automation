@@ -100,7 +100,7 @@ class SharedQueueRuntime:
             except (TypeError, ValueError):
                 online = False
             node["online"] = bool(online and node.get("enabled", True))
-            node["os_icon"] = "🍎" if node.get("os_name") == "macos" else ("🪟" if node.get("os_name") == "windows" else "💻")
+            node["os_icon"] = str(node.get("os_name") or "computer").lower()
             node_map[node.get("node_key")] = node
         for row in rows:
             source = node_map.get(row.get("requested_by_node"), {})
@@ -108,9 +108,9 @@ class SharedQueueRuntime:
             target = node_map.get(row.get("target_node"), {})
             client_os = str(row.get("requested_client_os") or source.get("os_name") or "unknown").lower()
             client_labels = {"windows": "Windows", "macos": "Mac", "darwin": "Mac", "android": "Android tablet"}
-            client_icons = {"windows": "🪟", "macos": "🍎", "darwin": "🍎", "android": "🤖"}
+            client_icons = {"windows": "windows", "macos": "macos", "darwin": "macos", "android": "android"}
             row["source_os"] = client_os
-            row["source_icon"] = client_icons.get(client_os, source.get("os_icon") or "💻")
+            row["source_icon"] = client_icons.get(client_os, source.get("os_icon") or "computer")
             row["source_display_name"] = client_labels.get(client_os, source.get("display_name") or row.get("requested_by_node"))
             row["runner_os"] = claimed.get("os_name")
             row["runner_icon"] = claimed.get("os_icon") if claimed else None

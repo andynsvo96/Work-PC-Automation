@@ -64,6 +64,21 @@ class SharedQueueTests(unittest.TestCase):
             {"order_id": "123"},
         )
 
+    def test_clear_finished_uses_scoped_rpc(self):
+        captured = {}
+
+        def opener(request, timeout):
+            captured["url"] = request.full_url
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _Response(4)
+
+        config = make_test_config(node_key="windows-pc")
+        result = SupabaseQueueClient(config, opener=opener).clear_finished()
+
+        self.assertEqual(result, 4)
+        self.assertTrue(captured["url"].endswith("/rest/v1/rpc/automation_clear_finished_tasks"))
+        self.assertEqual(captured["body"], {"p_workspace_id": config.workspace_id})
+
     def test_claim_decrypts_arguments(self):
         config = make_test_config(node_key="macbook")
         cipher = TaskPayloadCipher(config.encryption_key)

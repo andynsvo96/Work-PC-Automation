@@ -163,6 +163,10 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .platform-capability-notice.active{display:block}
 .control-target{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:12px;font-weight:700;color:#334155}
 .control-target select{max-width:210px;padding:6px;font-size:12px}
+.control-target select:disabled{background:#f1f5f9;color:#334155;opacity:1;cursor:default}
+.os-icon{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;vertical-align:-3px;margin:0 2px;color:#475569}
+.os-icon svg{display:block;width:100%;height:100%}
+.os-icon.windows{color:#0078d4}.os-icon.macos{color:#334155}.os-icon.android{color:#3ddc84}
 .hardware-summary{display:grid;grid-template-columns:repeat(4,minmax(135px,1fr));gap:8px;margin:10px 0}
 .hardware-summary .metric{min-width:0}
 .queue-tab-btn{margin-left:auto}
@@ -240,7 +244,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
   <button class='tab-btn queue-tab-btn' id='tabBtnQueue' onclick='toggleQueuePanel()'>Queue</button>
   <button class='tab-btn console-tab-btn' id='tabBtnConsole' onclick="setActiveTab('console')">Console</button>
   <button class='tab-btn master-refresh-btn' id='masterRefreshBtn' onclick='refreshAllStatuses(this)'>Refresh All</button>
-  <label class='control-target'>Control target <select id='controlTargetSelect' onchange='changeControlTarget(this.value)'><option value=''>Any available computer</option></select></label>
+  <label class='control-target'><span id='controlTargetLabel'>Control target</span><select id='controlTargetSelect' onchange='changeControlTarget(this.value)'><option value=''>Any available computer</option></select></label>
 </div>
 <div id='platformCapabilityNotice' class='notice platform-capability-notice'>Windows only</div>
 <div id='versionGateNotice' class='notice version-gate-notice'></div>
@@ -1691,7 +1695,7 @@ async function ensureAppCsrfToken() {
 async function api(path, opts = {}) {
   const requestOptions = {...opts};
   const method = String(requestOptions.method || 'GET').toUpperCase();
-  const controlTarget = String(localStorage.getItem('automationControlTargetNode') || '').trim();
+  const controlTarget = effectiveControlTargetNode();
   requestOptions.headers = {...(requestOptions.headers || {})};
   if (controlTarget) requestOptions.headers['X-Automation-Target-Node'] = controlTarget;
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
@@ -1809,6 +1813,38 @@ function queueTaskProgressLabel(task) {
   return total > 0 ? `${current}/${total}` : '';
 }
 
+function platformDisplayName(osName) {
+  const normalized = String(osName || '').toLowerCase();
+  if (normalized === 'windows') return 'Windows';
+  if (normalized === 'macos' || normalized === 'darwin') return 'Mac';
+  if (normalized === 'android') return 'Android';
+  return 'Computer';
+}
+
+function platformIconHtml(osName, label = '') {
+  const normalized = String(osName || '').toLowerCase();
+  const kind = normalized === 'darwin' ? 'macos' : (['windows', 'macos', 'android'].includes(normalized) ? normalized : 'computer');
+  const accessible = esc(label || platformDisplayName(kind));
+  const drawings = {
+    windows: `<rect x='2' y='3' width='8.5' height='8' rx='.6' fill='currentColor'/><rect x='11.5' y='2' width='10.5' height='9' rx='.6' fill='currentColor'/><rect x='2' y='12.5' width='8.5' height='8' rx='.6' fill='currentColor'/><rect x='11.5' y='12.5' width='10.5' height='9.5' rx='.6' fill='currentColor'/>`,
+    macos: `<rect x='3' y='4' width='18' height='13' rx='2.2' fill='none' stroke='currentColor' stroke-width='1.8'/><path d='M1.8 20h20.4M9.5 20h5' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round'/><circle cx='12' cy='10.6' r='2' fill='currentColor'/><path d='M12.2 8.3c.2-1 .9-1.7 1.8-2-.1 1-.7 1.8-1.8 2z' fill='currentColor'/>`,
+    android: `<path d='M7 8h10a2 2 0 0 1 2 2v7H5v-7a2 2 0 0 1 2-2zM7 6l-2-3m12 3 2-3M8 17v4m8-4v4M3 10v6m18-6v6' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round'/><circle cx='9' cy='11.5' r='1' fill='currentColor'/><circle cx='15' cy='11.5' r='1' fill='currentColor'/>`,
+    computer: `<rect x='3' y='4' width='18' height='13' rx='2' fill='none' stroke='currentColor' stroke-width='1.8'/><path d='M8 21h8m-4-4v4' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round'/>`,
+  };
+  return `<span class='os-icon ${kind}' title='${accessible}' aria-label='${accessible}'><svg viewBox='0 0 24 24' role='img'>${drawings[kind]}</svg></span>`;
+}
+
+function controlTargetIsLocked() {
+  return Boolean(nodeRuntimePayload && nodeRuntimePayload.control_target_locked);
+}
+
+function effectiveControlTargetNode() {
+  if (controlTargetIsLocked()) {
+    return String(nodeRuntimePayload.automatic_target_node || '').trim();
+  }
+  return String(localStorage.getItem('automationControlTargetNode') || '').trim();
+}
+
 function renderQueue(payload) {
   queuePayload = payload || {};
   const panel = document.getElementById('queuePanel');
@@ -1827,8 +1863,6 @@ function renderQueue(payload) {
   const coordinator = queuePayload.coordinator || {};
   renderControlTargetNodes(Array.isArray(queuePayload.nodes) ? queuePayload.nodes : []);
   applyPlatformCapabilities();
-  const clearButton = document.getElementById('queueClearFinishedBtn');
-  if (clearButton) clearButton.style.display = sharedMode ? 'none' : '';
   const resumeButton = document.getElementById('queueResumeBtn');
   const resumeNeeded = sharedMode && !coordinator.eligible && /pause|manual review|interrupted/i.test(String(coordinator.block_reason || ''));
   if (resumeButton) resumeButton.style.display = resumeNeeded ? '' : 'none';
@@ -1862,12 +1896,10 @@ function renderQueue(payload) {
     const dragGlyph = draggable ? '&#8942;&#8942;' : '';
     const pos = status === 'queued' && task.position ? `#${task.position} ` : '';
     const details = task.details ? ` | ${task.details}` : '';
-    const source = task.source_display_name
-      ? ` | ${task.source_icon || '💻'} From ${task.source_display_name}`
-      : '';
-    const runner = task.runner_icon && task.claimed_by_node
-      ? ` | ${task.runner_icon} Running on ${task.claimed_by_node}`
-      : '';
+    const sourceVisual = task.source_display_name
+      ? ` | ${platformIconHtml(task.source_os || task.source_icon, task.source_display_name)} From ${esc(task.source_display_name)}` : '';
+    const runnerVisual = task.claimed_by_node
+      ? ` | ${platformIconHtml(task.runner_os || task.runner_icon, task.claimed_by_node)} Running on ${esc(task.claimed_by_node)}` : '';
     const advanced = task.advanced_summary ? ` | ${task.advanced_summary}` : '';
     const isProcessingTask = String(task.label || '').toLowerCase().includes('processing');
     const orderProgressLabel = isProcessingTask ? currentCrmProcessingOrderProgressLabel() : '';
@@ -1885,7 +1917,7 @@ function renderQueue(payload) {
           ...(Array.isArray(queuePayload.nodes) ? queuePayload.nodes.map((node) => {
             const selected = String(task.target_node || '') === String(node.node_key || '') ? 'selected' : '';
             const state = node.online ? 'online' : 'offline';
-            return `<option value='${esc(node.node_key || '')}' ${selected}>${esc(node.os_icon || '💻')} ${esc(node.display_name || node.node_key || 'Computer')} (${state})</option>`;
+            return `<option value='${esc(node.node_key || '')}' ${selected}>${esc(platformDisplayName(node.os_name))} ? ${esc(node.display_name || node.node_key || 'Computer')} (${state})</option>`;
           }) : []),
         ].join('')
       : '';
@@ -1898,7 +1930,7 @@ function renderQueue(payload) {
         <div class='queue-drag'>${dragGlyph}</div>
         <div ${canExpand ? `onclick="toggleQueueRunHistory('${esc(task.id || '')}')" style='cursor:pointer' title='Open repeat run history'` : ''}>
           <div class='queue-title'>${esc(pos)}${esc(task.label || 'Automation Task')}</div>
-          <div class='queue-meta'>${esc(task.category || 'Automation')}${esc(details)}${esc(advanced)}${esc(source)}${esc(runner)} | ${esc(queueTimeText(task))}${esc(progressText)}${esc(msg)}</div>
+          <div class='queue-meta'>${esc(task.category || 'Automation')}${esc(details)}${esc(advanced)}${sourceVisual}${runnerVisual} | ${esc(queueTimeText(task))}${esc(progressText)}${esc(msg)}</div>
         </div>
         <div class='queue-status ${esc(status)}'>${esc(queueStatusLabel(status))}</div>
         <div class='queue-actions'>${targetControl}${canCancel ? `<button class='danger queue-cancel-btn' title='Cancel task' aria-label='Cancel task' onclick="cancelQueueTask('${esc(task.id || '')}')">X</button>` : (canDelete ? `<button class='secondary tiny' title='Delete queue entry' onclick="deleteQueueTask('${esc(task.id || '')}')">Delete</button>` : "<span></span>")}</div>
@@ -1910,15 +1942,39 @@ function renderQueue(payload) {
 function renderControlTargetNodes(nodes) {
   const select = document.getElementById('controlTargetSelect');
   if (!select) return;
+  const label = document.getElementById('controlTargetLabel');
+  nodes = (Array.isArray(nodes) ? nodes : []).map((node) => ({...node, os_icon: platformDisplayName(node.os_name)}));
+  if (controlTargetIsLocked()) {
+    localStorage.removeItem('automationControlTargetNode');
+    let targetKey = String(nodeRuntimePayload.automatic_target_node || '').trim();
+    const clientOS = String(nodeRuntimePayload.client_os || '').toLowerCase();
+    if (!targetKey) {
+      const match = nodes.find((node) => String(node.os_name || '').toLowerCase() === clientOS);
+      targetKey = match ? String(match.node_key || '') : '';
+      nodeRuntimePayload.automatic_target_node = targetKey;
+    }
+    const target = nodes.find((node) => String(node.node_key || '') === targetKey);
+    const targetName = target ? (target.display_name || target.node_key) : (targetKey || platformDisplayName(clientOS));
+    const online = target ? (target.online ? 'online' : 'offline') : 'automatic';
+    select.innerHTML = `<option value='${esc(targetKey)}' selected>${esc(platformDisplayName(clientOS))} — ${esc(targetName)} (${online})</option>`;
+    select.disabled = true;
+    select.title = 'Desktop control target is selected automatically from this device OS.';
+    if (label) label.textContent = 'This computer';
+    return;
+  }
+  select.disabled = false;
+  select.title = 'Android can choose which computer will run the task.';
+  if (label) label.textContent = 'Control target';
   const saved = String(localStorage.getItem('automationControlTargetNode') || '').trim();
   select.innerHTML = `<option value=''>Any available computer</option>` + nodes.map((node) => {
     const online = node.online ? 'online' : 'offline';
     const selected = saved === String(node.node_key || '') ? 'selected' : '';
-    return `<option value='${esc(node.node_key || '')}' ${selected}>${esc(node.os_icon || '💻')} ${esc(node.display_name || node.node_key || 'Computer')} (${online})</option>`;
+    return `<option value='${esc(node.node_key || '')}' ${selected}>${esc(node.os_icon || 'Computer')} ${esc(node.display_name || node.node_key || 'Computer')} (${online})</option>`;
   }).join('');
 }
 
 async function changeControlTarget(nodeKey) {
+  if (controlTargetIsLocked()) return;
   const value = String(nodeKey || '').trim();
   if (value) localStorage.setItem('automationControlTargetNode', value);
   else localStorage.removeItem('automationControlTargetNode');
@@ -2005,9 +2061,11 @@ async function deleteQueueTask(taskId) {
 }
 
 async function clearFinishedQueueTasks() {
+  if (!confirm('Clear all finished, failed, and canceled queue entries? Active and waiting tasks will remain.')) return;
   try {
     const d = await api('/api/queue/clear-finished', { method: 'POST' });
     renderQueue(d);
+    setStatus(d.message || 'Finished queue history cleared.');
   } catch (e) {
     setStatus('Queue clear failed: ' + e.message);
   }
@@ -2262,7 +2320,7 @@ function setCrmAutoSplitterLocalMessage(headline, detail = '') {
 function setCrmAddressStatusText(msg) { const el = document.getElementById('crmAddressStatusText'); if (el) el.textContent = msg; }
 
 function localPlatformCapabilities() {
-  const targetNode = String(localStorage.getItem('automationControlTargetNode') || '').trim();
+  const targetNode = effectiveControlTargetNode();
   if (targetNode && queuePayload && Array.isArray(queuePayload.nodes)) {
     const selected = queuePayload.nodes.find((node) => String(node.node_key || '') === targetNode);
     if (selected && selected.capabilities) return selected.capabilities;
@@ -2342,6 +2400,7 @@ function renderNodeRuntime(payload) {
     const commitText = git.short_commit ? ` Git ${git.short_commit}${git.dirty ? ' (local changes)' : ''}.` : '';
     note.textContent = `Recommended ${recommendation.recommended_workers || settings.effective_workers || 1} worker(s); effective ${settings.effective_workers || 1}. CPU cap ${recommendation.cpu_cap || '-'}, total-RAM cap ${recommendation.total_memory_cap || '-'}, available-RAM cap ${recommendation.available_memory_cap || '-'}.${commitText}`;
   }
+  if (queuePayload) renderControlTargetNodes(Array.isArray(queuePayload.nodes) ? queuePayload.nodes : []);
   applyPlatformCapabilities();
   syncWorkerModeControls();
 }

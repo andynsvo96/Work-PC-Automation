@@ -397,6 +397,13 @@ class SupabaseQueueClient:
             {"p_workspace_id": self.config.workspace_id, "p_task_id": str(task_id)},
         )
 
+    def clear_finished(self):
+        """Delete finished queue history while preserving queued/running work."""
+        return self._rpc(
+            "automation_clear_finished_tasks",
+            {"p_workspace_id": self.config.workspace_id},
+        )
+
     def reassign(self, task_id: str, target_node: Optional[str]):
         return self._rpc(
             "automation_reassign_task",

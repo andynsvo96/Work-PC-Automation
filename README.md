@@ -18,6 +18,9 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - Keeps local state, result JSON, screenshots, logs, debug output, and cloned browser profiles under ignored runtime folders.
 - Supports hidden startup through a Windows Script Host launcher.
 - Supports Safe Sync & Start on both operating systems, a macOS LaunchAgent, a Supabase-backed global FIFO queue, and a PIN-protected Android control board over Tailscale.
+- Checks GitHub before every supported startup and fast-forwards a clean checkout before loading the app.
+- Locks Windows browsers to the Windows node and Mac browsers to the Mac node; Android retains the cross-device target picker.
+- Shows vector OS icons and can clear finished shared queue history without touching running or waiting tasks.
 
 ## Project Layout
 
@@ -77,6 +80,7 @@ This repo intentionally does not commit real credentials, browser sessions, logs
    ```
 
 For hidden startup on Windows, use `start_server_hidden.vbs`; it now performs Safe Sync & Start. For macOS and Android/Tailscale onboarding, follow [`docs/MAC_AND_TABLET_SETUP.md`](docs/MAC_AND_TABLET_SETUP.md).
+A direct `python server.py` launch also performs the same safe startup check. Uncommitted, ahead, or diverged work is never overwritten; the app starts locked and explains what must be resolved.
 
 ## Runtime Files
 

@@ -6,7 +6,7 @@ The two computers run the same Git commit, but keep credentials and machine sett
 
 1. Commit and push the finished implementation from Windows.
 2. Run `python setup_app_security.py create --output app-security-transfer.json`.
-3. Create separate Windows and Mac users in Supabase Authentication. Run `supabase/migrations/001_shared_queue.sql` in the SQL editor.
+3. Create separate Windows and Mac users in Supabase Authentication. Run `supabase/migrations/001_shared_queue.sql`, followed by `supabase/migrations/002_clear_finished_queue.sql`, in the SQL editor.
 4. As the Windows/owner user, run `python configure_shared_queue.py bootstrap --node-key windows-pc --generate-encryption-key`. The prompts hide the password and store the finished bundle directly in Windows Credential Manager. Then run `python configure_shared_queue.py export-transfer queue-transfer.json` for the one-time Mac transfer.
 5. Run `python configure_shared_queue.py add-member MAC_AUTH_USER_UUID`.
 6. After the final code commit is pushed, run `python configure_shared_queue.py set-version-gate`.
@@ -72,6 +72,8 @@ The tailnet administrator must authorize `svc:automation-control` for both compu
 6. Open the Tailscale Service URL on Android, enter the PIN, and repeat the dry-run test.
 
 In Chrome on the Android tablet, open the menu and choose **Install app** (or **Add to Home screen**). Use the **Control target** selector in the header when an action must run on a specific computer. Selecting the Mac disables Metrics and System Power with “Windows only”; selecting Windows exposes its latest reported metrics and targets power actions to that PC.
+
+Windows and Mac browsers select their matching OS node automatically and cannot accidentally target the other desktop. Android remains the only client that can choose either computer.
 
 If a running computer disappears, its task becomes **Interrupted**, the global queue pauses, and later tasks do not start. Check the CRM, enter a review note, then use **Resume After Review**. A queued task aimed at an offline computer can be reassigned from its device selector without losing its FIFO position.
 

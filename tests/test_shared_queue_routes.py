@@ -9,7 +9,23 @@ class _FakeSharedRuntime:
     def __init__(self):
         self.enqueued = []
         self.client = types.SimpleNamespace(config=types.SimpleNamespace(node_key="windows-test"))
-        self.client.list_nodes = lambda: []
+        self.client.list_nodes = lambda: [
+            {
+                "node_key": "windows-test",
+                "os_name": "windows",
+                "enabled": True,
+                "capabilities": {"system_power": True, "metrics": True},
+                "last_seen_at": "2026-01-02T00:00:00+00:00",
+            },
+            {
+                "node_key": "macbook",
+                "os_name": "macos",
+                "enabled": True,
+                "capabilities": {"system_power": False, "metrics": False},
+                "last_seen_at": "2026-01-01T00:00:00+00:00",
+            },
+        ]
+        self.client.clear_finished = lambda: 3
 
     def enqueue(self, **task):
         self.enqueued.append(task)
@@ -83,6 +99,53 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertEqual(task["target_node"], "windows-test")
         self.assertEqual(task["queue_mode"], "scheduled")
         self.assertTrue(task["available_at"])
+
+    def test_windows_desktop_target_is_automatic(self):
+        response = self.client.post(
+            "/clock/test/in",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "X-Automation-Target-Node": "macbook",
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(self.runtime.enqueued[-1]["target_node"], "windows-test")
+
+    def test_android_can_choose_either_target(self):
+        response = self.client.post(
+            "/clock/test/in",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Linux; Android 16; Tablet)",
+                "X-Automation-Target-Node": "macbook",
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(self.runtime.enqueued[-1]["target_node"], "macbook")
+
+    def test_desktop_targeting_fails_closed_without_matching_node(self):
+        self.runtime.client.list_nodes = lambda: [
+            {"node_key": "macbook", "os_name": "macos", "enabled": True}
+        ]
+        mac_snapshot = types.SimpleNamespace(os_name="macos")
+
+        with mock.patch.object(server, "get_platform_snapshot", return_value=mac_snapshot):
+            response = self.client.post(
+                "/clock/test/in",
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("No registered Windows node", response.get_json()["message"])
+        self.assertEqual(self.runtime.enqueued, [])
+
+    def test_clear_finished_shared_queue_history(self):
+        response = self.client.post("/api/queue/clear-finished")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+        self.assertIn("3 finished shared queue", response.get_json()["message"])
 
     def test_outdated_node_rejects_new_actions(self):
         server.version_monitor_state["block_reason"] = (
