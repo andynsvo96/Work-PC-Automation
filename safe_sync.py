@@ -10,6 +10,17 @@ import sys
 from version_state import get_git_version_state
 
 
+_GIT_CREATION_FLAGS = (
+    getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+)
+
+
+def _git_process_options():
+    if not _GIT_CREATION_FLAGS:
+        return {}
+    return {"creationflags": _GIT_CREATION_FLAGS}
+
+
 def _run(repo_dir, *args, timeout=120):
     result = subprocess.run(
         ["git", *args],
@@ -17,6 +28,7 @@ def _run(repo_dir, *args, timeout=120):
         capture_output=True,
         text=True,
         timeout=timeout,
+        **_git_process_options(),
     )
     detail = (result.stdout or result.stderr or "").strip()
     return result.returncode, detail
