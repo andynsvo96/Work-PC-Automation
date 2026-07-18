@@ -1,5 +1,6 @@
 import types
 import unittest
+from unittest import mock
 
 import server
 
@@ -29,6 +30,7 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.previous_mode = server.AUTOMATION_QUEUE_MODE
         self.previous_runtime = server.shared_queue_runtime
         self.previous_pin_required = server.APP_PIN_REQUIRED
+        self.previous_version_monitor_state = dict(server.version_monitor_state)
         server.AUTOMATION_QUEUE_MODE = "shared"
         server.APP_PIN_REQUIRED = False
         self.runtime = _FakeSharedRuntime()
@@ -40,6 +42,8 @@ class SharedQueueRouteTests(unittest.TestCase):
         server.AUTOMATION_QUEUE_MODE = self.previous_mode
         server.shared_queue_runtime = self.previous_runtime
         server.APP_PIN_REQUIRED = self.previous_pin_required
+        server.version_monitor_state.clear()
+        server.version_monitor_state.update(self.previous_version_monitor_state)
 
     def test_communications_route_has_portable_descriptor(self):
         response = self.client.post("/clock/test/in")
@@ -79,6 +83,41 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertEqual(task["target_node"], "windows-test")
         self.assertEqual(task["queue_mode"], "scheduled")
         self.assertTrue(task["available_at"])
+
+    def test_outdated_node_rejects_new_actions(self):
+        server.version_monitor_state["block_reason"] = (
+            "Update required: this computer is behind origin/main. Run Safe Sync & Start."
+        )
+
+        response = self.client.post("/clock/test/in")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(response.get_json()["update_required"])
+        self.assertIn("Update required", response.get_json()["message"])
+        self.assertEqual(self.runtime.enqueued, [])
+
+    def test_outdated_node_rejects_nonqueued_mutating_actions(self):
+        server.version_monitor_state["block_reason"] = "Update required: behind origin/main."
+
+        response = self.client.post("/crm/shipping-bypasser/sanmar-cart/open")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(response.get_json()["update_required"])
+
+    def test_loaded_server_commit_change_requires_restart(self):
+        git_state = {"available": True, "dirty": False, "relation": "current", "commit": "new"}
+        with mock.patch.object(server, "SERVER_APP_COMMIT", "old"):
+            reason = server._git_update_block_reason(git_state)
+
+        self.assertIn("server started", reason)
+        self.assertIn("Safe Sync & Start", reason)
+
+    def test_remote_refresh_marks_behind_checkout_blocked(self):
+        git_state = {"available": True, "dirty": False, "relation": "behind"}
+        with mock.patch("server.refresh_origin_main", return_value=git_state):
+            state = server.refresh_remote_version_state()
+
+        self.assertIn("behind origin/main", state["block_reason"])
 
 
 if __name__ == "__main__":

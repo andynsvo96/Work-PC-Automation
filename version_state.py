@@ -33,6 +33,13 @@ def _git(repo_dir, *args, timeout=10):
     return (result.stdout or "").strip()
 
 
+def refresh_origin_main(repo_dir, timeout=30):
+    """Quietly refresh origin/main without modifying the working tree."""
+    repo_dir = os.path.abspath(repo_dir)
+    _git(repo_dir, "fetch", "--quiet", "--prune", "origin", timeout=timeout)
+    return get_git_version_state(repo_dir)
+
+
 def get_git_version_state(repo_dir):
     repo_dir = os.path.abspath(repo_dir)
     payload = {

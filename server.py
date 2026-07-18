@@ -45,7 +45,7 @@ from shared_queue import SharedQueueBlocked, SharedQueueConfig, SupabaseQueueCli
 from shared_queue_runtime import SharedQueueRuntime
 from slack_message_rotation import select_slack_day_message
 from task_registry import TaskRegistry
-from version_state import get_git_version_state
+from version_state import get_git_version_state, refresh_origin_main
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.py")
@@ -131,6 +131,8 @@ APP_PIN_REQUIRED = bool(getattr(config_module, "AUTOMATION_APP_PIN_REQUIRED", RE
 SERVER_BIND_HOST = "127.0.0.1" if REMOTE_ACCESS_MODE == "tailscale" else "0.0.0.0"
 SERVER_PORT = 5123
 SERVER_STARTED_AT = datetime.now()
+SERVER_START_GIT_STATE = get_git_version_state(SCRIPT_DIR)
+SERVER_APP_COMMIT = str(SERVER_START_GIT_STATE.get("commit") or "")
 AUTOMATION_QUEUE_MODE = str(getattr(config_module, "AUTOMATION_QUEUE_MODE", "local") or "local").strip().lower()
 if AUTOMATION_QUEUE_MODE not in {"local", "shared"}:
     AUTOMATION_QUEUE_MODE = "local"
@@ -350,6 +352,19 @@ automation_queue_current_task_id = None
 automation_task_registry = TaskRegistry()
 shared_queue_runtime = None
 shared_queue_initialization_error = None
+VERSION_CHECK_INTERVAL_SECONDS = max(
+    15.0,
+    float(getattr(config_module, "AUTOMATION_VERSION_CHECK_INTERVAL_SECONDS", 60) or 60),
+)
+version_monitor_lock = threading.RLock()
+version_monitor_stop = threading.Event()
+version_monitor_thread = None
+version_monitor_state = {
+    "last_checked_at": None,
+    "last_error": None,
+    "block_reason": None,
+    "git": None,
+}
 DAY_NAMES = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
 AUTOMATION_TEST_CATALOG = [
     {"id": "paycom_in", "label": "Paycom In (Dry Run)", "kind": "paycom", "action": "in", "default": True},
@@ -1381,11 +1396,96 @@ def get_server_runtime_payload():
     }
 
 
+def _git_update_block_reason(git_state):
+    if not isinstance(git_state, dict) or not git_state.get("available"):
+        return None
+    loaded_commit = str(SERVER_APP_COMMIT or "").strip()
+    checkout_commit = str(git_state.get("commit") or "").strip()
+    if loaded_commit and checkout_commit and checkout_commit != loaded_commit:
+        return "Update required: the checkout changed after this server started. Run Safe Sync & Start."
+    if git_state.get("dirty"):
+        return "Update required: commit or discard local code changes, then run Safe Sync & Start."
+    relation = str(git_state.get("relation") or "unknown").strip().lower()
+    if relation == "behind":
+        return "Update required: this computer is behind origin/main. Run Safe Sync & Start."
+    if relation == "ahead":
+        return "Update required: this computer has unpushed commits. Push them, then run Safe Sync & Start on both computers."
+    if relation == "diverged":
+        return "Update required: this checkout diverged from origin/main. Resolve Git before running another automation."
+    return None
+
+
+def get_version_monitor_state():
+    with version_monitor_lock:
+        return dict(version_monitor_state)
+
+
+def _automation_version_block_reason():
+    startup_reason = str(os.environ.get("AUTOMATION_VERSION_BLOCK_REASON") or "").strip()
+    if startup_reason:
+        return startup_reason
+    if AUTOMATION_QUEUE_MODE != "shared":
+        return ""
+    return str(get_version_monitor_state().get("block_reason") or "").strip()
+
+
+def refresh_remote_version_state():
+    try:
+        git_state = refresh_origin_main(SCRIPT_DIR)
+        block_reason = _git_update_block_reason(git_state)
+        error = None
+    except Exception as exc:
+        git_state = get_git_version_state(SCRIPT_DIR)
+        block_reason = _git_update_block_reason(git_state)
+        error = str(exc)
+        logger.warning("Could not refresh origin/main for update detection: %s", exc)
+    with version_monitor_lock:
+        version_monitor_state.update(
+            {
+                "last_checked_at": datetime.now().isoformat(),
+                "last_error": error,
+                "block_reason": block_reason,
+                "git": git_state,
+            }
+        )
+    runtime = shared_queue_runtime
+    if runtime is not None:
+        runtime.wake()
+    return get_version_monitor_state()
+
+
+def _version_monitor_loop():
+    while not version_monitor_stop.is_set():
+        refresh_remote_version_state()
+        if version_monitor_stop.wait(VERSION_CHECK_INTERVAL_SECONDS):
+            break
+
+
+def start_version_monitor():
+    global version_monitor_thread
+    if AUTOMATION_QUEUE_MODE != "shared":
+        return None
+    with version_monitor_lock:
+        if version_monitor_thread and version_monitor_thread.is_alive():
+            return version_monitor_thread
+        version_monitor_stop.clear()
+        version_monitor_thread = threading.Thread(
+            target=_version_monitor_loop,
+            name="automation-version-monitor",
+            daemon=True,
+        )
+        version_monitor_thread.start()
+        return version_monitor_thread
+
+
 def _strict_queue_commit():
     git_state = get_git_version_state(SCRIPT_DIR)
-    version_block_reason = str(os.environ.get("AUTOMATION_VERSION_BLOCK_REASON") or "").strip()
+    version_block_reason = _automation_version_block_reason()
     if version_block_reason:
         raise SharedQueueBlocked(version_block_reason)
+    git_block_reason = _git_update_block_reason(git_state)
+    if git_block_reason:
+        raise SharedQueueBlocked(git_block_reason)
     if not git_state.get("available"):
         raise SharedQueueBlocked(str(git_state.get("error") or "Git version is unavailable."))
     if git_state.get("dirty"):
@@ -1485,11 +1585,12 @@ def get_node_runtime_payload():
         snapshot=snapshot,
     )
     git_state = get_git_version_state(SCRIPT_DIR)
-    version_block_reason = str(os.environ.get("AUTOMATION_VERSION_BLOCK_REASON") or "").strip()
+    version_block_reason = _automation_version_block_reason()
     version_eligible = bool(
         git_state.get("available")
         and not git_state.get("dirty")
         and git_state.get("relation") == "current"
+        and (not SERVER_APP_COMMIT or git_state.get("commit") == SERVER_APP_COMMIT)
         and not version_block_reason
     )
     return {
@@ -1499,6 +1600,7 @@ def get_node_runtime_payload():
         "git": git_state,
         "version_eligible": version_eligible,
         "version_block_reason": version_block_reason or None,
+        "version_monitor": get_version_monitor_state(),
         "windows_only_message": "Windows only",
         "queue": _shared_queue_state_payload(),
     }
@@ -2042,7 +2144,7 @@ def enqueue_automation(
     target_node=None,
     required_capability=None,
 ):
-    startup_block = str(os.environ.get("AUTOMATION_VERSION_BLOCK_REASON") or "").strip()
+    startup_block = _automation_version_block_reason()
     if startup_block:
         return False, f"Safe Sync & Start blocked automation: {startup_block}", None
     if not callable(fn):
@@ -10684,8 +10786,34 @@ def _login_retry_after(client_key):
         return max(1, int(60 - (now - attempts[-1])))
 
 
+def _version_lock_allows_request(path):
+    safe_paths = {
+        "/api/auth/login",
+        "/api/auth/logout",
+        "/automation/force-stop",
+        "/api/queue/cancel-all",
+        "/pc/cancel-schedule",
+        "/work/cancel-schedule",
+        "/slack/lunch/cancel",
+    }
+    normalized = str(path or "").rstrip("/") or "/"
+    if normalized in safe_paths:
+        return True
+    return normalized.startswith("/api/queue/") and normalized.endswith("/cancel")
+
+
 @app.before_request
 def enforce_app_access_security():
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not _version_lock_allows_request(request.path):
+        version_block = _automation_version_block_reason()
+        if version_block:
+            return jsonify(
+                {
+                    "success": False,
+                    "message": f"Automation locked until update: {version_block}",
+                    "update_required": True,
+                }
+            ), 409
     if not APP_PIN_REQUIRED:
         return None
     initialize_app_security()
@@ -11292,6 +11420,7 @@ def kill_existing_server(port=SERVER_PORT):
 if __name__ == "__main__":
     reload_runtime_config()
     register_shared_queue_task_executors()
+    start_version_monitor()
     initialize_shared_queue_runtime()
     ensure_crm_state_file()
     ensure_crm_processing_state_file()
