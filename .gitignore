@@ -52,6 +52,7 @@ Test Files/
 workers/*_pre_*
 
 # Python caches
+.venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
