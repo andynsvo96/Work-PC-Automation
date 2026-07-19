@@ -2033,9 +2033,12 @@ function renderQueue(payload) {
     const dragGlyph = draggable ? '&#8942;&#8942;' : '';
     const pos = status === 'queued' && task.position ? `#${task.position} ` : '';
     const details = task.details ? ` | ${task.details}` : '';
+    const sourceOS = String(task.source_os || task.source_icon || '').trim().toLowerCase().replace('darwin', 'macos');
+    const runnerOS = String(task.runner_os || task.runner_icon || '').trim().toLowerCase().replace('darwin', 'macos');
+    const sameSourceAndRunnerOS = Boolean(sourceOS && runnerOS && sourceOS === runnerOS);
     const sourceVisual = task.source_display_name
       ? ` | ${platformIconHtml(task.source_os || task.source_icon, task.source_display_name)} From ${esc(task.source_display_name)}` : '';
-    const runnerVisual = task.claimed_by_node
+    const runnerVisual = task.claimed_by_node && !sameSourceAndRunnerOS
       ? ` | ${platformIconHtml(task.runner_os || task.runner_icon, task.claimed_by_node)} Running on ${esc(task.claimed_by_node)}` : '';
     const advanced = task.advanced_summary ? ` | ${task.advanced_summary}` : '';
     const isProcessingTask = String(task.label || '').toLowerCase().includes('processing');
