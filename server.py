@@ -2311,7 +2311,30 @@ def cancel_automation_queue_task(task_id):
         if runtime is None:
             return False, shared_queue_initialization_error or "Shared queue is not configured."
         try:
-            runtime.client.cancel(task_id)
+            task = runtime.client.cancel(task_id)
+            local_node = str(getattr(getattr(runtime.client, "config", None), "node_key", "") or "").strip()
+            claimed_node = str((task or {}).get("claimed_by_node") or "").strip()
+            lease_token = str((task or {}).get("lease_token") or "").strip()
+            lease_expires_at = _automation_queue_parse_datetime((task or {}).get("lease_expires_at"))
+            stale_local_task = bool(
+                isinstance(task, dict)
+                and task.get("status") == "running"
+                and task.get("cancel_requested")
+                and local_node
+                and claimed_node == local_node
+                and lease_token
+                and lease_expires_at is not None
+                and lease_expires_at <= datetime.now()
+            )
+            if stale_local_task:
+                runtime.client.finish(
+                    task_id,
+                    lease_token,
+                    success=False,
+                    message="Canceled after the original worker heartbeat was lost.",
+                )
+                runtime.wake()
+                return True, "Canceled the expired task after its worker heartbeat was lost."
             runtime.wake()
             return True, "Cancel request sent to the shared queue."
         except Exception as exc:

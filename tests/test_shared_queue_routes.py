@@ -147,6 +147,47 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertTrue(response.get_json()["success"])
         self.assertIn("3 finished shared queue", response.get_json()["message"])
 
+    def test_cancel_finalizes_expired_task_owned_by_current_node(self):
+        self.runtime.client.cancel = mock.Mock(return_value={
+            "id": "stale-task",
+            "status": "running",
+            "cancel_requested": True,
+            "claimed_by_node": "windows-test",
+            "lease_token": "stale-lease",
+            "lease_expires_at": "2000-01-01T00:00:00+00:00",
+        })
+        self.runtime.client.finish = mock.Mock(return_value={"status": "canceled"})
+
+        response = self.client.post("/api/queue/stale-task/cancel")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+        self.assertIn("Canceled the expired task", response.get_json()["message"])
+        self.runtime.client.finish.assert_called_once_with(
+            "stale-task",
+            "stale-lease",
+            success=False,
+            message="Canceled after the original worker heartbeat was lost.",
+        )
+
+    def test_cancel_does_not_finalize_task_with_active_lease(self):
+        self.runtime.client.cancel = mock.Mock(return_value={
+            "id": "active-task",
+            "status": "running",
+            "cancel_requested": True,
+            "claimed_by_node": "windows-test",
+            "lease_token": "active-lease",
+            "lease_expires_at": "2999-01-01T00:00:00+00:00",
+        })
+        self.runtime.client.finish = mock.Mock()
+
+        response = self.client.post("/api/queue/active-task/cancel")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+        self.assertIn("Cancel request sent", response.get_json()["message"])
+        self.runtime.client.finish.assert_not_called()
+
     def test_outdated_node_rejects_new_actions(self):
         server.version_monitor_state["block_reason"] = (
             "Update required: this computer is behind origin/main. Run Safe Sync & Start."

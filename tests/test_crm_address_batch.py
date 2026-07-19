@@ -6920,10 +6920,12 @@ class CrmAddressServerTests(unittest.TestCase):
     @mock.patch.object(server, "_finish_crm_order_goods_runtime")
     @mock.patch.object(server, "_start_crm_order_goods_runtime")
     @mock.patch.object(server, "_execute_crm_order_goods_worker")
+    @mock.patch.object(server, "_saved_crm_automation_parallel_workers", return_value=1)
     @mock.patch.object(server, "load_crm_address_state")
     def test_processing_order_goods_step_runs_headless_hidden(
         self,
         mock_load_address_state,
+        _mock_saved_workers,
         mock_execute,
         _mock_start_runtime,
         _mock_finish_runtime,
