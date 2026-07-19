@@ -1558,6 +1558,11 @@ def _shared_queue_node_status():
         "server_started_at": SERVER_STARTED_AT.isoformat(),
         "platform": snapshot.to_dict(),
         "power": get_power_countdown_payload(),
+        # Work-clock state is intentionally shared with the same private
+        # workspace heartbeat used by the global queue.  This lets either
+        # dashboard render the timer owned by the computer that most recently
+        # clocked in/out instead of showing its own stale local file.
+        "work": _build_local_work_status_payload(),
     }
     if snapshot.capabilities.get("metrics"):
         status["metrics"] = read_desktop_metrics()
@@ -11420,7 +11425,7 @@ def api_config_set():
     ok, msg = update_config_values(updates)
     return jsonify({"success": ok, "message": msg}), (200 if ok else 500)
 
-def get_work_status_payload():
+def _build_local_work_status_payload():
     with state_lock:
         state = load_work_state()
     active = state.get("active_shift") or {}
@@ -11441,6 +11446,103 @@ def get_work_status_payload():
         "auto_clock": auto_clock,
         "state": state,
     }
+
+
+def _work_status_timestamp(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone().replace(tzinfo=None)
+        return parsed.timestamp()
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def _work_state_freshness(state):
+    """Rank real clock events ahead of incidental state-file write times."""
+    if not isinstance(state, dict):
+        return (0, 0.0, 0, 0.0)
+    event_times = []
+    active = state.get("active_shift") if isinstance(state.get("active_shift"), dict) else None
+    if active:
+        stamp = _work_status_timestamp(active.get("clock_in_at"))
+        if stamp is not None:
+            event_times.append(stamp)
+    days = state.get("days") if isinstance(state.get("days"), dict) else {}
+    for entry in days.values():
+        if not isinstance(entry, dict):
+            continue
+        for key in ("clock_in_at", "clock_out_at"):
+            stamp = _work_status_timestamp(entry.get(key))
+            if stamp is not None:
+                event_times.append(stamp)
+    event_stamp = max(event_times) if event_times else 0.0
+    updated_stamp = _work_status_timestamp(state.get("updated_at")) or 0.0
+    return (1 if event_times else 0, event_stamp, 1 if active else 0, updated_stamp)
+
+
+def _shared_node_online(node, now=None):
+    if not isinstance(node, dict) or not bool(node.get("enabled", True)):
+        return False
+    seen = str(node.get("last_seen_at") or "").strip()
+    try:
+        seen_at = datetime.fromisoformat(seen.replace("Z", "+00:00"))
+        current = now or (datetime.now(seen_at.tzinfo) if seen_at.tzinfo else datetime.now())
+        if seen_at.tzinfo is not None and current.tzinfo is None:
+            current = current.astimezone()
+        return (current - seen_at).total_seconds() <= 30
+    except (TypeError, ValueError):
+        return False
+
+
+def _select_shared_work_status(local_payload, nodes, local_node_key=None, now=None):
+    """Choose the cross-device work state containing the newest real punch."""
+    local_state = local_payload.get("state") if isinstance(local_payload, dict) else None
+    week_start = str((local_state or {}).get("week_start") or "")
+    candidates = [(str(local_node_key or "local"), "This computer", local_payload)]
+    for node in nodes or []:
+        if not _shared_node_online(node, now=now):
+            continue
+        node_key = str(node.get("node_key") or "").strip()
+        if local_node_key and node_key.lower() == str(local_node_key).strip().lower():
+            continue
+        runtime_status = node.get("runtime_status") if isinstance(node.get("runtime_status"), dict) else {}
+        payload = runtime_status.get("work")
+        state = payload.get("state") if isinstance(payload, dict) else None
+        if not isinstance(state, dict) or str(state.get("week_start") or "") != week_start:
+            continue
+        candidates.append((node_key, str(node.get("display_name") or node_key or "Other computer"), payload))
+
+    source_key, source_name, selected = max(
+        candidates,
+        key=lambda item: _work_state_freshness((item[2] or {}).get("state")),
+    )
+    result = dict(selected or local_payload)
+    result["shared_state"] = {
+        "enabled": True,
+        "source_node": source_key,
+        "source_name": source_name,
+    }
+    return result
+
+
+def get_work_status_payload():
+    local_payload = _build_local_work_status_payload()
+    if AUTOMATION_QUEUE_MODE != "shared":
+        return local_payload
+    runtime = shared_queue_runtime or initialize_shared_queue_runtime()
+    if runtime is None:
+        return local_payload
+    try:
+        nodes = runtime.client.list_nodes()
+        local_key = str(getattr(runtime.client.config, "node_key", "") or "").strip()
+        return _select_shared_work_status(local_payload, nodes, local_node_key=local_key)
+    except Exception as exc:
+        logger.warning("Could not load shared work-clock state: %s", exc)
+        return local_payload
 
 register_work_routes(
     app,
