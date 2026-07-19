@@ -6,7 +6,7 @@ The two computers run the same Git commit, but keep credentials and machine sett
 
 1. Commit and push the finished implementation from Windows.
 2. Run `python setup_app_security.py create --output app-security-transfer.json`.
-3. Create separate Windows and Mac users in Supabase Authentication. Run `supabase/migrations/001_shared_queue.sql`, followed by `supabase/migrations/002_clear_finished_queue.sql`, in the SQL editor.
+3. Create separate Windows and Mac users in Supabase Authentication. Run the SQL files in `supabase/migrations/` in numeric order in the SQL editor. Existing installations should also apply any newly added migration, including `003_allow_zero_repeat_interval.sql`.
 4. As the Windows/owner user, run `python configure_shared_queue.py bootstrap --node-key windows-pc --generate-encryption-key`. The prompts hide the password and store the finished bundle directly in Windows Credential Manager. Then run `python configure_shared_queue.py export-transfer queue-transfer.json` for the one-time Mac transfer.
 5. Run `python configure_shared_queue.py add-member MAC_AUTH_USER_UUID`.
 6. After the final code commit is pushed, run `python configure_shared_queue.py set-version-gate`.

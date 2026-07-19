@@ -462,7 +462,7 @@ begin
             then 'Idle until the next repeat run.'
             else coalesce(nullif(p_message, ''), 'Task finished.') end,
         available_at = case when queue_mode = 'repeat' and not cancel_requested
-            then now() + make_interval(mins => greatest(5, least(60, coalesce(repeat_interval_minutes, 5))))
+            then now() + make_interval(mins => greatest(0, coalesce(repeat_interval_minutes, 5)))
             else available_at end,
         completed_at = case when queue_mode = 'repeat' and not cancel_requested then null else now() end,
         started_at = case when queue_mode = 'repeat' and not cancel_requested then null else started_at end,

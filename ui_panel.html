@@ -452,7 +452,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
         <div class='row' style='align-items:center;flex-wrap:wrap'>
           <label class='check'><input type='checkbox' id='crmProcessingRepeatToggle' onchange='syncCrmProcessingAdvancedControls("repeat")'> REPEAT</label>
           <label for='crmProcessingRepeatMinutesInput' class='muted'>Every</label>
-          <input id='crmProcessingRepeatMinutesInput' type='number' min='5' max='60' step='5' value='5' style='width:92px;padding:7px;border:1px solid #cbd5e1;border-radius:6px' oninput='syncCrmProcessingAdvancedControls()'>
+          <input id='crmProcessingRepeatMinutesInput' type='number' min='0' step='1' value='5' style='width:92px;padding:7px;border:1px solid #cbd5e1;border-radius:6px' oninput='syncCrmProcessingAdvancedControls()'>
           <span class='muted'>minutes</span>
           <label class='check' style='margin-left:8px'><input type='checkbox' id='crmProcessingScheduledToggle' onchange='syncCrmProcessingAdvancedControls("scheduled")'> SCHEDULED</label>
           <label for='crmProcessingScheduledTimeInput' class='muted'>At</label>
@@ -5126,7 +5126,7 @@ function crmProcessingAdvancedMode() {
 function normalizeCrmProcessingRepeatMinutes(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 5;
-  return Math.max(5, Math.min(60, Math.trunc(number)));
+  return Math.max(0, Math.trunc(number));
 }
 
 function formatCrmProcessingLocalDateTime(date) {
@@ -5165,7 +5165,10 @@ function syncCrmProcessingAdvancedControls(source = '') {
   if (timeInput) timeInput.disabled = mode !== 'scheduled';
   if (!summary) return;
   if (mode === 'repeat') {
-    summary.textContent = `Repeat is on. AUTOMATE will stay in Queue and rerun every ${minutes ? minutes.value : 5} minutes until canceled.`;
+    const repeatMinutes = normalizeCrmProcessingRepeatMinutes(minutes ? minutes.value : 5);
+    summary.textContent = repeatMinutes === 0
+      ? 'Repeat is on. AUTOMATE will rerun immediately after each finish until canceled.'
+      : `Repeat is on. AUTOMATE will stay in Queue and rerun every ${repeatMinutes} minute${repeatMinutes === 1 ? '' : 's'} until canceled.`;
   } else if (mode === 'scheduled') {
     const scheduledDateTime = timeInput && timeInput.value ? resolveCrmProcessingScheduledDateTime(timeInput.value) : null;
     summary.textContent = scheduledDateTime

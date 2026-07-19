@@ -2139,6 +2139,13 @@ def _automation_queue_append_run_history(task, ok, message, started_at, complete
     task["run_history"] = history[:50]
 
 
+def _normalize_automation_repeat_interval_minutes(value, default=5):
+    number = _safe_float(value, default)
+    if not math.isfinite(number):
+        number = float(default)
+    return max(0, int(number))
+
+
 def _automation_queue_worker_loop():
     global automation_queue_current_task_id
     while True:
@@ -2187,11 +2194,8 @@ def _automation_queue_worker_loop():
                 if canceled:
                     automation_queue_tasks.remove(task)
                 elif str(task.get("queue_mode") or "").strip().lower() == "repeat":
-                    interval_minutes = _normalize_crm_positive_int(
-                        task.get("repeat_interval_minutes"),
-                        default=5,
-                        minimum=5,
-                        maximum=60,
+                    interval_minutes = _normalize_automation_repeat_interval_minutes(
+                        task.get("repeat_interval_minutes")
                     )
                     next_run_at = datetime.now() + timedelta(minutes=interval_minutes)
                     task["status"] = "idle"
@@ -2248,7 +2252,7 @@ def enqueue_automation(
         mode = "normal"
     interval_minutes = None
     if mode == "repeat":
-        interval_minutes = _normalize_crm_positive_int(repeat_interval_minutes, default=5, minimum=5, maximum=60)
+        interval_minutes = _normalize_automation_repeat_interval_minutes(repeat_interval_minutes)
     scheduled_dt = _automation_queue_parse_datetime(scheduled_for)
     if mode == "scheduled" and scheduled_dt is None:
         return False, "Scheduled queue task needs a valid time.", None
@@ -2272,7 +2276,7 @@ def enqueue_automation(
                 details=str(details or "").strip() or None,
                 queue_mode=mode,
                 available_at=scheduled_dt.astimezone().isoformat() if scheduled_dt else None,
-                repeat_interval_minutes=repeat_interval_minutes,
+                repeat_interval_minutes=interval_minutes,
                 requested_client_os=_automation_request_client_os(),
             )
         except Exception as exc:

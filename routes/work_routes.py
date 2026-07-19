@@ -443,11 +443,17 @@ def register_work_routes(
         queue_options = {"automation_signature": signature}
         if mode == "repeat":
             interval = options.get("repeat_interval_minutes")
+            interval_label = 5 if interval in (None, "") else interval
+            repeat_label = (
+                "Repeat immediately"
+                if str(interval_label).strip() == "0"
+                else f"Repeat every {interval_label} minutes"
+            )
             queue_options.update(
                 {
                     "queue_mode": "repeat",
                     "repeat_interval_minutes": interval,
-                    "advanced_summary": f"Repeat every {interval or 5} minutes | {effective.get('processing_filter')} | {', '.join(steps)}",
+                    "advanced_summary": f"{repeat_label} | {effective.get('processing_filter')} | {', '.join(steps)}",
                 }
             )
             signature["repeat_interval_minutes"] = interval
