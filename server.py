@@ -4476,6 +4476,12 @@ def _crm_order_goods_outcome_label(outcome, success):
         return "Pushed"
     if key == "push_back_saved_stock_failed":
         return "Stock needs attention"
+    if key == "push_back_shipping_bypass_ordered":
+        return "Pushed + bypassed"
+    if key == "push_back_shipping_bypass_failed":
+        return "Shipping bypass needs attention"
+    if key == "push_back_no_purchase_plan_due_date_reached":
+        return "No purchase plan"
     if key in {"push_back_ready", "push_back_ready_stock_ready"}:
         return "Ready"
     if key == "push_back_ready_stock_failed":

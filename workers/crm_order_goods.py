@@ -1458,6 +1458,110 @@ def _page_indicates_non_vendor_stock_tab(driver):
     return "order goods from vendor: manual order" in normalized or "vendor order #" in normalized
 
 
+AUTO_ORDER_NO_PURCHASE_PLAN = "failed to auto order stock: no purchase plan available for products"
+AUTO_ORDER_SHIPMENT_COST_EXCEEDED = (
+    "failed to auto order stock: purchase plan exceeded maximum shipment cost as percentage of product cost"
+)
+AUTO_ORDER_SUCCEEDED = "(auto order) goods have been ordered successfully"
+
+
+def _classify_auto_order_feedback_text(text):
+    normalized = " ".join(str(text or "").lower().split())
+    if AUTO_ORDER_NO_PURCHASE_PLAN in normalized:
+        return "no_purchase_plan"
+    if AUTO_ORDER_SHIPMENT_COST_EXCEEDED in normalized:
+        return "shipment_cost_exceeded"
+    if AUTO_ORDER_SUCCEEDED in normalized:
+        return "ordered"
+    return None
+
+
+def _read_visible_auto_order_feedback(driver):
+    try:
+        feedback = driver.execute_script(
+            r"""
+function isVisible(node) {
+  if (!node) return false;
+  const rect = node.getBoundingClientRect && node.getBoundingClientRect();
+  if (rect && ((rect.width || 0) <= 0 || (rect.height || 0) <= 0)) return false;
+  for (let current = node; current; current = current.parentElement) {
+    const style = window.getComputedStyle(current);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+  }
+  return true;
+}
+const selectors = [
+  '.modal .modal-body',
+  '#growl-container .growl-item',
+  '.growl-item.alert-info'
+];
+const texts = [];
+for (const selector of selectors) {
+  for (const node of Array.from(document.querySelectorAll(selector))) {
+    if (!isVisible(node)) continue;
+    const text = String(node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+    if (text && !texts.includes(text)) texts.push(text);
+  }
+}
+return texts;
+"""
+        )
+    except Exception:
+        feedback = []
+    for text in feedback if isinstance(feedback, list) else []:
+        kind = _classify_auto_order_feedback_text(text)
+        if kind:
+            return {"kind": kind, "text": " ".join(str(text or "").split())}
+    return None
+
+
+def _dismiss_auto_order_failure_modal(driver):
+    try:
+        return bool(
+            driver.execute_script(
+                r"""
+function isVisible(node) {
+  if (!node) return false;
+  const rect = node.getBoundingClientRect && node.getBoundingClientRect();
+  if (rect && ((rect.width || 0) <= 0 || (rect.height || 0) <= 0)) return false;
+  const style = window.getComputedStyle(node);
+  return style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse';
+}
+for (const modal of Array.from(document.querySelectorAll('.modal')).filter(isVisible)) {
+  const text = String(modal.innerText || modal.textContent || '').toLowerCase();
+  if (!text.includes('failed to auto order stock:')) continue;
+  const close = Array.from(modal.querySelectorAll('button')).find((node) => {
+    const label = String(node.innerText || node.textContent || node.getAttribute('aria-label') || '').trim().toLowerCase();
+    return label === 'close' || node.classList.contains('close');
+  });
+  if (!close) continue;
+  close.click();
+  return true;
+}
+return false;
+"""
+            )
+        )
+    except Exception:
+        return False
+
+
+def _wait_for_auto_order_feedback(driver, timeout=None):
+    timeout = max(1, int(timeout or max(CRM_ACTION_TIMEOUT, 30)))
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        feedback = _read_visible_auto_order_feedback(driver)
+        if feedback:
+            if feedback.get("kind") in {"no_purchase_plan", "shipment_cost_exceeded"}:
+                feedback["modal_closed"] = _dismiss_auto_order_failure_modal(driver)
+            return feedback
+        time.sleep(0.25)
+    return {
+        "kind": "timeout",
+        "text": f"CRM did not show a recognized Auto Ordering result within {timeout} seconds.",
+    }
+
+
 def _order_goods_for_open_order(
     driver,
     order_id,
@@ -1465,6 +1569,7 @@ def _order_goods_for_open_order(
     allow_unlock_retry=True,
     stock_tab_index=None,
     ignore_already_ordered=False,
+    wait_for_auto_order_result=False,
 ):
     if not ignore_already_ordered and _page_indicates_stock_already_ordered(driver):
         return _stock_already_ordered_result(order_id)
@@ -1498,6 +1603,7 @@ def _order_goods_for_open_order(
                 allow_unlock_retry=False,
                 stock_tab_index=stock_tab_index,
                 ignore_already_ordered=ignore_already_ordered,
+                wait_for_auto_order_result=wait_for_auto_order_result,
             )
             return _mark_result_stock_unlocked(result, unlock_result)
         raise TimeoutException(
@@ -1534,6 +1640,7 @@ def _order_goods_for_open_order(
                 allow_unlock_retry=False,
                 stock_tab_index=stock_tab_index,
                 ignore_already_ordered=ignore_already_ordered,
+                wait_for_auto_order_result=wait_for_auto_order_result,
             )
             return _mark_result_stock_unlocked(result, unlock_result)
         return {
@@ -1553,6 +1660,24 @@ def _order_goods_for_open_order(
         }
     _click_with_fallback(driver, button)
     time.sleep(0.5)
+    if wait_for_auto_order_result:
+        feedback = _wait_for_auto_order_feedback(driver)
+        feedback_kind = str(feedback.get("kind") or "")
+        outcomes = {
+            "ordered": (True, "auto_order_succeeded"),
+            "no_purchase_plan": (False, "auto_order_no_purchase_plan"),
+            "shipment_cost_exceeded": (False, "auto_order_shipment_cost_exceeded"),
+            "timeout": (False, "auto_order_feedback_timeout"),
+        }
+        success, outcome = outcomes.get(feedback_kind, (False, "auto_order_feedback_unknown"))
+        return {
+            "order_id": order_id,
+            "success": success,
+            "outcome": outcome,
+            "message": feedback.get("text") or "CRM returned an unrecognized Auto Ordering result.",
+            "manual_review_required": not success,
+            "auto_order_feedback": feedback,
+        }
     return {
         "order_id": order_id,
         "success": True,
@@ -1664,11 +1789,17 @@ def _activate_stock_tab(driver, tab_index):
     return tab
 
 
-def _order_goods_for_all_stock_tabs(driver, order_id, dry_run=False):
+def _order_goods_for_all_stock_tabs(driver, order_id, dry_run=False, wait_for_auto_order_result=False):
     tabs = _find_stock_tabs(driver)
     tab_count = len(tabs)
     if tab_count <= 1:
-        result = _order_goods_for_open_order(driver, order_id, dry_run=dry_run, stock_tab_index=0 if tabs else None)
+        result = _order_goods_for_open_order(
+            driver,
+            order_id,
+            dry_run=dry_run,
+            stock_tab_index=0 if tabs else None,
+            wait_for_auto_order_result=wait_for_auto_order_result,
+        )
         result["stock_tab_index"] = 1
         result["stock_tab_count"] = max(1, tab_count)
         if tabs:
@@ -1696,7 +1827,13 @@ def _order_goods_for_all_stock_tabs(driver, order_id, dry_run=False):
             continue
         print(f"Ordering goods for stock tab {tab_number}/{tab_count}: {tab_label or 'untitled tab'}...")
         try:
-            result = _order_goods_for_open_order(driver, order_id, dry_run=dry_run, stock_tab_index=tab_index)
+            result = _order_goods_for_open_order(
+                driver,
+                order_id,
+                dry_run=dry_run,
+                stock_tab_index=tab_index,
+                wait_for_auto_order_result=wait_for_auto_order_result,
+            )
         except TimeoutException as exc:
             if not _page_indicates_non_vendor_stock_tab(driver):
                 raise
@@ -1718,14 +1855,14 @@ def _order_goods_for_all_stock_tabs(driver, order_id, dry_run=False):
             tab_index < tab_count - 1
             and isinstance(result, dict)
             and result.get("success")
-            and str(result.get("outcome") or "") == "order_goods_clicked"
+            and str(result.get("outcome") or "") in {"order_goods_clicked", "auto_order_succeeded"}
         ):
             _open_target_order_with_refresh(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
             _require_order_goods_page_ready(driver, order_id)
     return results
 
 
-def _run_order_with_driver(driver, order_id, dry_run=False):
+def _run_order_with_driver(driver, order_id, dry_run=False, wait_for_auto_order_result=False):
     normalized_order_id = _normalize_target_order_id(order_id)
     if not normalized_order_id:
         raise RuntimeError("Order ID must be a 7-digit value or CRM order URL.")
@@ -1757,12 +1894,28 @@ def _run_order_with_driver(driver, order_id, dry_run=False):
             result["warnings"] = [unlocked_message]
             return [result]
         _publish_status(f"Ordering stock tabs for order {normalized_order_id}.", stage="ordering_stock", order_id=normalized_order_id)
-        results = _order_goods_for_all_stock_tabs(driver, normalized_order_id, dry_run=dry_run)
+        if wait_for_auto_order_result:
+            results = _order_goods_for_all_stock_tabs(
+                driver,
+                normalized_order_id,
+                dry_run=dry_run,
+                wait_for_auto_order_result=True,
+            )
+        else:
+            results = _order_goods_for_all_stock_tabs(driver, normalized_order_id, dry_run=dry_run)
         for item in results:
             _mark_result_stock_unlocked(item, unlock_result)
         return results
     _publish_status(f"Ordering stock tabs for order {normalized_order_id}.", stage="ordering_stock", order_id=normalized_order_id)
-    results = _order_goods_for_all_stock_tabs(driver, normalized_order_id, dry_run=dry_run)
+    if wait_for_auto_order_result:
+        results = _order_goods_for_all_stock_tabs(
+            driver,
+            normalized_order_id,
+            dry_run=dry_run,
+            wait_for_auto_order_result=True,
+        )
+    else:
+        results = _order_goods_for_all_stock_tabs(driver, normalized_order_id, dry_run=dry_run)
     return results
 
 

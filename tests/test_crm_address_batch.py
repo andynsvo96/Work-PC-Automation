@@ -1576,6 +1576,156 @@ class CrmPushBackTests(unittest.TestCase):
         self.assertIn("CRM froze during save", retry_error)
         self.assertEqual(mock_change.call_count, 2)
 
+    def test_push_back_retries_next_business_day_after_no_purchase_plan(self):
+        row = {
+            "orderId": "4882684",
+            "rowText": "Order 4882684 Production Date: 2026-07-20 Due Date: 2026-07-24",
+            "productionText": "Production Date: 2026-07-20",
+            "colorLabel": "tan",
+        }
+        no_plan = [{
+            "success": False,
+            "outcome": "auto_order_no_purchase_plan",
+            "message": "Failed to auto order stock: No purchase plan available for products",
+        }]
+        ordered = [{
+            "success": True,
+            "outcome": "auto_order_succeeded",
+            "message": "(Auto Order) Goods have been ordered successfully.",
+        }]
+        with mock.patch.object(
+            crm_push_back,
+            "_open_and_read_order",
+            return_value={
+                "production_date": crm_shipping_bypasser.datetime(2026, 7, 20).date(),
+                "due_date": crm_shipping_bypasser.datetime(2026, 7, 24).date(),
+            },
+        ), mock.patch.object(
+            crm_push_back,
+            "_page_indicates_push_back_stock_already_ordered",
+            return_value=False,
+        ), mock.patch.object(
+            crm_push_back,
+            "_change_crm_production_date_with_retry",
+            side_effect=lambda _driver, _order_id, target, _filter, _url: (target, 0, None),
+        ) as change_date, mock.patch.object(
+            crm_push_back,
+            "_run_order_goods_with_push_back_status",
+            side_effect=[no_plan, ordered],
+        ), mock.patch.object(
+            crm_push_back,
+            "_wait_for_push_back_stock_confirmation",
+            return_value=True,
+        ):
+            result = crm_push_back._run_order_with_driver(mock.Mock(), row, "rush", "https://crm.example/report")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["outcome"], "push_back_saved_stock_ordered")
+        self.assertEqual(len(result["stock_order_attempts"]), 2)
+        self.assertEqual(change_date.call_args_list[0].args[2].isoformat(), "2026-07-21")
+        self.assertEqual(change_date.call_args_list[1].args[2].isoformat(), "2026-07-22")
+
+    def test_push_back_no_purchase_plan_fails_at_due_date_guard(self):
+        row = {
+            "orderId": "4877971",
+            "rowText": "Order 4877971 Production Date: 2026-07-20 Due Date: 2026-07-22",
+            "productionText": "Production Date: 2026-07-20",
+            "colorLabel": "tan",
+        }
+        no_plan = [{
+            "success": False,
+            "outcome": "auto_order_no_purchase_plan",
+            "message": "Failed to auto order stock: No purchase plan available for products",
+        }]
+        with mock.patch.object(
+            crm_push_back,
+            "_open_and_read_order",
+            return_value={
+                "production_date": crm_shipping_bypasser.datetime(2026, 7, 20).date(),
+                "due_date": crm_shipping_bypasser.datetime(2026, 7, 22).date(),
+            },
+        ), mock.patch.object(
+            crm_push_back,
+            "_page_indicates_push_back_stock_already_ordered",
+            return_value=False,
+        ), mock.patch.object(
+            crm_push_back,
+            "_change_crm_production_date_with_retry",
+            side_effect=lambda _driver, _order_id, target, _filter, _url: (target, 0, None),
+        ), mock.patch.object(
+            crm_push_back,
+            "_run_order_goods_with_push_back_status",
+            return_value=no_plan,
+        ):
+            result = crm_push_back._run_order_with_driver(mock.Mock(), row, "rush", "https://crm.example/report")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["outcome"], "push_back_no_purchase_plan_due_date_reached")
+        self.assertEqual(result["saved_production_date"], "2026-07-21")
+
+    def test_push_back_routes_shipment_cost_failure_to_shipping_bypasser(self):
+        row = {
+            "orderId": "4882019",
+            "rowText": "Order 4882019 Production Date: 2026-07-20 Due Date: 2026-07-24",
+            "productionText": "Production Date: 2026-07-20",
+            "colorLabel": "tan",
+        }
+        shipment_cost = [{
+            "success": False,
+            "outcome": "auto_order_shipment_cost_exceeded",
+            "message": "Failed to auto order stock: Purchase plan exceeded maximum shipment cost as percentage of product cost",
+        }]
+        with mock.patch.object(
+            crm_push_back,
+            "_open_and_read_order",
+            return_value={
+                "production_date": crm_shipping_bypasser.datetime(2026, 7, 20).date(),
+                "due_date": crm_shipping_bypasser.datetime(2026, 7, 24).date(),
+            },
+        ), mock.patch.object(
+            crm_push_back,
+            "_page_indicates_push_back_stock_already_ordered",
+            return_value=False,
+        ), mock.patch.object(
+            crm_push_back,
+            "_change_crm_production_date_with_retry",
+            side_effect=lambda _driver, _order_id, target, _filter, _url: (target, 0, None),
+        ), mock.patch.object(
+            crm_push_back,
+            "_run_order_goods_with_push_back_status",
+            return_value=shipment_cost,
+        ), mock.patch.object(
+            crm_push_back,
+            "_run_shipping_bypasser_with_current_crm_driver",
+            return_value={"success": True, "message": "Stock manually ordered.", "report": [], "manual_review_required": False},
+        ) as shipping_bypasser:
+            driver = mock.Mock()
+            result = crm_push_back._run_order_with_driver(driver, row, "rush", "https://crm.example/report")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["outcome"], "push_back_shipping_bypass_ordered")
+        shipping_bypasser.assert_called_once_with(driver, "4882019", dry_run=False)
+
+    def test_auto_order_feedback_classifier_matches_saved_crm_messages(self):
+        self.assertEqual(
+            crm_order_goods._classify_auto_order_feedback_text(
+                "Failed to auto order stock: No purchase plan available for products"
+            ),
+            "no_purchase_plan",
+        )
+        self.assertEqual(
+            crm_order_goods._classify_auto_order_feedback_text(
+                "Failed to auto order stock: Purchase plan exceeded maximum shipment cost as percentage of product cost"
+            ),
+            "shipment_cost_exceeded",
+        )
+        self.assertEqual(
+            crm_order_goods._classify_auto_order_feedback_text(
+                "(Auto Order) Goods have been ordered successfully."
+            ),
+            "ordered",
+        )
+
     @mock.patch.object(crm_push_back, "_run_order_worker_payload")
     @mock.patch.object(crm_push_back, "_clone_profile_for_worker")
     @mock.patch.object(crm_push_back, "_collect_push_back_rows")

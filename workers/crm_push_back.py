@@ -36,6 +36,7 @@ from config import (
     CRM_PUSH_BACK_RUSH_URL,
 )
 import crm_order_goods as crm_order_goods_worker
+import crm_shipping_bypasser as crm_shipping_bypasser_worker
 from crm_order_goods import (
     _run_order_with_driver as _order_goods_for_order_with_driver,
     _wait_for_order_goods_page_ready,
@@ -70,6 +71,8 @@ crm_order_goods_worker.AUTOMATION_NAME = AUTOMATION_NAME
 PROFILE_PATH = os.path.join(SCRIPT_DIR, CRM_PROFILE_DIR)
 CONTINUOUS_ORDER_FETCH_LIMIT = 25
 VALID_FILTERS = {"rush", "813", "high_value"}
+AUTO_ORDER_CONFIRMATION_TIMEOUT_SECONDS = 30
+_shipping_bypasser_lock = threading.Lock()
 RUSH_ROW_LABELS = ("tan", "purple")
 RUSH_ROW_DESCRIPTION = "tan, natural, or purple"
 ORDER_813_ROW_LABELS = ("bright_red", "dark_red", "purple")
@@ -191,7 +194,14 @@ def _result(order_id, success, outcome, message, **extra):
 
 
 def _run_order_goods_with_push_back_status(driver, order_id, dry_run=False):
-    return _order_goods_for_order_with_driver(driver, order_id, dry_run=dry_run)
+    if dry_run:
+        return _order_goods_for_order_with_driver(driver, order_id, dry_run=True)
+    return _order_goods_for_order_with_driver(
+        driver,
+        order_id,
+        dry_run=False,
+        wait_for_auto_order_result=True,
+    )
 
 
 def _normalize_stock_order_results(results):
@@ -218,6 +228,11 @@ def _stock_order_summary(results, dry_run=False):
     if dry_run:
         return f"Stock dry run checked {total} tab(s); {successful} tab(s) looked orderable or already handled."
     return f"Stock ordering finished for {successful}/{total} tab(s)."
+
+
+def _stock_order_has_outcome(results, outcome):
+    wanted = str(outcome or "").strip()
+    return any(str(item.get("outcome") or "").strip() == wanted for item in _normalize_stock_order_results(results))
 
 
 def _text_indicates_push_back_stock_already_ordered(text):
@@ -254,6 +269,69 @@ return normalize(parts.join('\n'));
     except Exception:
         text = ""
     return _text_indicates_push_back_stock_already_ordered(text)
+
+
+def _wait_for_push_back_stock_confirmation(driver, order_id, timeout=None):
+    timeout = max(1, int(timeout or AUTO_ORDER_CONFIRMATION_TIMEOUT_SECONDS))
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _page_indicates_push_back_stock_already_ordered(driver):
+            return True
+        time.sleep(0.5)
+
+    _publish_status(
+        f"Refreshing CRM order {order_id} to verify Stock Status: Ordered.",
+        stage="verifying_stock_order",
+        order_id=order_id,
+    )
+    try:
+        driver.switch_to.default_content()
+    except Exception:
+        pass
+    try:
+        driver.refresh()
+        _wait_for_order_goods_page_ready(driver, order_id, timeout=timeout)
+    except Exception:
+        return False
+    return _page_indicates_push_back_stock_already_ordered(driver)
+
+
+def _run_shipping_bypasser_with_current_crm_driver(driver, order_id, dry_run=False):
+    sanmar_driver = None
+    report_items = []
+    with _shipping_bypasser_lock:
+        try:
+            _publish_status(
+                f"Starting Shipping Bypasser for CRM order {order_id} after the shipment-cost Auto Ordering failure.",
+                stage="shipping_bypasser",
+                order_id=order_id,
+            )
+            sanmar_driver = crm_shipping_bypasser_worker._build_sanmar_driver(visible=bool(dry_run))
+            report_items = crm_shipping_bypasser_worker._run_order_with_drivers(
+                driver,
+                sanmar_driver,
+                order_id,
+                dry_run=dry_run,
+            )
+            if not any(isinstance(item, dict) and item.get("stop_run") for item in report_items):
+                crm_shipping_bypasser_worker._cleanup_after_failed_order(sanmar_driver, order_id, report_items)
+        finally:
+            safe_driver_quit(
+                sanmar_driver,
+                profile_path=os.path.abspath(crm_shipping_bypasser_worker.SANMAR_PROFILE_PATH),
+            )
+
+    success = crm_shipping_bypasser_worker._report_orders_succeeded_or_partially_succeeded(report_items)
+    return {
+        "success": bool(success),
+        "message": crm_shipping_bypasser_worker._summary_message(
+            report_items,
+            refresh_passes=1,
+            order_count=1,
+        ),
+        "report": _json_safe(report_items),
+        "manual_review_required": crm_shipping_bypasser_worker._report_has_fully_failed_order(report_items),
+    }
 
 
 def _precheck_row(row):
@@ -695,45 +773,154 @@ def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=Fal
             stock_order_results=stock_results,
         )
 
-    _publish_status(
-        f"Pushing CRM order {order_id} production date to {_date_text(target_date)}.",
-        stage="saving_order",
-        order_id=order_id,
-    )
-    saved_date, save_retry_count, save_retry_error = _change_crm_production_date_with_retry(
-        driver,
-        order_id,
-        target_date,
-        processing_filter,
-        list_url,
-    )
-    _publish_status(f"Ordering stock after Push Back for CRM order {order_id}.", stage="ordering_stock", order_id=order_id)
-    stock_results = _run_order_goods_with_push_back_status(driver, order_id, dry_run=False)
-    stock_success = _stock_order_success(stock_results)
-    stock_summary = _stock_order_summary(stock_results, dry_run=False)
-    return _result(
-        order_id,
-        stock_success,
-        "push_back_saved_stock_ordered" if stock_success else "push_back_saved_stock_failed",
-        f"Pushed production date from {_date_text(production_date)} to {_date_text(saved_date)}. {stock_summary}",
-        manual_review_required=not stock_success,
-        production_date=production_date,
-        target_production_date=target_date,
-        saved_production_date=saved_date,
-        due_date=due_date,
-        row_color=(row or {}).get("colorLabel"),
-        save_retry_count=save_retry_count,
-        save_retry_error=save_retry_error,
-        stock_order_attempted=True,
-        stock_order_success=stock_success,
-        stock_order_results=stock_results,
-    )
+    original_production_date = production_date
+    current_production_date = production_date
+    stock_order_attempts = []
+    saved_production_dates = []
+    total_save_retry_count = 0
+    save_retry_errors = []
+
+    while True:
+        target_date = _next_business_day_after(current_production_date)
+        if target_date >= due_date:
+            return _result(
+                order_id,
+                False,
+                "push_back_no_purchase_plan_due_date_reached",
+                (
+                    "Stock could not be auto ordered because no purchase plan was available, and production date "
+                    f"{_date_text(current_production_date)} is already the last allowable business day before due date "
+                    f"{_date_text(due_date)}."
+                ),
+                manual_review_required=True,
+                production_date=original_production_date,
+                saved_production_date=current_production_date,
+                saved_production_dates=saved_production_dates,
+                due_date=due_date,
+                row_color=(row or {}).get("colorLabel"),
+                save_retry_count=total_save_retry_count,
+                save_retry_errors=save_retry_errors,
+                stock_order_attempted=True,
+                stock_order_success=False,
+                stock_order_attempts=stock_order_attempts,
+            )
+
+        _publish_status(
+            f"Pushing CRM order {order_id} production date to {_date_text(target_date)}.",
+            stage="saving_order",
+            order_id=order_id,
+        )
+        saved_date, save_retry_count, save_retry_error = _change_crm_production_date_with_retry(
+            driver,
+            order_id,
+            target_date,
+            processing_filter,
+            list_url,
+        )
+        saved_production_dates.append(saved_date)
+        total_save_retry_count += int(save_retry_count or 0)
+        if save_retry_error:
+            save_retry_errors.append(str(save_retry_error))
+
+        _publish_status(
+            f"Ordering stock after Push Back for CRM order {order_id}.",
+            stage="ordering_stock",
+            order_id=order_id,
+        )
+        stock_results = _run_order_goods_with_push_back_status(driver, order_id, dry_run=False)
+        normalized_stock_results = _normalize_stock_order_results(stock_results)
+        stock_order_attempts.append(
+            {
+                "production_date": _json_safe(saved_date),
+                "results": normalized_stock_results,
+            }
+        )
+
+        if _stock_order_has_outcome(stock_results, "auto_order_shipment_cost_exceeded"):
+            shipping_bypass = _run_shipping_bypasser_with_current_crm_driver(driver, order_id, dry_run=False)
+            bypass_success = bool(shipping_bypass.get("success"))
+            return _result(
+                order_id,
+                bypass_success,
+                "push_back_shipping_bypass_ordered" if bypass_success else "push_back_shipping_bypass_failed",
+                (
+                    f"Pushed production date from {_date_text(original_production_date)} to {_date_text(saved_date)}. "
+                    "CRM rejected Auto Ordering because shipment cost exceeded the configured percentage, so Push Back "
+                    f"ran Shipping Bypasser. {shipping_bypass.get('message') or ''}"
+                ).strip(),
+                manual_review_required=bool(shipping_bypass.get("manual_review_required", not bypass_success)),
+                production_date=original_production_date,
+                saved_production_date=saved_date,
+                saved_production_dates=saved_production_dates,
+                due_date=due_date,
+                row_color=(row or {}).get("colorLabel"),
+                save_retry_count=total_save_retry_count,
+                save_retry_errors=save_retry_errors,
+                stock_order_attempted=True,
+                stock_order_success=bypass_success,
+                stock_order_results=normalized_stock_results,
+                stock_order_attempts=stock_order_attempts,
+                shipping_bypass=shipping_bypass,
+            )
+
+        if _stock_order_has_outcome(stock_results, "auto_order_no_purchase_plan"):
+            current_production_date = saved_date
+            next_target = _next_business_day_after(current_production_date)
+            if next_target < due_date:
+                _publish_status(
+                    (
+                        f"CRM found no purchase plan for order {order_id}; retrying after moving production date "
+                        f"to {_date_text(next_target)}."
+                    ),
+                    stage="retrying_no_purchase_plan",
+                    order_id=order_id,
+                )
+            continue
+
+        stock_success = _stock_order_success(stock_results)
+        stock_summary = _stock_order_summary(stock_results, dry_run=False)
+        if stock_success:
+            _publish_status(
+                f"Waiting for CRM to confirm ordered stock for order {order_id}.",
+                stage="verifying_stock_order",
+                order_id=order_id,
+            )
+            stock_success = _wait_for_push_back_stock_confirmation(driver, order_id)
+            if not stock_success:
+                stock_summary = (
+                    f"{stock_summary} CRM showed the Auto Order success message but did not refresh to "
+                    "Stock Status: Ordered and Stock: Ordered."
+                )
+
+        return _result(
+            order_id,
+            stock_success,
+            "push_back_saved_stock_ordered" if stock_success else "push_back_saved_stock_failed",
+            f"Pushed production date from {_date_text(original_production_date)} to {_date_text(saved_date)}. {stock_summary}",
+            manual_review_required=not stock_success,
+            production_date=original_production_date,
+            target_production_date=target_date,
+            saved_production_date=saved_date,
+            saved_production_dates=saved_production_dates,
+            due_date=due_date,
+            row_color=(row or {}).get("colorLabel"),
+            save_retry_count=total_save_retry_count,
+            save_retry_errors=save_retry_errors,
+            stock_order_attempted=True,
+            stock_order_success=stock_success,
+            stock_order_results=normalized_stock_results,
+            stock_order_attempts=stock_order_attempts,
+        )
 
 
 def _summary_message(report_items, refresh_passes=1, order_count=0, dry_run=False):
     if not report_items:
         return "No eligible Push Back orders were found in the CRM list."
-    pushed = sum(1 for item in report_items if str(item.get("outcome") or "").startswith("push_back_saved"))
+    pushed = sum(
+        1
+        for item in report_items
+        if str(item.get("outcome") or "").startswith(("push_back_saved", "push_back_shipping_bypass"))
+    )
     ready = sum(1 for item in report_items if str(item.get("outcome") or "").startswith("push_back_ready"))
     stock_success = sum(1 for item in report_items if item.get("stock_order_attempted") and item.get("stock_order_success"))
     skipped = sum(1 for item in report_items if str(item.get("outcome") or "").endswith("_skipped"))
