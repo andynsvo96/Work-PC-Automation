@@ -471,7 +471,7 @@ def _text_indicates_stock_already_ordered(text):
     if not normalized:
         return False
     if "stock auto ordering queued" in normalized:
-        return True
+        return False
     false_value = r"(?:false|no|not\s+ordered|unordered|0)"
     true_value = r"(?:ordered|true|yes|1)"
     if re.search(rf"\bstock\s+ordered\s*[:=]\s*{false_value}\b", normalized):
@@ -1508,11 +1508,50 @@ return texts;
         )
     except Exception:
         feedback = []
+    classified = []
     for text in feedback if isinstance(feedback, list) else []:
         kind = _classify_auto_order_feedback_text(text)
         if kind:
-            return {"kind": kind, "text": " ".join(str(text or "").split())}
+            classified.append({"kind": kind, "text": " ".join(str(text or "").split())})
+    for wanted in ("no_purchase_plan", "shipment_cost_exceeded", "ordered"):
+        for item in classified:
+            if item.get("kind") == wanted:
+                return item
     return None
+
+
+def _dismiss_visible_auto_order_feedback(driver):
+    try:
+        return int(
+            driver.execute_script(
+                r"""
+function isVisible(node) {
+  if (!node) return false;
+  const rect = node.getBoundingClientRect && node.getBoundingClientRect();
+  if (rect && ((rect.width || 0) <= 0 || (rect.height || 0) <= 0)) return false;
+  const style = window.getComputedStyle(node);
+  return style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse';
+}
+let dismissed = 0;
+for (const container of Array.from(document.querySelectorAll('.modal, #growl-container .growl-item, .growl-item.alert-info')).filter(isVisible)) {
+  const text = String(container.innerText || container.textContent || '').replace(/\s+/g, ' ').trim();
+  const lower = text.toLowerCase();
+  if (!lower.includes('failed to auto order stock:') && !lower.includes('(auto order) goods have been ordered successfully')) continue;
+  const close = Array.from(container.querySelectorAll('button')).find((node) => {
+    const label = String(node.innerText || node.textContent || node.getAttribute('aria-label') || '').trim().toLowerCase();
+    return label === 'close' || label === '×' || node.classList.contains('close');
+  });
+  if (!close) continue;
+  close.click();
+  dismissed += 1;
+}
+return dismissed;
+"""
+            )
+            or 0
+        )
+    except Exception:
+        return 0
 
 
 def _dismiss_auto_order_failure_modal(driver):
@@ -1658,6 +1697,9 @@ def _order_goods_for_open_order(
             "message": "Sanmar / S&S Activewear order goods button is available.",
             "manual_review_required": False,
         }
+    if wait_for_auto_order_result:
+        _dismiss_visible_auto_order_feedback(driver)
+        time.sleep(0.2)
     _click_with_fallback(driver, button)
     time.sleep(0.5)
     if wait_for_auto_order_result:
@@ -1740,6 +1782,19 @@ for (const node of Array.from(document.querySelectorAll('body *'))) {
 }
 const seen = new Set();
 const tabs = [];
+const headerButtons = Array.from(document.querySelectorAll('#main-header-design-tabs button'))
+  .filter((node) => isVisible(node) && looksLikeStockTab(node));
+if (headerButtons.length) {
+  for (const element of headerButtons) {
+    const rect = element.getBoundingClientRect();
+    const label = tabText(element);
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tabs.push({ element, label, top: rect.top || 0, left: rect.left || 0 });
+  }
+}
+if (!tabs.length) {
 for (const node of minimal) {
   const element = clickableFor(node);
   const rect = element.getBoundingClientRect();
@@ -1748,6 +1803,7 @@ for (const node of minimal) {
   if (seen.has(key)) continue;
   seen.add(key);
   tabs.push({ element, label, top: rect.top || 0, left: rect.left || 0 });
+}
 }
 tabs.sort((a, b) => (a.top - b.top) || (a.left - b.left));
 if (targetIndex === null || targetIndex === undefined) {
@@ -1789,17 +1845,24 @@ def _activate_stock_tab(driver, tab_index):
     return tab
 
 
-def _order_goods_for_all_stock_tabs(driver, order_id, dry_run=False, wait_for_auto_order_result=False):
+def _order_goods_for_all_stock_tabs(
+    driver,
+    order_id,
+    dry_run=False,
+    wait_for_auto_order_result=False,
+    ignore_already_ordered=False,
+):
     tabs = _find_stock_tabs(driver)
     tab_count = len(tabs)
     if tab_count <= 1:
-        result = _order_goods_for_open_order(
-            driver,
-            order_id,
-            dry_run=dry_run,
-            stock_tab_index=0 if tabs else None,
-            wait_for_auto_order_result=wait_for_auto_order_result,
-        )
+        kwargs = {
+            "dry_run": dry_run,
+            "stock_tab_index": 0 if tabs else None,
+            "wait_for_auto_order_result": wait_for_auto_order_result,
+        }
+        if ignore_already_ordered:
+            kwargs["ignore_already_ordered"] = True
+        result = _order_goods_for_open_order(driver, order_id, **kwargs)
         result["stock_tab_index"] = 1
         result["stock_tab_count"] = max(1, tab_count)
         if tabs:
@@ -1827,13 +1890,14 @@ def _order_goods_for_all_stock_tabs(driver, order_id, dry_run=False, wait_for_au
             continue
         print(f"Ordering goods for stock tab {tab_number}/{tab_count}: {tab_label or 'untitled tab'}...")
         try:
-            result = _order_goods_for_open_order(
-                driver,
-                order_id,
-                dry_run=dry_run,
-                stock_tab_index=tab_index,
-                wait_for_auto_order_result=wait_for_auto_order_result,
-            )
+            kwargs = {
+                "dry_run": dry_run,
+                "stock_tab_index": tab_index,
+                "wait_for_auto_order_result": wait_for_auto_order_result,
+            }
+            if ignore_already_ordered:
+                kwargs["ignore_already_ordered"] = True
+            result = _order_goods_for_open_order(driver, order_id, **kwargs)
         except TimeoutException as exc:
             if not _page_indicates_non_vendor_stock_tab(driver):
                 raise
@@ -1862,7 +1926,13 @@ def _order_goods_for_all_stock_tabs(driver, order_id, dry_run=False, wait_for_au
     return results
 
 
-def _run_order_with_driver(driver, order_id, dry_run=False, wait_for_auto_order_result=False):
+def _run_order_with_driver(
+    driver,
+    order_id,
+    dry_run=False,
+    wait_for_auto_order_result=False,
+    ignore_already_ordered=False,
+):
     normalized_order_id = _normalize_target_order_id(order_id)
     if not normalized_order_id:
         raise RuntimeError("Order ID must be a 7-digit value or CRM order URL.")
@@ -1895,12 +1965,10 @@ def _run_order_with_driver(driver, order_id, dry_run=False, wait_for_auto_order_
             return [result]
         _publish_status(f"Ordering stock tabs for order {normalized_order_id}.", stage="ordering_stock", order_id=normalized_order_id)
         if wait_for_auto_order_result:
-            results = _order_goods_for_all_stock_tabs(
-                driver,
-                normalized_order_id,
-                dry_run=dry_run,
-                wait_for_auto_order_result=True,
-            )
+            kwargs = {"dry_run": dry_run, "wait_for_auto_order_result": True}
+            if ignore_already_ordered:
+                kwargs["ignore_already_ordered"] = True
+            results = _order_goods_for_all_stock_tabs(driver, normalized_order_id, **kwargs)
         else:
             results = _order_goods_for_all_stock_tabs(driver, normalized_order_id, dry_run=dry_run)
         for item in results:
@@ -1908,12 +1976,10 @@ def _run_order_with_driver(driver, order_id, dry_run=False, wait_for_auto_order_
         return results
     _publish_status(f"Ordering stock tabs for order {normalized_order_id}.", stage="ordering_stock", order_id=normalized_order_id)
     if wait_for_auto_order_result:
-        results = _order_goods_for_all_stock_tabs(
-            driver,
-            normalized_order_id,
-            dry_run=dry_run,
-            wait_for_auto_order_result=True,
-        )
+        kwargs = {"dry_run": dry_run, "wait_for_auto_order_result": True}
+        if ignore_already_ordered:
+            kwargs["ignore_already_ordered"] = True
+        results = _order_goods_for_all_stock_tabs(driver, normalized_order_id, **kwargs)
     else:
         results = _order_goods_for_all_stock_tabs(driver, normalized_order_id, dry_run=dry_run)
     return results

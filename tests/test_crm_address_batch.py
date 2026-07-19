@@ -1726,6 +1726,29 @@ class CrmPushBackTests(unittest.TestCase):
             "ordered",
         )
 
+    def test_auto_order_feedback_prefers_failure_over_visible_stale_success(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = [
+            "(Auto Order) Goods have been ordered successfully.",
+            "Failed to auto order stock: No purchase plan available for products",
+        ]
+
+        feedback = crm_order_goods._read_visible_auto_order_feedback(driver)
+
+        self.assertEqual(feedback["kind"], "no_purchase_plan")
+
+    def test_push_back_stock_summary_preserves_exact_crm_feedback(self):
+        result = [{
+            "success": False,
+            "outcome": "auto_order_no_purchase_plan",
+            "message": "Failed to auto order stock: No purchase plan available for products",
+        }]
+
+        summary = crm_push_back._stock_order_summary(result)
+
+        self.assertIn("0/1", summary)
+        self.assertIn("No purchase plan available for products", summary)
+
     @mock.patch.object(crm_push_back, "_run_order_worker_payload")
     @mock.patch.object(crm_push_back, "_clone_profile_for_worker")
     @mock.patch.object(crm_push_back, "_collect_push_back_rows")
@@ -7116,8 +7139,13 @@ class CrmAddressServerTests(unittest.TestCase):
     def test_order_goods_does_not_treat_stock_ordered_false_label_as_ordered(self):
         self.assertFalse(crm_order_goods._text_indicates_stock_already_ordered("Stock Ordered: false"))
         self.assertFalse(crm_order_goods._text_indicates_stock_already_ordered("Stock Ordered"))
+        self.assertFalse(crm_order_goods._text_indicates_stock_already_ordered("Stock Auto Ordering Queued"))
         self.assertTrue(crm_order_goods._text_indicates_stock_already_ordered("Stock Status: Ordered"))
         self.assertTrue(crm_order_goods._text_indicates_stock_already_ordered("Stock : Ordered"))
+
+    def test_stock_tab_script_prefers_unique_header_design_tabs(self):
+        self.assertIn("#main-header-design-tabs button", crm_order_goods.STOCK_TAB_SCRIPT)
+        self.assertIn("if (!tabs.length)", crm_order_goods.STOCK_TAB_SCRIPT)
 
     @mock.patch.object(crm_order_goods, "_page_indicates_stock_already_ordered", return_value=False)
     @mock.patch.object(crm_order_goods, "_refresh_order_after_stock_unlock", return_value="orderable")

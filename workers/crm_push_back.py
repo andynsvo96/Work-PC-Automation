@@ -201,6 +201,7 @@ def _run_order_goods_with_push_back_status(driver, order_id, dry_run=False):
         order_id,
         dry_run=False,
         wait_for_auto_order_result=True,
+        ignore_already_ordered=True,
     )
 
 
@@ -227,7 +228,15 @@ def _stock_order_summary(results, dry_run=False):
     total = len(rows)
     if dry_run:
         return f"Stock dry run checked {total} tab(s); {successful} tab(s) looked orderable or already handled."
-    return f"Stock ordering finished for {successful}/{total} tab(s)."
+    summary = f"Stock ordering finished for {successful}/{total} tab(s)."
+    details = []
+    for item in rows:
+        message = " ".join(str(item.get("message") or "").split())
+        if message and message not in details:
+            details.append(message)
+    if details:
+        summary = f"{summary} CRM result: {'; '.join(details)}"
+    return summary
 
 
 def _stock_order_has_outcome(results, outcome):
@@ -887,10 +896,16 @@ def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=Fal
             )
             stock_success = _wait_for_push_back_stock_confirmation(driver, order_id)
             if not stock_success:
-                stock_summary = (
-                    f"{stock_summary} CRM showed the Auto Order success message but did not refresh to "
-                    "Stock Status: Ordered and Stock: Ordered."
-                )
+                if _stock_order_has_outcome(stock_results, "auto_order_succeeded"):
+                    stock_summary = (
+                        f"{stock_summary} CRM showed the Auto Order success message but did not refresh to "
+                        "Stock Status: Ordered and Stock: Ordered."
+                    )
+                else:
+                    stock_summary = (
+                        f"{stock_summary} The intermediate stock check reported success, but CRM did not confirm "
+                        "Stock Status: Ordered and Stock: Ordered."
+                    )
 
         return _result(
             order_id,
