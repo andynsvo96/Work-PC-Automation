@@ -12,6 +12,8 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .wrap{max-width:1200px;margin:0 auto;padding:18px}
 .app-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
 .app-header h1{margin:0}
+.app-title-row{display:flex;align-items:baseline;gap:9px;min-width:0;flex-wrap:wrap}
+.app-version{color:#94a3b8;font-size:11px;font-weight:600;letter-spacing:.02em;white-space:nowrap}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .card{background:#fff;border:1px solid #d9e2ec;border-radius:10px;padding:14px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
@@ -233,7 +235,10 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 <body>
 <div class='wrap'>
 <div class='app-header'>
-  <h1>Automation Control Panel</h1>
+  <div class='app-title-row'>
+    <h1>Automation Control Panel</h1>
+    <span class='app-version' id='appVersionText'>Version: loading</span>
+  </div>
   <button class='icon-btn' id='settingsGearBtn' onclick="setActiveTab('settings')" title='Open Settings' aria-label='Open Settings'>
     <svg viewBox='0 0 24 24' aria-hidden='true' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>
       <circle cx='12' cy='12' r='3'></circle>
@@ -2521,6 +2526,12 @@ function renderNodeRuntime(payload) {
   const recommendation = settings.recommendation || {};
   const git = nodeRuntimePayload.git || {};
   const appUpdate = nodeRuntimePayload.app_update || {};
+  const versionText = document.getElementById('appVersionText');
+  if (versionText) {
+    const loadedCommit = String(appUpdate.loaded_commit || git.commit || '').trim();
+    versionText.textContent = loadedCommit ? `Version: ${loadedCommit.slice(0, 7)}` : 'Version: unknown';
+    versionText.title = loadedCommit ? `Running commit ${loadedCommit}` : 'Running commit unavailable';
+  }
   const versionNotice = document.getElementById('versionGateNotice');
   const versionBlocked = Boolean(appUpdate.required || nodeRuntimePayload.version_eligible === false);
   if (versionNotice) {
