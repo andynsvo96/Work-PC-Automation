@@ -370,6 +370,7 @@ version_monitor_stop = threading.Event()
 version_monitor_thread = None
 app_update_restart_lock = threading.RLock()
 app_update_restart_scheduled = False
+server_singleton_handle = None
 version_monitor_state = {
     "last_checked_at": None,
     "last_error": None,
@@ -11575,6 +11576,23 @@ def _restart_server_process():
             )
             return True, "Server restart requested (hidden launcher)."
 
+        if sys.platform == "darwin":
+            launchd_target = f"gui/{os.getuid()}/com.workautomation.server"
+            probe = subprocess.run(
+                ["launchctl", "print", launchd_target],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if probe.returncode == 0:
+                subprocess.Popen(
+                    ["launchctl", "kickstart", "-k", launchd_target],
+                    start_new_session=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                return True, "macOS LaunchAgent restart requested."
+
         python_exe = _resolve_windowless_python() if os.name == "nt" else sys.executable
         sync_script = os.path.join(SCRIPT_DIR, "safe_sync.py")
         cmd = [python_exe, sync_script, "start"]
@@ -11638,6 +11656,57 @@ def on_exit(icon, _item=None):
     os._exit(0)
 
 
+def _acquire_server_singleton():
+    """Hold a lifetime lock on macOS so launchd/update races leave one server."""
+    global server_singleton_handle
+    if sys.platform != "darwin":
+        return True
+    try:
+        import fcntl
+
+        lock_path = state_file("server.lock")
+        os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+        handle = open(lock_path, "a+b")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            handle.close()
+            return False
+        server_singleton_handle = handle
+        return True
+    except Exception as exc:
+        logger.error("Could not acquire the macOS server singleton lock: %s", exc)
+        return False
+
+
+def _stop_orphan_mac_server_processes():
+    if sys.platform != "darwin":
+        return 0
+    try:
+        import psutil
+
+        server_path = os.path.realpath(os.path.abspath(__file__))
+        current_pid = os.getpid()
+        matches = []
+        for process in psutil.process_iter(["pid", "cmdline"]):
+            if process.pid == current_pid:
+                continue
+            command = list(process.info.get("cmdline") or [])
+            if any(os.path.realpath(os.path.abspath(arg)) == server_path for arg in command if str(arg).endswith("server.py")):
+                matches.append(process)
+        for process in matches:
+            process.terminate()
+        _gone, alive = psutil.wait_procs(matches, timeout=5)
+        for process in alive:
+            process.kill()
+        if matches:
+            logger.warning("Stopped %s orphan macOS dashboard process(es).", len(matches))
+        return len(matches)
+    except Exception as exc:
+        logger.warning("Could not stop orphan macOS dashboard processes: %s", exc)
+        return 0
+
+
 def kill_existing_server(port=SERVER_PORT):
     try:
         import psutil
@@ -11688,6 +11757,11 @@ def _safe_sync_before_direct_start():
 
 if __name__ == "__main__":
     _safe_sync_before_direct_start()
+    if not _acquire_server_singleton():
+        logger.info("Another macOS dashboard server already owns the singleton lock; exiting duplicate process.")
+        raise SystemExit(0)
+    _stop_orphan_mac_server_processes()
+    kill_existing_server()
     reload_runtime_config()
     register_shared_queue_task_executors()
     start_version_monitor()
@@ -11696,7 +11770,6 @@ if __name__ == "__main__":
     clipboard_runtime.start()
     ensure_crm_state_file()
     ensure_crm_processing_state_file()
-    kill_existing_server()
     restore_auto_clock_out_timer_from_state()
 
     logger.info("Paycom Automation Server starting on http://%s:%s", SERVER_BIND_HOST, SERVER_PORT)
