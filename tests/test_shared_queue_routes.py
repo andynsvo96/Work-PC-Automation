@@ -1,8 +1,10 @@
 import types
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 import server
+from app_security import create_app_security
 
 
 class _FakeSharedRuntime:
@@ -53,6 +55,27 @@ class SharedQueueRouteTests(unittest.TestCase):
         server.shared_queue_runtime = self.runtime
         server.app.config.update(TESTING=True)
         self.client = server.app.test_client()
+
+    def _set_node_availability(self, *, windows=True, mac=True):
+        now = datetime.now(timezone.utc)
+        online_stamp = now.isoformat()
+        offline_stamp = (now - timedelta(minutes=5)).isoformat()
+        self.runtime.client.list_nodes = lambda: [
+            {
+                "node_key": "windows-test",
+                "os_name": "windows",
+                "enabled": True,
+                "capabilities": {"automation": True, "crm": True, "system_power": True, "metrics": True},
+                "last_seen_at": online_stamp if windows else offline_stamp,
+            },
+            {
+                "node_key": "macbook",
+                "os_name": "macos",
+                "enabled": True,
+                "capabilities": {"automation": True, "crm": True, "system_power": False, "metrics": False},
+                "last_seen_at": online_stamp if mac else offline_stamp,
+            },
+        ]
 
     def tearDown(self):
         server.AUTOMATION_QUEUE_MODE = self.previous_mode
@@ -123,6 +146,77 @@ class SharedQueueRouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(self.runtime.enqueued[-1]["target_node"], "macbook")
+
+    def test_home_assistant_get_bypasses_browser_pin_and_prefers_online_windows(self):
+        self._set_node_availability(windows=True, mac=True)
+        server.APP_PIN_REQUIRED = True
+
+        response = self.client.get(
+            "/clock/test/in",
+            headers={"User-Agent": "HomeAssistant/2026.7.0"},
+        )
+
+        self.assertEqual(response.status_code, 202)
+        payload = response.get_json()
+        self.assertFalse(payload["home_assistant_failure"])
+        self.assertEqual(payload["target_node"], "windows-test")
+        self.assertEqual(self.runtime.enqueued[-1]["target_node"], "windows-test")
+        self.assertEqual(self.runtime.enqueued[-1]["requested_client_os"], "home_assistant")
+
+    def test_home_assistant_falls_back_to_online_mac(self):
+        self._set_node_availability(windows=False, mac=True)
+
+        response = self.client.post(
+            "/clock/test/in",
+            headers={"X-Automation-Source": "home-assistant"},
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.get_json()["target_node"], "macbook")
+        self.assertEqual(self.runtime.enqueued[-1]["target_node"], "macbook")
+
+    def test_home_assistant_returns_failure_signal_when_both_nodes_are_offline(self):
+        self._set_node_availability(windows=False, mac=False)
+
+        response = self.client.get(
+            "/crm/process/rush",
+            headers={"User-Agent": "HomeAssistant/2026.7.0"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.get_json()
+        self.assertTrue(payload["home_assistant_failure"])
+        self.assertFalse(payload["queued"])
+        self.assertIn("No online Windows or Mac", payload["message"])
+        self.assertEqual(self.runtime.enqueued, [])
+
+    def test_home_assistant_system_control_fails_if_only_mac_is_online(self):
+        self._set_node_availability(windows=False, mac=True)
+
+        response = self.client.get(
+            "/pc/sleep",
+            headers={"User-Agent": "HomeAssistant/2026.7.0"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.get_json()
+        self.assertTrue(payload["home_assistant_failure"])
+        self.assertIn("no online Windows server", payload["message"])
+        self.assertEqual(self.runtime.enqueued, [])
+
+    def test_non_home_assistant_action_still_requires_browser_login(self):
+        self._set_node_availability(windows=True, mac=True)
+        server.APP_PIN_REQUIRED = True
+
+        security = create_app_security("123456")
+        with (
+            mock.patch.object(server, "app_security_config", security),
+            mock.patch.object(server, "initialize_app_security", return_value=security),
+        ):
+            response = self.client.get("/clock/test/in")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.runtime.enqueued, [])
 
     def test_desktop_targeting_fails_closed_without_matching_node(self):
         self.runtime.client.list_nodes = lambda: [
@@ -265,23 +359,67 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertTrue(response.get_json()["retryable"])
         schedule.assert_not_called()
 
-    def test_update_endpoint_refuses_dirty_checkout(self):
+    def test_update_endpoint_saves_and_publishes_dirty_checkout(self):
         git_state = {
             "available": True,
             "dirty": True,
-            "relation": "behind",
+            "relation": "current",
+            "branch": "main",
             "commit": "old-commit",
+            "origin_commit": "old-commit",
+        }
+        published_state = {
+            "available": True,
+            "dirty": False,
+            "relation": "current",
+            "branch": "main",
+            "commit": "new-commit",
             "origin_commit": "new-commit",
         }
         with (
             mock.patch("server.refresh_remote_version_state", return_value={"git": git_state}),
             mock.patch("server._automation_version_block_reason", return_value="Update required: local changes."),
+            mock.patch("server.get_automation_queue_payload", return_value={"running_count": 0}),
+            mock.patch("server.get_power_countdown_payload", return_value={"active": False}),
+            mock.patch("server.get_slack_lunch_payload", return_value={"active": False}),
+            mock.patch("server.publish_repository_update", return_value={"success": True, "state": published_state}) as publish,
+            mock.patch("server._schedule_app_update_restart") as schedule,
+        ):
+            response = self.client.post("/api/app/update")
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.get_json()["restarting"])
+        self.assertEqual(response.get_json()["app_update"]["target_commit"], "new-commit")
+        publish.assert_called_once_with(server.SCRIPT_DIR)
+        schedule.assert_called_once_with()
+
+    def test_update_endpoint_reports_safe_publish_blocker(self):
+        git_state = {
+            "available": True,
+            "dirty": True,
+            "relation": "current",
+            "branch": "main",
+            "commit": "old-commit",
+            "origin_commit": "old-commit",
+        }
+        with (
+            mock.patch("server.refresh_remote_version_state", return_value={"git": git_state}),
+            mock.patch("server._automation_version_block_reason", return_value="Update required: local changes."),
+            mock.patch("server.get_automation_queue_payload", return_value={"running_count": 0}),
+            mock.patch("server.get_power_countdown_payload", return_value={"active": False}),
+            mock.patch("server.get_slack_lunch_payload", return_value={"active": False}),
+            mock.patch("server.publish_repository_update", return_value={
+                "success": False,
+                "message": "Automatic Update found untracked files.",
+                "state": git_state,
+            }),
             mock.patch("server._schedule_app_update_restart") as schedule,
         ):
             response = self.client.post("/api/app/update")
 
         self.assertEqual(response.status_code, 409)
         self.assertTrue(response.get_json()["manual_required"])
+        self.assertIn("untracked files", response.get_json()["message"])
         schedule.assert_not_called()
 
     def test_automatic_update_scheduler_restarts_clean_idle_checkout(self):

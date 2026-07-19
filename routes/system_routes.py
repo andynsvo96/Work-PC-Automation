@@ -5,7 +5,7 @@ System-domain route registration for the automation server.
 import time
 from datetime import datetime, timedelta
 
-from flask import jsonify, request
+from flask import g, jsonify, request
 
 
 def register_system_routes(
@@ -29,7 +29,8 @@ def register_system_routes(
 ):
     def _requested_target_node():
         return str(
-            request.headers.get("X-Automation-Target-Node")
+            getattr(g, "automation_target_node", None)
+            or request.headers.get("X-Automation-Target-Node")
             or request.args.get("target_node")
             or ""
         ).strip()
@@ -49,6 +50,14 @@ def register_system_routes(
             return False
 
     def _windows_only_response():
+        if getattr(g, "home_automation_request", False):
+            return jsonify({
+                "success": False,
+                "available": False,
+                "queued": False,
+                "home_assistant_failure": True,
+                "message": "Home Assistant request failed: no online Windows server can run this system control.",
+            }), 503
         return jsonify({"success": False, "available": False, "message": "Windows only"}), 400
 
     def _power_route_label(action):
@@ -75,7 +84,12 @@ def register_system_routes(
             **(queue_options if isinstance(queue_options, dict) else {}),
         )
         payload = get_power_countdown_payload()
-        return jsonify({"success": ok, "message": msg, "queued": ok, "queue_task": task, "countdown": payload}), (202 if ok else 500)
+        payload.update({"success": ok, "message": msg, "queued": ok, "queue_task": task})
+        if getattr(g, "home_automation_request", False):
+            payload["home_assistant_failure"] = not ok
+            payload["target_node"] = requested_target or None
+        failure_status = 503 if getattr(g, "home_automation_request", False) else 500
+        return jsonify(payload), (202 if ok else failure_status)
 
     @app.route("/api/metrics", methods=["GET"])
     def api_metrics():

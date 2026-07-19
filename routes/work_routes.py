@@ -5,7 +5,7 @@ Work-domain route registration for the automation server.
 import re
 from datetime import datetime
 
-from flask import jsonify, request
+from flask import g, jsonify, request
 
 
 def register_work_routes(
@@ -103,7 +103,8 @@ def register_work_routes(
         if required_capability is None and str(task_type or "").startswith("crm."):
             required_capability = "crm"
         if target_node is None:
-            requested_target = str(request.headers.get("X-Automation-Target-Node") or "").strip()
+            automatic_target = str(getattr(g, "automation_target_node", "") or "").strip()
+            requested_target = automatic_target or str(request.headers.get("X-Automation-Target-Node") or "").strip()
             target_node = requested_target if requested_target and requested_target.lower() != "any" else None
         ok, msg, task = enqueue_automation(
             label,
@@ -119,7 +120,11 @@ def register_work_routes(
         )
         payload = status_payload_fn() if callable(status_payload_fn) else {"success": True}
         payload.update({"success": ok, "message": msg, "queued": ok, "queue_task": task})
-        return jsonify(payload), (202 if ok else 500)
+        if getattr(g, "home_automation_request", False):
+            payload["home_assistant_failure"] = not ok
+            payload["target_node"] = target_node
+        failure_status = 503 if getattr(g, "home_automation_request", False) else 500
+        return jsonify(payload), (202 if ok else failure_status)
 
     @app.route("/clock/in", methods=["POST", "GET"])
     def clock_in():

@@ -27,7 +27,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, redirect, request, session, url_for
+from flask import Flask, Response, g, jsonify, redirect, request, session, url_for
 import pystray
 from PIL import Image, ImageDraw
 
@@ -49,6 +49,7 @@ from runtime_paths import resolve_runtime_file, result_file, state_file
 from routes.connectivity_routes import register_connectivity_routes
 from routes.system_routes import register_system_routes
 from routes.work_routes import register_work_routes
+from safe_sync import publish_repository_update
 from shared_queue import SharedQueueBlocked, SharedQueueConfig, SupabaseQueueClient
 from shared_queue_runtime import SharedQueueRuntime
 from slack_message_rotation import select_slack_day_message
@@ -136,6 +137,9 @@ REMOTE_ACCESS_MODE = str(getattr(config_module, "AUTOMATION_REMOTE_ACCESS_MODE",
 if REMOTE_ACCESS_MODE not in {"local", "tailscale"}:
     REMOTE_ACCESS_MODE = "local"
 APP_PIN_REQUIRED = bool(getattr(config_module, "AUTOMATION_APP_PIN_REQUIRED", REMOTE_ACCESS_MODE == "tailscale"))
+HOME_AUTOMATION_TRIGGERS_ENABLED = bool(
+    getattr(config_module, "AUTOMATION_HOME_ASSISTANT_ENABLED", True)
+)
 SERVER_BIND_HOST = "127.0.0.1" if REMOTE_ACCESS_MODE == "tailscale" else "0.0.0.0"
 SERVER_PORT = 5123
 CLIPBOARD_PEER_URL = str(getattr(config_module, "AUTOMATION_CLIPBOARD_PEER_URL", "") or "").strip()
@@ -1455,6 +1459,12 @@ def get_app_update_payload(git_state=None):
         and not git_state.get("dirty")
         and relation in {"behind", "current"}
     )
+    interactive_available = bool(
+        reason
+        and git_state.get("available")
+        and str(git_state.get("branch") or "") == "main"
+        and relation in {"behind", "current", "ahead", "diverged"}
+    )
     origin_commit = str(git_state.get("origin_commit") or "").strip()
     checkout_commit = str(git_state.get("commit") or "").strip()
     with app_update_restart_lock:
@@ -1465,6 +1475,7 @@ def get_app_update_payload(git_state=None):
         "required": bool(reason),
         "automatic_enabled": _automatic_app_updates_enabled(),
         "automatic_available": automatic_available,
+        "interactive_available": interactive_available,
         "automatic_scheduled": automatic_scheduled,
         "automatic_wait_reason": automatic_wait_reason or None,
         "reason": reason or None,
@@ -1786,6 +1797,8 @@ def _automation_queue_now_iso():
 
 
 def _automation_request_client_os():
+    if _home_automation_request_source():
+        return "home_assistant"
     try:
         user_agent = str(request.headers.get("Sec-CH-UA-Platform") or request.headers.get("User-Agent") or "").lower()
     except RuntimeError:
@@ -1797,6 +1810,81 @@ def _automation_request_client_os():
     if "mac" in user_agent or "darwin" in user_agent:
         return "macos"
     return get_platform_snapshot().os_name
+
+
+def _home_automation_request_source():
+    """Recognize Home Assistant/Alexa machine calls without weakening browser security."""
+    if not HOME_AUTOMATION_TRIGGERS_ENABLED:
+        return None
+    try:
+        explicit = str(request.headers.get("X-Automation-Source") or "").strip().lower()
+        if explicit in {"home-assistant", "home_assistant", "homeassistant", "alexa"}:
+            return "alexa" if explicit == "alexa" else "home_assistant"
+        user_agent = str(request.headers.get("User-Agent") or "").strip().lower()
+    except RuntimeError:
+        return None
+    if any(token in user_agent for token in ("homeassistant", "home-assistant", "home assistant")):
+        return "home_assistant"
+    if "alexa" in user_agent:
+        return "alexa"
+    return None
+
+
+def _is_home_automation_route():
+    try:
+        path = str(request.path or "")
+    except RuntimeError:
+        return False
+    return path.startswith(("/clock/", "/slack/", "/work/", "/crm/", "/pc/", "/automation/"))
+
+
+def _is_home_automation_request():
+    return bool(_home_automation_request_source() and _is_home_automation_route())
+
+
+def _home_automation_node_online(node, now=None):
+    if not isinstance(node, dict) or not bool(node.get("enabled", True)):
+        return False
+    try:
+        seen_at = datetime.fromisoformat(str(node.get("last_seen_at") or "").replace("Z", "+00:00"))
+        current = now or (datetime.now(seen_at.tzinfo) if seen_at.tzinfo else datetime.now())
+        if seen_at.tzinfo is not None and current.tzinfo is None:
+            current = current.astimezone()
+        return 0 <= (current - seen_at).total_seconds() <= 30
+    except (TypeError, ValueError):
+        return False
+
+
+def _resolve_home_automation_target(runtime, required_capability=None):
+    """Select an online Windows node first, then an online Mac node."""
+    if runtime is None:
+        raise SharedQueueBlocked(shared_queue_initialization_error or "The shared queue is unavailable.")
+    try:
+        nodes = list(runtime.client.list_nodes() or [])
+    except Exception as exc:
+        raise SharedQueueBlocked(f"Could not check Windows or Mac availability: {exc}") from exc
+    candidates = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        os_name = str(node.get("os_name") or "").strip().lower()
+        if os_name not in {"windows", "macos", "darwin"} or not _home_automation_node_online(node):
+            continue
+        if required_capability and not bool((node.get("capabilities") or {}).get(required_capability)):
+            continue
+        priority = 0 if os_name == "windows" else 1
+        candidates.append((priority, str(node.get("last_seen_at") or ""), node))
+    if not candidates:
+        capability_text = f" with the '{required_capability}' capability" if required_capability else ""
+        raise SharedQueueBlocked(
+            f"No online Windows or Mac automation server{capability_text} is available."
+        )
+    candidates.sort(key=lambda item: item[1], reverse=True)
+    candidates.sort(key=lambda item: item[0])
+    target = str(candidates[0][2].get("node_key") or "").strip()
+    if not target:
+        raise SharedQueueBlocked("The preferred automation server has no registered node key.")
+    return target
 
 
 def _automation_client_visual(os_name):
@@ -10945,7 +11033,12 @@ def _version_lock_allows_request(path):
 
 @app.before_request
 def enforce_app_access_security():
-    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not _version_lock_allows_request(request.path):
+    home_automation_request = _is_home_automation_request()
+    route_is_action = bool(request.url_rule and "POST" in request.url_rule.methods)
+    mutating_request = request.method in {"POST", "PUT", "PATCH", "DELETE"} or (
+        home_automation_request and route_is_action
+    )
+    if mutating_request and not _version_lock_allows_request(request.path):
         version_block = _automation_version_block_reason()
         if version_block:
             return jsonify(
@@ -10955,6 +11048,30 @@ def enforce_app_access_security():
                     "update_required": True,
                 }
             ), 409
+    if home_automation_request:
+        runtime = shared_queue_runtime or (
+            initialize_shared_queue_runtime() if AUTOMATION_QUEUE_MODE == "shared" else None
+        )
+        if AUTOMATION_QUEUE_MODE != "shared":
+            target_node = None
+        else:
+            try:
+                target_node = _resolve_home_automation_target(runtime)
+            except SharedQueueBlocked as exc:
+                return jsonify(
+                    {
+                        "success": False,
+                        "queued": False,
+                        "home_assistant_failure": True,
+                        "message": f"Home Assistant request failed: {exc}",
+                    }
+                ), 503
+        g.home_automation_request = True
+        g.home_automation_source = _home_automation_request_source()
+        g.automation_target_node = target_node
+        # Machine calls keep their existing action URLs. Browser traffic still
+        # requires the app PIN and CSRF token below.
+        return None
     # These machine-to-machine endpoints use timestamped HMAC authentication
     # inside their route handlers instead of a browser session and CSRF token.
     if request.path.startswith("/api/clipboard/peer/"):
@@ -11204,23 +11321,44 @@ def api_app_update():
         update = get_app_update_payload(git_state)
         if not update.get("required"):
             return jsonify({"success": True, "restarting": False, "message": "This computer is already current.", "app_update": update})
-        if not update.get("automatic_available"):
-            return jsonify({
-                "success": False,
-                "manual_required": True,
-                "message": "Automatic update is unavailable for this Git state. Resolve local changes or branch divergence first.",
-                "app_update": update,
-            }), 409
 
         safety_block = _app_update_safety_block_reason()
         if safety_block:
             return jsonify({"success": False, "retryable": True, "message": safety_block}), 409
 
+        if not update.get("automatic_available"):
+            if not update.get("interactive_available"):
+                return jsonify({
+                    "success": False,
+                    "manual_required": True,
+                    "message": "Automatic Update cannot safely resolve this Git state.",
+                    "app_update": update,
+                }), 409
+            publish_result = publish_repository_update(SCRIPT_DIR)
+            if not publish_result.get("success"):
+                refreshed_update = get_app_update_payload(publish_result.get("state"))
+                return jsonify({
+                    "success": False,
+                    "manual_required": True,
+                    "message": publish_result.get("message") or "Automatic Update could not publish the local changes.",
+                    "app_update": refreshed_update,
+                }), 409
+            git_state = publish_result.get("state") or get_git_version_state(SCRIPT_DIR)
+            block_reason = _git_update_block_reason(git_state)
+            with version_monitor_lock:
+                version_monitor_state.update({
+                    "last_checked_at": datetime.now().isoformat(),
+                    "last_error": None,
+                    "block_reason": block_reason,
+                    "git": git_state,
+                })
+            update = get_app_update_payload(git_state)
+
         _schedule_app_update_restart()
         return jsonify({
             "success": True,
             "restarting": True,
-            "message": "Update started. Safe Sync will restart the app automatically.",
+            "message": "Update started. Local changes are safe and the app will restart automatically.",
             "app_update": update,
         }), 202
     except Exception as exc:

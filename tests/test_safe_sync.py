@@ -55,6 +55,51 @@ class SafeSyncTests(unittest.TestCase):
         self.assertTrue(result["updated"])
         self.assertEqual(mock_run.call_args_list[1].args[1:], ("pull", "--ff-only", "origin", "main"))
 
+    @mock.patch("safe_sync.get_git_version_state")
+    def test_publish_update_commits_tracked_changes_pushes_main_and_verifies_clean(self, mock_state):
+        dirty = {"available": True, "dirty": True, "relation": "current", "branch": "main"}
+        ahead = {"available": True, "dirty": False, "relation": "ahead", "branch": "main"}
+        current = {"available": True, "dirty": False, "relation": "current", "branch": "main"}
+        mock_state.side_effect = [dirty, dirty, ahead, ahead, current]
+        with mock.patch(
+            "safe_sync._run",
+            side_effect=[
+                (0, " M server.py"),
+                (0, "fetched"),
+                (0, "staged"),
+                (0, "committed"),
+                (0, "pushed"),
+            ],
+        ) as mock_run:
+            result = safe_sync.publish_repository_update(".")
+
+        self.assertTrue(result["success"])
+        calls = [call.args[1:] for call in mock_run.call_args_list]
+        self.assertIn(("add", "--update", "--", "."), calls)
+        self.assertIn(("commit", "-m", "Update automation app"), calls)
+        self.assertIn(("push", "origin", "HEAD:main"), calls)
+
+    @mock.patch("safe_sync.get_git_version_state")
+    def test_publish_update_refuses_untracked_files(self, mock_state):
+        state = {"available": True, "dirty": True, "relation": "current", "branch": "main"}
+        mock_state.return_value = state
+        with mock.patch("safe_sync._run", return_value=(0, "?? local-script.py")) as mock_run:
+            result = safe_sync.publish_repository_update(".")
+
+        self.assertTrue(result["blocked"])
+        self.assertIn("untracked files", result["message"])
+        self.assertEqual(mock_run.call_count, 1)
+
+    @mock.patch("safe_sync.get_git_version_state")
+    def test_publish_update_refuses_non_main_branch(self, mock_state):
+        mock_state.return_value = {"available": True, "dirty": True, "relation": "current", "branch": "feature"}
+        with mock.patch("safe_sync._run") as mock_run:
+            result = safe_sync.publish_repository_update(".")
+
+        self.assertTrue(result["blocked"])
+        self.assertIn("main branch", result["message"])
+        mock_run.assert_not_called()
+
     def test_start_marks_safe_sync_complete_for_server(self):
         with (
             mock.patch.dict(safe_sync.os.environ, {"AUTOMATION_VERSION_BLOCK_REASON": "old error"}),

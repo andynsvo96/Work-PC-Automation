@@ -13,6 +13,13 @@ AUTOMATION_QUEUE_MODE = "local"
 AUTOMATION_REMOTE_ACCESS_MODE = "local"  # change to "tailscale" after setup
 AUTOMATION_APP_PIN_REQUIRED = AUTOMATION_REMOTE_ACCESS_MODE == "tailscale"
 
+# Home Assistant/Alexa HTTP actions keep using the existing /clock, /slack,
+# /work, /crm, /pc, and /automation URLs. Requests identified by the
+# Home Assistant/Alexa User-Agent (or X-Automation-Source header) are routed to
+# an online Windows node first, then an online Mac node. Browser PIN/CSRF
+# protection remains enabled for normal control-panel traffic.
+AUTOMATION_HOME_ASSISTANT_ENABLED = True
+
 # Cross-system clipboard. Each computer points to the other computer's
 # device-specific Tailscale Serve URL (configured on HTTPS port 8443).
 # Clipboard contents are never stored; automatic monitoring is toggled from

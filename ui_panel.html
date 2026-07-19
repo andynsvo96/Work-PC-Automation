@@ -269,7 +269,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
     <div class='suite-output app-update-details' id='appUpdateDetails'></div>
     <div class='modal-actions'>
       <button class='secondary' id='appUpdateDismissBtn' type='button' onclick='dismissAppUpdateModal()'>Later</button>
-      <button id='appUpdateNowBtn' type='button' onclick='updateAppNow(this)'>Update Now</button>
+      <button id='appUpdateNowBtn' type='button' onclick='updateAppNow(this)'>Update</button>
     </div>
   </div>
 </div>
@@ -2585,6 +2585,7 @@ function renderAppUpdateState(update) {
   if (appUpdateInProgress) return;
 
   const automatic = Boolean(update.automatic_available);
+  const interactive = Boolean(update.interactive_available);
   const automaticEnabled = update.automatic_enabled !== false;
   const unattended = automatic && automaticEnabled;
   const waitingReason = String(update.automatic_wait_reason || '').trim();
@@ -2594,16 +2595,16 @@ function renderAppUpdateState(update) {
   if (message) {
     message.textContent = unattended
       ? (waitingReason || 'This computer will update and restart automatically as soon as it is safe.')
-      : automatic
-        ? 'This computer must update before another automation can start.'
+      : (automatic || interactive)
+        ? 'Click Update to safely save local app changes, synchronize both computers, and restart.'
       : 'This checkout needs manual Git attention before it can update safely.';
   }
   if (details) details.textContent = `${update.reason || 'Update required.'}\nCurrent: ${current}\nAvailable: ${target}${unattended ? '\nMode: Automatic' : ''}${waitingReason ? `\nStatus: ${waitingReason}` : ''}`;
   if (updateButton) {
-    updateButton.disabled = !automatic || unattended;
+    updateButton.disabled = (!automatic && !interactive) || unattended;
     updateButton.textContent = unattended
       ? (update.automatic_scheduled ? 'Updating Automatically...' : (waitingReason ? 'Waiting Safely...' : 'Automatic Update Pending'))
-      : (automatic ? 'Update Now' : 'Manual Update Required');
+      : ((automatic || interactive) ? 'Update' : 'Manual Update Required');
   }
   if (dismissButton) dismissButton.disabled = false;
   if (dismissedAppUpdateTarget !== appUpdateIdentity(update)) modal.classList.add('active');
@@ -2645,7 +2646,7 @@ async function waitForUpdatedApp(targetCommit) {
 
 async function updateAppNow(button = null) {
   const update = nodeRuntimePayload && nodeRuntimePayload.app_update ? nodeRuntimePayload.app_update : {};
-  if (!update.automatic_available || appUpdateInProgress) return;
+  if ((!update.automatic_available && !update.interactive_available) || appUpdateInProgress) return;
   appUpdateInProgress = true;
   const dismissButton = document.getElementById('appUpdateDismissBtn');
   const message = document.getElementById('appUpdateMessage');
@@ -2662,13 +2663,14 @@ async function updateAppNow(button = null) {
       return;
     }
     if (button) button.textContent = 'Updating...';
-    await waitForUpdatedApp(String(update.target_commit || ''));
+    const completedUpdate = result && result.app_update ? result.app_update : update;
+    await waitForUpdatedApp(String(completedUpdate.target_commit || ''));
   } catch (error) {
     appUpdateInProgress = false;
     if (message) message.textContent = 'Update could not finish: ' + error.message;
     if (button) {
       button.disabled = false;
-      button.textContent = 'Try Update Again';
+      button.textContent = 'Update';
     }
     if (dismissButton) dismissButton.disabled = false;
   }

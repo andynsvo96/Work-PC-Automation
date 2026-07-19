@@ -88,6 +88,142 @@ def sync_repository(repo_dir, *, fetch=True):
     return {"success": False, "updated": False, "blocked": True, "message": message, "state": state}
 
 
+def publish_repository_update(repo_dir, *, commit_message="Update automation app"):
+    """Safely publish tracked local edits, synchronize main, and verify a clean tree."""
+    repo_dir = os.path.abspath(repo_dir)
+    before = get_git_version_state(repo_dir)
+    if not before.get("available"):
+        return {
+            "success": False,
+            "updated": False,
+            "blocked": True,
+            "message": before.get("error") or "Git is unavailable.",
+            "state": before,
+        }
+    if str(before.get("branch") or "") != "main":
+        return {
+            "success": False,
+            "updated": False,
+            "blocked": True,
+            "message": "Automatic Update only publishes from the main branch.",
+            "state": before,
+        }
+
+    code, status_detail = _run(repo_dir, "status", "--porcelain=v1", "--untracked-files=all")
+    if code != 0:
+        return {
+            "success": False,
+            "updated": False,
+            "blocked": True,
+            "message": f"Could not inspect local changes: {status_detail}",
+            "state": before,
+        }
+    status_rows = [row for row in status_detail.splitlines() if row.strip()]
+    if any(row.startswith("??") for row in status_rows):
+        return {
+            "success": False,
+            "updated": False,
+            "blocked": True,
+            "message": "Automatic Update found untracked files. Add, ignore, or remove them before updating.",
+            "state": before,
+        }
+    conflict_codes = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
+    if any(row[:2] in conflict_codes for row in status_rows):
+        return {
+            "success": False,
+            "updated": False,
+            "blocked": True,
+            "message": "Automatic Update found unresolved Git conflicts.",
+            "state": before,
+        }
+
+    code, detail = _run(repo_dir, "fetch", "origin", "main")
+    if code != 0:
+        return {
+            "success": False,
+            "updated": False,
+            "blocked": True,
+            "message": f"Could not fetch origin/main: {detail}",
+            "state": get_git_version_state(repo_dir),
+        }
+    refreshed = get_git_version_state(repo_dir)
+
+    committed = False
+    if refreshed.get("dirty"):
+        code, detail = _run(repo_dir, "add", "--update", "--", ".")
+        if code != 0:
+            return {
+                "success": False,
+                "updated": False,
+                "blocked": True,
+                "message": f"Could not stage tracked app changes: {detail}",
+                "state": get_git_version_state(repo_dir),
+            }
+        code, detail = _run(repo_dir, "commit", "-m", str(commit_message or "Update automation app"))
+        if code != 0:
+            return {
+                "success": False,
+                "updated": False,
+                "blocked": True,
+                "message": f"Could not save local app changes: {detail}",
+                "state": get_git_version_state(repo_dir),
+            }
+        committed = True
+
+    state = get_git_version_state(repo_dir)
+    relation = str(state.get("relation") or "unknown")
+    if relation == "behind":
+        code, detail = _run(repo_dir, "pull", "--ff-only", "origin", "main")
+        if code != 0:
+            return {
+                "success": False,
+                "updated": committed,
+                "blocked": True,
+                "message": f"Could not fast-forward from origin/main: {detail}",
+                "state": get_git_version_state(repo_dir),
+            }
+    elif relation == "diverged":
+        code, detail = _run(repo_dir, "rebase", "origin/main")
+        if code != 0:
+            _run(repo_dir, "rebase", "--abort")
+            return {
+                "success": False,
+                "updated": True,
+                "blocked": True,
+                "message": f"Local changes were saved, but they conflict with origin/main: {detail}",
+                "state": get_git_version_state(repo_dir),
+            }
+
+    state = get_git_version_state(repo_dir)
+    if str(state.get("relation") or "") == "ahead":
+        code, detail = _run(repo_dir, "push", "origin", "HEAD:main", timeout=180)
+        if code != 0:
+            return {
+                "success": False,
+                "updated": True,
+                "blocked": True,
+                "message": f"Local changes were saved, but could not be pushed to origin/main: {detail}",
+                "state": get_git_version_state(repo_dir),
+            }
+
+    final = get_git_version_state(repo_dir)
+    if final.get("dirty") or str(final.get("relation") or "") != "current":
+        return {
+            "success": False,
+            "updated": committed,
+            "blocked": True,
+            "message": "Automatic Update could not verify a clean checkout matching origin/main.",
+            "state": final,
+        }
+    return {
+        "success": True,
+        "updated": bool(committed or before.get("relation") != "current"),
+        "blocked": False,
+        "message": "Local changes were saved and all computers can now sync from origin/main.",
+        "state": final,
+    }
+
+
 def _start_server(repo_dir, block_reason=""):
     env = os.environ.copy()
     env["AUTOMATION_SAFE_SYNC_COMPLETED"] = "1"
