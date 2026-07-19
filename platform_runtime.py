@@ -139,6 +139,8 @@ def platform_capabilities(os_name=None):
         "crm": normalized in {"windows", "macos"},
         "paycom": normalized in {"windows", "macos"},
         "slack": normalized in {"windows", "macos"},
+        "clipboard": normalized in {"windows", "macos"},
+        "clipboard_image": normalized in {"windows", "macos"},
         "metrics": is_windows,
         "system_power": is_windows,
         "restart_explorer": is_windows,

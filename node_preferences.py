@@ -20,6 +20,8 @@ def default_node_preferences():
         # explicitly selected in Settings on this computer.
         "worker_mode": "manual",
         "manual_workers": 1,
+        # Clipboard monitoring is always opt-in on each computer.
+        "clipboard_auto_sync": False,
     }
 
 
@@ -39,6 +41,7 @@ def normalize_node_preferences(values):
     return {
         "worker_mode": _normalize_worker_mode(values.get("worker_mode")),
         "manual_workers": _normalize_worker_count(values.get("manual_workers")),
+        "clipboard_auto_sync": bool(values.get("clipboard_auto_sync", False)),
     }
 
 
@@ -87,4 +90,6 @@ def update_node_preferences(updates, path=NODE_PREFERENCES_FILE):
             current["worker_mode"] = _normalize_worker_mode(updates.get("worker_mode"))
         if "manual_workers" in updates:
             current["manual_workers"] = _normalize_worker_count(updates.get("manual_workers"))
+        if "clipboard_auto_sync" in updates:
+            current["clipboard_auto_sync"] = bool(updates.get("clipboard_auto_sync"))
         return save_node_preferences(current, path)

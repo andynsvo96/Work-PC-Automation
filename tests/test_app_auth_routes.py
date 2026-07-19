@@ -42,6 +42,24 @@ class AppAuthRouteTests(unittest.TestCase):
         response = self.client.get("/work/in")
         self.assertEqual(response.status_code, 405)
 
+    def test_clipboard_peer_endpoint_requires_valid_machine_signature(self):
+        response = self.client.get("/api/clipboard/peer/status")
+        self.assertEqual(response.status_code, 401)
+
+        path = "/api/clipboard/peer/status"
+        headers = server.clipboard_peer_authenticator.headers("GET", path, b"")
+        response = self.client.get(path, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+
+    def test_remote_control_options_require_normal_app_login(self):
+        response = self.client.get("/api/remote-control/options")
+        self.assertEqual(response.status_code, 401)
+        self.client.post("/api/auth/login", json={"pin": "123456"})
+        response = self.client.get("/api/remote-control/options")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("windows", response.get_json()["urls"])
+
 
 if __name__ == "__main__":
     unittest.main()

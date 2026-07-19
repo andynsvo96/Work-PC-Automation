@@ -62,6 +62,61 @@ powershell -ExecutionPolicy Bypass -File .\setup_tailscale_windows.ps1
 
 The tailnet administrator must authorize `svc:automation-control` for both computers and the tablet. Tailscale Serve stays private to the tailnet and resumes after reboot when configured in background mode. The Flask server listens only on `127.0.0.1` in Tailscale mode.
 
+### Startup behavior
+
+`setup_mac.sh` installs `com.workautomation.server` as a per-user LaunchAgent with both `RunAtLoad` and `KeepAlive`, so Safe Sync & Start launches at login and is restarted by macOS if it exits. Logs are written under `runtime/logs/`.
+
+The first launch of the Tailscale Mac app installs its macOS login helper. In **System Settings → General → Login Items & Extensions**, confirm Tailscale is allowed to run at login and its Network Extension is enabled. Tailscale must be connected on both computers for clipboard transfer and private control-panel access. If either computer or Tailscale connection is offline, communication pauses until connectivity returns. See Tailscale's official [start-at-login policy documentation](https://tailscale.com/docs/features/tailscale-system-policies#automatically-start-tailscale-when-the-user-logs-in) and [macOS extension instructions](https://tailscale.com/docs/concepts/macos-sysext).
+
+### Cross-system clipboard
+
+The Tailscale setup scripts also expose an authenticated, device-specific HTTPS endpoint on port `8443`. The shared `svc:automation-control` URL must not be used for clipboard traffic because a shared Service can route to either computer.
+
+After running both Tailscale setup scripts, find each computer's full MagicDNS device name in the Tailscale admin console or `tailscale status`. Add the opposite computer's URL to each machine-local `config.py`:
+
+The setup scripts accept the opposite computer's URL as an optional second step/parameter and update only this one machine-local setting. For the current Mac, the one-command setup is:
+
+```zsh
+./setup_tailscale_mac.sh svc:automation-control https://sirius.tail45cc11.ts.net:8443
+```
+
+The equivalent Windows form is:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup_tailscale_windows.ps1 -PeerUrl https://YOUR-MAC.YOUR-TAILNET.ts.net:8443
+```
+
+You can also set it manually:
+
+```python
+# Windows config.py points to the Mac:
+AUTOMATION_CLIPBOARD_PEER_URL = "https://YOUR-MAC.YOUR-TAILNET.ts.net:8443"
+```
+
+```python
+# Mac config.py points to Windows:
+AUTOMATION_CLIPBOARD_PEER_URL = "https://YOUR-WINDOWS-PC.YOUR-TAILNET.ts.net:8443"
+```
+
+Restart Safe Sync & Start on both computers. The Communications tab then provides:
+
+- **Send to Other Computer** and **Get from Other Computer** for deliberate text or PNG image transfer, even when automatic sync is off.
+- A machine-local **Automatic Sync** toggle. Automatic two-way monitoring becomes active only when both computers enable it.
+- Connection and last-sync metadata without recording clipboard contents.
+
+The same shared app-security bundle must remain installed on both computers. It supplies the server-to-server authentication secret. Requests are timestamped, signed, replay-protected, restricted to 1 MB of text or 8 MB PNG images, and carried only through the private Tailscale endpoint. Clipboard contents are not written to logs, state files, Supabase, or Git.
+
+### Chrome Remote Desktop
+
+Install and configure unattended Chrome Remote Desktop access on both computers using the same authorized Google account. The Communications tab shows **Control Mac** on Windows and **Control Windows** on macOS. The supported default opens `https://remotedesktop.google.com/access`; Google may still require selecting the computer and entering its PIN. The Automation app never stores or types that PIN.
+
+If Google exposes a stable target-specific URL and it works after a browser restart, it can be placed in the corresponding machine-local setting:
+
+```python
+CHROME_REMOTE_DESKTOP_WINDOWS_URL = "https://remotedesktop.google.com/access"
+CHROME_REMOTE_DESKTOP_MACOS_URL = "https://remotedesktop.google.com/access"
+```
+
 ## 4. Cut over safely
 
 1. Stop new local runs and wait for the old Windows in-memory queue to be empty.
@@ -70,6 +125,8 @@ The tailnet administrator must authorize `svc:automation-control` for both compu
 4. Confirm both computers show the identical commit and queue protocol in Settings.
 5. Submit one harmless dry run from Windows, then another from the Mac. Confirm the second remains queued until the first finishes.
 6. Open the Tailscale Service URL on Android, enter the PIN, and repeat the dry-run test.
+7. Copy text and a small image in each direction using the manual clipboard buttons. Then enable Automatic Sync on both computers and repeat with newly copied content.
+8. Use the remote-control button on each desktop and confirm Chrome Remote Desktop opens the opposite computer.
 
 In Chrome on the Android tablet, open the menu and choose **Install app** (or **Add to Home screen**). Use the **Control target** selector in the header when an action must run on a specific computer. Selecting the Mac disables Metrics and System Power with “Windows only”; selecting Windows exposes its latest reported metrics and targets power actions to that PC.
 

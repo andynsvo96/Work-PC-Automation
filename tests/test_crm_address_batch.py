@@ -7597,18 +7597,21 @@ class CrmAddressServerTests(unittest.TestCase):
             state_path = Path(tmp) / "crm_processing_state.json"
             with mock.patch.object(server, "CRM_PROCESSING_STATE_FILE", str(state_path)):
                 server.ensure_crm_processing_state_file()
-                response = server.app.test_client().post(
-                    "/crm/process/preferences",
-                    json={
-                        "stock_unlocker_enabled": True,
-                        "address_validator_enabled": False,
-                        "product_separator_enabled": False,
-                        "order_goods_enabled": True,
-                        "processing_filter": "rush",
-                        "advanced_mode": "repeat",
-                        "repeat_interval_minutes": 10,
-                    },
-                )
+                # Route behavior is under test here, not optional remote-access
+                # authentication from this machine's local config.py.
+                with mock.patch.object(server, "APP_PIN_REQUIRED", False):
+                    response = server.app.test_client().post(
+                        "/crm/process/preferences",
+                        json={
+                            "stock_unlocker_enabled": True,
+                            "address_validator_enabled": False,
+                            "product_separator_enabled": False,
+                            "order_goods_enabled": True,
+                            "processing_filter": "rush",
+                            "advanced_mode": "repeat",
+                            "repeat_interval_minutes": 10,
+                        },
+                    )
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()

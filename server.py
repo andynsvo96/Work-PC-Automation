@@ -33,12 +33,20 @@ from PIL import Image, ImageDraw
 
 from automation_audit import AUDIT_LOG_FILE, log_automation_event, log_automation_result
 from app_security import load_app_security
+from clipboard_runtime import (
+    ClipboardPeerClient,
+    ClipboardRuntime,
+    PeerRequestAuthenticator,
+    UnsupportedClipboardAdapter,
+    create_platform_clipboard_adapter,
+)
 import config as config_module
 from credential_store import SHARED_QUEUE_CREDENTIAL_TARGET, credential_exists
 from node_preferences import load_node_preferences, update_node_preferences
 from platform_runtime import get_platform_snapshot, resolve_worker_count
 from runtime_paths import STATE_DIR, log_file as runtime_log_file
 from runtime_paths import resolve_runtime_file, result_file, state_file
+from routes.connectivity_routes import register_connectivity_routes
 from routes.system_routes import register_system_routes
 from routes.work_routes import register_work_routes
 from shared_queue import SharedQueueBlocked, SharedQueueConfig, SupabaseQueueClient
@@ -130,6 +138,17 @@ if REMOTE_ACCESS_MODE not in {"local", "tailscale"}:
 APP_PIN_REQUIRED = bool(getattr(config_module, "AUTOMATION_APP_PIN_REQUIRED", REMOTE_ACCESS_MODE == "tailscale"))
 SERVER_BIND_HOST = "127.0.0.1" if REMOTE_ACCESS_MODE == "tailscale" else "0.0.0.0"
 SERVER_PORT = 5123
+CLIPBOARD_PEER_URL = str(getattr(config_module, "AUTOMATION_CLIPBOARD_PEER_URL", "") or "").strip()
+CHROME_REMOTE_DESKTOP_URLS = {
+    "windows": str(
+        getattr(config_module, "CHROME_REMOTE_DESKTOP_WINDOWS_URL", "https://remotedesktop.google.com/access")
+        or "https://remotedesktop.google.com/access"
+    ).strip(),
+    "macos": str(
+        getattr(config_module, "CHROME_REMOTE_DESKTOP_MACOS_URL", "https://remotedesktop.google.com/access")
+        or "https://remotedesktop.google.com/access"
+    ).strip(),
+}
 SERVER_STARTED_AT = datetime.now()
 SERVER_START_GIT_STATE = get_git_version_state(SCRIPT_DIR)
 SERVER_APP_COMMIT = str(SERVER_START_GIT_STATE.get("commit") or "")
@@ -10834,6 +10853,8 @@ def _version_lock_allows_request(path):
         "/slack/lunch/cancel",
     }
     normalized = str(path or "").rstrip("/") or "/"
+    if normalized.startswith("/api/clipboard/peer/"):
+        return True
     if normalized in safe_paths:
         return True
     return normalized.startswith("/api/queue/") and normalized.endswith("/cancel")
@@ -10851,6 +10872,10 @@ def enforce_app_access_security():
                     "update_required": True,
                 }
             ), 409
+    # These machine-to-machine endpoints use timestamped HMAC authentication
+    # inside their route handlers instead of a browser session and CSRF token.
+    if request.path.startswith("/api/clipboard/peer/"):
+        return None
     if not APP_PIN_REQUIRED:
         return None
     initialize_app_security()
@@ -10936,6 +10961,35 @@ def api_auth_status():
 def api_auth_logout():
     session.clear()
     return jsonify({"success": True, "message": "Signed out."})
+
+
+def _clipboard_shared_secret():
+    security = initialize_app_security()
+    return security.session_secret if security is not None else ""
+
+
+def _update_clipboard_preference(enabled):
+    return update_node_preferences({"clipboard_auto_sync": bool(enabled)})
+
+
+try:
+    _clipboard_adapter = create_platform_clipboard_adapter()
+except Exception as exc:
+    logger.warning("Clipboard integration is unavailable: %s", exc)
+    _clipboard_adapter = UnsupportedClipboardAdapter()
+
+clipboard_peer_authenticator = PeerRequestAuthenticator(_clipboard_shared_secret)
+clipboard_peer_client = ClipboardPeerClient(CLIPBOARD_PEER_URL, clipboard_peer_authenticator)
+clipboard_runtime = ClipboardRuntime(
+    _clipboard_adapter,
+    clipboard_peer_client,
+    enabled=bool(load_node_preferences().get("clipboard_auto_sync")),
+    preference_updater=_update_clipboard_preference,
+)
+
+
+def authenticate_clipboard_peer_request(method, path, body, headers):
+    return clipboard_peer_authenticator.verify(method, path, body, headers)
 
 
 def open_control_panel():
@@ -11321,6 +11375,13 @@ register_system_routes(
     cancel_scheduled_power_tasks=cancel_scheduled_power_tasks,
 )
 
+register_connectivity_routes(
+    app,
+    clipboard_runtime=clipboard_runtime,
+    authenticate_peer_request=authenticate_clipboard_peer_request,
+    remote_desktop_urls=CHROME_REMOTE_DESKTOP_URLS,
+)
+
 
 def create_tray_icon():
     img = Image.new("RGB", (64, 64), "black")
@@ -11431,6 +11492,7 @@ def on_exit(icon, _item=None):
     cancel_power_countdown(audit=False)
     cancel_slack_lunch_break(audit=False)
     close_desktop_metrics_runtime()
+    clipboard_runtime.stop()
     if shared_queue_runtime is not None:
         shared_queue_runtime.stop()
     icon.stop()
@@ -11491,6 +11553,8 @@ if __name__ == "__main__":
     register_shared_queue_task_executors()
     start_version_monitor()
     initialize_shared_queue_runtime()
+    initialize_app_security()
+    clipboard_runtime.start()
     ensure_crm_state_file()
     ensure_crm_processing_state_file()
     kill_existing_server()

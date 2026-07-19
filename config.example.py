@@ -13,6 +13,17 @@ AUTOMATION_QUEUE_MODE = "local"
 AUTOMATION_REMOTE_ACCESS_MODE = "local"  # change to "tailscale" after setup
 AUTOMATION_APP_PIN_REQUIRED = AUTOMATION_REMOTE_ACCESS_MODE == "tailscale"
 
+# Cross-system clipboard. Each computer points to the other computer's
+# device-specific Tailscale Serve URL (configured on HTTPS port 8443).
+# Clipboard contents are never stored; automatic monitoring is toggled from
+# the control panel and saved only as a machine-local preference.
+AUTOMATION_CLIPBOARD_PEER_URL = ""
+
+# Chrome Remote Desktop links. The supported fallback opens the device list.
+# A stable target-specific URL may be placed here after confirming it works.
+CHROME_REMOTE_DESKTOP_WINDOWS_URL = "https://remotedesktop.google.com/access"
+CHROME_REMOTE_DESKTOP_MACOS_URL = "https://remotedesktop.google.com/access"
+
 # Paycom time clock URL.
 PAYCOM_URL = "https://www.paycomonline.net/v4/ee/web.php/timeclock/WEB04"
 PAYCOM_HOURS_URL = "https://www.paycomonline.net/v4/ee/web.php/timecard/WEB02#!timecard-view"
