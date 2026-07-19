@@ -101,6 +101,8 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .section-note-body p:last-child{margin-bottom:0}
 .notice{border:1px solid #cbd5e1;background:#f8fafc;border-radius:8px;padding:8px;margin:8px 0;font-size:13px}
 .version-gate-notice{display:none;border-color:#f59e0b;background:#fffbeb;color:#92400e;font-weight:700}
+.app-update-modal{max-width:560px}
+.app-update-details{margin-top:10px;white-space:pre-wrap}
 .rule-check-cell{text-align:center;min-width:72px}
 .rule-check-cell input[type=checkbox]{width:16px;height:16px;accent-color:#2563eb}
 .rules-note{min-width:260px}
@@ -253,6 +255,19 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 </div>
 <div id='platformCapabilityNotice' class='notice platform-capability-notice'>Windows only</div>
 <div id='versionGateNotice' class='notice version-gate-notice'></div>
+<div id='appUpdateModal' class='modal-backdrop' role='presentation'>
+  <div class='modal app-update-modal' role='dialog' aria-modal='true' aria-labelledby='appUpdateTitle'>
+    <div class='modal-title-row'>
+      <h2 id='appUpdateTitle'>Update Available</h2>
+    </div>
+    <p id='appUpdateMessage'>This computer must update before another automation can start.</p>
+    <div class='suite-output app-update-details' id='appUpdateDetails'></div>
+    <div class='modal-actions'>
+      <button class='secondary' id='appUpdateDismissBtn' type='button' onclick='dismissAppUpdateModal()'>Later</button>
+      <button id='appUpdateNowBtn' type='button' onclick='updateAppNow(this)'>Update Now</button>
+    </div>
+  </div>
+</div>
 
 <div id='queuePanel' class='queue-panel'>
   <div class='queue-header'>
@@ -1151,6 +1166,8 @@ let queuePayload = null;
 let queueExpandedTaskId = null;
 let nodeRuntimePayload = null;
 let clipboardStatusPayload = null;
+let dismissedAppUpdateTarget = null;
+let appUpdateInProgress = false;
 let queueDragTaskId = null;
 let settingsSaveTimer = null;
 let settingsSavePromise = Promise.resolve();
@@ -2499,14 +2516,16 @@ function renderNodeRuntime(payload) {
   const settings = nodeRuntimePayload.worker_settings || {};
   const recommendation = settings.recommendation || {};
   const git = nodeRuntimePayload.git || {};
+  const appUpdate = nodeRuntimePayload.app_update || {};
   const versionNotice = document.getElementById('versionGateNotice');
-  const versionBlocked = nodeRuntimePayload.version_eligible === false;
+  const versionBlocked = Boolean(appUpdate.required || nodeRuntimePayload.version_eligible === false);
   if (versionNotice) {
     versionNotice.style.display = versionBlocked ? 'block' : 'none';
     versionNotice.textContent = versionBlocked
-      ? (nodeRuntimePayload.version_block_reason || 'Update required. Run Safe Sync & Start before starting another automation.')
+      ? (appUpdate.reason || nodeRuntimePayload.version_block_reason || 'Update required before starting another automation.')
       : '';
   }
+  renderAppUpdateState(appUpdate);
   const summary = document.getElementById('nodeHardwareSummary');
   if (summary) {
     const rows = [
@@ -2529,6 +2548,106 @@ function renderNodeRuntime(payload) {
   if (queuePayload) renderControlTargetNodes(Array.isArray(queuePayload.nodes) ? queuePayload.nodes : []);
   applyPlatformCapabilities();
   syncWorkerModeControls();
+}
+
+function appUpdateIdentity(update) {
+  return String(update && (update.target_commit || update.reason) || 'update-required');
+}
+
+function renderAppUpdateState(update) {
+  const modal = document.getElementById('appUpdateModal');
+  const message = document.getElementById('appUpdateMessage');
+  const details = document.getElementById('appUpdateDetails');
+  const updateButton = document.getElementById('appUpdateNowBtn');
+  const dismissButton = document.getElementById('appUpdateDismissBtn');
+  if (!modal) return;
+  if (!update || !update.required) {
+    modal.classList.remove('active');
+    dismissedAppUpdateTarget = null;
+    appUpdateInProgress = false;
+    return;
+  }
+  if (appUpdateInProgress) return;
+
+  const automatic = Boolean(update.automatic_available);
+  const current = update.current_short_commit || 'unknown';
+  const target = update.target_short_commit || 'unknown';
+  if (message) {
+    message.textContent = automatic
+      ? 'This computer must update before another automation can start.'
+      : 'This checkout needs manual Git attention before it can update safely.';
+  }
+  if (details) details.textContent = `${update.reason || 'Update required.'}\nCurrent: ${current}\nAvailable: ${target}`;
+  if (updateButton) {
+    updateButton.disabled = !automatic;
+    updateButton.textContent = automatic ? 'Update Now' : 'Manual Update Required';
+  }
+  if (dismissButton) dismissButton.disabled = false;
+  if (dismissedAppUpdateTarget !== appUpdateIdentity(update)) modal.classList.add('active');
+}
+
+function dismissAppUpdateModal() {
+  const update = nodeRuntimePayload && nodeRuntimePayload.app_update ? nodeRuntimePayload.app_update : {};
+  dismissedAppUpdateTarget = appUpdateIdentity(update);
+  const modal = document.getElementById('appUpdateModal');
+  if (modal) modal.classList.remove('active');
+}
+
+function appUpdateDelay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitForUpdatedApp(targetCommit) {
+  const deadline = Date.now() + 150000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`/api/node-runtime?update_check=${Date.now()}`, {cache: 'no-store'});
+      if (response.ok) {
+        const payload = await response.json();
+        const update = payload && payload.app_update ? payload.app_update : {};
+        const currentCommit = String(payload && payload.git && payload.git.commit || '');
+        if (!update.required && payload.version_eligible !== false && (!targetCommit || currentCommit === targetCommit)) {
+          window.location.reload();
+          return;
+        }
+      }
+    } catch (_) {
+      // Expected briefly while the old server exits and the updated server starts.
+    }
+    await appUpdateDelay(1500);
+  }
+  throw new Error('The app did not return within 150 seconds. Run Safe Sync & Start manually, then refresh this page.');
+}
+
+async function updateAppNow(button = null) {
+  const update = nodeRuntimePayload && nodeRuntimePayload.app_update ? nodeRuntimePayload.app_update : {};
+  if (!update.automatic_available || appUpdateInProgress) return;
+  appUpdateInProgress = true;
+  const dismissButton = document.getElementById('appUpdateDismissBtn');
+  const message = document.getElementById('appUpdateMessage');
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Starting Update...';
+  }
+  if (dismissButton) dismissButton.disabled = true;
+  if (message) message.textContent = 'Safe Sync is updating and restarting this computer. Keep this page open.';
+  try {
+    const result = await api('/api/app/update', {method: 'POST'});
+    if (!result.restarting) {
+      window.location.reload();
+      return;
+    }
+    if (button) button.textContent = 'Updating...';
+    await waitForUpdatedApp(String(update.target_commit || ''));
+  } catch (error) {
+    appUpdateInProgress = false;
+    if (message) message.textContent = 'Update could not finish: ' + error.message;
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Try Update Again';
+    }
+    if (dismissButton) dismissButton.disabled = false;
+  }
 }
 
 async function loadNodeRuntime(showBusy = false) {

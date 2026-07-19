@@ -20,6 +20,7 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - Supports Safe Sync & Start on both operating systems, a macOS LaunchAgent, a Supabase-backed global FIFO queue, and a PIN-protected Android control board over Tailscale.
 - Supports authenticated manual and opt-in automatic text/PNG clipboard transfer between Windows and macOS without persisting clipboard contents.
 - Checks GitHub before every supported startup and fast-forwards a clean checkout before loading the app.
+- Shows an in-app update warning and can safely run Safe Sync & Start with one click when the checkout is clean and behind.
 - Locks Windows browsers to the Windows node and Mac browsers to the Mac node; Android retains the cross-device target picker.
 - Shows vector OS icons and can clear finished shared queue history without touching running or waiting tasks.
 

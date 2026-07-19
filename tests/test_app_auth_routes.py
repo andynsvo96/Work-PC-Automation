@@ -52,5 +52,14 @@ class AppAuthRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["success"])
 
+    def test_app_update_requires_login_and_csrf(self):
+        response = self.client.post("/api/app/update")
+        self.assertEqual(response.status_code, 401)
+
+        login = self.client.post("/api/auth/login", json={"pin": "123456"})
+        self.assertEqual(login.status_code, 200)
+        response = self.client.post("/api/app/update")
+        self.assertEqual(response.status_code, 403)
+
 if __name__ == "__main__":
     unittest.main()

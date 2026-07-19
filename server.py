@@ -1438,6 +1438,31 @@ def _automation_version_block_reason():
     return str(get_version_monitor_state().get("block_reason") or "").strip()
 
 
+def get_app_update_payload(git_state=None):
+    git_state = dict(git_state or get_git_version_state(SCRIPT_DIR))
+    reason = _automation_version_block_reason() or _git_update_block_reason(git_state) or ""
+    relation = str(git_state.get("relation") or "unknown").strip().lower()
+    automatic_available = bool(
+        reason
+        and git_state.get("available")
+        and not git_state.get("dirty")
+        and relation in {"behind", "current"}
+    )
+    origin_commit = str(git_state.get("origin_commit") or "").strip()
+    checkout_commit = str(git_state.get("commit") or "").strip()
+    return {
+        "required": bool(reason),
+        "automatic_available": automatic_available,
+        "reason": reason or None,
+        "relation": relation,
+        "loaded_commit": str(SERVER_APP_COMMIT or "") or None,
+        "checkout_commit": checkout_commit or None,
+        "target_commit": origin_commit or None,
+        "current_short_commit": (checkout_commit or str(SERVER_APP_COMMIT or ""))[:8] or None,
+        "target_short_commit": origin_commit[:8] or None,
+    }
+
+
 def refresh_remote_version_state():
     try:
         git_state = refresh_origin_main(SCRIPT_DIR)
@@ -1610,6 +1635,7 @@ def get_node_runtime_payload():
         "version_eligible": version_eligible,
         "version_block_reason": version_block_reason or None,
         "version_monitor": get_version_monitor_state(),
+        "app_update": get_app_update_payload(git_state),
         "windows_only_message": "Windows only",
         "queue": _shared_queue_state_payload(),
     }
@@ -10835,6 +10861,7 @@ def _version_lock_allows_request(path):
     safe_paths = {
         "/api/auth/login",
         "/api/auth/logout",
+        "/api/app/update",
         "/automation/force-stop",
         "/api/queue/cancel-all",
         "/api/queue/clear-finished",
@@ -11045,6 +11072,52 @@ def api_node_runtime():
         return jsonify(payload)
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
+
+
+def _schedule_app_update_restart(delay_seconds=0.75):
+    def _launch():
+        time.sleep(max(0.0, float(delay_seconds)))
+        ok, message = _restart_server_process()
+        if not ok:
+            logger.error("App update restart failed: %s", message)
+
+    threading.Thread(target=_launch, name="app-update-restart", daemon=True).start()
+
+
+@app.route("/api/app/update", methods=["POST"])
+def api_app_update():
+    try:
+        monitor = refresh_remote_version_state()
+        git_state = monitor.get("git") if isinstance(monitor, dict) else None
+        update = get_app_update_payload(git_state)
+        if not update.get("required"):
+            return jsonify({"success": True, "restarting": False, "message": "This computer is already current.", "app_update": update})
+        if not update.get("automatic_available"):
+            return jsonify({
+                "success": False,
+                "manual_required": True,
+                "message": "Automatic update is unavailable for this Git state. Resolve local changes or branch divergence first.",
+                "app_update": update,
+            }), 409
+
+        queue = get_automation_queue_payload()
+        if int(queue.get("running_count") or 0) > 0:
+            return jsonify({"success": False, "retryable": True, "message": "Wait for the running automation to finish before updating."}), 409
+        if get_power_countdown_payload().get("active"):
+            return jsonify({"success": False, "retryable": True, "message": "Cancel the active power countdown before updating."}), 409
+        if get_slack_lunch_payload().get("active"):
+            return jsonify({"success": False, "retryable": True, "message": "Finish or cancel the active Slack lunch timer before updating."}), 409
+
+        _schedule_app_update_restart()
+        return jsonify({
+            "success": True,
+            "restarting": True,
+            "message": "Update started. Safe Sync will restart the app automatically.",
+            "app_update": update,
+        }), 202
+    except Exception as exc:
+        logger.exception("Could not start app update")
+        return jsonify({"success": False, "message": f"Could not start update: {exc}"}), 500
 
 
 @app.route("/api/worker-settings", methods=["POST"])

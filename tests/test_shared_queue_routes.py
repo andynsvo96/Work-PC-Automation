@@ -182,6 +182,67 @@ class SharedQueueRouteTests(unittest.TestCase):
 
         self.assertIn("behind origin/main", state["block_reason"])
 
+    def test_update_endpoint_starts_safe_restart_for_clean_behind_checkout(self):
+        git_state = {
+            "available": True,
+            "dirty": False,
+            "relation": "behind",
+            "commit": "old-commit",
+            "origin_commit": "new-commit",
+        }
+        with (
+            mock.patch("server.refresh_remote_version_state", return_value={"git": git_state}),
+            mock.patch("server._automation_version_block_reason", return_value="Update required: behind origin/main."),
+            mock.patch("server.get_automation_queue_payload", return_value={"running_count": 0}),
+            mock.patch("server.get_power_countdown_payload", return_value={"active": False}),
+            mock.patch("server.get_slack_lunch_payload", return_value={"active": False}),
+            mock.patch("server._schedule_app_update_restart") as schedule,
+        ):
+            response = self.client.post("/api/app/update")
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.get_json()["restarting"])
+        schedule.assert_called_once_with()
+
+    def test_update_endpoint_waits_for_running_automation(self):
+        git_state = {
+            "available": True,
+            "dirty": False,
+            "relation": "behind",
+            "commit": "old-commit",
+            "origin_commit": "new-commit",
+        }
+        with (
+            mock.patch("server.refresh_remote_version_state", return_value={"git": git_state}),
+            mock.patch("server._automation_version_block_reason", return_value="Update required: behind origin/main."),
+            mock.patch("server.get_automation_queue_payload", return_value={"running_count": 1}),
+            mock.patch("server._schedule_app_update_restart") as schedule,
+        ):
+            response = self.client.post("/api/app/update")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(response.get_json()["retryable"])
+        schedule.assert_not_called()
+
+    def test_update_endpoint_refuses_dirty_checkout(self):
+        git_state = {
+            "available": True,
+            "dirty": True,
+            "relation": "behind",
+            "commit": "old-commit",
+            "origin_commit": "new-commit",
+        }
+        with (
+            mock.patch("server.refresh_remote_version_state", return_value={"git": git_state}),
+            mock.patch("server._automation_version_block_reason", return_value="Update required: local changes."),
+            mock.patch("server._schedule_app_update_restart") as schedule,
+        ):
+            response = self.client.post("/api/app/update")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(response.get_json()["manual_required"])
+        schedule.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
