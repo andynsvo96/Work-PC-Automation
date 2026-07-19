@@ -312,6 +312,25 @@ class SharedQueueRouteTests(unittest.TestCase):
 
         self.assertFalse(scheduled)
         schedule.assert_not_called()
+        self.assertEqual(server.version_monitor_state["automatic_wait_reason"], "Automation is running.")
+
+    def test_automatic_update_scheduler_clears_wait_reason_when_safe(self):
+        server.version_monitor_state["automatic_wait_reason"] = "Automation is running."
+        update = {
+            "automatic_available": True,
+            "current_short_commit": "old",
+            "target_short_commit": "new",
+        }
+        with (
+            mock.patch("server._automatic_app_updates_enabled", return_value=True),
+            mock.patch("server.get_app_update_payload", return_value=update),
+            mock.patch("server._app_update_safety_block_reason", return_value=None),
+            mock.patch("server._schedule_app_update_restart", return_value=True),
+        ):
+            scheduled = server._maybe_schedule_automatic_app_update({"relation": "behind"})
+
+        self.assertTrue(scheduled)
+        self.assertIsNone(server.version_monitor_state["automatic_wait_reason"])
 
     def test_automatic_update_scheduler_does_not_run_after_refresh_error(self):
         with mock.patch("server._schedule_app_update_restart") as schedule:

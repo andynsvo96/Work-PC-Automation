@@ -1194,6 +1194,7 @@ let tempThresholdsC = loadTemperatureThresholdsPreference();
 let manualAutoOutTouched = false;
 let workHoursStatusPayload = null;
 let workHoursTickTimer = null;
+let appUpdateFastPollAt = 0;
 const WORK_PLAN_STORAGE_PREFIX = 'automation.workPlan.';
 const WORK_PLAN_DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const workPlanMemory = {};
@@ -2575,21 +2576,22 @@ function renderAppUpdateState(update) {
   const automatic = Boolean(update.automatic_available);
   const automaticEnabled = update.automatic_enabled !== false;
   const unattended = automatic && automaticEnabled;
+  const waitingReason = String(update.automatic_wait_reason || '').trim();
   const serverManaged = Object.prototype.hasOwnProperty.call(update, 'automatic_enabled');
   const current = update.current_short_commit || 'unknown';
   const target = update.target_short_commit || 'unknown';
   if (message) {
     message.textContent = unattended
-      ? 'This computer will update and restart automatically as soon as it is safe.'
+      ? (waitingReason || 'This computer will update and restart automatically as soon as it is safe.')
       : automatic
         ? 'This computer must update before another automation can start.'
       : 'This checkout needs manual Git attention before it can update safely.';
   }
-  if (details) details.textContent = `${update.reason || 'Update required.'}\nCurrent: ${current}\nAvailable: ${target}${unattended ? '\nMode: Automatic' : ''}`;
+  if (details) details.textContent = `${update.reason || 'Update required.'}\nCurrent: ${current}\nAvailable: ${target}${unattended ? '\nMode: Automatic' : ''}${waitingReason ? `\nStatus: ${waitingReason}` : ''}`;
   if (updateButton) {
     updateButton.disabled = !automatic || unattended;
     updateButton.textContent = unattended
-      ? (update.automatic_scheduled ? 'Updating Automatically...' : 'Automatic Update Pending')
+      ? (update.automatic_scheduled ? 'Updating Automatically...' : (waitingReason ? 'Waiting Safely...' : 'Automatic Update Pending'))
       : (automatic ? 'Update Now' : 'Manual Update Required');
   }
   if (dismissButton) dismissButton.disabled = false;
@@ -7440,6 +7442,16 @@ if (!UI_OPENED_FROM_FILE) {
       loadConsoleLog(false);
     }
     loadClipboardStatus();
+    const pendingUpdate = nodeRuntimePayload && nodeRuntimePayload.app_update ? nodeRuntimePayload.app_update : {};
+    if (
+      pendingUpdate.required
+      && pendingUpdate.automatic_available
+      && pendingUpdate.automatic_enabled !== false
+      && Date.now() - appUpdateFastPollAt >= 10000
+    ) {
+      appUpdateFastPollAt = Date.now();
+      loadNodeRuntime(false);
+    }
     if (queueVisible || (queuePayload && (queuePayload.running_count || queuePayload.queued_count || queuePayload.idle_count))) {
       loadQueue(false);
     }

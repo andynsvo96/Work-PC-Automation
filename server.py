@@ -363,7 +363,10 @@ shared_queue_runtime = None
 shared_queue_initialization_error = None
 VERSION_CHECK_INTERVAL_SECONDS = max(
     15.0,
-    float(getattr(config_module, "AUTOMATION_VERSION_CHECK_INTERVAL_SECONDS", 60) or 60),
+    # A 30-second Git check is responsive without continuously spawning Git
+    # processes on either computer.  The UI only polls faster while a clean
+    # automatic update is already pending.
+    float(getattr(config_module, "AUTOMATION_VERSION_CHECK_INTERVAL_SECONDS", 30) or 30),
 )
 version_monitor_lock = threading.RLock()
 version_monitor_stop = threading.Event()
@@ -375,6 +378,7 @@ version_monitor_state = {
     "last_checked_at": None,
     "last_error": None,
     "block_reason": None,
+    "automatic_wait_reason": None,
     "git": None,
 }
 DAY_NAMES = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
@@ -1455,11 +1459,14 @@ def get_app_update_payload(git_state=None):
     checkout_commit = str(git_state.get("commit") or "").strip()
     with app_update_restart_lock:
         automatic_scheduled = bool(app_update_restart_scheduled)
+    with version_monitor_lock:
+        automatic_wait_reason = str(version_monitor_state.get("automatic_wait_reason") or "").strip()
     return {
         "required": bool(reason),
         "automatic_enabled": _automatic_app_updates_enabled(),
         "automatic_available": automatic_available,
         "automatic_scheduled": automatic_scheduled,
+        "automatic_wait_reason": automatic_wait_reason or None,
         "reason": reason or None,
         "relation": relation,
         "loaded_commit": str(SERVER_APP_COMMIT or "") or None,
@@ -1473,6 +1480,11 @@ def get_app_update_payload(git_state=None):
 def _automatic_app_updates_enabled():
     value = getattr(config_module, "AUTOMATION_AUTO_UPDATE_ENABLED", True)
     return value if isinstance(value, bool) else _is_trueish(value)
+
+
+def _set_automatic_update_wait_reason(reason=None):
+    with version_monitor_lock:
+        version_monitor_state["automatic_wait_reason"] = str(reason or "").strip() or None
 
 
 def refresh_remote_version_state():
@@ -11156,11 +11168,14 @@ def _maybe_schedule_automatic_app_update(git_state=None, *, refresh_error=None):
         return False
     update = get_app_update_payload(git_state)
     if not update.get("automatic_available"):
+        _set_automatic_update_wait_reason()
         return False
     block_reason = _app_update_safety_block_reason()
     if block_reason:
+        _set_automatic_update_wait_reason(block_reason)
         logger.info("Automatic app update deferred: %s", block_reason)
         return False
+    _set_automatic_update_wait_reason()
     scheduled = _schedule_app_update_restart(delay_seconds=2.0)
     if scheduled:
         logger.info(
