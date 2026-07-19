@@ -93,6 +93,8 @@ def _start_server(repo_dir, block_reason=""):
     env["AUTOMATION_SAFE_SYNC_COMPLETED"] = "1"
     if block_reason:
         env["AUTOMATION_VERSION_BLOCK_REASON"] = block_reason
+    else:
+        env.pop("AUTOMATION_VERSION_BLOCK_REASON", None)
     python_executable = sys.executable
     server_path = os.path.join(repo_dir, "server.py")
     os.execve(python_executable, [python_executable, server_path], env)

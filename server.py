@@ -368,6 +368,8 @@ VERSION_CHECK_INTERVAL_SECONDS = max(
 version_monitor_lock = threading.RLock()
 version_monitor_stop = threading.Event()
 version_monitor_thread = None
+app_update_restart_lock = threading.RLock()
+app_update_restart_scheduled = False
 version_monitor_state = {
     "last_checked_at": None,
     "last_error": None,
@@ -1450,9 +1452,13 @@ def get_app_update_payload(git_state=None):
     )
     origin_commit = str(git_state.get("origin_commit") or "").strip()
     checkout_commit = str(git_state.get("commit") or "").strip()
+    with app_update_restart_lock:
+        automatic_scheduled = bool(app_update_restart_scheduled)
     return {
         "required": bool(reason),
+        "automatic_enabled": _automatic_app_updates_enabled(),
         "automatic_available": automatic_available,
+        "automatic_scheduled": automatic_scheduled,
         "reason": reason or None,
         "relation": relation,
         "loaded_commit": str(SERVER_APP_COMMIT or "") or None,
@@ -1461,6 +1467,11 @@ def get_app_update_payload(git_state=None):
         "current_short_commit": (checkout_commit or str(SERVER_APP_COMMIT or ""))[:8] or None,
         "target_short_commit": origin_commit[:8] or None,
     }
+
+
+def _automatic_app_updates_enabled():
+    value = getattr(config_module, "AUTOMATION_AUTO_UPDATE_ENABLED", True)
+    return value if isinstance(value, bool) else _is_trueish(value)
 
 
 def refresh_remote_version_state():
@@ -1490,7 +1501,11 @@ def refresh_remote_version_state():
 
 def _version_monitor_loop():
     while not version_monitor_stop.is_set():
-        refresh_remote_version_state()
+        monitor = refresh_remote_version_state()
+        try:
+            _maybe_schedule_automatic_app_update(monitor.get("git"), refresh_error=monitor.get("last_error"))
+        except Exception as exc:
+            logger.warning("Could not schedule automatic app update: %s", exc)
         if version_monitor_stop.wait(VERSION_CHECK_INTERVAL_SECONDS):
             break
 
@@ -11097,14 +11112,57 @@ def api_node_runtime():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
+def _app_update_safety_block_reason():
+    if AUTOMATION_QUEUE_MODE == "shared" and shared_queue_runtime is None:
+        return "Waiting for the shared queue coordinator to start."
+    queue = get_automation_queue_payload()
+    if int(queue.get("running_count") or 0) > 0:
+        return "Waiting for the running automation to finish before updating."
+    if get_power_countdown_payload().get("active"):
+        return "Waiting for the active power countdown to finish or be canceled."
+    if get_slack_lunch_payload().get("active"):
+        return "Waiting for the active Slack lunch timer to finish or be canceled."
+    return None
+
+
 def _schedule_app_update_restart(delay_seconds=0.75):
+    global app_update_restart_scheduled
+    with app_update_restart_lock:
+        if app_update_restart_scheduled:
+            return False
+        app_update_restart_scheduled = True
+
     def _launch():
+        global app_update_restart_scheduled
         time.sleep(max(0.0, float(delay_seconds)))
         ok, message = _restart_server_process()
         if not ok:
             logger.error("App update restart failed: %s", message)
+            with app_update_restart_lock:
+                app_update_restart_scheduled = False
 
     threading.Thread(target=_launch, name="app-update-restart", daemon=True).start()
+    return True
+
+
+def _maybe_schedule_automatic_app_update(git_state=None, *, refresh_error=None):
+    if not _automatic_app_updates_enabled() or refresh_error:
+        return False
+    update = get_app_update_payload(git_state)
+    if not update.get("automatic_available"):
+        return False
+    block_reason = _app_update_safety_block_reason()
+    if block_reason:
+        logger.info("Automatic app update deferred: %s", block_reason)
+        return False
+    scheduled = _schedule_app_update_restart(delay_seconds=2.0)
+    if scheduled:
+        logger.info(
+            "Automatic app update scheduled: %s -> %s",
+            update.get("current_short_commit") or "unknown",
+            update.get("target_short_commit") or "unknown",
+        )
+    return scheduled
 
 
 @app.route("/api/app/update", methods=["POST"])
@@ -11123,13 +11181,9 @@ def api_app_update():
                 "app_update": update,
             }), 409
 
-        queue = get_automation_queue_payload()
-        if int(queue.get("running_count") or 0) > 0:
-            return jsonify({"success": False, "retryable": True, "message": "Wait for the running automation to finish before updating."}), 409
-        if get_power_countdown_payload().get("active"):
-            return jsonify({"success": False, "retryable": True, "message": "Cancel the active power countdown before updating."}), 409
-        if get_slack_lunch_payload().get("active"):
-            return jsonify({"success": False, "retryable": True, "message": "Finish or cancel the active Slack lunch timer before updating."}), 409
+        safety_block = _app_update_safety_block_reason()
+        if safety_block:
+            return jsonify({"success": False, "retryable": True, "message": safety_block}), 409
 
         _schedule_app_update_restart()
         return jsonify({

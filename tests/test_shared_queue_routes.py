@@ -284,6 +284,45 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertTrue(response.get_json()["manual_required"])
         schedule.assert_not_called()
 
+    def test_automatic_update_scheduler_restarts_clean_idle_checkout(self):
+        update = {
+            "automatic_available": True,
+            "current_short_commit": "old",
+            "target_short_commit": "new",
+        }
+        with (
+            mock.patch("server._automatic_app_updates_enabled", return_value=True),
+            mock.patch("server.get_app_update_payload", return_value=update),
+            mock.patch("server._app_update_safety_block_reason", return_value=None),
+            mock.patch("server._schedule_app_update_restart", return_value=True) as schedule,
+        ):
+            scheduled = server._maybe_schedule_automatic_app_update({"relation": "behind"})
+
+        self.assertTrue(scheduled)
+        schedule.assert_called_once_with(delay_seconds=2.0)
+
+    def test_automatic_update_scheduler_waits_while_automation_is_active(self):
+        with (
+            mock.patch("server._automatic_app_updates_enabled", return_value=True),
+            mock.patch("server.get_app_update_payload", return_value={"automatic_available": True}),
+            mock.patch("server._app_update_safety_block_reason", return_value="Automation is running."),
+            mock.patch("server._schedule_app_update_restart") as schedule,
+        ):
+            scheduled = server._maybe_schedule_automatic_app_update({"relation": "behind"})
+
+        self.assertFalse(scheduled)
+        schedule.assert_not_called()
+
+    def test_automatic_update_scheduler_does_not_run_after_refresh_error(self):
+        with mock.patch("server._schedule_app_update_restart") as schedule:
+            scheduled = server._maybe_schedule_automatic_app_update(
+                {"relation": "behind"},
+                refresh_error="network unavailable",
+            )
+
+        self.assertFalse(scheduled)
+        schedule.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

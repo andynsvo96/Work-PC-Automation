@@ -2570,20 +2570,28 @@ function renderAppUpdateState(update) {
   if (appUpdateInProgress) return;
 
   const automatic = Boolean(update.automatic_available);
+  const automaticEnabled = update.automatic_enabled !== false;
+  const unattended = automatic && automaticEnabled;
+  const serverManaged = Object.prototype.hasOwnProperty.call(update, 'automatic_enabled');
   const current = update.current_short_commit || 'unknown';
   const target = update.target_short_commit || 'unknown';
   if (message) {
-    message.textContent = automatic
-      ? 'This computer must update before another automation can start.'
+    message.textContent = unattended
+      ? 'This computer will update and restart automatically as soon as it is safe.'
+      : automatic
+        ? 'This computer must update before another automation can start.'
       : 'This checkout needs manual Git attention before it can update safely.';
   }
-  if (details) details.textContent = `${update.reason || 'Update required.'}\nCurrent: ${current}\nAvailable: ${target}`;
+  if (details) details.textContent = `${update.reason || 'Update required.'}\nCurrent: ${current}\nAvailable: ${target}${unattended ? '\nMode: Automatic' : ''}`;
   if (updateButton) {
-    updateButton.disabled = !automatic;
-    updateButton.textContent = automatic ? 'Update Now' : 'Manual Update Required';
+    updateButton.disabled = !automatic || unattended;
+    updateButton.textContent = unattended
+      ? (update.automatic_scheduled ? 'Updating Automatically...' : 'Automatic Update Pending')
+      : (automatic ? 'Update Now' : 'Manual Update Required');
   }
   if (dismissButton) dismissButton.disabled = false;
   if (dismissedAppUpdateTarget !== appUpdateIdentity(update)) modal.classList.add('active');
+  if (unattended && !serverManaged && !appUpdateInProgress) void updateAppNow(updateButton);
 }
 
 function dismissAppUpdateModal() {

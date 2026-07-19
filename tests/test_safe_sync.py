@@ -56,11 +56,15 @@ class SafeSyncTests(unittest.TestCase):
         self.assertEqual(mock_run.call_args_list[1].args[1:], ("pull", "--ff-only", "origin", "main"))
 
     def test_start_marks_safe_sync_complete_for_server(self):
-        with mock.patch("safe_sync.os.execve") as execve:
+        with (
+            mock.patch.dict(safe_sync.os.environ, {"AUTOMATION_VERSION_BLOCK_REASON": "old error"}),
+            mock.patch("safe_sync.os.execve") as execve,
+        ):
             safe_sync._start_server("/automation")
 
         environment = execve.call_args.args[2]
         self.assertEqual(environment["AUTOMATION_SAFE_SYNC_COMPLETED"], "1")
+        self.assertNotIn("AUTOMATION_VERSION_BLOCK_REASON", environment)
         self.assertEqual(
             execve.call_args.args[1],
             [safe_sync.sys.executable, safe_sync.os.path.join("/automation", "server.py")],
