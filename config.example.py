@@ -19,11 +19,6 @@ AUTOMATION_APP_PIN_REQUIRED = AUTOMATION_REMOTE_ACCESS_MODE == "tailscale"
 # the control panel and saved only as a machine-local preference.
 AUTOMATION_CLIPBOARD_PEER_URL = ""
 
-# Chrome Remote Desktop links. The supported fallback opens the device list.
-# A stable target-specific URL may be placed here after confirming it works.
-CHROME_REMOTE_DESKTOP_WINDOWS_URL = "https://remotedesktop.google.com/access"
-CHROME_REMOTE_DESKTOP_MACOS_URL = "https://remotedesktop.google.com/access"
-
 # Paycom time clock URL.
 PAYCOM_URL = "https://www.paycomonline.net/v4/ee/web.php/timeclock/WEB04"
 PAYCOM_HOURS_URL = "https://www.paycomonline.net/v4/ee/web.php/timecard/WEB02#!timecard-view"

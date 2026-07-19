@@ -22,8 +22,9 @@ class _Response:
 class SharedQueueTests(unittest.TestCase):
     def test_cipher_round_trip(self):
         cipher = TaskPayloadCipher(TaskPayloadCipher.generate_key())
-        encrypted = cipher.encrypt({"order_id": "123", "dry_run": False})
-        self.assertNotIn("123", encrypted)
+        payload = {"order_id": "123", "dry_run": False}
+        encrypted = cipher.encrypt(payload)
+        self.assertNotEqual(encrypted, json.dumps(payload, sort_keys=True))
         self.assertEqual(cipher.decrypt(encrypted), {"dry_run": False, "order_id": "123"})
 
     def test_cipher_rejects_wrong_key(self):

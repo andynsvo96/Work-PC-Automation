@@ -1,4 +1,4 @@
-"""Cross-device clipboard and remote-access route registration."""
+"""Cross-device clipboard route registration."""
 
 from flask import jsonify, request
 
@@ -13,7 +13,6 @@ def register_connectivity_routes(
     *,
     clipboard_runtime,
     authenticate_peer_request,
-    remote_desktop_urls,
 ):
     def _peer_authenticated():
         if request.content_length and request.content_length > MAX_PEER_REQUEST_BYTES:
@@ -106,7 +105,3 @@ def register_connectivity_routes(
             return jsonify({"success": False, "message": str(exc)}), 409
         except Exception:
             return jsonify({"success": False, "message": "Peer clipboard could not be applied."}), 500
-
-    @app.route("/api/remote-control/options", methods=["GET"])
-    def api_remote_control_options():
-        return jsonify({"success": True, "urls": dict(remote_desktop_urls or {})})

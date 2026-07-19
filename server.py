@@ -139,16 +139,6 @@ APP_PIN_REQUIRED = bool(getattr(config_module, "AUTOMATION_APP_PIN_REQUIRED", RE
 SERVER_BIND_HOST = "127.0.0.1" if REMOTE_ACCESS_MODE == "tailscale" else "0.0.0.0"
 SERVER_PORT = 5123
 CLIPBOARD_PEER_URL = str(getattr(config_module, "AUTOMATION_CLIPBOARD_PEER_URL", "") or "").strip()
-CHROME_REMOTE_DESKTOP_URLS = {
-    "windows": str(
-        getattr(config_module, "CHROME_REMOTE_DESKTOP_WINDOWS_URL", "https://remotedesktop.google.com/access")
-        or "https://remotedesktop.google.com/access"
-    ).strip(),
-    "macos": str(
-        getattr(config_module, "CHROME_REMOTE_DESKTOP_MACOS_URL", "https://remotedesktop.google.com/access")
-        or "https://remotedesktop.google.com/access"
-    ).strip(),
-}
 SERVER_STARTED_AT = datetime.now()
 SERVER_START_GIT_STATE = get_git_version_state(SCRIPT_DIR)
 SERVER_APP_COMMIT = str(SERVER_START_GIT_STATE.get("commit") or "")
@@ -11379,7 +11369,6 @@ register_connectivity_routes(
     app,
     clipboard_runtime=clipboard_runtime,
     authenticate_peer_request=authenticate_clipboard_peer_request,
-    remote_desktop_urls=CHROME_REMOTE_DESKTOP_URLS,
 )
 
 

@@ -20,7 +20,7 @@ chmod +x setup_mac.sh setup_tailscale_mac.sh "Sync & Start Mac.command"
 ./setup_mac.sh
 ```
 
-Copy the Windows `config.py` values into the Mac's local `config.py`; keep `config.py` uncommitted. Metrics and System Power remain disabled on macOS with “Windows only.”
+Copy the Windows `config.py` values into the Mac's local `config.py`; keep `config.py` uncommitted. Desktop Metrics and the power-action cards remain Windows only; cross-system clipboard controls remain available on macOS.
 
 Import the shared PIN bundle, then delete it:
 
@@ -98,24 +98,13 @@ AUTOMATION_CLIPBOARD_PEER_URL = "https://YOUR-MAC.YOUR-TAILNET.ts.net:8443"
 AUTOMATION_CLIPBOARD_PEER_URL = "https://YOUR-WINDOWS-PC.YOUR-TAILNET.ts.net:8443"
 ```
 
-Restart Safe Sync & Start on both computers. The Communications tab then provides:
+Restart Safe Sync & Start on both computers. The **System Controls** tab then provides:
 
 - **Send to Other Computer** and **Get from Other Computer** for deliberate text or PNG image transfer, even when automatic sync is off.
 - A machine-local **Automatic Sync** toggle. Automatic two-way monitoring becomes active only when both computers enable it.
 - Connection and last-sync metadata without recording clipboard contents.
 
 The same shared app-security bundle must remain installed on both computers. It supplies the server-to-server authentication secret. Requests are timestamped, signed, replay-protected, restricted to 1 MB of text or 8 MB PNG images, and carried only through the private Tailscale endpoint. Clipboard contents are not written to logs, state files, Supabase, or Git.
-
-### Chrome Remote Desktop
-
-Install and configure unattended Chrome Remote Desktop access on both computers using the same authorized Google account. The Communications tab shows **Control Mac** on Windows and **Control Windows** on macOS. The supported default opens `https://remotedesktop.google.com/access`; Google may still require selecting the computer and entering its PIN. The Automation app never stores or types that PIN.
-
-If Google exposes a stable target-specific URL and it works after a browser restart, it can be placed in the corresponding machine-local setting:
-
-```python
-CHROME_REMOTE_DESKTOP_WINDOWS_URL = "https://remotedesktop.google.com/access"
-CHROME_REMOTE_DESKTOP_MACOS_URL = "https://remotedesktop.google.com/access"
-```
 
 ## 4. Cut over safely
 
@@ -126,9 +115,8 @@ CHROME_REMOTE_DESKTOP_MACOS_URL = "https://remotedesktop.google.com/access"
 5. Submit one harmless dry run from Windows, then another from the Mac. Confirm the second remains queued until the first finishes.
 6. Open the Tailscale Service URL on Android, enter the PIN, and repeat the dry-run test.
 7. Copy text and a small image in each direction using the manual clipboard buttons. Then enable Automatic Sync on both computers and repeat with newly copied content.
-8. Use the remote-control button on each desktop and confirm Chrome Remote Desktop opens the opposite computer.
 
-In Chrome on the Android tablet, open the menu and choose **Install app** (or **Add to Home screen**). Use the **Control target** selector in the header when an action must run on a specific computer. Selecting the Mac disables Metrics and System Power with “Windows only”; selecting Windows exposes its latest reported metrics and targets power actions to that PC.
+In Chrome on the Android tablet, open the menu and choose **Install app** (or **Add to Home screen**). Use the **Control target** selector in the header when an action must run on a specific computer. The **System Controls** tab remains available on macOS for clipboard sync, while its Windows-only power cards are hidden. Selecting Windows exposes its latest reported metrics and power actions.
 
 Windows and Mac browsers select their matching OS node automatically and cannot accidentally target the other desktop. Android remains the only client that can choose either computer.
 

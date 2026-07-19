@@ -217,14 +217,12 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .temp-unit-group{display:flex;align-items:center;gap:6px}
 .temp-btn.active{background:#2563eb;color:#fff;border-color:#2563eb}
 .metrics-path{margin:0 0 10px;word-break:break-all}
-.connectivity-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
 .connectivity-status{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .connectivity-dot{width:10px;height:10px;border-radius:50%;background:#94a3b8;display:inline-block}
 .connectivity-dot.online{background:#22c55e}
 .connectivity-dot.waiting{background:#eab308}
 .connectivity-dot.error{background:#ef4444}
 @media (max-width:980px){.grid,.subgrid,.slack-day-message-panel{grid-template-columns:1fr}}
-@media (max-width:980px){.connectivity-grid{grid-template-columns:1fr}}
 @media (max-width:980px){.work-plan-days{grid-template-columns:repeat(4,minmax(110px,1fr))}}
 @media (max-width:760px){.metrics,.desktop-metrics-grid,.processing-report-metrics,.work-timer-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}.work-plan-days{grid-template-columns:repeat(2,minmax(120px,1fr))}}
 @media (max-width:520px){.work-hours-title-actions{width:100%;justify-content:flex-end}.work-cap-quick-setting{justify-content:flex-end}.work-timer-grid{grid-template-columns:1fr}.work-plan-days{grid-template-columns:1fr 1fr}.work-timer-value{font-size:30px}}
@@ -247,7 +245,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
   <button class='tab-btn' id='tabBtnProcessing' onclick="setActiveTab('processing')">Processing</button>
   <button class='tab-btn' id='tabBtnDevelopment' onclick="setActiveTab('development')">Development</button>
   <button class='tab-btn' id='tabBtnMetrics' onclick="setActiveTab('metrics')">Desktop Metrics Server</button>
-  <button class='tab-btn' id='tabBtnPower' onclick="setActiveTab('power')">System Power</button>
+  <button class='tab-btn' id='tabBtnPower' onclick="setActiveTab('power')">System Controls</button>
   <button class='tab-btn queue-tab-btn' id='tabBtnQueue' onclick='toggleQueuePanel()'>Queue</button>
   <button class='tab-btn console-tab-btn' id='tabBtnConsole' onclick="setActiveTab('console')">Console</button>
   <button class='tab-btn master-refresh-btn' id='masterRefreshBtn' onclick='refreshAllStatuses(this)'>Refresh All</button>
@@ -303,32 +301,6 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
         <button class='secondary' id='slackLunchToggleBtn' onclick='toggleSlackLunch(this)'>Slack Lunch (1 Hour)</button>
         <span class='muted' id='slackLunchStatusText'>Lunch timer not active.</span>
       </div>
-    </div>
-  </div>
-
-  <div class='connectivity-grid'>
-    <div class='card'>
-      <div class='card-title-row'>
-        <h2>Cross-System Clipboard</h2>
-        <button class='secondary toggle-btn' id='clipboardAutoToggleBtn' type='button' onclick='toggleClipboardAutoSync(this)'>Automatic Sync Off</button>
-      </div>
-      <div class='connectivity-status'>
-        <span class='connectivity-dot' id='clipboardStatusDot' aria-hidden='true'></span>
-        <span class='muted' id='clipboardStatusText'>Checking clipboard connection...</span>
-      </div>
-      <div class='row'>
-        <button type='button' onclick='sendClipboard(this)'>Send to Other Computer</button>
-        <button class='secondary' type='button' onclick='pullClipboard(this)'>Get from Other Computer</button>
-      </div>
-      <div class='muted'>Transfers text and PNG images. Automatic monitoring runs only while enabled on both computers. Clipboard contents are never stored.</div>
-    </div>
-    <div class='card'>
-      <h2>Remote Control</h2>
-      <div class='row'>
-        <button type='button' id='controlWindowsBtn' onclick="openChromeRemoteDesktop('windows')">Control Windows</button>
-        <button type='button' id='controlMacBtn' onclick="openChromeRemoteDesktop('macos')">Control Mac</button>
-      </div>
-      <div class='muted' id='remoteControlText'>Opens Chrome Remote Desktop. Google may ask you to select the computer and enter its PIN.</div>
     </div>
   </div>
 
@@ -963,8 +935,27 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 </div>
 
 <div id='tabPower' class='tab-panel'>
-  <div class='status' id='powerStatusBox'>System power status: loading...</div>
+  <div class='status' id='powerStatusBox'>System controls status: loading...</div>
+
   <div class='card'>
+    <div class='card-title-row'>
+      <h2>Cross-System Clipboard</h2>
+      <button class='secondary toggle-btn' id='clipboardAutoToggleBtn' type='button' onclick='toggleClipboardAutoSync(this)'>Automatic Sync Off</button>
+    </div>
+    <div class='connectivity-status'>
+      <span class='connectivity-dot' id='clipboardStatusDot' aria-hidden='true'></span>
+      <span class='muted' id='clipboardStatusText'>Checking clipboard connection...</span>
+    </div>
+    <div class='row'>
+      <button type='button' onclick='sendClipboard(this)'>Send to Other Computer</button>
+      <button class='secondary' type='button' onclick='pullClipboard(this)'>Get from Other Computer</button>
+    </div>
+    <div class='muted'>Transfers text and PNG images. Automatic monitoring runs only while enabled on both computers. Clipboard contents are never stored.</div>
+  </div>
+
+  <div class='notice' id='systemPowerUnavailableNotice' style='display:none;margin-top:14px'>Power controls are available on Windows only.</div>
+
+  <div class='card' id='systemPowerActionsCard' style='margin-top:14px'>
     <div class='card-title-row'>
       <h2>System Power</h2>
       <details class='section-note'>
@@ -982,7 +973,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
     </div>
   </div>
 
-  <div class='card' style='margin-top:14px'>
+  <div class='card' id='systemPowerCountdownCard' style='margin-top:14px'>
     <div class='card-title-row'>
       <h2>Timed Countdown</h2>
       <details class='section-note'>
@@ -1033,7 +1024,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
         <details class='section-note'>
           <summary>Read More</summary>
           <div class='section-note-body'>
-            <p>Shows the latest automation events from Communications, Processing, Development, System Power, and other shared automation actions.</p>
+            <p>Shows the latest automation events from Communications, Processing, Development, System Controls, and other shared automation actions.</p>
           </div>
         </details>
         <button onclick='loadConsoleLog(true)'>Refresh Console</button>
@@ -1160,7 +1151,6 @@ let queuePayload = null;
 let queueExpandedTaskId = null;
 let nodeRuntimePayload = null;
 let clipboardStatusPayload = null;
-let remoteDesktopUrls = {};
 let queueDragTaskId = null;
 let settingsSaveTimer = null;
 let settingsSavePromise = Promise.resolve();
@@ -1859,35 +1849,6 @@ async function pullClipboard(button = null) {
   }
 }
 
-function renderRemoteControlOptions(payload) {
-  remoteDesktopUrls = payload && payload.urls ? payload.urls : {};
-  const clientOS = String(nodeRuntimePayload && nodeRuntimePayload.client_os || '').toLowerCase();
-  const windowsButton = document.getElementById('controlWindowsBtn');
-  const macButton = document.getElementById('controlMacBtn');
-  if (windowsButton) windowsButton.style.display = clientOS === 'windows' ? 'none' : '';
-  if (macButton) macButton.style.display = clientOS === 'macos' ? 'none' : '';
-}
-
-async function loadRemoteControlOptions() {
-  try {
-    renderRemoteControlOptions(await api('/api/remote-control/options'));
-  } catch (error) {
-    const text = document.getElementById('remoteControlText');
-    if (text) text.textContent = 'Remote-control link failed to load: ' + error.message;
-  }
-}
-
-function openChromeRemoteDesktop(targetOS) {
-  const raw = String(remoteDesktopUrls[targetOS] || 'https://remotedesktop.google.com/access');
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== 'https:' || url.hostname !== 'remotedesktop.google.com') throw new Error('unsupported URL');
-    window.open(url.href, '_blank', 'noopener,noreferrer');
-  } catch (_) {
-    setStatus('Chrome Remote Desktop URL is invalid. Check Settings.');
-  }
-}
-
 function queueStatusLabel(status) {
   const key = String(status || '').toLowerCase();
   if (key === 'queued') return 'Queued';
@@ -2499,7 +2460,6 @@ function applyPlatformCapabilities() {
     : 'Windows only';
   const mappings = [
     ['tabBtnMetrics', 'metrics'],
-    ['tabBtnPower', 'system_power'],
   ];
   for (const [buttonId, capability] of mappings) {
     const button = document.getElementById(buttonId);
@@ -2509,6 +2469,13 @@ function applyPlatformCapabilities() {
     button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
     button.title = disabled ? windowsOnly : '';
   }
+  const powerAvailable = platformFeatureAvailable('system_power');
+  for (const elementId of ['systemPowerActionsCard', 'systemPowerCountdownCard']) {
+    const element = document.getElementById(elementId);
+    if (element) element.style.display = powerAvailable ? '' : 'none';
+  }
+  const powerNotice = document.getElementById('systemPowerUnavailableNotice');
+  if (powerNotice) powerNotice.style.display = powerAvailable ? 'none' : 'block';
 }
 
 function syncWorkerModeControls() {
@@ -2820,7 +2787,7 @@ function renderTemperatureGauges(payload) {
 }
 
 function setActiveTab(tabName) {
-  const requestedCapability = tabName === 'metrics' ? 'metrics' : (tabName === 'power' ? 'system_power' : null);
+  const requestedCapability = tabName === 'metrics' ? 'metrics' : null;
   if (requestedCapability && !platformFeatureAvailable(requestedCapability)) {
     const notice = document.getElementById('platformCapabilityNotice');
     if (notice) {
@@ -3365,7 +3332,7 @@ async function toggleSlackLunchTest(button = null) {
 
 async function loadPowerStatus(showBusy = true) {
   if (!platformFeatureAvailable('system_power')) {
-    setPowerStatus('Windows only');
+    setPowerStatus('System controls ready. Power actions are available on Windows only.');
     return null;
   }
   if (showBusy) {
@@ -7277,7 +7244,6 @@ async function reloadAll() {
   renderTemperatureGauges(desktopMetricsLastPayload || {});
   await loadNodeRuntime(false);
   await loadClipboardStatus();
-  await loadRemoteControlOptions();
   await loadStatus();
   await loadCrmProcessingStatus(false);
   await loadCrmStatus(false);

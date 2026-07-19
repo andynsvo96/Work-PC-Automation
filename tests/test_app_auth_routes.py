@@ -52,14 +52,5 @@ class AppAuthRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["success"])
 
-    def test_remote_control_options_require_normal_app_login(self):
-        response = self.client.get("/api/remote-control/options")
-        self.assertEqual(response.status_code, 401)
-        self.client.post("/api/auth/login", json={"pin": "123456"})
-        response = self.client.get("/api/remote-control/options")
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("windows", response.get_json()["urls"])
-
-
 if __name__ == "__main__":
     unittest.main()
