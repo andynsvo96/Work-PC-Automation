@@ -1504,62 +1504,23 @@ def _convert_unpaid_split_quote_and_wait_for_order(driver):
     conversion = _quote_scope(
         driver,
         """
-        const labels = new Set([
-          'create order',
-          'create an order',
-          'convert to order',
-          'convert quote to order',
-          'save as order',
-          'place order'
-        ]);
-        const controls = Array.from(document.querySelectorAll('button,a,input[type=button],input[type=submit]'));
-        const isVisible = (el) => {
-          const rect = el.getBoundingClientRect();
-          const style = window.getComputedStyle ? window.getComputedStyle(el) : {};
-          return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
-        };
-        const control = controls.find((el) => {
-          const text = (el.innerText || el.value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-          return labels.has(text) && isVisible(el) && !el.disabled && el.getAttribute('disabled') === null;
-        });
-        if (control) {
-          const label = (control.innerText || control.value || '').replace(/\\s+/g, ' ').trim();
-          control.scrollIntoView({block: 'center', inline: 'center'});
-          control.click();
-          return {started: true, action: label, source: 'visible_control'};
-        }
-
-        const methods = ['createOrder', 'convertToOrder', 'convertQuoteToOrder', 'saveAsOrder', 'placeOrder'];
-        const method = methods.find((name) => typeof s[name] === 'function');
-        if (!method) {
-          return {
-            started: false,
-            available_controls: controls
-              .filter(isVisible)
-              .map((el) => (el.innerText || el.value || '').replace(/\\s+/g, ' ').trim())
-              .filter(Boolean)
-              .slice(0, 30)
-          };
-        }
-        runInAngular(s, () => s[method](op));
-        return {started: true, action: method, source: 'quote_scope'};
+        if (typeof s.produceWithoutPayment !== 'function') return {started: false};
+        runInAngular(s, () => s.produceWithoutPayment(op));
+        return {started: true, action: 'produceWithoutPayment', source: 'quote_scope'};
         """,
     )
     if not conversion or not conversion.get("started"):
-        available = (conversion or {}).get("available_controls", [])
-        raise SplitterError(
-            "Could not find the CRM create/convert order action for an unpaid split quote. "
-            f"Visible controls: {available}"
-        )
+        raise SplitterError("The CRM quote does not expose its produce-without-payment action.")
 
     time.sleep(1)
     modal_text = _find_modal_text(driver).lower()
-    if "change the due date" in modal_text:
-        _click_modal_choice(driver, "no")
-        time.sleep(1)
-        modal_text = _find_modal_text(driver).lower()
-    if modal_text and "order" in modal_text and any(word in modal_text for word in ("create", "convert", "place")):
-        _click_modal_choice(driver, "yes")
+    if "create an order without a payment" not in modal_text:
+        raise SplitterError(
+            "CRM produce-without-payment confirmation did not appear. "
+            f"Visible modal: {modal_text or '<none>'}"
+        )
+    if not _click_modal_choice(driver, "yes"):
+        raise SplitterError("Could not confirm the CRM produce-without-payment action.")
     return _wait_for_new_split_order(driver, "Unpaid split quote conversion was started")
 
 

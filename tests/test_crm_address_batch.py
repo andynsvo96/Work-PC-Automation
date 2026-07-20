@@ -3252,17 +3252,23 @@ class CrmAutoSplitterTests(unittest.TestCase):
 
     def test_unpaid_quote_conversion_never_records_a_transaction(self):
         driver = mock.Mock()
-        conversion = {"started": True, "action": "Create Order", "source": "visible_control"}
+        conversion = {"started": True, "action": "produceWithoutPayment", "source": "quote_scope"}
         with mock.patch.object(crm_auto_splitter, "_quote_scope", return_value=conversion) as quote_scope, \
-             mock.patch.object(crm_auto_splitter, "_find_modal_text", return_value=""), \
+             mock.patch.object(
+                 crm_auto_splitter,
+                 "_find_modal_text",
+                 return_value="Warning Do you want to create an order without a Payment?",
+             ), \
+             mock.patch.object(crm_auto_splitter, "_click_modal_choice", return_value=True) as confirm, \
              mock.patch.object(crm_auto_splitter, "_wait_for_new_split_order", return_value="4882000") as wait_order, \
              mock.patch.object(crm_auto_splitter, "_open_record_transaction") as open_transaction, \
              mock.patch.object(crm_auto_splitter.time, "sleep"):
             result = crm_auto_splitter._convert_unpaid_split_quote_and_wait_for_order(driver)
 
         self.assertEqual(result, "4882000")
-        self.assertIn("create order", quote_scope.call_args.args[1].lower())
+        self.assertIn("producewithoutpayment", quote_scope.call_args.args[1].lower())
         self.assertNotIn("recordtransaction", quote_scope.call_args.args[1].lower())
+        confirm.assert_called_once_with(driver, "yes")
         wait_order.assert_called_once_with(driver, "Unpaid split quote conversion was started")
         open_transaction.assert_not_called()
 
