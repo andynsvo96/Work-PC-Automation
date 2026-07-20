@@ -7021,6 +7021,7 @@ def _product_separator_payload_order_ids(payload):
         "live_order_ids",
         "order_ids",
         "skipped_order_ids",
+        "custom_names_and_numbers_order_ids",
         "manual_review_order_ids",
         "failed_order_ids",
     )
@@ -7065,7 +7066,11 @@ def _build_crm_product_separator_order_results(payload):
             status = "Separated"
         elif resolution == "dry_run_ready" or needs_split:
             status = "Ready"
-        elif resolution == "skipped_no_split_needed":
+        elif resolution in {
+            "skipped_no_split_needed",
+            "skipped_custom_names_and_numbers",
+            "skipped_custom_names_and_numbers_after_refresh",
+        }:
             status = "Skipped"
         else:
             status = "Success" if item.get("success") else "Needs attention"
@@ -7077,6 +7082,8 @@ def _build_crm_product_separator_order_results(payload):
             "message": str(item.get("message") or ""),
             "duration_seconds": _normalize_duration_seconds(item.get("duration_seconds") or item.get("session_duration_seconds")),
             "manual_review_required": manual_review,
+            "custom_names_and_numbers_present": bool(item.get("custom_names_and_numbers_present")),
+            "custom_names_and_numbers_tabs": item.get("custom_names_and_numbers_tabs") or [],
         }
         stock_ordered_status = _product_separator_stock_ordered_status(item)
         if stock_ordered_status:
@@ -7335,6 +7342,9 @@ def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_
 
     split_order_ids = _extract_crm_order_ids({"order_ids": preflight_payload.get("split_order_ids")})
     skipped_order_ids = _extract_crm_order_ids({"order_ids": preflight_payload.get("skipped_order_ids")})
+    custom_names_and_numbers_order_ids = _extract_crm_order_ids(
+        {"order_ids": preflight_payload.get("custom_names_and_numbers_order_ids")}
+    )
     preflight_order_results = _build_crm_product_separator_order_results(preflight_payload)
     preflight_attention_results = [
         row
@@ -7367,6 +7377,11 @@ def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_
                 "message": (
                     "No orders detected"
                     if no_orders_detected
+                    else (
+                        "Product Separator skipped custom names and numbers tabs for order(s): "
+                        f"{_format_product_separator_order_ids(custom_names_and_numbers_order_ids)}."
+                    )
+                    if custom_names_and_numbers_order_ids
                     else f"Product Separator found no orders needing separation for {_product_separator_mode_label(normalized_mode)} mode."
                 ),
                 "action": "product_separator_batch",
@@ -7457,7 +7472,15 @@ def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_
     attention_order_ids = _extract_crm_order_ids({"order_ids": [row.get("order_id") for row in attention_results]})
     live_result_order_ids = _extract_crm_order_ids({"order_ids": [row.get("order_id") for row in live_results]})
     all_result_order_ids = _extract_crm_order_ids(
-        {"order_ids": attempted_live_order_ids + attention_order_ids + live_result_order_ids + skipped_order_ids}
+        {
+            "order_ids": (
+                attempted_live_order_ids
+                + attention_order_ids
+                + live_result_order_ids
+                + skipped_order_ids
+                + custom_names_and_numbers_order_ids
+            )
+        }
     )
     all_order_results = live_results + [
         row
@@ -7483,6 +7506,11 @@ def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_
         if attention_summary:
             message += f": {attention_summary}"
         message += "."
+    if custom_names_and_numbers_order_ids:
+        message += (
+            " Custom names and numbers present; skipped those tabs for order(s): "
+            f"{_format_product_separator_order_ids(custom_names_and_numbers_order_ids)}."
+        )
     payload = {
         "success": success,
         "message": message,
@@ -7495,6 +7523,7 @@ def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_
         "order_ids": all_result_order_ids,
         "split_order_ids": split_order_ids,
         "skipped_order_ids": skipped_order_ids,
+        "custom_names_and_numbers_order_ids": custom_names_and_numbers_order_ids,
         "live_order_ids": attempted_live_order_ids,
         "attention_order_ids": attention_order_ids,
         "order_results": all_order_results,

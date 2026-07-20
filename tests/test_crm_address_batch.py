@@ -3563,6 +3563,42 @@ class CrmProductSeparatorTests(unittest.TestCase):
             ["Adult Tee", "Legacy Product Without Parsed Total"],
         )
 
+    def test_custom_names_and_numbers_detector_targets_visible_edit_button(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = True
+
+        self.assertTrue(crm_product_separator._active_tab_has_custom_names_and_numbers(driver))
+        script = driver.execute_script.call_args.args[0]
+        self.assertIn("editnamesandnumbers", script.lower())
+        self.assertIn(".filter(visible)", script)
+
+    def test_separator_plan_skips_only_mixed_tabs_with_custom_names_and_numbers(self):
+        scan = self._product_separator_mixed_scan()
+        scan["tabs"][0]["custom_names_and_numbers_present"] = True
+        normal_tab = json.loads(json.dumps(scan["tabs"][0]))
+        normal_tab.update(
+            {
+                "tab_number": 2,
+                "tab_name": "H-Test002",
+                "custom_names_and_numbers_present": False,
+            }
+        )
+        scan["tabs"].append(normal_tab)
+        scan["tab_count"] = 2
+
+        plan = crm_product_separator._build_separator_plan(scan)
+
+        self.assertTrue(plan["needs_split"])
+        self.assertTrue(plan["custom_names_and_numbers_present"])
+        self.assertEqual([tab["tab_number"] for tab in plan["custom_names_and_numbers_tabs"]], [1])
+        self.assertEqual([tab["source_tab_number"] for tab in plan["split_tabs"]], [2])
+
+    def test_split_verification_ignores_custom_names_and_numbers_mixed_tab(self):
+        scan = self._product_separator_mixed_scan()
+        scan["tabs"][0]["custom_names_and_numbers_present"] = True
+
+        self.assertEqual(crm_product_separator._tabs_still_needing_split(scan), [])
+
     def test_ladies_micro_ribbed_baby_tee_stays_with_adult_products(self):
         product = crm_product_separator._classify_product(
             {
@@ -3811,6 +3847,54 @@ class CrmProductSeparatorTests(unittest.TestCase):
         self.assertEqual(payload["order_results"], [])
         self.assertEqual(mock_run_script.call_count, 1)
 
+    @mock.patch.object(server, "_execute_crm_product_separator_script")
+    def test_live_batch_reports_custom_names_and_numbers_skipped_order(self, mock_run_script):
+        preflight_payload = {
+            "success": True,
+            "message": (
+                "Product Separator list dry run complete. 0 order(s) need splitting, "
+                "0 already okay, 1 skipped for custom names and numbers."
+            ),
+            "action": "product_separator_list",
+            "dry_run": True,
+            "list_mode": "rush",
+            "order_ids": ["4883479"],
+            "split_order_ids": [],
+            "skipped_order_ids": ["4883479"],
+            "custom_names_and_numbers_order_ids": ["4883479"],
+            "manual_review_order_ids": [],
+            "failed_order_ids": [],
+            "report": [
+                {
+                    "order_id": "4883479",
+                    "success": True,
+                    "resolution": "skipped_custom_names_and_numbers",
+                    "needs_split": False,
+                    "custom_names_and_numbers_present": True,
+                    "custom_names_and_numbers_tabs": [{"tab_number": 1}],
+                    "message": (
+                        "Product Separator skipped order 4883479: "
+                        "Custom names and numbers present on mixed-product tab 1."
+                    ),
+                }
+            ],
+        }
+        mock_run_script.return_value = (True, preflight_payload["message"], preflight_payload)
+
+        ok, message, payload = server._execute_crm_product_separator_worker(
+            dry_run=False,
+            list_mode="rush",
+            parallel_workers=4,
+        )
+
+        self.assertTrue(ok)
+        self.assertIn("4883479", message)
+        self.assertIn("custom names and numbers", message.lower())
+        self.assertEqual(payload["custom_names_and_numbers_order_ids"], ["4883479"])
+        self.assertEqual(payload["order_results"][0]["status"], "Skipped")
+        self.assertTrue(payload["order_results"][0]["custom_names_and_numbers_present"])
+        self.assertEqual(mock_run_script.call_count, 1)
+
     def test_not_authenticated_page_is_detected_before_design_tab_failure(self):
         driver = mock.Mock()
         driver.execute_script.return_value = "\u00d7 Error Not authenticated close"
@@ -3893,6 +3977,36 @@ class CrmProductSeparatorTests(unittest.TestCase):
         self.assertEqual(mock_write.call_args.kwargs["resolution"], "skipped_no_split_needed")
         self.assertFalse(mock_write.call_args.kwargs["manual_review_required"])
         self.assertNotIn("manual_order_reconciliation", mock_write.call_args.kwargs["report"])
+
+    def test_order_with_only_custom_names_and_numbers_mixed_tab_is_skipped_and_reported(self):
+        driver = mock.Mock()
+        scan = self._product_separator_mixed_scan()
+        scan["order_id"] = "4883479"
+        scan["tabs"][0]["custom_names_and_numbers_present"] = True
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(crm_product_separator, "_build_driver", return_value=(driver, None)))
+            stack.enter_context(mock.patch.object(crm_product_separator, "safe_get_with_partial_load"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_handle_login_if_needed"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_wait_for_crm_context"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_recover_not_authenticated_page"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "_scan_order", return_value=scan))
+            mock_apply = stack.enter_context(mock.patch.object(crm_product_separator, "_apply_live_split"))
+            mock_write = stack.enter_context(mock.patch.object(crm_product_separator, "_write_result"))
+            stack.enter_context(mock.patch.object(crm_product_separator, "safe_driver_quit"))
+
+            exit_code = crm_product_separator.run_product_separator_order(order_id="4883479", dry_run=False)
+
+        self.assertEqual(exit_code, 0)
+        mock_apply.assert_not_called()
+        self.assertTrue(mock_write.call_args.args[0])
+        self.assertIn("4883479", mock_write.call_args.args[1])
+        self.assertIn("Custom names and numbers present", mock_write.call_args.args[1])
+        self.assertEqual(mock_write.call_args.kwargs["resolution"], "skipped_custom_names_and_numbers")
+        self.assertEqual(
+            [tab["tab_number"] for tab in mock_write.call_args.kwargs["custom_names_and_numbers_tabs"]],
+            [1],
+        )
 
     def test_stock_ordered_status_rejects_stock_history_confirmation(self):
         driver = mock.Mock()

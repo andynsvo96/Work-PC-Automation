@@ -568,6 +568,25 @@ return products;
 """
 
 
+CUSTOM_NAMES_AND_NUMBERS_SCAN_JS = r"""
+function clean(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+function visible(el) {
+  if (!el) return false;
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  const style = window.getComputedStyle ? window.getComputedStyle(el) : {};
+  return style.display !== 'none' && style.visibility !== 'hidden';
+}
+return Array.from(document.querySelectorAll('button'))
+  .filter(visible)
+  .some((button) => {
+    const ngClick = clean(button.getAttribute('ng-click')).toLowerCase();
+    const text = clean(button.innerText || button.textContent).toLowerCase();
+    return ngClick.includes('editnamesandnumbers') && /\bnames?\s+and\s+numbers?\b/i.test(text);
+  });
+"""
+
+
 def _visible_design_tabs(driver):
     try:
         tabs = driver.execute_script(VISIBLE_TABS_JS)
@@ -590,6 +609,13 @@ def _scan_visible_products(driver):
     if not isinstance(products, list):
         return []
     return [product for product in products if _product_has_positive_quantity(product)]
+
+
+def _active_tab_has_custom_names_and_numbers(driver):
+    try:
+        return bool(driver.execute_script(CUSTOM_NAMES_AND_NUMBERS_SCAN_JS))
+    except Exception:
+        return False
 
 
 def _product_has_positive_quantity(product):
@@ -854,6 +880,7 @@ def _scan_order(driver, expected_order_id=None, refresh_on_missing_tabs=True):
             continue
         clicked = _click_design_tab(driver, tab_number)
         products = [_classify_product(item) for item in _scan_visible_products(driver)]
+        custom_names_and_numbers_present = _active_tab_has_custom_names_and_numbers(driver)
         groups = OrderedDict()
         for product in products:
             groups.setdefault(product["group"], []).append(product)
@@ -874,6 +901,7 @@ def _scan_order(driver, expected_order_id=None, refresh_on_missing_tabs=True):
                     for group, items in groups.items()
                 ],
                 "needs_split": len(groups) > 1,
+                "custom_names_and_numbers_present": custom_names_and_numbers_present,
                 "stock": stock_state,
                 "warnings": [],
             }
@@ -1146,10 +1174,20 @@ def _build_separator_plan(scan):
     production_notes = []
     manual_order_records = []
     local_inventory_auto_order_targets = []
+    custom_names_and_numbers_tabs = []
     claimed_existing_tab_numbers = set()
 
     for tab in tabs:
         if not tab.get("needs_split"):
+            continue
+        if tab.get("custom_names_and_numbers_present"):
+            custom_names_and_numbers_tabs.append(
+                {
+                    "tab_number": tab.get("tab_number"),
+                    "tab_name": tab.get("tab_name") or "",
+                    "reason": "Custom names and numbers present; mixed-product tab was excluded from separation.",
+                }
+            )
             continue
         products = tab.get("products") or []
         groups = OrderedDict()
@@ -1378,6 +1416,8 @@ def _build_separator_plan(scan):
         "production_notes": production_notes,
         "manual_order_records": manual_order_records,
         "local_inventory_auto_order_targets": local_inventory_auto_order_targets,
+        "custom_names_and_numbers_present": bool(custom_names_and_numbers_tabs),
+        "custom_names_and_numbers_tabs": custom_names_and_numbers_tabs,
     }
 
 
@@ -2443,7 +2483,20 @@ def _verify_local_inventory_auto_orders(scan, targets):
 
 
 def _tabs_still_needing_split(scan):
-    return [tab for tab in (scan.get("tabs") or []) if tab.get("needs_split")]
+    return [
+        tab
+        for tab in (scan.get("tabs") or [])
+        if tab.get("needs_split") and not tab.get("custom_names_and_numbers_present")
+    ]
+
+
+def _format_custom_names_and_numbers_notice(plan):
+    tabs = plan.get("custom_names_and_numbers_tabs") or []
+    tab_numbers = [tab.get("tab_number") for tab in tabs if tab.get("tab_number") not in (None, "")]
+    tab_label = _format_tab_list(tab_numbers)
+    location = f" on mixed-product {tab_label}" if tab_label else " on a mixed-product tab"
+    target = "those tabs" if len(tab_numbers) > 1 else "that tab"
+    return f"Custom names and numbers present{location}; skipped separation for {target}."
 
 
 def _format_remaining_split_tabs(tabs):
@@ -2492,6 +2545,7 @@ def _scan_split_signature(scan):
                 tuple(products),
                 groups,
                 bool(tab.get("needs_split")),
+                bool(tab.get("custom_names_and_numbers_present")),
             )
         )
     return tuple(signature)
@@ -2582,9 +2636,16 @@ def run_product_separator_order(
         expected_quantity_total = _scan_tab_quantity_total(scan)
 
         if not plan.get("needs_split"):
+            custom_names_and_numbers_present = bool(plan.get("custom_names_and_numbers_present"))
+            message = (
+                f"Product Separator skipped order {resolved_order_id}: "
+                f"{_format_custom_names_and_numbers_notice(plan)}"
+                if custom_names_and_numbers_present
+                else f"Product Separator skipped order {resolved_order_id}: no mixed product tabs detected."
+            )
             _write_result(
                 True,
-                f"Product Separator skipped order {resolved_order_id}: no mixed product tabs detected.",
+                message,
                 result_file=result_file,
                 action="product_separator_order",
                 dry_run=bool(dry_run),
@@ -2592,7 +2653,13 @@ def run_product_separator_order(
                 order_url=target_url,
                 report=report,
                 manual_review_required=False,
-                resolution="skipped_no_split_needed",
+                resolution=(
+                    "skipped_custom_names_and_numbers"
+                    if custom_names_and_numbers_present
+                    else "skipped_no_split_needed"
+                ),
+                custom_names_and_numbers_present=custom_names_and_numbers_present,
+                custom_names_and_numbers_tabs=plan.get("custom_names_and_numbers_tabs") or [],
                 duration_seconds=round(time.monotonic() - started, 2),
             )
             return 0
@@ -2621,9 +2688,16 @@ def run_product_separator_order(
             elif not retry_plan.get("needs_split"):
                 report["scan"] = retry_scan
                 report["plan"] = retry_plan
+                retry_custom_names_and_numbers = bool(retry_plan.get("custom_names_and_numbers_present"))
+                retry_message = (
+                    f"Product Separator skipped order {resolved_order_id} after refresh: "
+                    f"{_format_custom_names_and_numbers_notice(retry_plan)}"
+                    if retry_custom_names_and_numbers
+                    else f"Product Separator skipped order {resolved_order_id}: no mixed product tabs detected after refresh."
+                )
                 _write_result(
                     True,
-                    f"Product Separator skipped order {resolved_order_id}: no mixed product tabs detected after refresh.",
+                    retry_message,
                     result_file=result_file,
                     action="product_separator_order",
                     dry_run=bool(dry_run),
@@ -2631,7 +2705,13 @@ def run_product_separator_order(
                     order_url=target_url,
                     report=report,
                     manual_review_required=False,
-                    resolution="skipped_no_split_needed_after_refresh",
+                    resolution=(
+                        "skipped_custom_names_and_numbers_after_refresh"
+                        if retry_custom_names_and_numbers
+                        else "skipped_no_split_needed_after_refresh"
+                    ),
+                    custom_names_and_numbers_present=retry_custom_names_and_numbers,
+                    custom_names_and_numbers_tabs=retry_plan.get("custom_names_and_numbers_tabs") or [],
                     duration_seconds=round(time.monotonic() - started, 2),
                 )
                 return 0
@@ -2653,9 +2733,17 @@ def run_product_separator_order(
             return 4
 
         if dry_run:
+            custom_notice = (
+                f" {_format_custom_names_and_numbers_notice(plan)}"
+                if plan.get("custom_names_and_numbers_present")
+                else ""
+            )
             _write_result(
                 True,
-                f"Product Separator dry run complete for order {resolved_order_id}. No CRM changes were made.",
+                (
+                    f"Product Separator dry run complete for order {resolved_order_id}. "
+                    f"No CRM changes were made.{custom_notice}"
+                ),
                 result_file=result_file,
                 action="product_separator_order",
                 dry_run=True,
@@ -2664,6 +2752,8 @@ def run_product_separator_order(
                 report=report,
                 manual_review_required=False,
                 resolution="dry_run_ready",
+                custom_names_and_numbers_present=bool(plan.get("custom_names_and_numbers_present")),
+                custom_names_and_numbers_tabs=plan.get("custom_names_and_numbers_tabs") or [],
                 duration_seconds=round(time.monotonic() - started, 2),
             )
             return 0
@@ -3006,9 +3096,14 @@ def run_product_separator_order(
                 "reason": plan.get("stock_ordered_apply_skip_reason"),
                 "order_stock_status_before_split": plan.get("order_stock_status_before_split"),
             }
+        custom_notice = (
+            f" {_format_custom_names_and_numbers_notice(plan)}"
+            if plan.get("custom_names_and_numbers_present")
+            else ""
+        )
         _write_result(
             True,
-            f"Product Separator completed order {resolved_order_id}.",
+            f"Product Separator completed order {resolved_order_id}.{custom_notice}",
             result_file=result_file,
             action="product_separator_order",
             dry_run=False,
@@ -3017,6 +3112,8 @@ def run_product_separator_order(
             report=report,
             manual_review_required=False,
             resolution="split_complete",
+            custom_names_and_numbers_present=bool(plan.get("custom_names_and_numbers_present")),
+            custom_names_and_numbers_tabs=plan.get("custom_names_and_numbers_tabs") or [],
             duration_seconds=round(time.monotonic() - started, 2),
         )
         return 0
@@ -3121,6 +3218,7 @@ def _run_product_separator_order_id_batch(order_ids, profile_dirs, result_dir, v
     order_results = []
     split_order_ids = []
     skipped_order_ids = []
+    custom_names_and_numbers_order_ids = []
     manual_review_order_ids = []
     failed_order_ids = []
     chunks = [[] for _ in range(worker_count)]
@@ -3160,8 +3258,19 @@ def _run_product_separator_order_id_batch(order_ids, profile_dirs, result_dir, v
                     "manual_review_required": bool(payload.get("manual_review_required") or plan.get("manual_review_required")),
                     "split_tabs": plan.get("split_tabs") or [],
                     "production_notes": plan.get("production_notes") or [],
+                    "custom_names_and_numbers_present": bool(
+                        payload.get("custom_names_and_numbers_present")
+                        or plan.get("custom_names_and_numbers_present")
+                    ),
+                    "custom_names_and_numbers_tabs": (
+                        payload.get("custom_names_and_numbers_tabs")
+                        or plan.get("custom_names_and_numbers_tabs")
+                        or []
+                    ),
                 }
                 order_results.append(summary)
+                if summary["custom_names_and_numbers_present"]:
+                    custom_names_and_numbers_order_ids.append(order_id)
                 if summary["needs_split"] and summary["success"] and not summary["manual_review_required"]:
                     split_order_ids.append(order_id)
                 elif summary["manual_review_required"]:
@@ -3180,6 +3289,7 @@ def _run_product_separator_order_id_batch(order_ids, profile_dirs, result_dir, v
         "order_results": order_results,
         "split_order_ids": split_order_ids,
         "skipped_order_ids": skipped_order_ids,
+        "custom_names_and_numbers_order_ids": custom_names_and_numbers_order_ids,
         "manual_review_order_ids": manual_review_order_ids,
         "failed_order_ids": failed_order_ids,
     }
@@ -3199,11 +3309,23 @@ def _product_separator_list_url_for_mode(list_mode):
     return mode, urls.get(mode) or ""
 
 
-def _product_separator_list_summary_message(split_count, skipped_count, manual_review_count=0, failed_count=0):
+def _product_separator_list_summary_message(
+    split_count,
+    skipped_count,
+    manual_review_count=0,
+    failed_count=0,
+    custom_names_and_numbers_count=0,
+    custom_names_and_numbers_skipped_count=0,
+):
+    custom_count = max(0, int(custom_names_and_numbers_count or 0))
+    custom_skipped_count = max(0, int(custom_names_and_numbers_skipped_count or 0))
+    already_okay_count = max(0, int(skipped_count or 0) - custom_skipped_count)
     parts = [
         f"{int(split_count or 0)} order(s) need splitting",
-        f"{int(skipped_count or 0)} already okay",
+        f"{already_okay_count} already okay",
     ]
+    if custom_count:
+        parts.append(f"{custom_count} order(s) have custom names and numbers tabs skipped")
     if manual_review_count:
         parts.append(f"{int(manual_review_count)} require manual review")
     if failed_count:
@@ -3256,6 +3378,7 @@ def run_product_separator_list(
     order_results = []
     split_order_ids = []
     skipped_order_ids = []
+    custom_names_and_numbers_order_ids = []
     manual_review_order_ids = []
     failed_order_ids = []
     worker_count = 0
@@ -3333,6 +3456,7 @@ def run_product_separator_list(
             order_results.extend(batch["order_results"])
             split_order_ids.extend(batch["split_order_ids"])
             skipped_order_ids.extend(batch["skipped_order_ids"])
+            custom_names_and_numbers_order_ids.extend(batch.get("custom_names_and_numbers_order_ids") or [])
             manual_review_order_ids.extend(batch["manual_review_order_ids"])
             failed_order_ids.extend(batch["failed_order_ids"])
 
@@ -3357,6 +3481,7 @@ def run_product_separator_list(
             order_ids=[],
             split_order_ids=[],
             skipped_order_ids=[],
+            custom_names_and_numbers_order_ids=[],
             manual_review_order_ids=[],
             failed_order_ids=[],
             result_dir=result_dir,
@@ -3375,6 +3500,10 @@ def run_product_separator_list(
             len(skipped_order_ids),
             manual_review_count=len(manual_review_order_ids),
             failed_count=len(failed_order_ids),
+            custom_names_and_numbers_count=len(custom_names_and_numbers_order_ids),
+            custom_names_and_numbers_skipped_count=len(
+                set(custom_names_and_numbers_order_ids).intersection(skipped_order_ids)
+            ),
         ),
         result_file=result_file,
         action="product_separator_list",
@@ -3386,6 +3515,7 @@ def run_product_separator_list(
         order_ids=order_ids,
         split_order_ids=split_order_ids,
         skipped_order_ids=skipped_order_ids,
+        custom_names_and_numbers_order_ids=custom_names_and_numbers_order_ids,
         manual_review_order_ids=manual_review_order_ids,
         failed_order_ids=failed_order_ids,
         result_dir=result_dir,
