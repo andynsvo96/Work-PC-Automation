@@ -3211,6 +3211,123 @@ class CrmAutoSplitterTests(unittest.TestCase):
         self.assertEqual(result["detected_tab_count"], 1)
         self.assertEqual(result["designs"][0]["design_name"], "Recovered")
 
+    def test_payment_detection_uses_explicit_paid_amount(self):
+        self.assertTrue(crm_auto_splitter._payment_is_detected({"amount_paid": "125.00", "transactions": []}))
+        self.assertFalse(
+            crm_auto_splitter._payment_is_detected(
+                {
+                    "amount_paid": "0.00",
+                    "transactions": [{"amount": "125.00", "tag": "Stripe.com"}],
+                }
+            )
+        )
+
+    def test_payment_detection_falls_back_to_positive_non_refund_transaction(self):
+        self.assertTrue(
+            crm_auto_splitter._payment_is_detected(
+                {"amount_paid": None, "transactions": [{"amount": "125.00", "tag": "PayPal"}]}
+            )
+        )
+        self.assertFalse(
+            crm_auto_splitter._payment_is_detected(
+                {"amount_paid": None, "transactions": [{"amount": "-125.00", "tag": "Refund"}]}
+            )
+        )
+
+    def test_split_quote_finalization_routes_by_transaction_presence(self):
+        driver = mock.Mock()
+        with mock.patch.object(crm_auto_splitter, "_record_split_payment_and_wait_for_order", return_value="paid") as paid, \
+             mock.patch.object(crm_auto_splitter, "_convert_unpaid_split_quote_and_wait_for_order", return_value="unpaid") as unpaid:
+            self.assertEqual(
+                crm_auto_splitter._finalize_split_quote_and_wait_for_order(driver, "Stripe.com", "pi_test"),
+                "paid",
+            )
+            self.assertEqual(
+                crm_auto_splitter._finalize_split_quote_and_wait_for_order(driver, "", ""),
+                "unpaid",
+            )
+
+        paid.assert_called_once_with(driver, "Stripe Manual CC Entry", "pi_test")
+        unpaid.assert_called_once_with(driver)
+
+    def test_unpaid_quote_conversion_never_records_a_transaction(self):
+        driver = mock.Mock()
+        conversion = {"started": True, "action": "Create Order", "source": "visible_control"}
+        with mock.patch.object(crm_auto_splitter, "_quote_scope", return_value=conversion) as quote_scope, \
+             mock.patch.object(crm_auto_splitter, "_find_modal_text", return_value=""), \
+             mock.patch.object(crm_auto_splitter, "_wait_for_new_split_order", return_value="4882000") as wait_order, \
+             mock.patch.object(crm_auto_splitter, "_open_record_transaction") as open_transaction, \
+             mock.patch.object(crm_auto_splitter.time, "sleep"):
+            result = crm_auto_splitter._convert_unpaid_split_quote_and_wait_for_order(driver)
+
+        self.assertEqual(result, "4882000")
+        self.assertIn("create order", quote_scope.call_args.args[1].lower())
+        self.assertNotIn("recordtransaction", quote_scope.call_args.args[1].lower())
+        wait_order.assert_called_once_with(driver, "Unpaid split quote conversion was started")
+        open_transaction.assert_not_called()
+
+    def test_unpaid_original_finalization_skips_refund_actions(self):
+        driver = mock.Mock()
+        with mock.patch.object(crm_auto_splitter, "_add_refund_fee_to_original") as add_refund_fee, \
+             mock.patch.object(crm_auto_splitter, "_cancel_original_order") as cancel_order, \
+             mock.patch.object(crm_auto_splitter, "_open_record_transaction") as open_transaction, \
+             mock.patch.object(crm_auto_splitter, "_save_transaction_modal_with_amount") as save_transaction, \
+             mock.patch.object(crm_auto_splitter, "_add_original_transfer_note") as add_note, \
+             mock.patch.object(
+                 crm_auto_splitter,
+                 "_read_order_totals",
+                 return_value={"grand_total": "125.00", "paid": "0.00", "balance_due": "125.00"},
+             ):
+            result = crm_auto_splitter._finalize_original_order_after_split(
+                driver,
+                False,
+                crm_auto_splitter.Decimal("125.00"),
+                crm_auto_splitter.Decimal("125.00"),
+                "transferred to 4882000, 4882001",
+            )
+
+        cancel_order.assert_called_once_with(driver)
+        add_note.assert_called_once_with(driver, "transferred to 4882000, 4882001")
+        add_refund_fee.assert_not_called()
+        open_transaction.assert_not_called()
+        save_transaction.assert_not_called()
+        self.assertTrue(result["payment_actions_skipped"])
+        self.assertEqual(result["refund_fee_amount"], "0.00")
+
+    def test_paid_original_finalization_keeps_existing_refund_actions(self):
+        driver = mock.Mock()
+        totals = [
+            {"grand_total": "0.00", "paid": "125.00", "balance_due": "-125.00"},
+            {"grand_total": "0.00", "paid": "0.00", "balance_due": "0.00"},
+        ]
+        with mock.patch.object(crm_auto_splitter, "_add_refund_fee_to_original") as add_refund_fee, \
+             mock.patch.object(crm_auto_splitter, "_cancel_original_order") as cancel_order, \
+             mock.patch.object(crm_auto_splitter, "_open_record_transaction") as open_transaction, \
+             mock.patch.object(crm_auto_splitter, "_save_transaction_modal_with_amount") as save_transaction, \
+             mock.patch.object(crm_auto_splitter, "_add_original_transfer_note") as add_note, \
+             mock.patch.object(crm_auto_splitter, "_read_order_totals", side_effect=totals), \
+             mock.patch.object(crm_auto_splitter.time, "sleep"):
+            result = crm_auto_splitter._finalize_original_order_after_split(
+                driver,
+                True,
+                crm_auto_splitter.Decimal("125.00"),
+                crm_auto_splitter.Decimal("125.00"),
+                "transferred to 4882000, 4882001",
+            )
+
+        add_refund_fee.assert_called_once_with(driver, crm_auto_splitter.Decimal("125.00"))
+        cancel_order.assert_called_once_with(driver)
+        open_transaction.assert_called_once_with(driver, quote=False)
+        save_transaction.assert_called_once_with(
+            driver,
+            "Refund",
+            "transferred to 4882000, 4882001",
+            amount=crm_auto_splitter.Decimal("-125.00"),
+        )
+        add_note.assert_called_once_with(driver, "transferred to 4882000, 4882001")
+        self.assertFalse(result["payment_actions_skipped"])
+        self.assertEqual(result["refund_fee_amount"], "125.00")
+
     def test_cancel_confirmation_accepts_crm_cancel_order_status(self):
         self.assertTrue(crm_auto_splitter._is_cancel_order_status("Cancel Order"))
         self.assertTrue(crm_auto_splitter._is_cancel_order_status("Cancelled"))

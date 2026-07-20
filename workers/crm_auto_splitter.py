@@ -989,6 +989,27 @@ def _get_original_payment_info(driver):
     return {"transaction_id": "", "payment_type": state.get("transactions", [{}])[0].get("type", "") if state.get("transactions") else ""}
 
 
+def _payment_is_detected(order_state):
+    """Return whether the order currently has money paid against it.
+
+    ``amount_paid`` is authoritative when the CRM exposes it, including an
+    explicit zero on orders that have historical or otherwise non-payable
+    transaction rows. Older CRM views sometimes omit that computed value, so
+    positive, non-refund transactions are used only as a fallback.
+    """
+    raw_amount_paid = order_state.get("amount_paid")
+    if raw_amount_paid not in (None, ""):
+        return _parse_money(raw_amount_paid) > Decimal("0.00")
+
+    for transaction in order_state.get("transactions") or []:
+        tag = _clean_text(transaction.get("tag") or transaction.get("type")).lower()
+        if "refund" in tag:
+            continue
+        if _parse_money(transaction.get("amount")) > Decimal("0.00"):
+            return True
+    return False
+
+
 def _copy_order_to_quote(driver, original_order_id, expected_design_count):
     _wait_for_order_scope(driver, order_id=original_order_id)
     _order_scope(
@@ -1452,7 +1473,11 @@ def _record_split_payment_and_wait_for_order(driver, tag, transaction_id):
     amount = _quote_visible_total(driver)
     _open_record_transaction(driver, quote=True)
     _save_transaction_modal_with_amount(driver, tag, transaction_id, amount=amount)
-    deadline = time.monotonic() + 300
+    return _wait_for_new_split_order(driver, "Split payment was saved")
+
+
+def _wait_for_new_split_order(driver, action_description, timeout=300):
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         time.sleep(1)
         driver.switch_to.default_content()
@@ -1471,7 +1496,81 @@ def _record_split_payment_and_wait_for_order(driver, tag, transaction_id):
                 return match.group(1)
         except Exception:
             pass
-    raise SplitterError("Split payment was saved, but the quote did not convert to a visible order.")
+    raise SplitterError(f"{action_description}, but the quote did not convert to a visible order.")
+
+
+def _convert_unpaid_split_quote_and_wait_for_order(driver):
+    """Convert a saved quote through the CRM's normal no-payment order action."""
+    conversion = _quote_scope(
+        driver,
+        """
+        const labels = new Set([
+          'create order',
+          'create an order',
+          'convert to order',
+          'convert quote to order',
+          'save as order',
+          'place order'
+        ]);
+        const controls = Array.from(document.querySelectorAll('button,a,input[type=button],input[type=submit]'));
+        const isVisible = (el) => {
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle ? window.getComputedStyle(el) : {};
+          return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+        };
+        const control = controls.find((el) => {
+          const text = (el.innerText || el.value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+          return labels.has(text) && isVisible(el) && !el.disabled && el.getAttribute('disabled') === null;
+        });
+        if (control) {
+          const label = (control.innerText || control.value || '').replace(/\\s+/g, ' ').trim();
+          control.scrollIntoView({block: 'center', inline: 'center'});
+          control.click();
+          return {started: true, action: label, source: 'visible_control'};
+        }
+
+        const methods = ['createOrder', 'convertToOrder', 'convertQuoteToOrder', 'saveAsOrder', 'placeOrder'];
+        const method = methods.find((name) => typeof s[name] === 'function');
+        if (!method) {
+          return {
+            started: false,
+            available_controls: controls
+              .filter(isVisible)
+              .map((el) => (el.innerText || el.value || '').replace(/\\s+/g, ' ').trim())
+              .filter(Boolean)
+              .slice(0, 30)
+          };
+        }
+        runInAngular(s, () => s[method](op));
+        return {started: true, action: method, source: 'quote_scope'};
+        """,
+    )
+    if not conversion or not conversion.get("started"):
+        available = (conversion or {}).get("available_controls", [])
+        raise SplitterError(
+            "Could not find the CRM create/convert order action for an unpaid split quote. "
+            f"Visible controls: {available}"
+        )
+
+    time.sleep(1)
+    modal_text = _find_modal_text(driver).lower()
+    if "change the due date" in modal_text:
+        _click_modal_choice(driver, "no")
+        time.sleep(1)
+        modal_text = _find_modal_text(driver).lower()
+    if modal_text and "order" in modal_text and any(word in modal_text for word in ("create", "convert", "place")):
+        _click_modal_choice(driver, "yes")
+    return _wait_for_new_split_order(driver, "Unpaid split quote conversion was started")
+
+
+def _finalize_split_quote_and_wait_for_order(driver, payment_type, transaction_id):
+    if transaction_id:
+        return _record_split_payment_and_wait_for_order(
+            driver,
+            _transaction_tag_for_payment_type(payment_type),
+            transaction_id,
+        )
+    return _convert_unpaid_split_quote_and_wait_for_order(driver)
 
 
 def _create_split_order_in_worker(
@@ -1509,11 +1608,7 @@ def _create_split_order_in_worker(
         configured = _configure_quote_split(driver, split, original_state)
         promo_discount_fee = _add_discount_fee_to_split_quote(driver, split.get("promo_credit", "0.00"))
         saved_quote = _save_quote(driver)
-        new_order_id = _record_split_payment_and_wait_for_order(
-            driver,
-            _transaction_tag_for_payment_type(payment_type),
-            transaction_id,
-        )
+        new_order_id = _finalize_split_quote_and_wait_for_order(driver, payment_type, transaction_id)
         _open_order_scope_with_reload(
             driver,
             _order_url(order_id=new_order_id),
@@ -2160,6 +2255,29 @@ def _add_original_transfer_note(driver, note):
     return _save_order_and_wait(driver)
 
 
+def _finalize_original_order_after_split(driver, payment_detected, refund_amount, original_grand_total, transfer_note):
+    if payment_detected:
+        _add_refund_fee_to_original(driver, refund_amount)
+        refunded_totals = _read_order_totals(driver)
+        _cancel_original_order(driver)
+        _open_record_transaction(driver, quote=False)
+        _save_transaction_modal_with_amount(driver, "Refund", transfer_note, amount=-original_grand_total)
+        time.sleep(2)
+    else:
+        refunded_totals = None
+        _cancel_original_order(driver)
+
+    _add_original_transfer_note(driver, transfer_note)
+    return {
+        "refund_fee_amount": _money_text(refund_amount) if payment_detected else "0.00",
+        "refund_transaction_id": transfer_note if payment_detected else "",
+        "payment_actions_skipped": not payment_detected,
+        "sales_note": transfer_note,
+        "refunded_totals": refunded_totals,
+        "final_totals": _read_order_totals(driver),
+    }
+
+
 def _visible_design_tab_numbers(driver):
     return driver.execute_script(
         """
@@ -2722,6 +2840,7 @@ def run_split_order(
             stock_routing["message"] = f"{target_url} cancelled"
         original_note_after_split = f"transferred to {_format_order_list(['<split order #>' for _ in range(divisions)])}"
         payment_type = scan.get("totals", {}).get("payment_type", "")
+        payment_detected = _parse_money(scan.get("totals", {}).get("paid")) > Decimal("0.00")
         report = {
             "original_order_id": resolved_order_id,
             "order_url": target_url,
@@ -2740,15 +2859,20 @@ def run_split_order(
             "promo_allocation_total": _money_text(promo_amount),
             "promo_code": _clean_text(promo_code),
             "payment_transfer": {
+                "payment_detected": payment_detected,
+                "mode": "split_payment" if payment_detected else "no_payment",
                 "original_payment_type": payment_type,
-                "split_transaction_tag": _transaction_tag_for_payment_type(payment_type),
-                "transaction_id": "<read from original payment view popup during live run>",
+                "split_transaction_tag": _transaction_tag_for_payment_type(payment_type) if payment_detected else "",
+                "transaction_id": "<read from original payment view popup during live run>" if payment_detected else "",
             },
             "original_order_final_steps": {
-                "refund_fee_amount": scan.get("totals", {}).get("subtotal") or scan.get("totals", {}).get("subtotal_before_tax"),
+                "refund_fee_amount": (
+                    scan.get("totals", {}).get("subtotal") or scan.get("totals", {}).get("subtotal_before_tax")
+                ) if payment_detected else "0.00",
                 "cancel_status": "cancel order",
-                "refund_transaction_tag": "Refund",
-                "refund_transaction_id": original_note_after_split,
+                "refund_transaction_tag": "Refund" if payment_detected else "",
+                "refund_transaction_id": original_note_after_split if payment_detected else "",
+                "payment_actions_skipped": not payment_detected,
                 "sales_note": original_note_after_split,
                 "never_click_payment_refund_button": True,
             },
@@ -2760,19 +2884,24 @@ def run_split_order(
                     f"Auto Splitter stock routing requires manual review: {stock_routing.get('reason') or 'unknown reason'}."
                 )
             original_state = _get_order_live_state(driver)
-            payment_info = _get_original_payment_info(driver)
-            payment_type = payment_info.get("payment_type") or payment_type
-            transaction_id = payment_info.get("transaction_id", "")
-            if not transaction_id:
-                raise SplitterError("Original payment transaction ID could not be read from the payment view popup.")
+            payment_detected = _payment_is_detected(original_state)
+            transaction_id = ""
+            if payment_detected:
+                payment_info = _get_original_payment_info(driver)
+                payment_type = payment_info.get("payment_type") or payment_type
+                transaction_id = payment_info.get("transaction_id", "")
+                if not transaction_id:
+                    raise SplitterError("Original payment transaction ID could not be read from the payment view popup.")
 
             split_total = Decimal("0.00")
             report.update(
                 {
                     "dry_run": False,
                     "payment_transfer": {
+                        "payment_detected": payment_detected,
+                        "mode": "split_payment" if payment_detected else "no_payment",
                         "original_payment_type": payment_type,
-                        "split_transaction_tag": _transaction_tag_for_payment_type(payment_type),
+                        "split_transaction_tag": _transaction_tag_for_payment_type(payment_type) if payment_detected else "",
                         "transaction_id": transaction_id,
                     },
                     "split_orders": split_orders,
@@ -2868,11 +2997,7 @@ def run_split_order(
                     configured = _configure_quote_split(driver, split, original_state)
                     promo_discount_fee = _add_discount_fee_to_split_quote(driver, split.get("promo_credit", "0.00"))
                     saved_quote = _save_quote(driver)
-                    new_order_id = _record_split_payment_and_wait_for_order(
-                        driver,
-                        _transaction_tag_for_payment_type(payment_type),
-                        transaction_id,
-                    )
+                    new_order_id = _finalize_split_quote_and_wait_for_order(driver, payment_type, transaction_id)
                     _open_order_scope_with_reload(
                         driver,
                         _order_url(order_id=new_order_id),
@@ -2951,14 +3076,13 @@ def run_split_order(
                 order_id=resolved_order_id,
                 label="original CRM order for refund and cancellation",
             )
-            _add_refund_fee_to_original(driver, refund_amount)
-            refunded_totals = _read_order_totals(driver)
-            _cancel_original_order(driver)
-            _open_record_transaction(driver, quote=False)
-            _save_transaction_modal_with_amount(driver, "Refund", transfer_note, amount=-original_grand_total)
-            time.sleep(2)
-            _add_original_transfer_note(driver, transfer_note)
-            final_original = _read_order_totals(driver)
+            original_finalization = _finalize_original_order_after_split(
+                driver,
+                payment_detected,
+                refund_amount,
+                original_grand_total,
+                transfer_note,
+            )
             if stock_routing.get("action") == "slack_mach6_cancelled":
                 report["stock_cancel_slack"] = _send_mach6_stock_cancel_slack(target_url, dry_run=False)
 
@@ -2966,8 +3090,10 @@ def run_split_order(
                 {
                     "dry_run": False,
                     "payment_transfer": {
+                        "payment_detected": payment_detected,
+                        "mode": "split_payment" if payment_detected else "no_payment",
                         "original_payment_type": payment_type,
-                        "split_transaction_tag": _transaction_tag_for_payment_type(payment_type),
+                        "split_transaction_tag": _transaction_tag_for_payment_type(payment_type) if payment_detected else "",
                         "transaction_id": transaction_id,
                     },
                     "split_orders": split_orders,
@@ -2980,11 +3106,7 @@ def run_split_order(
                     "partial": False,
                     "original_order_final_steps": {
                         **report["original_order_final_steps"],
-                        "refund_fee_amount": _money_text(refund_amount),
-                        "refund_transaction_id": transfer_note,
-                        "sales_note": transfer_note,
-                        "refunded_totals": refunded_totals,
-                        "final_totals": final_original,
+                        **original_finalization,
                     },
                 }
             )
