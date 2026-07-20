@@ -140,7 +140,12 @@ APP_PIN_REQUIRED = bool(getattr(config_module, "AUTOMATION_APP_PIN_REQUIRED", RE
 HOME_AUTOMATION_TRIGGERS_ENABLED = bool(
     getattr(config_module, "AUTOMATION_HOME_ASSISTANT_ENABLED", True)
 )
-SERVER_BIND_HOST = "127.0.0.1" if REMOTE_ACCESS_MODE == "tailscale" else "0.0.0.0"
+LAN_REST_ACCESS_ENABLED = bool(getattr(config_module, "AUTOMATION_LAN_REST_ENABLED", False))
+SERVER_BIND_HOST = (
+    "0.0.0.0"
+    if REMOTE_ACCESS_MODE != "tailscale" or LAN_REST_ACCESS_ENABLED
+    else "127.0.0.1"
+)
 SERVER_PORT = 5123
 CLIPBOARD_PEER_URL = str(getattr(config_module, "AUTOMATION_CLIPBOARD_PEER_URL", "") or "").strip()
 SERVER_STARTED_AT = datetime.now()

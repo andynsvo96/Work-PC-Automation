@@ -50,6 +50,14 @@ AUTOMATION_REMOTE_ACCESS_MODE = "tailscale"
 AUTOMATION_APP_PIN_REQUIRED = True
 ```
 
+Home Assistant REST commands should use the shared service URL
+`https://automation-control.YOUR-TAILNET.ts.net/...` for Windows-first routing
+with Mac fallback. A legacy command that must continue calling a computer's
+private LAN address can set `AUTOMATION_LAN_REST_ENABLED = True` in that
+computer's local `config.py`; this intentionally exposes the PIN-protected
+server on port 5123 to the trusted LAN and cannot provide failover when that
+specific computer is offline.
+
 Install Tailscale on Windows, macOS, and Android; sign all three into the same tailnet. Configure the same stable Service on both computers:
 
 ```powershell

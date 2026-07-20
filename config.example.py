@@ -20,6 +20,12 @@ AUTOMATION_APP_PIN_REQUIRED = AUTOMATION_REMOTE_ACCESS_MODE == "tailscale"
 # protection remains enabled for normal control-panel traffic.
 AUTOMATION_HOME_ASSISTANT_ENABLED = True
 
+# Optional compatibility listener for a Home Assistant instance that calls a
+# computer's private LAN address (for example http://192.168.x.x:5123). Keep
+# False when Home Assistant uses the shared Tailscale HTTPS service. Enabling
+# this exposes the PIN-protected server to the trusted local network.
+AUTOMATION_LAN_REST_ENABLED = False
+
 # Cross-system clipboard. Each computer points to the other computer's
 # device-specific Tailscale Serve URL (configured on HTTPS port 8443).
 # Clipboard contents are never stored; automatic monitoring is toggled from
