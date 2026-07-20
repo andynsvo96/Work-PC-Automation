@@ -7,12 +7,26 @@
 <meta charset='utf-8'>
 <title>Automation Control Panel</title>
 <meta name='viewport' content='width=device-width, initial-scale=1'>
+<script>
+(() => {
+  const key = 'automation.ui.theme';
+  let theme = 'light';
+  try {
+    const saved = localStorage.getItem(key);
+    theme = saved === 'dark' || saved === 'light'
+      ? saved
+      : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  } catch (_) {}
+  document.documentElement.dataset.theme = theme;
+})();
+</script>
 <style>
 body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1f2937}
 .wrap{max-width:1200px;margin:0 auto;padding:18px}
 .app-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
 .app-header h1{margin:0}
 .app-title-row{display:flex;align-items:baseline;gap:9px;min-width:0;flex-wrap:wrap}
+.app-header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .app-version{color:#94a3b8;font-size:11px;font-weight:600;letter-spacing:.02em;white-space:nowrap}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .card{background:#fff;border:1px solid #d9e2ec;border-radius:10px;padding:14px}
@@ -173,9 +187,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .os-icon.windows{color:#0078d4}.os-icon.macos{color:#334155}.os-icon.android{color:#3ddc84}
 .hardware-summary{display:grid;grid-template-columns:repeat(4,minmax(135px,1fr));gap:8px;margin:10px 0}
 .hardware-summary .metric{min-width:0}
-.queue-tab-btn{margin-left:auto}
-.console-tab-btn{margin-left:0}
-.master-refresh-btn{background:#fff;border-color:#2563eb;color:#2563eb}
+.console-tab-btn{margin-left:auto}
 .tab-panel{display:none}
 .tab-panel.active{display:block}
 .queue-panel{display:none;margin:0 0 12px;border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:10px;box-shadow:0 12px 28px rgba(15,23,42,.12)}
@@ -226,6 +238,84 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .connectivity-dot.online{background:#22c55e}
 .connectivity-dot.waiting{background:#eab308}
 .connectivity-dot.error{background:#ef4444}
+:root[data-theme='dark']{color-scheme:dark}
+:root[data-theme='dark'] body{background:#1e1e1e;color:#d4d4d4}
+:root[data-theme='dark'] .app-version{color:#9d9d9d}
+:root[data-theme='dark'] .card,
+:root[data-theme='dark'] .modal,
+:root[data-theme='dark'] .queue-panel{background:#252526;border-color:#3c3c3c;box-shadow:0 12px 28px rgba(0,0,0,.34)}
+:root[data-theme='dark'] .field,
+:root[data-theme='dark'] .crm-link-panel,
+:root[data-theme='dark'] .processing-report,
+:root[data-theme='dark'] .work-plan{border-color:#3c3c3c}
+:root[data-theme='dark'] .field input,
+:root[data-theme='dark'] .field textarea,
+:root[data-theme='dark'] .field select,
+:root[data-theme='dark'] select,
+:root[data-theme='dark'] input[type='text'],
+:root[data-theme='dark'] input[type='number'],
+:root[data-theme='dark'] input[type='time'],
+:root[data-theme='dark'] input[type='date'],
+:root[data-theme='dark'] textarea{background:#3c3c3c!important;border-color:#555!important;color:#f0f0f0!important}
+:root[data-theme='dark'] input::placeholder,
+:root[data-theme='dark'] textarea::placeholder{color:#a6a6a6}
+:root[data-theme='dark'] button{background:#0e639c;border-color:#1177bb;color:#fff}
+:root[data-theme='dark'] button:hover:not(:disabled){background:#1177bb}
+:root[data-theme='dark'] button.secondary,
+:root[data-theme='dark'] button.icon-btn,
+:root[data-theme='dark'] .tab-btn{background:#2d2d30;border-color:#555;color:#d4d4d4}
+:root[data-theme='dark'] button.secondary:hover:not(:disabled),
+:root[data-theme='dark'] button.icon-btn:hover:not(:disabled),
+:root[data-theme='dark'] .tab-btn:hover:not(:disabled){background:#3c3c3c;border-color:#007acc}
+:root[data-theme='dark'] button.active,
+:root[data-theme='dark'] button.toggle-btn.active,
+:root[data-theme='dark'] button.icon-btn.active,
+:root[data-theme='dark'] .tab-btn.active,
+:root[data-theme='dark'] .processing-report-filter.active{background:#007acc;border-color:#3794ff;color:#fff}
+:root[data-theme='dark'] button:disabled{background:#2d2d30!important;border-color:#3c3c3c!important;color:#777!important}
+:root[data-theme='dark'] .status{background:#181818;color:#d4d4d4;border:1px solid #3c3c3c}
+:root[data-theme='dark'] .muted,
+:root[data-theme='dark'] .queue-meta,
+:root[data-theme='dark'] .queue-empty,
+:root[data-theme='dark'] .work-timer-note,
+:root[data-theme='dark'] .work-day-date,
+:root[data-theme='dark'] .work-day-state,
+:root[data-theme='dark'] .temp-gauge-meta{color:#9d9d9d}
+:root[data-theme='dark'] .metric,
+:root[data-theme='dark'] .processing-report-metric,
+:root[data-theme='dark'] .notice,
+:root[data-theme='dark'] .suite-output,
+:root[data-theme='dark'] .work-cap-quick-setting,
+:root[data-theme='dark'] .queue-item{background:#2d2d30;border-color:#3c3c3c}
+:root[data-theme='dark'] .queue-item.running{background:#102f4c;border-color:#3794ff}
+:root[data-theme='dark'] .queue-item.idle{background:#252526;border-color:#555}
+:root[data-theme='dark'] .queue-runs{border-color:#3c3c3c;color:#d4d4d4}
+:root[data-theme='dark'] .queue-runs td,
+:root[data-theme='dark'] .queue-runs th,
+:root[data-theme='dark'] .tbl th,
+:root[data-theme='dark'] .tbl td{border-color:#3c3c3c}
+:root[data-theme='dark'] .tbl th{background:#2d2d30}
+:root[data-theme='dark'] .section-note summary{background:#2d2d30;border-color:#555;color:#75beff}
+:root[data-theme='dark'] .section-note[open] summary{background:#102f4c}
+:root[data-theme='dark'] .section-note-body{background:#252526;border-color:#555;color:#d4d4d4;box-shadow:0 12px 30px rgba(0,0,0,.42)}
+:root[data-theme='dark'] .modal-backdrop{background:rgba(0,0,0,.68)}
+:root[data-theme='dark'] .crm-link-category-title,
+:root[data-theme='dark'] .control-target,
+:root[data-theme='dark'] .work-timer-label,
+:root[data-theme='dark'] .work-day-toggle{color:#c8c8c8}
+:root[data-theme='dark'] .crm-link-btn,
+:root[data-theme='dark'] .work-day-toggle{background:#2d2d30;border-color:#555}
+:root[data-theme='dark'] .crm-link-btn:hover,
+:root[data-theme='dark'] .work-day-toggle.active{background:#102f4c;border-color:#3794ff;color:#f0f0f0}
+:root[data-theme='dark'] .crm-link-btn .state{color:#9d9d9d}
+:root[data-theme='dark'] .work-timer{background:linear-gradient(145deg,#252526,#2d2d30);border-color:#555}
+:root[data-theme='dark'] .work-timer-value{color:#f0f0f0}
+:root[data-theme='dark'] .work-hours-progress,
+:root[data-theme='dark'] .countdown-bar{background:#3c3c3c}
+:root[data-theme='dark'] .badge{background:#3c3c3c;color:#d4d4d4}
+:root[data-theme='dark'] .console-output{background:#181818;color:#dcdcaa;border-color:#3c3c3c}
+:root[data-theme='dark'] .version-gate-notice,
+:root[data-theme='dark'] .platform-capability-notice{background:#332b00;color:#f0d48a;border-color:#cca700}
 @media (max-width:980px){.grid,.subgrid,.slack-day-message-panel{grid-template-columns:1fr}}
 @media (max-width:980px){.work-plan-days{grid-template-columns:repeat(4,minmax(110px,1fr))}}
 @media (max-width:760px){.metrics,.desktop-metrics-grid,.processing-report-metrics,.work-timer-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}.work-plan-days{grid-template-columns:repeat(2,minmax(120px,1fr))}}
@@ -239,23 +329,24 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
     <h1>Automation Control Panel</h1>
     <span class='app-version' id='appVersionText'>Version: loading</span>
   </div>
-  <button class='icon-btn' id='settingsGearBtn' onclick="setActiveTab('settings')" title='Open Settings' aria-label='Open Settings'>
-    <svg viewBox='0 0 24 24' aria-hidden='true' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>
-      <circle cx='12' cy='12' r='3'></circle>
-      <path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 8.91 4.6H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c0 .66.26 1.3.73 1.77.47.47 1.11.73 1.77.73H22a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'></path>
-    </svg>
-    <span>Settings</span>
-  </button>
+  <div class='app-header-actions'>
+    <button class='icon-btn' id='themeToggleBtn' type='button' onclick='toggleColorTheme()' title='Switch color theme' aria-label='Switch color theme'>Dark Mode</button>
+    <button class='icon-btn' id='tabBtnQueue' onclick='toggleQueuePanel()'>Queue</button>
+    <button class='icon-btn' id='settingsGearBtn' onclick="setActiveTab('settings')" title='Open Settings' aria-label='Open Settings'>
+      <svg viewBox='0 0 24 24' aria-hidden='true' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>
+        <circle cx='12' cy='12' r='3'></circle>
+        <path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 8.91 4.6H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c0 .66.26 1.3.73 1.77.47.47 1.11.73 1.77.73H22a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'></path>
+      </svg>
+      <span>Settings</span>
+    </button>
+  </div>
 </div>
 <div class='tab-bar'>
   <button class='tab-btn active' id='tabBtnAutomation' onclick="setActiveTab('automation')">Communications</button>
   <button class='tab-btn' id='tabBtnProcessing' onclick="setActiveTab('processing')">Processing</button>
-  <button class='tab-btn' id='tabBtnDevelopment' onclick="setActiveTab('development')">Development</button>
   <button class='tab-btn' id='tabBtnMetrics' onclick="setActiveTab('metrics')">Desktop Metrics Server</button>
   <button class='tab-btn' id='tabBtnPower' onclick="setActiveTab('power')">System Controls</button>
-  <button class='tab-btn queue-tab-btn' id='tabBtnQueue' onclick='toggleQueuePanel()'>Queue</button>
   <button class='tab-btn console-tab-btn' id='tabBtnConsole' onclick="setActiveTab('console')">Console</button>
-  <button class='tab-btn master-refresh-btn' id='masterRefreshBtn' onclick='refreshAllStatuses(this)'>Refresh All</button>
   <label class='control-target'><span id='controlTargetLabel'>Control target</span><select id='controlTargetSelect' onchange='changeControlTarget(this.value)'><option value=''>Any available computer</option></select></label>
 </div>
 <div id='platformCapabilityNotice' class='notice platform-capability-notice'>Windows only</div>
@@ -525,6 +616,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
           <option value='order_goods_single_run'>Order Goods Single Run</option>
           <option value='shipping_bypasser_dry_run'>Shipping Bypasser Dry Run</option>
           <option value='shipping_bypasser_run'>Shipping Bypasser Run</option>
+          <option value='push_back_run'>Push Back Run</option>
         </select>
       </div>
       <button class='secondary' id='crmStockAutomationTestRunBtn' onclick="startCrmStockAutomationSelectedTest(this)">Run Selected Test</button>
@@ -809,50 +901,6 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
     </div>
   </div>
 </dialog>
-<div id='tabDevelopment' class='tab-panel'>
-  <div class='status' id='devStatusBox'>Development tools ready.</div>
-  <div class='card'>
-    <div class='card-title-row'>
-      <h2>Slack Test Controls</h2>
-      <details class='section-note'>
-        <summary>Read More</summary>
-        <div class='section-note-body'>
-          <p>Use these controls to test Slack automations against Slack test channel URL.</p>
-        </div>
-      </details>
-    </div>
-    <div class='row'>
-      <button class='secondary' id='slackLunchTestToggleBtn' onclick='toggleSlackLunchTest(this)'>Slack Lunch Test (1 Hour)</button>
-      <span class='muted' id='slackLunchTestStatusText'>Test lunch timer not active.</span>
-    </div>
-  </div>
-  <div class='card'>
-    <div class='card-title-row'>
-      <h2>Automation Test Suite</h2>
-      <details class='section-note'>
-        <summary>Read More</summary>
-        <div class='section-note-body'>
-          <p>All Slack tests in this tab use Slack test channel URL.</p>
-          <p>Lunch test starts lunch on test channel and schedules auto-return in 1 hour.</p>
-        </div>
-      </details>
-    </div>
-    <div class='checklist'>
-      <label class='check'><input type='checkbox' class='suite-check' value='paycom_in' checked>Paycom In (Dry Run)</label>
-      <label class='check'><input type='checkbox' class='suite-check' value='paycom_out' checked>Paycom Out (Dry Run)</label>
-      <label class='check'><input type='checkbox' class='suite-check' value='slack_in' checked>Slack In (Test Channel)</label>
-      <label class='check'><input type='checkbox' class='suite-check' value='slack_out' checked>Slack Out (Test Channel)</label>
-      <label class='check'><input type='checkbox' class='suite-check' value='slack_lunch'>Slack Lunch (Test Channel)</label>
-    </div>
-    <div class='row'>
-      <button class='secondary' onclick='setSuiteChecks(true)'>Check All</button>
-      <button class='secondary' onclick='setSuiteChecks(false)'>Clear</button>
-      <button onclick='runAutomationSuite(this)'>Run Selected Tests</button>
-    </div>
-    <div id='suiteResult' class='suite-output'>No suite run yet.</div>
-  </div>
-</div>
-
 <div id='tabMetrics' class='tab-panel'>
   <div class='status' id='metricsStatusBox'>Desktop metrics status: waiting for first update...</div>
   <div class='card'>
@@ -1044,7 +1092,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
         <details class='section-note'>
           <summary>Read More</summary>
           <div class='section-note-body'>
-            <p>Shows the latest automation events from Communications, Processing, Development, System Controls, and other shared automation actions.</p>
+            <p>Shows the latest automation events from Communications, Processing, System Controls, and other shared automation actions.</p>
           </div>
         </details>
         <button onclick='loadConsoleLog(true)'>Refresh Console</button>
@@ -1225,6 +1273,8 @@ let crmOrderGoodsStatusPayload = null;
 let crmOrderGoodsPollTimer = null;
 let crmShippingBypasserStatusPayload = null;
 let crmShippingBypasserPollTimer = null;
+let crmPushBackStatusPayload = null;
+let crmPushBackPollTimer = null;
 let crmAutoSplitterStatusPayload = null;
 let crmAutoSplitterPollTimer = null;
 let crmAutoSplitterHistoryExpanded = false;
@@ -1727,6 +1777,27 @@ function syncSlackDayMessagePanels(day) {
 }
 
 let appCsrfToken = null;
+const COLOR_THEME_STORAGE_KEY = 'automation.ui.theme';
+
+function applyColorTheme(theme, persist = false) {
+  const normalized = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = normalized;
+  const button = document.getElementById('themeToggleBtn');
+  if (button) {
+    button.textContent = normalized === 'dark' ? 'Light Mode' : 'Dark Mode';
+    button.setAttribute('aria-label', `Switch to ${normalized === 'dark' ? 'light' : 'dark'} mode`);
+    button.title = `Switch to ${normalized === 'dark' ? 'light' : 'dark'} mode`;
+  }
+  const themeColor = document.querySelector("meta[name='theme-color']");
+  if (themeColor) themeColor.content = normalized === 'dark' ? '#1e1e1e' : '#2563eb';
+  if (persist) {
+    try { localStorage.setItem(COLOR_THEME_STORAGE_KEY, normalized); } catch (_) {}
+  }
+}
+
+function toggleColorTheme() {
+  applyColorTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', true);
+}
 
 async function ensureAppCsrfToken() {
   if (appCsrfToken) return appCsrfToken;
@@ -1765,7 +1836,6 @@ function setStatus(msg, targetTab = null) {
   const idsByTab = {
     automation: 'statusBox',
     processing: 'processingStatusBox',
-    development: 'devStatusBox',
     metrics: 'metricsStatusBox',
     power: 'powerStatusBox',
     console: 'consoleStatusBox',
@@ -2179,7 +2249,7 @@ async function cancelQueueTask(taskId) {
   try {
     const d = await api(`/api/queue/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' });
     renderQueue(d);
-    await refreshAutomationStatusesAfterStop();
+    await refreshAutomationStatusesAfterQueueChange();
   } catch (e) {
     setStatus('Queue cancel failed: ' + e.message);
   }
@@ -2190,7 +2260,7 @@ async function cancelAllQueueTasks() {
   try {
     const d = await api('/api/queue/cancel-all', { method: 'POST' });
     renderQueue(d);
-    await refreshAutomationStatusesAfterStop();
+    await refreshAutomationStatusesAfterQueueChange();
   } catch (e) {
     setStatus('Queue cancel-all failed: ' + e.message);
   }
@@ -2294,67 +2364,28 @@ async function withButtonBusy(button, busyLabel, task) {
     setButtonBusy(button, false);
   }
 }
-function markButtonStoppable(button, stopLabel = 'STOP') {
+function setAutomationButtonRunning(button, running) {
   if (!button) return;
-  if (!button.dataset.originalText) button.dataset.originalText = button.textContent;
-  button.dataset.stopActive = '1';
-  button.disabled = false;
-  button.textContent = stopLabel;
-  button.classList.add('danger');
-}
-function restoreStoppableButton(button) {
-  if (!button) return;
-  button.dataset.stopActive = '';
-  button.disabled = false;
-  if (button.dataset.originalText) button.textContent = button.dataset.originalText;
   button.classList.remove('danger');
+  button.disabled = Boolean(running);
 }
-async function refreshAutomationStatusesAfterStop() {
+async function refreshAutomationStatusesAfterQueueChange() {
   await Promise.allSettled([
     loadStatus(false),
     loadCrmProcessingStatus(false),
     loadCrmStatus(false),
     loadCrmProductSeparatorStatus(false),
     loadCrmOrderGoodsStatus(false),
+    loadCrmShippingBypasserStatus(false),
+    loadCrmPushBackStatus(false),
     loadCrmMassEmailerStatus(false),
     loadCrmAutoSplitterStatus(false),
     loadCrmAddressStatus(false),
     loadSlackLunchStatus(false),
   ]);
 }
-async function forceStopAutomation(button = null) {
-  if (button) {
-    button.disabled = true;
-    button.textContent = 'STOPPING...';
-  }
-  try {
-    const d = await api('/automation/force-stop', { method: 'POST' });
-    setStatus(d.message || 'Force stop requested.');
-    await refreshAutomationStatusesAfterStop();
-    setTimeout(() => { refreshAutomationStatusesAfterStop(); }, 1500);
-  } catch (e) {
-    setStatus('Force stop failed: ' + e.message);
-    if (button) {
-      button.disabled = false;
-      button.textContent = 'STOP';
-    }
-  }
-}
-async function maybeForceStopFromButton(button) {
-  if (button && button.dataset.stopActive === '1') {
-    await forceStopAutomation(button);
-    return true;
-  }
-  return false;
-}
-async function withStopButton(button, task) {
-  if (await maybeForceStopFromButton(button)) return null;
-  markButtonStoppable(button);
-  try {
-    return await task();
-  } finally {
-    restoreStoppableButton(button);
-  }
+async function withAutomationButtonBusy(button, task) {
+  return withButtonBusy(button, 'Adding to queue...', task);
 }
 function setConsoleStatus(msg) {
   const el = document.getElementById('consoleStatusBox');
@@ -2944,29 +2975,26 @@ function setActiveTab(tabName) {
   }
   const capabilityNotice = document.getElementById('platformCapabilityNotice');
   if (capabilityNotice) capabilityNotice.classList.remove('active');
-  activeTab = ['automation', 'processing', 'console', 'development', 'metrics', 'power', 'settings'].includes(tabName) ? tabName : 'automation';
+  activeTab = ['automation', 'processing', 'console', 'metrics', 'power', 'settings'].includes(tabName) ? tabName : 'automation';
   const isAutomation = activeTab === 'automation';
   const isProcessing = activeTab === 'processing';
   const isConsole = activeTab === 'console';
-  const isDevelopment = activeTab === 'development';
   const isMetrics = activeTab === 'metrics';
   const isPower = activeTab === 'power';
   const isSettings = activeTab === 'settings';
   document.getElementById('tabAutomation').classList.toggle('active', isAutomation);
   document.getElementById('tabProcessing').classList.toggle('active', isProcessing);
   document.getElementById('tabConsole').classList.toggle('active', isConsole);
-  document.getElementById('tabDevelopment').classList.toggle('active', isDevelopment);
   document.getElementById('tabMetrics').classList.toggle('active', isMetrics);
   document.getElementById('tabPower').classList.toggle('active', isPower);
   document.getElementById('tabSettings').classList.toggle('active', isSettings);
   document.getElementById('tabBtnAutomation').classList.toggle('active', isAutomation);
   document.getElementById('tabBtnProcessing').classList.toggle('active', isProcessing);
   document.getElementById('tabBtnConsole').classList.toggle('active', isConsole);
-  document.getElementById('tabBtnDevelopment').classList.toggle('active', isDevelopment);
   document.getElementById('tabBtnMetrics').classList.toggle('active', isMetrics);
   document.getElementById('tabBtnPower').classList.toggle('active', isPower);
   document.getElementById('settingsGearBtn').classList.toggle('active', isSettings);
-  if (isAutomation || isDevelopment) {
+  if (isAutomation) {
     loadSlackLunchStatus(false);
   }
   if (isAutomation) {
@@ -2978,6 +3006,7 @@ function setActiveTab(tabName) {
     loadCrmProductSeparatorStatus(false);
     loadCrmOrderGoodsStatus(false);
     loadCrmShippingBypasserStatus(false);
+    loadCrmPushBackStatus(false);
     loadCrmMassEmailerStatus(false);
     loadCrmAutoSplitterStatus(false);
     loadCrmAddressStatus(false);
@@ -3390,7 +3419,6 @@ function applySlackLunchControlVisual(mode, buttonId, statusId, idleLabel) {
 
 function updateSlackLunchVisual() {
   applySlackLunchControlVisual('production', 'slackLunchToggleBtn', 'slackLunchStatusText', 'Slack Lunch (1 Hour)');
-  applySlackLunchControlVisual('test', 'slackLunchTestToggleBtn', 'slackLunchTestStatusText', 'Slack Lunch Test (1 Hour)');
 }
 
 function renderSlackLunchStatus(payload) {
@@ -3420,7 +3448,6 @@ async function loadSlackLunchStatus(showBusy = false) {
 }
 
 async function toggleSlackLunchMode(mode, button = null) {
-  if (await maybeForceStopFromButton(button)) return;
   const modeLabel = (mode === 'test') ? 'test' : 'production';
   const payload = slackLunchPayload || {};
   const isActive = Boolean(payload.active);
@@ -3463,16 +3490,12 @@ async function toggleSlackLunchMode(mode, button = null) {
   if (isActive) {
     await withButtonBusy(button, 'Canceling lunch...', runner);
   } else {
-    await withStopButton(button, runner);
+    await withAutomationButtonBusy(button, runner);
   }
 }
 
 async function toggleSlackLunch(button = null) {
   await toggleSlackLunchMode('production', button);
-}
-
-async function toggleSlackLunchTest(button = null) {
-  await toggleSlackLunchMode('test', button);
 }
 
 async function loadPowerStatus(showBusy = true) {
@@ -4787,6 +4810,7 @@ async function pollCrmProcessingStatus() {
     loadCrmProductSeparatorStatus(false);
     loadCrmOrderGoodsStatus(false);
     loadCrmShippingBypasserStatus(false);
+    loadCrmPushBackStatus(false);
     loadCrmMassEmailerStatus(false);
     loadCrmAddressStatus(false);
   }
@@ -4970,8 +4994,7 @@ function renderCrmProcessingStatus(payload) {
   renderCrmProcessingReport(payload);
   renderCrmProcessingSelectionButtons({ ...state, processing_filter: processingFilter });
   if (runBtn) {
-    restoreStoppableButton(runBtn);
-    runBtn.disabled = selectedSteps.length === 0;
+    setAutomationButtonRunning(runBtn, running || selectedSteps.length === 0);
   }
   if (queueVisible && queuePayload) renderQueue(queuePayload);
   syncCrmProcessingPolling();
@@ -5257,6 +5280,7 @@ async function startCrmProcessingRun(button = null) {
   await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
   await loadCrmShippingBypasserStatus(false);
+  await loadCrmPushBackStatus(false);
   await loadCrmMassEmailerStatus(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmAddressStatus(false);
@@ -5649,10 +5673,9 @@ function renderCrmStatus(payload) {
   const dryRunBtn = document.getElementById('crmDryRunBtn');
   if (dryRunBtn) {
     if (running && !processingRunning) {
-      markButtonStoppable(dryRunBtn);
+      setAutomationButtonRunning(dryRunBtn, true);
     } else {
-      restoreStoppableButton(dryRunBtn);
-      dryRunBtn.disabled = processingRunning;
+      setAutomationButtonRunning(dryRunBtn, processingRunning);
     }
   }
   renderCrmHistory(state.run_history || []);
@@ -5678,6 +5701,7 @@ function getCrmStockAutomationSelectedSource() {
   if (action.indexOf('product_separator') === 0) return 'product_separator';
   if (action.indexOf('order_goods') === 0) return 'order_goods';
   if (action.indexOf('shipping_bypasser') === 0) return 'shipping_bypasser';
+  if (action.indexOf('push_back') === 0) return 'push_back';
   return '';
 }
 
@@ -5692,6 +5716,7 @@ function crmStockAutomationPayloadForSource(source) {
   if (source === 'product_separator') return crmProductSeparatorStatusPayload;
   if (source === 'order_goods') return crmOrderGoodsStatusPayload;
   if (source === 'shipping_bypasser') return crmShippingBypasserStatusPayload;
+  if (source === 'push_back') return crmPushBackStatusPayload;
   return null;
 }
 
@@ -5705,6 +5730,7 @@ function crmStockAutomationSingleTestDetails(source, payload) {
     (source === 'product_separator' && action === 'product_separator_order')
     || (source === 'order_goods' && action === 'order_goods_single')
     || (source === 'shipping_bypasser' && action === 'shipping_bypass_single')
+    || (source === 'push_back' && action === 'push_back_single')
     || Boolean(targetOrderId)
   );
   if (!isSingle) return null;
@@ -5719,6 +5745,9 @@ function crmStockAutomationSingleTestDetails(source, payload) {
     activity = runtime.dryRun ? 'dry run' : 'single run';
   } else if (source === 'shipping_bypasser') {
     tool = 'Shipping Bypasser';
+    activity = runtime.dryRun ? 'dry run' : 'run';
+  } else if (source === 'push_back') {
+    tool = 'Push Back';
     activity = runtime.dryRun ? 'dry run' : 'run';
   }
 
@@ -5767,12 +5796,11 @@ function updateCrmStockAutomationTestControls() {
   const select = document.getElementById('crmStockAutomationTestSelect');
   if (select) select.disabled = false;
   if (!btn) return;
-  restoreStoppableButton(btn);
-  btn.disabled = false;
+  setAutomationButtonRunning(btn, false);
 }
 
 async function startCrmStockAutomationSelectedTest(button = null) {
-  restoreStoppableButton(button);
+  setAutomationButtonRunning(button, false);
   const action = String((document.getElementById('crmStockAutomationTestSelect') || {}).value || 'product_separator_dry_run');
   const orderTarget = getCrmStockAutomationOrderTarget();
   const label = getCrmStockAutomationSelectedLabel();
@@ -5797,6 +5825,9 @@ async function startCrmStockAutomationSelectedTest(button = null) {
   }
   if (action === 'shipping_bypasser_run') {
     return startCrmShippingBypasserRun(false, button, true);
+  }
+  if (action === 'push_back_run') {
+    return startCrmPushBackRun(false, button, true);
   }
   setStatus('Choose a stock automation test before running.');
 }
@@ -5834,11 +5865,10 @@ async function loadCrmStatus(setStatusText = false) {
 }
 
 async function startCrmRun(dryRun, button = null) {
-  if (await maybeForceStopFromButton(button)) return;
   const path = dryRun ? '/crm/unlock/dry-run' : '/crm/unlock';
   let resultMsg = dryRun ? 'Starting Stock Unlocker dry run...' : 'Starting Stock Unlocker...';
   setStatus(resultMsg);
-  markButtonStoppable(button);
+  setAutomationButtonRunning(button, true);
   crmAddressModeDirty = false;
   try {
     const d = await api(path, { method: 'POST' });
@@ -5851,11 +5881,12 @@ async function startCrmRun(dryRun, button = null) {
   await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
   await loadCrmShippingBypasserStatus(false);
+  await loadCrmPushBackStatus(false);
   await loadCrmMassEmailerStatus(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmProcessingStatus(false);
   setStatus(resultMsg);
-  if (!(crmStatusPayload && crmStatusPayload.running)) restoreStoppableButton(button);
+  setAutomationButtonRunning(button, Boolean(crmStatusPayload && crmStatusPayload.running));
 }
 
 function stopCrmProductSeparatorPolling() {
@@ -5931,7 +5962,6 @@ async function loadCrmProductSeparatorStatus(setStatusText = false) {
 }
 
 async function startCrmProductSeparatorRun(dryRun, button = null, singleOrder = false) {
-  if (!singleOrder && await maybeForceStopFromButton(button)) return;
   const rawOrderTarget = getCrmStockAutomationOrderTarget();
   if (singleOrder && !rawOrderTarget) {
     setStatus('Enter a single order ID or CRM order URL before starting Single Separator.');
@@ -5942,7 +5972,7 @@ async function startCrmProductSeparatorRun(dryRun, button = null, singleOrder = 
     ? (dryRun ? `Starting Single Separator dry run for order ${rawOrderTarget}...` : `Starting Single Separator run for order ${rawOrderTarget}...`)
     : (dryRun ? 'Starting Product Separator dry run...' : 'Starting Product Separator...');
   setStatus(resultMsg);
-  if (!singleOrder) markButtonStoppable(button);
+  if (!singleOrder) setAutomationButtonRunning(button, true);
   try {
     const payload = {};
     if (singleOrder) payload.order_id = rawOrderTarget;
@@ -5968,11 +5998,11 @@ async function startCrmProductSeparatorRun(dryRun, button = null, singleOrder = 
   await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
   await loadCrmShippingBypasserStatus(false);
+  await loadCrmPushBackStatus(false);
   await loadCrmMassEmailerStatus(false);
   await loadCrmProcessingStatus(false);
   setStatus(resultMsg);
-  if (!singleOrder && !(crmProductSeparatorStatusPayload && crmProductSeparatorStatusPayload.running)) restoreStoppableButton(button);
-  if (singleOrder) restoreStoppableButton(button);
+  setAutomationButtonRunning(button, !singleOrder && Boolean(crmProductSeparatorStatusPayload && crmProductSeparatorStatusPayload.running));
 }
 
 function stopCrmOrderGoodsPolling() {
@@ -6050,7 +6080,6 @@ async function loadCrmOrderGoodsStatus(setStatusText = false) {
 }
 
 async function startCrmOrderGoodsRun(dryRun, button = null, singleOrder = false) {
-  if (!singleOrder && await maybeForceStopFromButton(button)) return;
   const rawOrderTarget = getCrmStockAutomationOrderTarget();
   if (singleOrder && !rawOrderTarget) {
     setStatus('Enter a single order ID or CRM order URL before starting Single Stock.');
@@ -6061,7 +6090,7 @@ async function startCrmOrderGoodsRun(dryRun, button = null, singleOrder = false)
     ? (dryRun ? `Starting Single Stock dry run for order ${rawOrderTarget}...` : `Starting Single Stock run for order ${rawOrderTarget}...`)
     : (dryRun ? 'Starting Rush Order Goods dry run...' : 'Starting Rush Order Goods...');
   setStatus(resultMsg);
-  if (!singleOrder) markButtonStoppable(button);
+  if (!singleOrder) setAutomationButtonRunning(button, true);
   try {
     const payload = {};
     if (singleOrder) payload.order_id = rawOrderTarget;
@@ -6087,12 +6116,12 @@ async function startCrmOrderGoodsRun(dryRun, button = null, singleOrder = false)
   await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
   await loadCrmShippingBypasserStatus(false);
+  await loadCrmPushBackStatus(false);
   await loadCrmMassEmailerStatus(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmProcessingStatus(false);
   setStatus(resultMsg);
-  if (!singleOrder && !(crmOrderGoodsStatusPayload && crmOrderGoodsStatusPayload.running)) restoreStoppableButton(button);
-  if (singleOrder) restoreStoppableButton(button);
+  setAutomationButtonRunning(button, !singleOrder && Boolean(crmOrderGoodsStatusPayload && crmOrderGoodsStatusPayload.running));
 }
 
 function setCrmShippingBypasserStatusText(message) {
@@ -6174,7 +6203,6 @@ async function loadCrmShippingBypasserStatus(setStatusText = false) {
 }
 
 async function startCrmShippingBypasserRun(dryRun, button = null, singleOrder = false) {
-  if (!singleOrder && await maybeForceStopFromButton(button)) return;
   const rawOrderTarget = getCrmStockAutomationOrderTarget();
   if (singleOrder && !rawOrderTarget) {
     setStatus('Enter a single order ID or CRM order URL before starting Single Bypasser.');
@@ -6185,7 +6213,7 @@ async function startCrmShippingBypasserRun(dryRun, button = null, singleOrder = 
     ? (dryRun ? `Starting Single Bypasser dry run for order ${rawOrderTarget}...` : `Starting Single Bypasser run for order ${rawOrderTarget}...`)
     : (dryRun ? 'Starting Shipping Bypasser dry run...' : 'Starting Shipping Bypasser...');
   setStatus(resultMsg);
-  if (!singleOrder) markButtonStoppable(button);
+  if (!singleOrder) setAutomationButtonRunning(button, true);
   try {
     const payload = {};
     if (singleOrder) payload.order_id = rawOrderTarget;
@@ -6213,8 +6241,7 @@ async function startCrmShippingBypasserRun(dryRun, button = null, singleOrder = 
   await loadCrmAutoSplitterStatus(false);
   await loadCrmProcessingStatus(false);
   setStatus(resultMsg);
-  if (!singleOrder && !(crmShippingBypasserStatusPayload && crmShippingBypasserStatusPayload.running)) restoreStoppableButton(button);
-  if (singleOrder) restoreStoppableButton(button);
+  setAutomationButtonRunning(button, !singleOrder && Boolean(crmShippingBypasserStatusPayload && crmShippingBypasserStatusPayload.running));
 }
 
 function stopCrmShippingBypasserPolling() {
@@ -6234,6 +6261,85 @@ function syncCrmShippingBypasserPolling() {
   } else {
     stopCrmShippingBypasserPolling();
   }
+}
+
+function stopCrmPushBackPolling() {
+  if (crmPushBackPollTimer) {
+    clearInterval(crmPushBackPollTimer);
+    crmPushBackPollTimer = null;
+  }
+}
+
+function renderCrmPushBackStatus(payload) {
+  crmPushBackStatusPayload = payload || {};
+  maybeRenderCrmStockAutomationStatus('push_back', crmPushBackStatusPayload);
+  if (crmPushBackStatusPayload.running) {
+    if (!crmPushBackPollTimer) {
+      crmPushBackPollTimer = setInterval(() => loadCrmPushBackStatus(false), 2000);
+    }
+  } else {
+    stopCrmPushBackPolling();
+  }
+}
+
+async function loadCrmPushBackStatus(setStatusText = false) {
+  try {
+    const d = await api('/crm/push-back/status');
+    renderCrmPushBackStatus(d);
+    if (setStatusText) {
+      const runtime = d && d.runtime ? d.runtime : {};
+      setStatus(d.running ? (runtime.lastMessage || 'Push Back is starting.') : (runtime.lastMessage || 'Push Back status refreshed.'));
+    }
+    return d;
+  } catch (e) {
+    if (setStatusText) setStatus('Push Back status load failed: ' + e.message);
+    if (getCrmStockAutomationSelectedSource() === 'push_back') {
+      setCrmStockAutomationTestStatus('Push Back test status load failed.', e.message);
+    }
+    stopCrmPushBackPolling();
+    return null;
+  }
+}
+
+async function startCrmPushBackRun(dryRun, button = null, singleOrder = false) {
+  const rawOrderTarget = getCrmStockAutomationOrderTarget();
+  if (singleOrder && !rawOrderTarget) {
+    setStatus('Enter a single order ID or CRM order URL before starting Push Back.');
+    return;
+  }
+  const path = dryRun ? '/crm/push-back/dry-run' : '/crm/push-back';
+  const currentFilter = normalizeCrmProcessingFilter(
+    crmProcessingStatusPayload && crmProcessingStatusPayload.state
+      ? crmProcessingStatusPayload.state.processing_filter
+      : 'rush'
+  );
+  const processingFilter = ['rush', 'high_value', '813'].includes(currentFilter) ? currentFilter : 'rush';
+  let resultMsg = singleOrder
+    ? `Starting Push Back run for order ${rawOrderTarget}...`
+    : 'Starting Push Back...';
+  setStatus(resultMsg);
+  try {
+    const payload = { processing_filter: processingFilter };
+    if (singleOrder) payload.order_id = rawOrderTarget;
+    const d = await api(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    renderCrmPushBackStatus(d);
+    resultMsg = d.message || resultMsg;
+    if (singleOrder && d.queue_task) {
+      setCrmStockAutomationTestStatus('Queued Push Back Run.', `Order ${rawOrderTarget} | ${resultMsg}`);
+    }
+  } catch (e) {
+    resultMsg = 'Push Back request failed: ' + e.message;
+  }
+  await loadCrmPushBackStatus(false);
+  await loadCrmStatus(false);
+  await loadCrmProcessingStatus(false);
+  await loadQueue(false);
+  setStatus(resultMsg);
+  setAutomationButtonRunning(button, false);
 }
 
 function formatCrmMassEmailerAction(action) {
@@ -6329,13 +6435,12 @@ function renderCrmMassEmailerStatus(payload) {
   if (running) {
     if (scanBtn) scanBtn.disabled = true;
     if (dryBtn) dryBtn.disabled = true;
-    if (runBtn) markButtonStoppable(runBtn);
+    if (runBtn) setAutomationButtonRunning(runBtn, true);
   } else {
     if (scanBtn) scanBtn.disabled = false;
     if (dryBtn) dryBtn.disabled = false;
     if (runBtn) {
-      restoreStoppableButton(runBtn);
-      runBtn.disabled = false;
+      setAutomationButtonRunning(runBtn, false);
     }
   }
   renderCrmMassEmailerHistory(state.run_history || []);
@@ -6373,7 +6478,6 @@ function buildCrmMassEmailerPayload() {
 }
 
 async function startCrmMassEmailerRun(mode, button = null) {
-  if (await maybeForceStopFromButton(button)) return;
   let path = '/crm/mass-emailer';
   let label = 'Sheets Scanner';
   if (mode === 'scan') {
@@ -6398,7 +6502,7 @@ async function startCrmMassEmailerRun(mode, button = null) {
   }
   let resultMsg = `Starting ${label}...`;
   setStatus(resultMsg);
-  markButtonStoppable(button);
+  setAutomationButtonRunning(button, true);
   try {
     const d = await api(path, {
       method: 'POST',
@@ -6415,7 +6519,7 @@ async function startCrmMassEmailerRun(mode, button = null) {
   await loadCrmAddressStatus(false);
   await loadQueue(false);
   setStatus(resultMsg);
-  if (!(crmMassEmailerStatusPayload && crmMassEmailerStatusPayload.running)) restoreStoppableButton(button);
+  setAutomationButtonRunning(button, Boolean(crmMassEmailerStatusPayload && crmMassEmailerStatusPayload.running));
 }
 
 function toggleCrmMassEmailerHistory() {
@@ -6635,8 +6739,7 @@ function renderCrmAutoSplitterStatus(payload) {
 
   const liveBtn = document.getElementById('crmAutoSplitterRunBtn');
   if (liveBtn) {
-    restoreStoppableButton(liveBtn);
-    liveBtn.disabled = false;
+    setAutomationButtonRunning(liveBtn, false);
     liveBtn.textContent = 'Add to Queue';
     liveBtn.title = 'Queue this order. Use the Queue panel to cancel a running or waiting Auto Splitter task.';
   }
@@ -7097,10 +7200,9 @@ function renderCrmAddressStatus(payload) {
   const addressDryBtn = document.getElementById('crmAddressDryRunBtn');
   if (addressDryBtn) {
     if (running && !processingRunning) {
-      markButtonStoppable(addressDryBtn);
+      setAutomationButtonRunning(addressDryBtn, true);
     } else {
-      restoreStoppableButton(addressDryBtn);
-      addressDryBtn.disabled = processingRunning;
+      setAutomationButtonRunning(addressDryBtn, processingRunning);
     }
   }
   if (lastReportBtn) {
@@ -7167,7 +7269,6 @@ async function loadCrmAddressStatus(setStatusText = false) {
 }
 
 async function startCrmAddressRun(dryRun, button = null) {
-  if (await maybeForceStopFromButton(button)) return;
   const path = dryRun ? '/crm/address-validator/dry-run' : '/crm/address-validator';
   const mode = normalizeCrmAddressMode(crmAddressMode);
   const action = crmAddressActionForMode(mode);
@@ -7188,7 +7289,7 @@ async function startCrmAddressRun(dryRun, button = null) {
       ? (dryRun ? `Starting Address Validator dry run for order ${rawOrderTarget}...` : `Starting Address Validator for order ${rawOrderTarget}...`)
       : (dryRun ? 'Starting Address Validator dry run for the first allowed shipping-list order...' : 'Starting Address Validator for the first allowed shipping-list order...'));
   setStatus(resultMsg);
-  markButtonStoppable(button);
+  setAutomationButtonRunning(button, true);
   try {
     const payload = { action };
     if (customListUrl) payload.list_url = customListUrl;
@@ -7215,69 +7316,7 @@ async function startCrmAddressRun(dryRun, button = null) {
   await loadCrmMassEmailerStatus(false);
   await loadCrmAutoSplitterStatus(false);
   setStatus(resultMsg);
-  if (!(crmAddressStatusPayload && crmAddressStatusPayload.running)) restoreStoppableButton(button);
-}
-
-function setSuiteChecks(checked) {
-  const boxes = document.querySelectorAll('.suite-check');
-  boxes.forEach((el) => { el.checked = Boolean(checked); });
-}
-
-function getSelectedSuiteTests() {
-  const boxes = document.querySelectorAll('.suite-check');
-  const selected = [];
-  boxes.forEach((el) => {
-    if (el.checked && el.value) selected.push(String(el.value).trim());
-  });
-  return selected;
-}
-
-function renderSuiteResult(data) {
-  const box = document.getElementById('suiteResult');
-  if (!box) return;
-  const lines = [];
-  if (data && data.queue_task) {
-    box.textContent = `${data.message || 'Automation suite queued.'}\nWatch the Queue panel for live progress.`;
-    return;
-  }
-  if (!data || !Array.isArray(data.results)) {
-    box.textContent = 'Suite result unavailable.';
-    return;
-  }
-  lines.push(data.message || 'Automation suite completed.');
-  for (const row of data.results) {
-    const status = row && row.success ? '[OK]' : '[FAIL]';
-    const label = row && row.label ? row.label : (row && row.id ? row.id : 'unknown');
-    const msg = row && row.message ? row.message : '';
-    const dur = row && row.duration_seconds != null ? ` (${row.duration_seconds}s)` : '';
-    lines.push(`${status} ${label}${dur}: ${msg}`);
-  }
-  box.textContent = lines.join('\n');
-}
-
-async function runAutomationSuite(button = null) {
-  return withStopButton(button, async () => {
-  const selected = getSelectedSuiteTests();
-  if (selected.length === 0) {
-    setStatus('Select at least one test checkbox first.');
-    return;
-  }
-
-  setStatus('Running automation test suite...');
-  try {
-    const d = await api('/automation/test-suite', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tests: selected }),
-    });
-    renderSuiteResult(d);
-    const status = await loadStatus(false);
-    const prefix = d.queue_task ? 'Suite queued' : (d.success ? 'Suite passed' : 'Suite finished with failures');
-    setStatus(prefix + ': ' + (d.message || '') + ' | ' + status.summary);
-  } catch (e) {
-    setStatus('Automation suite failed: ' + e.message);
-  }
-  });
+  setAutomationButtonRunning(button, Boolean(crmAddressStatusPayload && crmAddressStatusPayload.running));
 }
 
 async function loadStatus(setStatusText = true) {
@@ -7329,7 +7368,7 @@ async function loadConfig() {
 }
 
 async function callEndpoint(path, button = null, busyLabel = 'Automation underway...') {
-  return withStopButton(button, async () => {
+  return withButtonBusy(button, busyLabel, async () => {
   let resultMsg = '';
   try {
     const d = await api(path, { method: 'POST' });
@@ -7343,7 +7382,7 @@ async function callEndpoint(path, button = null, busyLabel = 'Automation underwa
 }
 
 async function updateManualAutoOutTime(button = null) {
-  return withStopButton(button, async () => {
+  return withButtonBusy(button, 'Saving...', async () => {
   const input = document.getElementById('manualAutoOutTime');
   const timeValue = input ? String(input.value || '').trim() : '';
   if (!timeValue) {
@@ -7398,6 +7437,7 @@ async function reloadAll() {
   await loadCrmProductSeparatorStatus(false);
   await loadCrmOrderGoodsStatus(false);
   await loadCrmShippingBypasserStatus(false);
+  await loadCrmPushBackStatus(false);
   await loadCrmMassEmailerStatus(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmAddressStatus(false);
@@ -7408,13 +7448,7 @@ async function reloadAll() {
   await loadQueue(false);
 }
 
-async function refreshAllStatuses(button = null) {
-  return withButtonBusy(button, 'Refreshing...', async () => {
-    setStatus('Refreshing all automation statuses...');
-    await reloadAll();
-    setStatus('All automation statuses refreshed.');
-  });
-}
+applyColorTheme(document.documentElement.dataset.theme);
 
 if (!UI_OPENED_FROM_FILE) {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/service-worker.js').catch(() => {});
@@ -7435,6 +7469,7 @@ if (!UI_OPENED_FROM_FILE) {
     loadCrmProductSeparatorStatus(false);
     loadCrmOrderGoodsStatus(false);
     loadCrmShippingBypasserStatus(false);
+    loadCrmPushBackStatus(false);
     loadCrmMassEmailerStatus(false);
     loadCrmAutoSplitterStatus(false);
     loadCrmAddressStatus(false);
@@ -7451,7 +7486,7 @@ if (!UI_OPENED_FROM_FILE) {
     if (powerCountdownPayload && powerCountdownPayload.active) {
       loadPowerStatus(false);
     }
-    if (activeTab === 'automation' || activeTab === 'development' || (slackLunchPayload && slackLunchPayload.active)) {
+    if (activeTab === 'automation' || (slackLunchPayload && slackLunchPayload.active)) {
       loadSlackLunchStatus(false);
     }
     if (activeTab === 'console') {

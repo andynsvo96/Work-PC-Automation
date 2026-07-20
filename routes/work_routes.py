@@ -45,6 +45,9 @@ def register_work_routes(
     start_crm_shipping_bypasser_run,
     run_crm_shipping_bypasser_run_queued,
     get_crm_shipping_bypasser_status_payload,
+    start_crm_push_back_run,
+    run_crm_push_back_run_queued,
+    get_crm_push_back_status_payload,
     open_sanmar_cart_browser,
     start_crm_product_separator_run,
     run_crm_product_separator_run_queued,
@@ -654,6 +657,17 @@ def register_work_routes(
             "list_url": _first_present(data.get("list_url"), data.get("listUrl"), request.args.get("list_url"), request.args.get("listUrl")),
         }
 
+    def _crm_push_back_request_options():
+        data = request.get_json(silent=True) if request.method == "POST" else None
+        data = data if isinstance(data, dict) else {}
+        return {
+            "order_id": _first_present(data.get("order_id"), data.get("orderId"), data.get("target_order_id"), request.args.get("order_id"), request.args.get("orderId"), request.args.get("target_order_id")),
+            "processing_filter": _first_present(data.get("processing_filter"), data.get("processingFilter"), data.get("filter"), request.args.get("processing_filter"), request.args.get("processingFilter"), request.args.get("filter")),
+            "batch_size": _first_present(data.get("batch_size"), data.get("batchSize"), request.args.get("batch_size"), request.args.get("batchSize")),
+            "parallel_workers": _first_present(data.get("parallel_workers"), data.get("parallelWorkers"), request.args.get("parallel_workers"), request.args.get("parallelWorkers")),
+            "list_url": _first_present(data.get("list_url"), data.get("listUrl"), request.args.get("list_url"), request.args.get("listUrl")),
+        }
+
     def _crm_product_separator_request_options():
         data = request.get_json(silent=True) if request.method == "POST" else None
         data = data if isinstance(data, dict) else {}
@@ -917,6 +931,34 @@ def register_work_routes(
     @app.route("/crm/shipping-bypass/status", methods=["GET"])
     def crm_shipping_bypasser_status():
         return jsonify(get_crm_shipping_bypasser_status_payload()), 200
+
+    @app.route("/crm/push-back", methods=["POST", "GET"])
+    def crm_push_back():
+        options = _crm_push_back_request_options()
+        return _queue_response(
+            _crm_stock_queue_label("Push Back", options),
+            "Processing",
+            lambda: run_crm_push_back_run_queued(dry_run=False, **options),
+            get_crm_push_back_status_payload,
+            task_type="crm.push_back",
+            task_arguments={"dry_run": False, **options},
+        )
+
+    @app.route("/crm/push-back/dry-run", methods=["POST", "GET"])
+    def crm_push_back_dry_run():
+        options = _crm_push_back_request_options()
+        return _queue_response(
+            _crm_stock_queue_label("Push Back Dry Run", options),
+            "Processing",
+            lambda: run_crm_push_back_run_queued(dry_run=True, **options),
+            get_crm_push_back_status_payload,
+            task_type="crm.push_back",
+            task_arguments={"dry_run": True, **options},
+        )
+
+    @app.route("/crm/push-back/status", methods=["GET"])
+    def crm_push_back_status():
+        return jsonify(get_crm_push_back_status_payload()), 200
 
     @app.route("/crm/shipping-bypasser/sanmar-cart/open", methods=["POST", "GET"])
     @app.route("/crm/shipping-bypass/sanmar-cart/open", methods=["POST", "GET"])

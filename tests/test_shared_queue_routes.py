@@ -114,10 +114,25 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertTrue(task["arguments"]["dry_run"])
         self.assertEqual(task["required_capability"], "crm")
 
+    def test_push_back_single_order_route_has_portable_descriptor(self):
+        response = self.client.post(
+            "/crm/push-back",
+            json={"order_id": "1234567", "processing_filter": "rush"},
+        )
+
+        self.assertEqual(response.status_code, 202)
+        task = self.runtime.enqueued[-1]
+        self.assertEqual(task["task_type"], "crm.push_back")
+        self.assertEqual(task["arguments"]["order_id"], "1234567")
+        self.assertEqual(task["arguments"]["processing_filter"], "rush")
+        self.assertFalse(task["arguments"]["dry_run"])
+        self.assertEqual(task["required_capability"], "crm")
+
     def test_registered_executors_cover_route_task_types(self):
         registered = set(server.register_shared_queue_task_executors())
         self.assertIn("communications.paycom_clock", registered)
         self.assertIn("crm.processing", registered)
+        self.assertIn("crm.push_back", registered)
         self.assertIn("system.power", registered)
 
     def test_scheduled_power_action_is_durable_and_targeted(self):
