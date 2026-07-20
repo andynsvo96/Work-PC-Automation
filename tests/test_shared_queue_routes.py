@@ -28,6 +28,13 @@ class _FakeSharedRuntime:
             },
         ]
         self.client.clear_finished = lambda: 3
+        self.version_gate = {"required_commit": "old-commit", "required_protocol_version": 1}
+        self.client.get_version_gate = lambda: dict(self.version_gate)
+        self.client.set_version_gate = self._set_version_gate
+
+    def _set_version_gate(self, commit):
+        self.version_gate["required_commit"] = str(commit)
+        return {"ok": True, "required_commit": str(commit)}
 
     def enqueue(self, **task):
         self.enqueued.append(task)
@@ -317,6 +324,22 @@ class SharedQueueRouteTests(unittest.TestCase):
 
         self.assertIn("behind origin/main", state["block_reason"])
 
+    def test_version_gate_auto_repair_requires_latest_clean_main(self):
+        current = {
+            "available": True,
+            "dirty": False,
+            "relation": "current",
+            "branch": "main",
+            "commit": "new-commit",
+            "origin_commit": "new-commit",
+        }
+        with mock.patch("server.refresh_origin_main", return_value=current):
+            self.assertTrue(server._can_auto_sync_version_gate("new-commit"))
+
+        behind = dict(current, relation="behind", commit="old-commit")
+        with mock.patch("server.refresh_origin_main", return_value=behind):
+            self.assertFalse(server._can_auto_sync_version_gate("old-commit"))
+
     def test_update_endpoint_starts_safe_restart_for_clean_behind_checkout(self):
         git_state = {
             "available": True,
@@ -390,6 +413,8 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         self.assertTrue(response.get_json()["restarting"])
         self.assertEqual(response.get_json()["app_update"]["target_commit"], "new-commit")
+        self.assertEqual(response.get_json()["automate_version_gate"]["required_commit"], "new-commit")
+        self.assertEqual(self.runtime.version_gate["required_commit"], "new-commit")
         publish.assert_called_once_with(server.SCRIPT_DIR)
         schedule.assert_called_once_with()
 

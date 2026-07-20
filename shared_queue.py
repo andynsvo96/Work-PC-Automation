@@ -391,6 +391,15 @@ class SupabaseQueueClient:
         rows = self._request("GET", path) or []
         return rows if isinstance(rows, list) else []
 
+    def get_version_gate(self):
+        workspace = urllib.parse.quote(f"eq.{self.config.workspace_id}", safe=".")
+        columns = "required_commit,required_protocol_version,paused,pause_reason,updated_at"
+        path = f"automation_queue_control?select={columns}&workspace_id={workspace}&limit=1"
+        rows = self._request("GET", path) or []
+        if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+            return dict(rows[0])
+        return {}
+
     def cancel(self, task_id: str):
         return self._rpc(
             "automation_cancel_task",

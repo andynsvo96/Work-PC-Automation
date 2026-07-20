@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, Mapping, Optional
 
 from shared_queue import SharedQueueBlocked, SharedQueueError, SupabaseQueueClient
 from task_registry import TaskRegistry
+from version_state import QUEUE_PROTOCOL_VERSION
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,8 @@ class SharedQueueRuntime:
         commit_provider: Callable[[], str],
         capabilities_provider: Callable[[], Mapping[str, Any]],
         node_status_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
+        auto_sync_version_gate: bool = False,
+        version_gate_sync_guard: Optional[Callable[[str], bool]] = None,
         heartbeat_interval_seconds: float = 10.0,
         poll_interval_seconds: float = 2.0,
         lease_renew_interval_seconds: float = 15.0,
@@ -33,6 +36,8 @@ class SharedQueueRuntime:
         self.commit_provider = commit_provider
         self.capabilities_provider = capabilities_provider
         self.node_status_provider = node_status_provider or (lambda: {})
+        self.auto_sync_version_gate = bool(auto_sync_version_gate)
+        self.version_gate_sync_guard = version_gate_sync_guard or (lambda _commit: True)
         self.heartbeat_interval_seconds = max(1.0, float(heartbeat_interval_seconds))
         self.poll_interval_seconds = max(0.25, float(poll_interval_seconds))
         self.lease_renew_interval_seconds = max(1.0, float(lease_renew_interval_seconds))
@@ -163,6 +168,22 @@ class SharedQueueRuntime:
             capabilities=self.capabilities_provider(),
             runtime_status=self.node_status_provider(),
         )
+        if (
+            self.auto_sync_version_gate
+            and response
+            and not response.get("eligible")
+            and not response.get("paused")
+            and str(response.get("required_commit") or "").strip() != commit
+            and int(response.get("required_protocol_version") or 0) == QUEUE_PROTOCOL_VERSION
+            and self.version_gate_sync_guard(commit)
+        ):
+            self.client.set_version_gate(commit)
+            logger.info("Advanced the shared AUTOMATE version gate to %s.", commit[:8])
+            response = self.client.heartbeat(
+                commit=commit,
+                capabilities=self.capabilities_provider(),
+                runtime_status=self.node_status_provider(),
+            )
         eligible = bool(response and response.get("eligible"))
         reason = None
         if not eligible:

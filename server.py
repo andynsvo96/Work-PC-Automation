@@ -141,6 +141,12 @@ HOME_AUTOMATION_TRIGGERS_ENABLED = bool(
     getattr(config_module, "AUTOMATION_HOME_ASSISTANT_ENABLED", True)
 )
 LAN_REST_ACCESS_ENABLED = bool(getattr(config_module, "AUTOMATION_LAN_REST_ENABLED", False))
+_AUTO_SYNC_VERSION_GATE_SETTING = getattr(config_module, "AUTOMATION_AUTO_SYNC_VERSION_GATE", None)
+AUTO_SYNC_VERSION_GATE = (
+    get_platform_snapshot().os_name == "windows"
+    if _AUTO_SYNC_VERSION_GATE_SETTING is None
+    else bool(_AUTO_SYNC_VERSION_GATE_SETTING)
+)
 SERVER_BIND_HOST = (
     "0.0.0.0"
     if REMOTE_ACCESS_MODE != "tailscale" or LAN_REST_ACCESS_ENABLED
@@ -1575,6 +1581,25 @@ def _strict_queue_commit():
     return str(git_state.get("commit"))
 
 
+def _can_auto_sync_version_gate(commit):
+    """Only let the Windows owner advance the gate from the latest clean main."""
+    try:
+        git_state = refresh_origin_main(SCRIPT_DIR)
+    except Exception as exc:
+        logger.warning("Could not verify origin/main before repairing the AUTOMATE gate: %s", exc)
+        return False
+    target_commit = str(commit or "").strip()
+    return bool(
+        target_commit
+        and git_state.get("available")
+        and not git_state.get("dirty")
+        and git_state.get("relation") == "current"
+        and str(git_state.get("branch") or "") == "main"
+        and str(git_state.get("commit") or "").strip() == target_commit
+        and str(git_state.get("origin_commit") or "").strip() == target_commit
+    )
+
+
 def _shared_queue_capabilities():
     return get_platform_snapshot().capabilities
 
@@ -1635,6 +1660,8 @@ def initialize_shared_queue_runtime():
             commit_provider=_strict_queue_commit,
             capabilities_provider=_shared_queue_capabilities,
             node_status_provider=_shared_queue_node_status,
+            auto_sync_version_gate=AUTO_SYNC_VERSION_GATE,
+            version_gate_sync_guard=_can_auto_sync_version_gate,
         )
         runtime.start()
         shared_queue_runtime = runtime
@@ -11318,6 +11345,27 @@ def _maybe_schedule_automatic_app_update(git_state=None, *, refresh_error=None):
     return scheduled
 
 
+def _sync_automate_version_gate(commit):
+    target_commit = str(commit or "").strip()
+    if AUTOMATION_QUEUE_MODE != "shared" or not target_commit:
+        return {"success": True, "updated": False, "required_commit": target_commit or None}
+    runtime = shared_queue_runtime or initialize_shared_queue_runtime()
+    if runtime is None:
+        raise SharedQueueBlocked(shared_queue_initialization_error or "The shared AUTOMATE queue is unavailable.")
+    current = runtime.client.get_version_gate()
+    if str(current.get("required_commit") or "").strip() == target_commit:
+        return {"success": True, "updated": False, "required_commit": target_commit}
+    result = runtime.client.set_version_gate(target_commit)
+    runtime.wake()
+    logger.info("Updated the shared AUTOMATE version gate to %s.", target_commit[:8])
+    return {
+        "success": True,
+        "updated": True,
+        "required_commit": target_commit,
+        "result": result,
+    }
+
+
 @app.route("/api/app/update", methods=["POST"])
 def api_app_update():
     try:
@@ -11359,12 +11407,15 @@ def api_app_update():
                 })
             update = get_app_update_payload(git_state)
 
+        target_commit = str(update.get("target_commit") or (git_state or {}).get("commit") or "").strip()
+        gate_update = _sync_automate_version_gate(target_commit)
         _schedule_app_update_restart()
         return jsonify({
             "success": True,
             "restarting": True,
-            "message": "Update started. Local changes are safe and the app will restart automatically.",
+            "message": "Update started. The app and shared AUTOMATE gate are synchronized, and the app will restart automatically.",
             "app_update": update,
+            "automate_version_gate": gate_update,
         }), 202
     except Exception as exc:
         logger.exception("Could not start app update")

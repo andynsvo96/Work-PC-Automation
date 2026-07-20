@@ -26,6 +26,11 @@ AUTOMATION_HOME_ASSISTANT_ENABLED = True
 # this exposes the PIN-protected server to the trusted local network.
 AUTOMATION_LAN_REST_ENABLED = False
 
+# The Windows owner node repairs the shared AUTOMATE/Supabase required-commit
+# gate after a successful app update. Leave enabled on Windows; Mac operators
+# simply wait for the owner node to advance the gate.
+AUTOMATION_AUTO_SYNC_VERSION_GATE = None  # None = enabled on Windows only
+
 # Cross-system clipboard. Each computer points to the other computer's
 # device-specific Tailscale Serve URL (configured on HTTPS port 8443).
 # Clipboard contents are never stored; automatic monitoring is toggled from

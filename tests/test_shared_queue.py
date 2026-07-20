@@ -80,6 +80,20 @@ class SharedQueueTests(unittest.TestCase):
         self.assertTrue(captured["url"].endswith("/rest/v1/rpc/automation_clear_finished_tasks"))
         self.assertEqual(captured["body"], {"p_workspace_id": config.workspace_id})
 
+    def test_get_version_gate_reads_workspace_control(self):
+        captured = {}
+
+        def opener(request, timeout):
+            captured["url"] = request.full_url
+            return _Response([{"required_commit": "abc123", "required_protocol_version": 1, "paused": False}])
+
+        config = make_test_config(node_key="windows-pc")
+        result = SupabaseQueueClient(config, opener=opener).get_version_gate()
+
+        self.assertEqual(result["required_commit"], "abc123")
+        self.assertIn("automation_queue_control?select=", captured["url"])
+        self.assertIn(config.workspace_id, captured["url"])
+
     def test_claim_decrypts_arguments(self):
         config = make_test_config(node_key="macbook")
         cipher = TaskPayloadCipher(config.encryption_key)

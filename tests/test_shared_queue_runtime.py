@@ -1,6 +1,7 @@
 import threading
 import time
 import unittest
+from unittest import mock
 
 from shared_queue_runtime import SharedQueueRuntime
 from task_registry import TaskRegistry
@@ -34,6 +35,70 @@ class _FakeClient:
 
 
 class SharedQueueRuntimeTests(unittest.TestCase):
+    def test_windows_owner_repairs_stale_version_gate_then_becomes_eligible(self):
+        client = mock.Mock()
+        client.heartbeat.side_effect = [
+            {
+                "eligible": False,
+                "paused": False,
+                "required_commit": "old-commit",
+                "required_protocol_version": 1,
+            },
+            {"eligible": True, "paused": False, "required_commit": "new-commit"},
+        ]
+        client.set_version_gate.return_value = {"ok": True, "required_commit": "new-commit"}
+        runtime = SharedQueueRuntime(
+            client,
+            TaskRegistry(),
+            commit_provider=lambda: "new-commit",
+            capabilities_provider=lambda: {"crm": True},
+            auto_sync_version_gate=True,
+            version_gate_sync_guard=lambda commit: commit == "new-commit",
+        )
+
+        self.assertTrue(runtime._heartbeat())
+        client.set_version_gate.assert_called_once_with("new-commit")
+        self.assertEqual(client.heartbeat.call_count, 2)
+
+    def test_operator_does_not_modify_stale_version_gate(self):
+        client = mock.Mock()
+        client.heartbeat.return_value = {
+            "eligible": False,
+            "paused": False,
+            "required_commit": "old-commit",
+            "required_protocol_version": 1,
+        }
+        runtime = SharedQueueRuntime(
+            client,
+            TaskRegistry(),
+            commit_provider=lambda: "new-commit",
+            capabilities_provider=lambda: {"crm": True},
+            auto_sync_version_gate=False,
+        )
+
+        self.assertFalse(runtime._heartbeat())
+        client.set_version_gate.assert_not_called()
+
+    def test_outdated_owner_cannot_move_version_gate_backward(self):
+        client = mock.Mock()
+        client.heartbeat.return_value = {
+            "eligible": False,
+            "paused": False,
+            "required_commit": "new-commit",
+            "required_protocol_version": 1,
+        }
+        runtime = SharedQueueRuntime(
+            client,
+            TaskRegistry(),
+            commit_provider=lambda: "old-commit",
+            capabilities_provider=lambda: {"crm": True},
+            auto_sync_version_gate=True,
+            version_gate_sync_guard=lambda _commit: False,
+        )
+
+        self.assertFalse(runtime._heartbeat())
+        client.set_version_gate.assert_not_called()
+
     def test_claimed_task_executes_and_finishes(self):
         client = _FakeClient(
             {
