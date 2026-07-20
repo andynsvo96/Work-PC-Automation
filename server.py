@@ -4628,7 +4628,7 @@ def _crm_order_goods_outcome_label(outcome, success):
         return "Ready"
     if key == "push_back_ready_stock_failed":
         return "Stock dry run needs attention"
-    if key in {"due_date_guard_skipped", "stock_already_ordered_skipped", "missing_production_date", "missing_due_date", "missing_order_production_date", "missing_order_due_date"}:
+    if key in {"due_date_guard_skipped", "stock_already_ordered_skipped", "max_rush_lime_green_skipped", "missing_production_date", "missing_due_date", "missing_order_production_date", "missing_order_due_date"}:
         return "Skipped"
     if key in {"sanmar_cart_not_empty", "eta_on_or_after_due_date", "no_single_warehouse", "multiple_warehouses", "checkout_warehouse_mismatch", "sanmar_product_mismatch"}:
         return "Skipped"

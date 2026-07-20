@@ -345,6 +345,19 @@ def _run_shipping_bypasser_with_current_crm_driver(driver, order_id, dry_run=Fal
 
 def _precheck_row(row):
     order_id = str((row or {}).get("orderId") or "").strip()
+    row_color = str((row or {}).get("colorLabel") or "").strip().lower()
+    if row_color == "lime_green":
+        return _result(
+            order_id,
+            True,
+            "max_rush_lime_green_skipped",
+            (
+                "Skipped because the CRM list row is lime green (Max Rush); "
+                "these orders are due tomorrow and cannot be pushed back."
+            ),
+            manual_review_required=False,
+            row_color=row_color,
+        )
     production_date = _production_date_from_row(row)
     due_date = _fulfillment_date_from_row(row, production_date=production_date)
     target_date = _next_business_day_after(production_date) if production_date is not None else None
@@ -554,6 +567,7 @@ def _collect_push_back_rows_with_driver(
 
     deadline = time.monotonic() + max(CRM_ACTION_TIMEOUT, 12)
     selected = []
+    logged_lime_order_ids = set()
     while time.monotonic() < deadline:
         try:
             raw_rows = driver.execute_script(PUSH_BACK_REPORT_ROWS_JS, target_limit) or []
@@ -567,6 +581,13 @@ def _collect_push_back_rows_with_driver(
             if not order_id or order_id in excluded or order_id in candidates:
                 continue
             label, rgb = _row_color_label(raw)
+            if label == "lime_green":
+                if order_id not in logged_lime_order_ids:
+                    print(
+                        f"Skipping Push Back order {order_id} because its CRM list row is lime green (Max Rush)."
+                    )
+                    logged_lime_order_ids.add(order_id)
+                continue
             if label not in allowed_labels:
                 continue
             raw["colorLabel"] = label

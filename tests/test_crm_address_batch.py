@@ -1485,6 +1485,47 @@ class CrmUnlockOrdersTests(unittest.TestCase):
 
 
 class CrmPushBackTests(unittest.TestCase):
+    def test_push_back_precheck_skips_lime_green_max_rush_before_dates(self):
+        result = crm_push_back._precheck_row(
+            {
+                "orderId": "4883001",
+                "rowText": "Order 4883001",
+                "colorLabel": "lime_green",
+            }
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["outcome"], "max_rush_lime_green_skipped")
+        self.assertEqual(result["row_color"], "lime_green")
+        self.assertFalse(result["manual_review_required"])
+        self.assertIn("Max Rush", result["message"])
+
+    def test_push_back_report_collection_explicitly_skips_lime_green_rows(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = [
+            {
+                "orderId": "4883001",
+                "colors": [{"backgroundColor": "rgb(34, 236, 72)"}],
+            },
+            {
+                "orderId": "4883002",
+                "colors": [{"backgroundColor": "rgb(243, 196, 156)"}],
+            },
+        ]
+
+        with mock.patch.object(crm_push_back, "safe_get_with_partial_load"), mock.patch.object(
+            crm_push_back, "login_if_needed", return_value=False
+        ):
+            rows = crm_push_back._collect_push_back_rows_with_driver(
+                driver,
+                "rush",
+                5,
+                "https://crm.example/push-back",
+            )
+
+        self.assertEqual([row["orderId"] for row in rows], ["4883002"])
+        self.assertEqual(rows[0]["colorLabel"], "tan")
+
     def test_push_back_stock_ordered_precheck_requires_status_and_stock_ordered(self):
         self.assertTrue(
             crm_push_back._text_indicates_push_back_stock_already_ordered(
