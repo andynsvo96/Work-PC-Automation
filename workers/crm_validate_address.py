@@ -135,6 +135,43 @@ WORKER_PROFILE_CACHE_DIR_NAMES = (
     "GrShaderCache",
 )
 
+SHIPPING_ISSUE_STATUS = "Issue - Shipping"
+RUSH_PO_BOX_SALES_NOTE = (
+    "Cannot use PO Box for rush orders. USPS cannot guarantee delivery time\n"
+    "Need physical address"
+)
+MISSING_STREET_NUMBER_SALES_NOTE = "Incomplete shipping address"
+
+
+def _activate_crm_context(driver):
+    from crm_auto_splitter import _activate_crm_context as activate_crm_context
+
+    return activate_crm_context(driver)
+
+
+def _order_scope(driver, script, *args):
+    from crm_auto_splitter import _order_scope as order_scope
+
+    return order_scope(driver, script, *args)
+
+
+def _save_order_and_wait(driver):
+    from crm_auto_splitter import _save_order_and_wait as save_order_and_wait
+
+    return save_order_and_wait(driver)
+
+
+def _wait_for_order_scope(driver, order_id=None):
+    from crm_auto_splitter import _wait_for_order_scope as wait_for_order_scope
+
+    return wait_for_order_scope(driver, order_id=order_id)
+
+
+def _apply_order_status(driver, status_text, dry_run=False):
+    from crm_copyright_cancel import _apply_order_status as apply_order_status
+
+    return apply_order_status(driver, status_text, dry_run=dry_run)
+
 
 def _elapsed_seconds(started_at):
     return round(max(0.0, time.monotonic() - started_at), 1)
@@ -2616,6 +2653,132 @@ def _result_for(order_id, outcome, message, success=False, resolution="", warnin
         item["final_address_text"] = _format_address_fields(final_address)
     return item
 
+
+def _reload_order_for_shipping_issue(driver, shipping_modal, order_id):
+    """Discard shipping-editor changes and restore the normal order page."""
+    try:
+        _close_modal_with_generic_button(driver, shipping_modal)
+    except Exception:
+        pass
+    try:
+        driver.switch_to.default_content()
+    except Exception:
+        pass
+    order_url = f"https://crm2.legacy.printfly.com/order/{order_id}"
+    safe_get_with_partial_load(driver, order_url, f"CRM order {order_id} shipping issue action")
+    if login_if_needed(driver):
+        safe_get_with_partial_load(driver, order_url, f"CRM order {order_id} shipping issue action after login")
+    _activate_crm_context(driver)
+    return _wait_for_order_scope(driver, order_id=order_id)
+
+
+def _sales_note_text(driver):
+    return str(
+        _order_scope(
+            driver,
+            """
+            return String(r.addSalesNotes || r.salesNotes || r.filteredSalesNotes || '');
+            """,
+        )
+        or ""
+    )
+
+
+def _add_shipping_issue_sales_note(driver, note, dry_run=False):
+    note = str(note or "").strip()
+    existing = _sales_note_text(driver)
+    if note.lower() in existing.lower():
+        return {
+            "updated": False,
+            "already_present": True,
+            "dry_run": bool(dry_run),
+            "note": note,
+            "confirmation": "existing_sales_notes",
+        }
+    if dry_run:
+        return {
+            "updated": False,
+            "already_present": False,
+            "dry_run": True,
+            "note": note,
+            "message": "Skipped updating CRM Sales Notes in dry-run mode.",
+        }
+
+    update_result = _order_scope(
+        driver,
+        """
+        const note = arguments[0];
+        const existingDraft = String(r.addSalesNotes || '').trim();
+        const alreadyPresent = existingDraft.toLowerCase().includes(note.toLowerCase());
+        const after = alreadyPresent ? existingDraft : note;
+        runInAngular(s, () => {
+          s.editModeOn();
+          r.addSalesNotes = after;
+          if (s.order.setAddSalesNotes) s.order.setAddSalesNotes(r.addSalesNotes);
+        });
+        return {
+          updated: after !== existingDraft,
+          already_present: alreadyPresent,
+          note: note
+        };
+        """,
+        note,
+    )
+    save_result = _save_order_and_wait(driver)
+
+    deadline = time.monotonic() + max(20, CRM_ACTION_TIMEOUT)
+    while time.monotonic() < deadline:
+        try:
+            if note.lower() in _sales_note_text(driver).lower():
+                return {
+                    "updated": bool((update_result or {}).get("updated")),
+                    "already_present": bool((update_result or {}).get("already_present")),
+                    "dry_run": False,
+                    "note": note,
+                    "save": save_result,
+                    "confirmation": "order_scope",
+                }
+        except Exception:
+            pass
+        time.sleep(0.5)
+    raise RuntimeError("CRM Sales Note was not confirmed after Save Order.")
+
+
+def _handle_shipping_issue(
+    driver,
+    shipping_modal,
+    order_id,
+    note,
+    issue_kind,
+    dry_run=False,
+    warnings=None,
+    original_address=None,
+    final_address=None,
+):
+    _reload_order_for_shipping_issue(driver, shipping_modal, order_id)
+    sales_note_result = _add_shipping_issue_sales_note(driver, note, dry_run=dry_run)
+    status_result = _apply_order_status(driver, SHIPPING_ISSUE_STATUS, dry_run=dry_run)
+
+    ready_or_applied = "ready" if dry_run else "applied"
+    label = "rush PO Box" if issue_kind == "po_box_rush" else "missing street number"
+    result = _result_for(
+        order_id,
+        f"{issue_kind}_shipping_issue_{ready_or_applied}",
+        (
+            f"Detected the {label}; "
+            f"{'verified the Sales Note and Issue - Shipping actions are ready' if dry_run else 'saved the Sales Note and applied Issue - Shipping'}."
+        ),
+        success=True,
+        resolution="shipping_issue_ready" if dry_run else "shipping_issue_applied",
+        manual_review=False,
+        warnings=warnings,
+        original_address=original_address,
+        final_address=final_address,
+    )
+    result["sales_note"] = sales_note_result
+    result["order_status"] = status_result
+    return result
+
 def _extract_option_text(input_element):
     candidates = [input_element]
     for xpath in ('./ancestor::label[1]', './ancestor::div[1]', './..'):
@@ -4878,13 +5041,13 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
         and not po_box_profile["po_box_only"]
         and not _is_military_address(current_address)
     ):
-        return _result_for(
+        return _handle_shipping_issue(
+            driver,
+            shipping_modal,
             order_id,
+            MISSING_STREET_NUMBER_SALES_NOTE,
             "missing_street_number",
-            "Skipped because the shipping address is missing the street number.",
-            success=False,
-            resolution="manual_review",
-            manual_review=True,
+            dry_run=dry_run,
             warnings=warnings,
             original_address=original_address,
             final_address=current_address,
@@ -4906,13 +5069,13 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
     if po_box_profile["po_box_only"]:
         if po_box_shipping_filter_key == "rush":
             warnings.append("Rush orders cannot ship to a PO Box without a separate street address.")
-            return _result_for(
+            return _handle_shipping_issue(
+                driver,
+                shipping_modal,
                 order_id,
-                "po_box_rush_skipped",
-                "Skipped because this rush order only has a PO Box and no separate street shipping address.",
-                success=False,
-                resolution="manual_review",
-                manual_review=True,
+                RUSH_PO_BOX_SALES_NOTE,
+                "po_box_rush",
+                dry_run=dry_run,
                 warnings=warnings,
                 original_address=original_address,
                 final_address=current_address,
@@ -5226,13 +5389,13 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
         warnings.append("Validator reported no address candidates.")
         if recovered_street_number_from_cont:
             final_address["address_cont"] = ""
-            return _result_for(
+            return _handle_shipping_issue(
+                driver,
+                shipping_modal,
                 order_id,
+                MISSING_STREET_NUMBER_SALES_NOTE,
                 "missing_street_number",
-                "Skipped because the shipping address was missing the street number; moving the number from Address (cont) into Address produced no validator candidates.",
-                success=False,
-                resolution="manual_review",
-                manual_review=True,
+                dry_run=dry_run,
                 warnings=warnings,
                 original_address=original_address,
                 final_address=final_address,

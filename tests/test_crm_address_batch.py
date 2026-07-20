@@ -5064,6 +5064,88 @@ class CrmProductSeparatorTests(unittest.TestCase):
 
 
 class CrmAddressBatchWorkerTests(unittest.TestCase):
+    def test_rush_po_box_shipping_issue_saves_exact_note_then_applies_issue(self):
+        driver = mock.Mock()
+        shipping_modal = object()
+        calls = []
+
+        with mock.patch.object(
+            crm_validate_address,
+            "_reload_order_for_shipping_issue",
+            side_effect=lambda *args, **kwargs: calls.append("reload"),
+        ), mock.patch.object(
+            crm_validate_address,
+            "_add_shipping_issue_sales_note",
+            side_effect=lambda *args, **kwargs: calls.append(("note", args[1], kwargs["dry_run"])) or {"updated": True},
+        ), mock.patch.object(
+            crm_validate_address,
+            "_apply_order_status",
+            side_effect=lambda *args, **kwargs: calls.append(("status", args[1], kwargs["dry_run"])) or {"status_applied": True},
+        ):
+            result = crm_validate_address._handle_shipping_issue(
+                driver,
+                shipping_modal,
+                "4885010",
+                crm_validate_address.RUSH_PO_BOX_SALES_NOTE,
+                "po_box_rush",
+                dry_run=False,
+            )
+
+        self.assertEqual(
+            calls,
+            [
+                "reload",
+                (
+                    "note",
+                    "Cannot use PO Box for rush orders. USPS cannot guarantee delivery time\nNeed physical address",
+                    False,
+                ),
+                ("status", "Issue - Shipping", False),
+            ],
+        )
+        self.assertTrue(result["success"])
+        self.assertFalse(result["manual_review_required"])
+        self.assertEqual(result["outcome"], "po_box_rush_shipping_issue_applied")
+
+    def test_missing_street_number_shipping_issue_dry_run_previews_note_and_issue(self):
+        driver = mock.Mock()
+        shipping_modal = object()
+        calls = []
+
+        with mock.patch.object(
+            crm_validate_address,
+            "_reload_order_for_shipping_issue",
+            side_effect=lambda *args, **kwargs: calls.append("reload"),
+        ), mock.patch.object(
+            crm_validate_address,
+            "_add_shipping_issue_sales_note",
+            side_effect=lambda *args, **kwargs: calls.append(("note", args[1], kwargs["dry_run"])) or {"dry_run": True},
+        ), mock.patch.object(
+            crm_validate_address,
+            "_apply_order_status",
+            side_effect=lambda *args, **kwargs: calls.append(("status", args[1], kwargs["dry_run"])) or {"dry_run": True},
+        ):
+            result = crm_validate_address._handle_shipping_issue(
+                driver,
+                shipping_modal,
+                "4885365",
+                crm_validate_address.MISSING_STREET_NUMBER_SALES_NOTE,
+                "missing_street_number",
+                dry_run=True,
+            )
+
+        self.assertEqual(
+            calls,
+            [
+                "reload",
+                ("note", "Incomplete shipping address", True),
+                ("status", "Issue - Shipping", True),
+            ],
+        )
+        self.assertTrue(result["success"])
+        self.assertFalse(result["manual_review_required"])
+        self.assertEqual(result["outcome"], "missing_street_number_shipping_issue_ready")
+
     def test_address_timeout_reloads_order_once_then_retries(self):
         driver = mock.Mock()
         recovered = {
