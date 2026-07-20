@@ -135,6 +135,42 @@ class SharedQueueRuntimeTests(unittest.TestCase):
         self.assertEqual(client.finished[0][0:2], ("task-1", "lease-1"))
         self.assertEqual(client.finished[0][2], {"success": True, "message": "ok"})
 
+    def test_remote_cancel_invokes_runner_force_stop_once(self):
+        task = {
+            "id": "task-cancel",
+            "lease_token": "lease-cancel",
+            "task_type": "test.cancel",
+            "arguments": {},
+        }
+        client = _FakeClient(task)
+        client.renew_lease = mock.Mock(return_value={"ok": True, "cancel_requested": True})
+        released = threading.Event()
+        registry = TaskRegistry()
+
+        def execute():
+            self.assertTrue(released.wait(2.0))
+            return False, "Stopped by user."
+
+        def force_stop():
+            released.set()
+            return True, "Force stop requested."
+
+        registry.register("test.cancel", execute)
+        cancel_callback = mock.Mock(side_effect=force_stop)
+        runtime = SharedQueueRuntime(
+            client,
+            registry,
+            commit_provider=lambda: "abc",
+            capabilities_provider=lambda: {"crm": True},
+            cancel_running_task=cancel_callback,
+            lease_renew_interval_seconds=1,
+        )
+
+        runtime._execute_claim(task)
+
+        cancel_callback.assert_called_once_with()
+        self.assertEqual(client.finished[0][2], {"success": False, "message": "Stopped by user."})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1662,6 +1662,7 @@ def initialize_shared_queue_runtime():
             node_status_provider=_shared_queue_node_status,
             auto_sync_version_gate=AUTO_SYNC_VERSION_GATE,
             version_gate_sync_guard=_can_auto_sync_version_gate,
+            cancel_running_task=force_stop_automation,
         )
         runtime.start()
         shared_queue_runtime = runtime
@@ -1888,9 +1889,30 @@ def _home_automation_node_online(node, now=None):
 
 
 def _resolve_home_automation_target(runtime, required_capability=None):
-    """Select an online Windows node first, then an online Mac node."""
+    """Select a healthy local Windows node first, then live Windows/Mac heartbeats."""
     if runtime is None:
         raise SharedQueueBlocked(shared_queue_initialization_error or "The shared queue is unavailable.")
+
+    # When this request reached the Windows app, Windows is demonstrably online.
+    # Prefer its healthy queue runtime even if its database heartbeat is a few
+    # seconds late; otherwise a transient heartbeat delay can incorrectly send
+    # an Alexa/Home Assistant task to Mac.
+    snapshot = get_platform_snapshot()
+    local_node_key = str(getattr(getattr(runtime.client, "config", None), "node_key", "") or "").strip()
+    try:
+        local_state = runtime.state()
+    except Exception:
+        local_state = {}
+    local_has_capability = not required_capability or bool(snapshot.capabilities.get(required_capability))
+    if (
+        snapshot.os_name == "windows"
+        and local_node_key
+        and local_has_capability
+        and bool(local_state.get("connected"))
+        and bool(local_state.get("eligible"))
+    ):
+        return local_node_key
+
     try:
         nodes = list(runtime.client.list_nodes() or [])
     except Exception as exc:

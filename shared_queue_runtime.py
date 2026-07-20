@@ -27,6 +27,7 @@ class SharedQueueRuntime:
         node_status_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
         auto_sync_version_gate: bool = False,
         version_gate_sync_guard: Optional[Callable[[str], bool]] = None,
+        cancel_running_task: Optional[Callable[[], Any]] = None,
         heartbeat_interval_seconds: float = 10.0,
         poll_interval_seconds: float = 2.0,
         lease_renew_interval_seconds: float = 15.0,
@@ -38,6 +39,7 @@ class SharedQueueRuntime:
         self.node_status_provider = node_status_provider or (lambda: {})
         self.auto_sync_version_gate = bool(auto_sync_version_gate)
         self.version_gate_sync_guard = version_gate_sync_guard or (lambda _commit: True)
+        self.cancel_running_task = cancel_running_task
         self.heartbeat_interval_seconds = max(1.0, float(heartbeat_interval_seconds))
         self.poll_interval_seconds = max(0.25, float(poll_interval_seconds))
         self.lease_renew_interval_seconds = max(1.0, float(lease_renew_interval_seconds))
@@ -202,6 +204,7 @@ class SharedQueueRuntime:
         lease_token = str(task.get("lease_token") or "")
         self._update_state(running_task_id=task_id)
         lease_stop = threading.Event()
+        cancel_dispatched = threading.Event()
 
         def renew_loop():
             while not lease_stop.wait(self.lease_renew_interval_seconds):
@@ -219,8 +222,18 @@ class SharedQueueRuntime:
                         last_heartbeat_at=time.time(),
                         last_error=None,
                     )
-                    if response and response.get("cancel_requested"):
-                        self._update_state(last_error="Cancellation requested; waiting for the automation to stop safely.")
+                    if response and response.get("cancel_requested") and not cancel_dispatched.is_set():
+                        cancel_dispatched.set()
+                        cancel_message = "Cancellation requested; stopping the automation on this computer."
+                        if self.cancel_running_task is not None:
+                            try:
+                                result = self.cancel_running_task()
+                                if isinstance(result, tuple) and len(result) >= 2:
+                                    cancel_message = str(result[1] or cancel_message)
+                            except Exception as exc:
+                                logger.exception("Could not stop canceled shared queue task %s", task_id)
+                                cancel_message = f"Cancellation was requested, but force stop failed: {exc}"
+                        self._update_state(last_error=cancel_message)
                 except SharedQueueError as exc:
                     self._update_state(connected=False, eligible=False, block_reason=str(exc), last_error=str(exc))
                     return

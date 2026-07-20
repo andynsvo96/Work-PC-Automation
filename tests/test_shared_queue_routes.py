@@ -10,6 +10,8 @@ from app_security import create_app_security
 class _FakeSharedRuntime:
     def __init__(self):
         self.enqueued = []
+        self.connected = True
+        self.eligible = True
         self.client = types.SimpleNamespace(config=types.SimpleNamespace(node_key="windows-test"))
         self.client.list_nodes = lambda: [
             {
@@ -41,7 +43,7 @@ class _FakeSharedRuntime:
         return {"id": f"task-{len(self.enqueued)}", "sequence": len(self.enqueued), "status": "queued"}
 
     def state(self):
-        return {"connected": True, "eligible": True}
+        return {"connected": self.connected, "eligible": self.eligible}
 
     def snapshot(self):
         return {"success": True, "mode": "shared", "tasks": [], "queued_count": 0, "running_count": 0, "idle_count": 0}
@@ -64,6 +66,8 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.client = server.app.test_client()
 
     def _set_node_availability(self, *, windows=True, mac=True):
+        self.runtime.connected = bool(windows)
+        self.runtime.eligible = bool(windows)
         now = datetime.now(timezone.utc)
         online_stamp = now.isoformat()
         offline_stamp = (now - timedelta(minutes=5)).isoformat()
@@ -181,6 +185,24 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.get_json()["target_node"], "macbook")
         self.assertEqual(self.runtime.enqueued[-1]["target_node"], "macbook")
+
+    def test_home_assistant_keeps_healthy_local_windows_when_heartbeat_is_late(self):
+        self._set_node_availability(windows=False, mac=True)
+        self.runtime.connected = True
+        self.runtime.eligible = True
+
+        with mock.patch("server.get_platform_snapshot", return_value=types.SimpleNamespace(
+            os_name="windows",
+            capabilities={"automation": True, "crm": True, "system_power": True},
+        )):
+            response = self.client.post(
+                "/clock/test/in",
+                headers={"X-Automation-Source": "home-assistant"},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.get_json()["target_node"], "windows-test")
+        self.assertEqual(self.runtime.enqueued[-1]["target_node"], "windows-test")
 
     def test_home_assistant_returns_failure_signal_when_both_nodes_are_offline(self):
         self._set_node_availability(windows=False, mac=False)
