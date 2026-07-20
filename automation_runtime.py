@@ -518,6 +518,11 @@ def _is_renderer_timeout(error):
 
 CRM_CHALLENGE_ATTEMPTS_EXCEEDED_TEXT = "max challenge attempts exceeded"
 CRM_CHALLENGE_REFRESH_HINT_TEXT = "please refresh the page to try again"
+CRM_AUTHENTICATION_ERROR_TEXTS = (
+    "not authenticated",
+    "not authorized",
+)
+CRM_HOST_TEXT = "crm2.legacy.printfly.com"
 
 
 def _page_text(driver, top_level=True):
@@ -551,28 +556,99 @@ def crm_challenge_attempts_exceeded(driver, top_level=True):
     )
 
 
-def refresh_if_crm_challenge_attempts_exceeded(driver, label="CRM page", cooldown_seconds=5, top_level=True):
-    if not crm_challenge_attempts_exceeded(driver, top_level=top_level):
+def _crm_page_texts(driver, include_frames=True, max_frame_depth=2):
+    """Return top-level and same-session frame text while restoring top-level context."""
+    texts = []
+    try:
+        driver.switch_to.default_content()
+    except Exception:
+        pass
+
+    def _collect(depth):
+        texts.append(_page_text(driver, top_level=False))
+        if not include_frames or depth >= max_frame_depth:
+            return
+
+        try:
+            frames = list(driver.find_elements(By.CSS_SELECTOR, "iframe, frame"))
+        except Exception:
+            return
+
+        for frame in frames:
+            try:
+                driver.switch_to.frame(frame)
+                _collect(depth + 1)
+            except Exception:
+                pass
+            finally:
+                try:
+                    driver.switch_to.parent_frame()
+                except Exception:
+                    try:
+                        driver.switch_to.default_content()
+                    except Exception:
+                        pass
+
+    try:
+        _collect(0)
+    finally:
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            pass
+    return texts
+
+
+def crm_authentication_error(driver, top_level=True):
+    """Detect the transient CRM Error / Not authenticated modal, including in frames."""
+    if top_level:
+        texts = _crm_page_texts(driver, include_frames=True)
+    else:
+        texts = [_page_text(driver, top_level=False)]
+
+    for page_text in texts:
+        normalized = " ".join(str(page_text or "").lower().split())
+        if any(marker in normalized for marker in CRM_AUTHENTICATION_ERROR_TEXTS):
+            return True
+    return False
+
+
+def _crm_recoverable_error_reason(driver, top_level=True):
+    if crm_challenge_attempts_exceeded(driver, top_level=top_level):
+        return "challenge attempts exceeded"
+
+    try:
+        current_url = str(driver.current_url or "").lower()
+    except Exception:
+        current_url = ""
+    if CRM_HOST_TEXT in current_url and crm_authentication_error(driver, top_level=top_level):
+        return "authentication error"
+    return ""
+
+
+def refresh_if_crm_recoverable_error(driver, label="CRM page", cooldown_seconds=5, top_level=True):
+    reason = _crm_recoverable_error_reason(driver, top_level=top_level)
+    if not reason:
         return False
 
     now = time.monotonic()
-    last_refresh = float(getattr(driver, "_crm_challenge_last_refresh", 0) or 0)
+    last_refresh = float(getattr(driver, "_crm_recovery_last_refresh", 0) or 0)
     if last_refresh and now - last_refresh < max(0, float(cooldown_seconds or 0)):
         return True
 
-    setattr(driver, "_crm_challenge_last_refresh", now)
-    print(f"CRM challenge attempts exceeded while loading {label}; refreshing page.")
+    setattr(driver, "_crm_recovery_last_refresh", now)
+    print(f"CRM {reason} while loading {label}; refreshing page.")
     try:
         driver.refresh()
     except TimeoutException as err:
-        print(f"Warning: timeout while refreshing {label} after CRM challenge page: {err}")
+        print(f"Warning: timeout while refreshing {label} after CRM {reason}: {err}")
         try:
             driver.execute_script("window.stop();")
         except Exception:
             pass
     except Exception as err:
         if _is_renderer_timeout(err):
-            print(f"Warning: renderer timeout while refreshing {label} after CRM challenge page: {err}")
+            print(f"Warning: renderer timeout while refreshing {label} after CRM {reason}: {err}")
             try:
                 driver.execute_script("window.stop();")
             except Exception:
@@ -583,11 +659,21 @@ def refresh_if_crm_challenge_attempts_exceeded(driver, label="CRM page", cooldow
     return True
 
 
+def refresh_if_crm_challenge_attempts_exceeded(driver, label="CRM page", cooldown_seconds=5, top_level=True):
+    """Backward-compatible entry point for all transient CRM error refreshes."""
+    return refresh_if_crm_recoverable_error(
+        driver,
+        label=label,
+        cooldown_seconds=cooldown_seconds,
+        top_level=top_level,
+    )
+
+
 def safe_get_with_partial_load(driver, url, label):
     """Navigate and continue with a partial load on known renderer/page-load timeouts."""
     try:
         driver.get(url)
-        refresh_if_crm_challenge_attempts_exceeded(driver, label)
+        refresh_if_crm_recoverable_error(driver, label)
         return True
     except TimeoutException as err:
         print(f"Warning: timeout while opening {label}: {err}")
@@ -602,7 +688,7 @@ def safe_get_with_partial_load(driver, url, label):
         print(f"Continuing with partially loaded page for {label}.")
     except Exception:
         pass
-    refresh_if_crm_challenge_attempts_exceeded(driver, label)
+    refresh_if_crm_recoverable_error(driver, label)
     return False
 
 
