@@ -575,12 +575,16 @@ def _crm_page_texts(driver, include_frames=True, max_frame_depth=2):
             return
 
         for frame in frames:
+            switched = False
             try:
                 driver.switch_to.frame(frame)
+                switched = True
                 _collect(depth + 1)
             except Exception:
                 pass
             finally:
+                if not switched:
+                    continue
                 try:
                     driver.switch_to.parent_frame()
                 except Exception:

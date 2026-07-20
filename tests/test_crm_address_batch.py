@@ -54,6 +54,83 @@ class ChromeProfileRuntimeTests(unittest.TestCase):
         self.assertTrue(automation_runtime._chrome_cmdline_uses_profile(cmdline, profile))
 
 
+class CrmRecoverableErrorTests(unittest.TestCase):
+    class Frame:
+        def __init__(self, text):
+            self.text = text
+
+    class SwitchTo:
+        def __init__(self, driver):
+            self.driver = driver
+
+        def default_content(self):
+            self.driver.contexts = [self.driver.top_text]
+
+        def frame(self, frame):
+            self.driver.contexts.append(frame.text)
+
+        def parent_frame(self):
+            if len(self.driver.contexts) > 1:
+                self.driver.contexts.pop()
+
+    class Driver:
+        def __init__(self, top_text="", frame_text="", current_url="https://crm2.legacy.printfly.com/order/4882286"):
+            self.current_url = current_url
+            self.top_text = top_text
+            self.frame_element = CrmRecoverableErrorTests.Frame(frame_text) if frame_text else None
+            self.contexts = [top_text]
+            self.switch_to = CrmRecoverableErrorTests.SwitchTo(self)
+            self.refresh_count = 0
+
+        def execute_script(self, script):
+            return self.contexts[-1] if "document.body" in script else None
+
+        def find_elements(self, by, selector):
+            if len(self.contexts) == 1 and self.frame_element is not None:
+                return [self.frame_element]
+            return []
+
+        def refresh(self):
+            self.refresh_count += 1
+
+        def get(self, url):
+            self.current_url = url
+
+    def test_refreshes_not_authenticated_modal_inside_crm_iframe(self):
+        driver = self.Driver(frame_text="Error Not authenticated Close")
+
+        with mock.patch.object(automation_runtime.time, "sleep"):
+            refreshed = automation_runtime.refresh_if_crm_recoverable_error(driver, "CRM order")
+
+        self.assertTrue(refreshed)
+        self.assertEqual(driver.refresh_count, 1)
+        self.assertEqual(driver.contexts, [driver.top_text])
+
+    def test_accepts_not_authorized_wording(self):
+        driver = self.Driver(frame_text="Error: Not authorized")
+
+        self.assertTrue(automation_runtime.crm_authentication_error(driver))
+
+    def test_does_not_refresh_same_text_outside_crm(self):
+        driver = self.Driver(top_text="Not authenticated", current_url="https://vendor.example.com/login")
+
+        self.assertFalse(automation_runtime.refresh_if_crm_recoverable_error(driver))
+        self.assertEqual(driver.refresh_count, 0)
+
+    def test_safe_get_applies_shared_crm_recovery(self):
+        driver = self.Driver(frame_text="Error Not authenticated Close")
+
+        with mock.patch.object(automation_runtime.time, "sleep"):
+            loaded = automation_runtime.safe_get_with_partial_load(
+                driver,
+                "https://crm2.legacy.printfly.com/order/4882286",
+                "CRM order",
+            )
+
+        self.assertTrue(loaded)
+        self.assertEqual(driver.refresh_count, 1)
+
+
 class CrmCopyrightCancelTests(unittest.TestCase):
     def test_salesforce_contact_is_accepted_as_account_link_alias(self):
         contact_driver = mock.Mock()
