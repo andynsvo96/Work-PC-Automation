@@ -248,7 +248,9 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .ok,.crm-link-btn.configured .state,.queue-status.completed{color:var(--vscode-green)}
 .bad,.crm-address-failure-message,.queue-status.failed,.queue-status.canceled,.temp-state-danger{color:var(--vscode-red)}
 .queue-status.running,.work-plan-summary,.work-day-toggle.active .work-day-hours{color:var(--vscode-blue-text)}
-.hours-sync-card .metric .k,.hours-sync-card .metric .v{color:var(--vscode-blue-text)}
+.hours-sync-card .metric .k,.hours-sync-card .metric .v{color:#111}
+button.icon-btn.has-items{background:#007acc;border-color:#007acc;color:#fff}
+button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#0062a3}
 :root[data-theme='dark']{
   color-scheme:dark;
   --vscode-blue:#0e639c;
@@ -349,7 +351,14 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 :root[data-theme='dark'] .work-plan-summary,
 :root[data-theme='dark'] .work-day-toggle.active .work-day-hours,
 :root[data-theme='dark'] .hours-sync-card .metric .k,
-:root[data-theme='dark'] .hours-sync-card .metric .v{color:var(--vscode-blue-text)}
+:root[data-theme='dark'] .vscode-blue-title,
+:root[data-theme='dark'] .processing-report .k,
+:root[data-theme='dark'] .stock-automation-card .metric .k,
+:root[data-theme='dark'] .sheets-scanner-card .metric .k{color:var(--vscode-blue-text)}
+:root[data-theme='dark'] .hours-sync-card .metric .v,
+:root[data-theme='dark'] .processing-report .v,
+:root[data-theme='dark'] .stock-automation-card .metric .v,
+:root[data-theme='dark'] .sheets-scanner-card .metric .v{color:#f0f0f0}
 :root[data-theme='dark'] .hours-sync-card .metric .k{font-weight:700}
 :root[data-theme='dark'] .work-day-toggle:not(.active) .work-day-hours{color:#9d9d9d}
 :root[data-theme='dark'] .filter-toggle.free{background:#25372d;border-color:var(--vscode-green);color:var(--vscode-green)}
@@ -367,6 +376,8 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 :root[data-theme='dark'] .work-hours-progress-fill{background:var(--vscode-blue)}
 :root[data-theme='dark'] button.danger{background:var(--vscode-red);border-color:var(--vscode-red);color:#fff}
 :root[data-theme='dark'] button.danger:hover:not(:disabled){background:#d83b3b;border-color:#d83b3b}
+:root[data-theme='dark'] button.icon-btn.has-items{background:var(--vscode-blue);border-color:#007acc;color:#fff}
+:root[data-theme='dark'] button.icon-btn.has-items:hover:not(:disabled){background:var(--vscode-blue-hover)}
 :root[data-theme='dark'] .os-icon.windows{color:var(--vscode-blue-text)}
 :root[data-theme='dark'] .os-icon.android{color:var(--vscode-green)}
 :root[data-theme='dark'] input[type='checkbox']{accent-color:#007acc}
@@ -481,7 +492,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       </div>
       <div class='work-hours-title-actions'>
         <div class='work-cap-quick-setting'>
-          <label for='weeklyCapHoursInput'>Weekly Cap</label>
+          <label class='vscode-blue-title' for='weeklyCapHoursInput'>Weekly Cap</label>
           <input id='weeklyCapHoursInput' type='number' min='1' max='168' step='0.25' inputmode='decimal' aria-label='Weekly hours cap'>
           <button class='secondary tiny' id='weeklyCapHoursSaveBtn' type='button' onclick='saveWeeklyHoursCap(this)'>Apply</button>
         </div>
@@ -613,7 +624,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
     <div class='processing-report'>
       <div class='processing-report-header'>
         <div>
-          <h3>Quick Report</h3>
+          <h3 class='vscode-blue-title'>Quick Report</h3>
           <div class='muted'>Orders, errors, and total automation time by processing tool.</div>
         </div>
         <div class='processing-report-filters' aria-label='Processing report period'>
@@ -655,30 +666,8 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
     </div>
   </div>
 
-  <div class='card' style='margin-top:14px'>
-    <h2>Stock Automation</h2>
-    <h3 style='margin:0 0 6px'>Single Order Test</h3>
-    <div class='row' style='margin-top:8px;align-items:end;flex-wrap:wrap'>
-      <div class='field' style='min-width:320px;flex:1 1 360px'>
-        <label for='crmStockAutomationOrderInput'>Order ID Or URL</label>
-        <input id='crmStockAutomationOrderInput' placeholder='1234567 or https://crm2.legacy.printfly.com/order/1234567'>
-      </div>
-      <div class='field' style='min-width:220px;flex:0 1 260px'>
-        <label for='crmStockAutomationTestSelect'>Test</label>
-        <select id='crmStockAutomationTestSelect' onchange='renderCrmStockAutomationSelectedStatus()'>
-          <option value='product_separator_dry_run'>Product Separator Dry Run</option>
-          <option value='product_separator_run'>Product Separator Run</option>
-          <option value='order_goods_single_run'>Order Goods Single Run</option>
-          <option value='shipping_bypasser_dry_run'>Shipping Bypasser Dry Run</option>
-          <option value='shipping_bypasser_run'>Shipping Bypasser Run</option>
-          <option value='push_back_run'>Push Back Run</option>
-        </select>
-      </div>
-      <button class='secondary' id='crmStockAutomationTestRunBtn' onclick="startCrmStockAutomationSelectedTest(this)">Run Selected Test</button>
-      <button class='secondary' id='crmShippingBypasserOpenCartBtn' onclick="openCrmShippingBypasserSanmarCart(this)">Open SanMar Cart</button>
-    </div>
-    <div class='notice' id='crmStockAutomationTestStatusText'>No single-order test running.</div>
-    <div class='muted' id='crmStockAutomationTestRuntimeText'>Enter an order ID or URL, choose a test, then run it.</div>
+  <div class='card stock-automation-card' style='margin-top:14px'>
+    <h2 class='vscode-blue-title'>Stock Automation</h2>
     <div class='metrics' style='margin-top:10px'>
       <div class='metric'>
         <div class='k'>Last Stock Tool Run</div>
@@ -698,7 +687,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       </div>
     </div>
     <div class='row' style='justify-content:space-between;align-items:center;margin-top:12px'>
-      <h3 style='margin:0'>Stock Tools History</h3>
+      <h3 class='vscode-blue-title' style='margin:0'>Stock Tools History</h3>
       <div class='row'>
         <label class='muted' for='crmHistoryFilterSelect'>Tool</label>
         <select class='select history-filter-select' id='crmHistoryFilterSelect' onchange='setCrmHistoryFilter(this.value)' title='Filter Stock Tools history'>
@@ -735,31 +724,6 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
   <div class='card' style='margin-top:14px'>
     <div class='row' style='justify-content:space-between;align-items:center;gap:12px'>
       <h2 style='margin:0'>Address Validator</h2>
-      <div class='row' style='gap:8px'>
-        <details class='section-note'>
-          <summary>Read More</summary>
-          <div class='section-note-body'>
-            <p id='crmAddressModeHelpText'>Single mode dry-runs one entered order ID or CRM order URL for targeted testing. Batch mode dry-runs the selected shipping list.</p>
-          </div>
-        </details>
-        <button class='secondary tiny' id='crmAddressModeToggleBtn' onclick='toggleCrmAddressMode()' title='Toggle Address Validator between Single Order mode and Batch mode'>SINGLE</button>
-        <button class='secondary tiny filter-toggle free' id='crmAddressFilterToggleBtn' onclick='toggleCrmAddressFilter()' title='Toggle Address Validator between Free Ship Orders and Rush Orders'>FREE</button>
-      </div>
-    </div>
-    <div class='muted' id='crmAddressBatchSettingsText'>Saved batch settings: Continuous | Parallel Workers 1.</div>
-    <div class='row' style='margin-top:10px;align-items:end;flex-wrap:wrap'>
-      <div class='field' id='crmAddressOrderField' style='min-width:320px;flex:1 1 360px'>
-        <label for='crmAddressOrderInput'>Single Order ID Or URL</label>
-        <input id='crmAddressOrderInput' placeholder='1234567 or https://crm2.legacy.printfly.com/order/1234567'>
-      </div>
-      <button class='secondary' id='crmAddressDryRunBtn' onclick="startCrmAddressRun(true, this)">Address Validator Dry Run</button>
-      <button class='secondary' onclick='openCrmAddressRulesDialog()'>Custom Rules</button>
-    </div>
-    <div class='row' id='crmAddressCustomListRow' style='margin-top:8px;align-items:end;flex-wrap:wrap'>
-      <div class='field' style='min-width:320px;flex:1 1 520px'>
-        <label for='crmAddressListUrlInput'>Optional Custom List URL</label>
-        <input id='crmAddressListUrlInput' placeholder='Leave blank to use the selected FREE/RUSH shipping list'>
-      </div>
     </div>
     <div class='notice' id='crmAddressStatusText'>Address Validator status loading...</div>
     <div class='muted' id='crmAddressRuntimeText'>No Address Validator runs yet.</div>
@@ -806,9 +770,9 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
     </div>
   </div>
 
-  <div class='card' style='margin-top:14px'>
+  <div class='card sheets-scanner-card' style='margin-top:14px'>
     <div class='card-title-row'>
-      <h2>Sheets Scanner</h2>
+      <h2 class='vscode-blue-title'>Sheets Scanner</h2>
       <details class='section-note'>
         <summary>Read More</summary>
         <div class='section-note-body'>
@@ -846,7 +810,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
       </div>
     </div>
     <div class='row' style='justify-content:space-between;align-items:center;margin-top:12px'>
-      <h3 style='margin:0'>Sheets Scanner History</h3>
+      <h3 class='vscode-blue-title' style='margin:0'>Sheets Scanner History</h3>
       <div class='row'>
         <button class='secondary' id='crmMassEmailerHistoryMoreBtn' onclick='toggleCrmMassEmailerHistory()' style='display:none'>View More</button>
         <button class='secondary' id='crmMassEmailerClearHistoryBtn' onclick='clearCrmMassEmailerHistory()'>Clear History</button>
@@ -872,15 +836,8 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
         </div>
       </details>
     </div>
-    <div class='row' style='margin-top:10px;align-items:end;flex-wrap:wrap'>
-      <div class='field' style='min-width:320px;flex:1 1 420px'>
-        <label for='crmAutoSplitterOrderInput'>Order Number Or CRM Link</label>
-        <input id='crmAutoSplitterOrderInput' placeholder='4489412 or https://crm2.legacy.printfly.com/order/4489412'>
-      </div>
-      <button class='secondary' id='crmAutoSplitterRunBtn' onclick='startCrmAutoSplitterRun(this)'>Add to Queue</button>
-    </div>
     <div class='notice' id='crmAutoSplitterStatusText'>Auto Splitter status loading...</div>
-    <div class='muted' id='crmAutoSplitterRuntimeText'>Enter an order and add it to the queue. Dry run preflight runs before live split.</div>
+    <div class='muted' id='crmAutoSplitterRuntimeText'>Auto Splitter single-order work is submitted through Sheets Scanner.</div>
     <div class='muted' id='crmAutoSplitterReportText'>No Auto Splitter report yet.</div>
     <div class='row' style='justify-content:space-between;align-items:center;margin-top:12px'>
       <h3 style='margin:0'>Auto Splitter History</h3>
@@ -2126,7 +2083,9 @@ function renderQueue(payload) {
     const queuedCount = Number(queuePayload.queued_count || 0);
     const idleCount = Number(queuePayload.idle_count || 0);
     const runningCount = Number(queuePayload.running_count || 0);
-    btn.textContent = queuedCount || runningCount || idleCount ? `Queue (${queuedCount + runningCount + idleCount})` : 'Queue';
+    const activeTaskCount = queuedCount + runningCount + idleCount;
+    btn.classList.toggle('has-items', activeTaskCount > 0);
+    btn.textContent = activeTaskCount > 0 ? `Queue (${activeTaskCount})` : 'Queue';
   }
 
   const summary = document.getElementById('queueSummaryText');
@@ -7257,8 +7216,10 @@ function renderCrmAddressStatus(payload) {
   document.getElementById('crmAddressLastOrderIdText').innerHTML = crmAddressMode === 'batch' ? (effectiveCount > 0 ? esc(`${effectiveCount} order${effectiveCount === 1 ? '' : 's'}`) : '-') : (state.last_order_id ? crmOrderLinkHtml(state.last_order_id) : '-');
   document.getElementById('crmAddressLastResolutionText').textContent = formatCrmAddressResolution(state.last_resolution);
   document.getElementById('crmAddressTotalRunsText').textContent = state.total_runs != null ? String(state.total_runs) : '0';
-  document.getElementById('crmAddressModeToggleBtn').disabled = running || processingRunning;
-  document.getElementById('crmAddressFilterToggleBtn').disabled = running || processingRunning;
+  const addressModeToggleBtn = document.getElementById('crmAddressModeToggleBtn');
+  const addressFilterToggleBtn = document.getElementById('crmAddressFilterToggleBtn');
+  if (addressModeToggleBtn) addressModeToggleBtn.disabled = running || processingRunning;
+  if (addressFilterToggleBtn) addressFilterToggleBtn.disabled = running || processingRunning;
   const addressDryBtn = document.getElementById('crmAddressDryRunBtn');
   if (addressDryBtn) {
     if (running && !processingRunning) {
