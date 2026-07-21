@@ -238,7 +238,25 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .connectivity-dot.online{background:#22c55e}
 .connectivity-dot.waiting{background:#eab308}
 .connectivity-dot.error{background:#ef4444}
-:root[data-theme='dark']{color-scheme:dark}
+:root{
+  --vscode-blue:#007acc;
+  --vscode-blue-hover:#0062a3;
+  --vscode-blue-text:#0451a5;
+  --vscode-red:#a31515;
+  --vscode-green:#098658;
+}
+.ok,.crm-link-btn.configured .state,.queue-status.completed{color:var(--vscode-green)}
+.bad,.crm-address-failure-message,.queue-status.failed,.queue-status.canceled,.temp-state-danger{color:var(--vscode-red)}
+.queue-status.running,.work-plan-summary,.work-day-toggle.active .work-day-hours{color:var(--vscode-blue-text)}
+.hours-sync-card .metric .k,.hours-sync-card .metric .v{color:var(--vscode-blue-text)}
+:root[data-theme='dark']{
+  color-scheme:dark;
+  --vscode-blue:#0e639c;
+  --vscode-blue-hover:#1177bb;
+  --vscode-blue-text:#4fc1ff;
+  --vscode-red:#f44747;
+  --vscode-green:#89d185;
+}
 :root[data-theme='dark'] body{background:#1e1e1e;color:#d4d4d4}
 :root[data-theme='dark'] .app-version{color:#9d9d9d}
 :root[data-theme='dark'] .card,
@@ -259,8 +277,8 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 :root[data-theme='dark'] textarea{background:#3c3c3c!important;border-color:#555!important;color:#f0f0f0!important}
 :root[data-theme='dark'] input::placeholder,
 :root[data-theme='dark'] textarea::placeholder{color:#a6a6a6}
-:root[data-theme='dark'] button{background:#0e639c;border-color:#1177bb;color:#fff}
-:root[data-theme='dark'] button:hover:not(:disabled){background:#1177bb}
+:root[data-theme='dark'] button{background:var(--vscode-blue);border-color:var(--vscode-blue-hover);color:#fff}
+:root[data-theme='dark'] button:hover:not(:disabled){background:var(--vscode-blue-hover)}
 :root[data-theme='dark'] button.secondary,
 :root[data-theme='dark'] button.icon-btn,
 :root[data-theme='dark'] .tab-btn{background:#2d2d30;border-color:#555;color:#d4d4d4}
@@ -271,7 +289,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 :root[data-theme='dark'] button.toggle-btn.active,
 :root[data-theme='dark'] button.icon-btn.active,
 :root[data-theme='dark'] .tab-btn.active,
-:root[data-theme='dark'] .processing-report-filter.active{background:#007acc;border-color:#3794ff;color:#fff}
+:root[data-theme='dark'] .processing-report-filter.active{background:var(--vscode-blue);border-color:#007acc;color:#fff}
 :root[data-theme='dark'] button:disabled{background:#2d2d30!important;border-color:#3c3c3c!important;color:#777!important}
 :root[data-theme='dark'] .status{background:#181818;color:#d4d4d4;border:1px solid #3c3c3c}
 :root[data-theme='dark'] .muted,
@@ -287,7 +305,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 :root[data-theme='dark'] .suite-output,
 :root[data-theme='dark'] .work-cap-quick-setting,
 :root[data-theme='dark'] .queue-item{background:#2d2d30;border-color:#3c3c3c}
-:root[data-theme='dark'] .queue-item.running{background:#102f4c;border-color:#3794ff}
+:root[data-theme='dark'] .queue-item.running{background:#04395e;border-color:#007acc}
 :root[data-theme='dark'] .queue-item.idle{background:#252526;border-color:#555}
 :root[data-theme='dark'] .queue-runs{border-color:#3c3c3c;color:#d4d4d4}
 :root[data-theme='dark'] .queue-runs td,
@@ -295,8 +313,8 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 :root[data-theme='dark'] .tbl th,
 :root[data-theme='dark'] .tbl td{border-color:#3c3c3c}
 :root[data-theme='dark'] .tbl th{background:#2d2d30}
-:root[data-theme='dark'] .section-note summary{background:#2d2d30;border-color:#555;color:#75beff}
-:root[data-theme='dark'] .section-note[open] summary{background:#102f4c}
+:root[data-theme='dark'] .section-note summary{background:#2d2d30;border-color:#555;color:var(--vscode-blue-text)}
+:root[data-theme='dark'] .section-note[open] summary{background:#04395e}
 :root[data-theme='dark'] .section-note-body{background:#252526;border-color:#555;color:#d4d4d4;box-shadow:0 12px 30px rgba(0,0,0,.42)}
 :root[data-theme='dark'] .modal-backdrop{background:rgba(0,0,0,.68)}
 :root[data-theme='dark'] .crm-link-category-title,
@@ -306,9 +324,12 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 :root[data-theme='dark'] .crm-link-btn,
 :root[data-theme='dark'] .work-day-toggle{background:#2d2d30;border-color:#555}
 :root[data-theme='dark'] .crm-link-btn:hover,
-:root[data-theme='dark'] .work-day-toggle.active{background:#102f4c;border-color:#3794ff;color:#f0f0f0}
+:root[data-theme='dark'] .work-day-toggle.active{background:#04395e;border-color:#007acc;color:#f0f0f0}
+:root[data-theme='dark'] .work-day-toggle:hover{border-color:#007acc}
 :root[data-theme='dark'] .crm-link-btn .state{color:#9d9d9d}
-:root[data-theme='dark'] .work-timer{background:linear-gradient(145deg,#252526,#2d2d30);border-color:#555}
+:root[data-theme='dark'] .work-timer{background:#2d2d30;border-color:#3c3c3c}
+:root[data-theme='dark'] .work-timer::after{display:none}
+:root[data-theme='dark'] .work-timer.live{border-color:#007acc;box-shadow:0 0 0 2px rgba(0,122,204,.28)}
 :root[data-theme='dark'] .work-timer-value{color:#f0f0f0}
 :root[data-theme='dark'] .work-hours-progress,
 :root[data-theme='dark'] .countdown-bar{background:#3c3c3c}
@@ -316,6 +337,40 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 :root[data-theme='dark'] .console-output{background:#181818;color:#dcdcaa;border-color:#3c3c3c}
 :root[data-theme='dark'] .version-gate-notice,
 :root[data-theme='dark'] .platform-capability-notice{background:#332b00;color:#f0d48a;border-color:#cca700}
+:root[data-theme='dark'] .ok,
+:root[data-theme='dark'] .crm-link-btn.configured .state,
+:root[data-theme='dark'] .queue-status.completed{color:var(--vscode-green)}
+:root[data-theme='dark'] .bad,
+:root[data-theme='dark'] .crm-address-failure-message,
+:root[data-theme='dark'] .queue-status.failed,
+:root[data-theme='dark'] .queue-status.canceled,
+:root[data-theme='dark'] .temp-state-danger{color:var(--vscode-red)}
+:root[data-theme='dark'] .queue-status.running,
+:root[data-theme='dark'] .work-plan-summary,
+:root[data-theme='dark'] .work-day-toggle.active .work-day-hours,
+:root[data-theme='dark'] .hours-sync-card .metric .k,
+:root[data-theme='dark'] .hours-sync-card .metric .v{color:var(--vscode-blue-text)}
+:root[data-theme='dark'] .hours-sync-card .metric .k{font-weight:700}
+:root[data-theme='dark'] .work-day-toggle:not(.active) .work-day-hours{color:#9d9d9d}
+:root[data-theme='dark'] .filter-toggle.free{background:#25372d;border-color:var(--vscode-green);color:var(--vscode-green)}
+:root[data-theme='dark'] .filter-toggle.free:hover{background:#2d4437}
+:root[data-theme='dark'] .filter-toggle.rush{background:#3b2527;border-color:var(--vscode-red);color:var(--vscode-red)}
+:root[data-theme='dark'] .filter-toggle.rush:hover{background:#4a292c}
+:root[data-theme='dark'] .filter-toggle.high_value{background:#18384d;border-color:#007acc;color:var(--vscode-blue-text)}
+:root[data-theme='dark'] .filter-toggle.high_value:hover{background:#21465e}
+:root[data-theme='dark'] .connectivity-dot.online,
+:root[data-theme='dark'] .work-timer.live::before,
+:root[data-theme='dark'] .temp-gauge-fill.state-idle{background:var(--vscode-green)}
+:root[data-theme='dark'] .connectivity-dot.error,
+:root[data-theme='dark'] .temp-gauge-fill.state-danger,
+:root[data-theme='dark'] .temp-gauge-tick.danger{background:var(--vscode-red)}
+:root[data-theme='dark'] .work-hours-progress-fill{background:var(--vscode-blue)}
+:root[data-theme='dark'] button.danger{background:var(--vscode-red);border-color:var(--vscode-red);color:#fff}
+:root[data-theme='dark'] button.danger:hover:not(:disabled){background:#d83b3b;border-color:#d83b3b}
+:root[data-theme='dark'] .os-icon.windows{color:var(--vscode-blue-text)}
+:root[data-theme='dark'] .os-icon.android{color:var(--vscode-green)}
+:root[data-theme='dark'] input[type='checkbox']{accent-color:#007acc}
+:root[data-theme='dark'] a{color:var(--vscode-blue-text)}
 @media (max-width:980px){.grid,.subgrid,.slack-day-message-panel{grid-template-columns:1fr}}
 @media (max-width:980px){.work-plan-days{grid-template-columns:repeat(4,minmax(110px,1fr))}}
 @media (max-width:760px){.metrics,.desktop-metrics-grid,.processing-report-metrics,.work-timer-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}.work-plan-days{grid-template-columns:repeat(2,minmax(120px,1fr))}}
@@ -461,7 +516,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
     </div>
   </div>
 
-  <div class='card' style='margin-top:14px'>
+  <div class='card hours-sync-card' style='margin-top:14px'>
     <h2>Hours Sync Cross-Reference</h2>
     <div class='metrics'>
       <div class='metric'>
@@ -1540,7 +1595,10 @@ function renderCrmProcessingReport(payload) {
   });
   document.getElementById('crmProcessingReportOrders').textContent = String(Number(period.total_orders_processed || 0));
   document.getElementById('crmProcessingReportTime').textContent = fmtDuration(Number(period.total_duration_seconds || 0));
-  document.getElementById('crmProcessingReportErrors').textContent = String(Number(period.total_errors || 0));
+  const totalErrors = Number(period.total_errors || 0);
+  const totalErrorsEl = document.getElementById('crmProcessingReportErrors');
+  totalErrorsEl.textContent = String(totalErrors);
+  totalErrorsEl.classList.toggle('bad', totalErrors > 0);
   document.getElementById('crmProcessingReportRuns').textContent = String(Number(period.total_runs || 0));
 
   const rowsEl = document.getElementById('crmProcessingReportRows');
@@ -6426,7 +6484,11 @@ function renderCrmMassEmailerStatus(payload) {
   const lastOrderCount = document.getElementById('crmMassEmailerLastOrderCountText');
   if (lastOrderCount) lastOrderCount.textContent = String(state.last_order_count || 0);
   const lastFailureCount = document.getElementById('crmMassEmailerLastFailureCountText');
-  if (lastFailureCount) lastFailureCount.textContent = String(state.last_failure_count || 0);
+  if (lastFailureCount) {
+    const savedFailureCount = Number(state.last_failure_count || 0);
+    lastFailureCount.textContent = String(savedFailureCount);
+    lastFailureCount.classList.toggle('bad', savedFailureCount > 0);
+  }
   const totalOrders = document.getElementById('crmMassEmailerTotalOrdersText');
   if (totalOrders) totalOrders.textContent = String(state.total_orders_processed || 0);
   const scanBtn = document.getElementById('crmMassEmailerScanBtn');
