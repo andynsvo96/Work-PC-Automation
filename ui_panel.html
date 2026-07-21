@@ -5011,7 +5011,7 @@ function renderCrmProcessingStatus(payload) {
   renderCrmProcessingReport(payload);
   renderCrmProcessingSelectionButtons({ ...state, processing_filter: processingFilter });
   if (runBtn) {
-    setAutomationButtonRunning(runBtn, running || selectedSteps.length === 0);
+    setAutomationButtonRunning(runBtn, selectedSteps.length === 0);
   }
   if (queueVisible && queuePayload) renderQueue(queuePayload);
   syncCrmProcessingPolling();
