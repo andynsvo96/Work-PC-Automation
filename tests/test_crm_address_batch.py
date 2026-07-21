@@ -5818,6 +5818,30 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
             "1 Example Way",
         )
 
+    def test_format_plain_us_zip_plus4_adds_separator(self):
+        self.assertEqual(
+            crm_validate_address._format_plain_us_zip_plus4("440701741"),
+            "44070-1741",
+        )
+
+    def test_format_plain_us_zip_plus4_leaves_other_postal_codes_unchanged(self):
+        self.assertEqual(crm_validate_address._format_plain_us_zip_plus4("44070-1741"), "44070-1741")
+        self.assertEqual(crm_validate_address._format_plain_us_zip_plus4("V4V 2P7"), "V4V 2P7")
+
+    def test_normalize_plain_us_zip_plus4_rewrites_the_zip_field_before_validation(self):
+        zip_field = mock.Mock()
+        zip_field.get_attribute.return_value = "440701741"
+        warnings = []
+
+        with mock.patch.object(crm_validate_address, "_find_address_form_input", return_value=zip_field):
+            with mock.patch.object(crm_validate_address, "_set_input_value") as mock_set:
+                with mock.patch.object(crm_validate_address.time, "sleep"):
+                    changed = crm_validate_address._normalize_plain_us_zip_plus4(object(), warnings)
+
+        self.assertTrue(changed)
+        mock_set.assert_called_once_with(zip_field, "44070-1741")
+        self.assertTrue(any("44070-1741" in warning for warning in warnings))
+
     def test_clean_city_field_value_strips_embedded_state_code(self):
         self.assertEqual(
             crm_validate_address._clean_city_field_value("Los Angeles, CA", "California", "90013"),
@@ -7991,13 +8015,15 @@ class CrmAddressServerTests(unittest.TestCase):
         state = {
             "processing_filter": "rush",
             "address_validator_enabled": True,
+            "product_separator_enabled": True,
+            "auto_splitter_enabled": True,
             "stock_unlocker_enabled": True,
             "order_goods_enabled": True,
         }
 
         self.assertEqual(
             server._crm_processing_selected_steps_from_state(state),
-            ["address_validator_batch", "product_separator", "stock_unlocker", "order_goods"],
+            ["address_validator_batch", "product_separator", "auto_splitter", "stock_unlocker", "order_goods"],
         )
 
     def test_processing_high_value_uses_rush_like_steps(self):
@@ -8005,6 +8031,7 @@ class CrmAddressServerTests(unittest.TestCase):
             "processing_filter": "high_value",
             "address_validator_enabled": True,
             "product_separator_enabled": True,
+            "auto_splitter_enabled": True,
             "stock_unlocker_enabled": True,
             "order_goods_enabled": True,
             "shipping_bypasser_enabled": True,
@@ -8016,6 +8043,7 @@ class CrmAddressServerTests(unittest.TestCase):
             [
                 "address_validator_batch",
                 "product_separator",
+                "auto_splitter",
                 "stock_unlocker",
                 "order_goods",
                 "shipping_bypasser",
@@ -8038,11 +8066,12 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertTrue(state["address_validator_enabled"])
         self.assertTrue(state["product_separator_enabled"])
+        self.assertTrue(state["auto_splitter_enabled"])
         self.assertTrue(state["stock_unlocker_enabled"])
         self.assertTrue(state["order_goods_enabled"])
         self.assertEqual(
             server._crm_processing_selected_steps_from_state(state),
-            ["address_validator_batch", "product_separator", "stock_unlocker", "order_goods"],
+            ["address_validator_batch", "product_separator", "auto_splitter", "stock_unlocker", "order_goods"],
         )
 
     def test_processing_free_unlocker_uses_free_report_url(self):
@@ -8060,6 +8089,71 @@ class CrmAddressServerTests(unittest.TestCase):
                 server._crm_processing_mode_list_url_for_step("free", "order_goods"),
                 list_url,
             )
+
+    def test_processing_auto_splitter_uses_mode_specific_report_urls(self):
+        urls = {
+            "rush": "https://crm.example/report/split-rush",
+            "free": "https://crm.example/report/split-free",
+            "all": "https://crm.example/report/split-all",
+            "high_value": "https://crm.example/report/split-high-value",
+        }
+        with mock.patch.multiple(
+            server,
+            CRM_AUTO_SPLITTER_LIST_URL_RUSH=urls["rush"],
+            CRM_AUTO_SPLITTER_LIST_URL_FREE=urls["free"],
+            CRM_AUTO_SPLITTER_LIST_URL_ALL=urls["all"],
+            CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE=urls["high_value"],
+        ):
+            for processing_filter, expected_url in urls.items():
+                self.assertEqual(
+                    server._crm_processing_mode_list_url_for_step(processing_filter, "auto_splitter"),
+                    expected_url,
+                )
+
+    def test_processing_auto_splitter_reports_missing_mode_link(self):
+        with mock.patch.object(server, "CRM_AUTO_SPLITTER_LIST_URL_ALL", ""):
+            result = server._run_crm_processing_step("auto_splitter", "all")
+
+        self.assertFalse(result["success"])
+        self.assertIn("CRM_AUTO_SPLITTER_LIST_URL_ALL is empty", result["message"])
+
+    @mock.patch.object(server, "_automation_stop_is_blocking", return_value=False)
+    @mock.patch.object(server, "_execute_crm_auto_splitter_worker")
+    @mock.patch.object(server, "_run_script")
+    def test_auto_splitter_batch_preflights_then_splits_each_list_order(
+        self,
+        mock_run_script,
+        mock_execute_splitter,
+        _mock_stop,
+    ):
+        mock_run_script.return_value = (
+            True,
+            "Found two orders.",
+            {"success": True, "order_ids": ["4700001", "4700002"]},
+        )
+        mock_execute_splitter.side_effect = [
+            (True, "Preflight one.", {"expected_tab_count": 12, "divisions": 2}),
+            (True, "Split one.", {"new_order_ids": ["4800001", "4800002"]}),
+            (True, "Preflight two.", {"expected_tab_count": 21, "divisions": 3}),
+            (False, "Split two failed.", {"new_order_ids": []}),
+        ]
+
+        ok, message, payload = server._execute_crm_auto_splitter_batch(
+            "https://crm.example/report/split-all",
+            minimum_tabs=10,
+            parallel_workers=3,
+        )
+
+        self.assertFalse(ok)
+        self.assertIn("1 need attention", message)
+        self.assertEqual(payload["order_ids"], ["4700001", "4700002"])
+        self.assertEqual(payload["new_order_ids"], ["4800001", "4800002"])
+        self.assertEqual([row["success"] for row in payload["order_results"]], [True, False])
+        self.assertEqual(mock_execute_splitter.call_count, 4)
+        self.assertEqual(mock_execute_splitter.call_args_list[0].args[:3], ("4700001", None, None))
+        self.assertEqual(mock_execute_splitter.call_args_list[1].args[:3], ("4700001", 12, 2))
+        self.assertEqual(mock_execute_splitter.call_args_list[2].args[:3], ("4700002", None, None))
+        self.assertEqual(mock_execute_splitter.call_args_list[3].args[:3], ("4700002", 21, 3))
 
     def test_processing_free_order_goods_reports_missing_mode_link(self):
         with mock.patch.object(server, "CRM_ORDER_GOODS_FREE_URL", ""):
@@ -8131,6 +8225,7 @@ class CrmAddressServerTests(unittest.TestCase):
                     stock_unlocker_enabled=False,
                     address_validator_enabled=False,
                     product_separator_enabled=False,
+                    auto_splitter_enabled=False,
                     order_goods_enabled=False,
                     processing_filter="rush",
                 )
@@ -8151,6 +8246,7 @@ class CrmAddressServerTests(unittest.TestCase):
                     stock_unlocker_enabled=False,
                     address_validator_enabled=True,
                     product_separator_enabled=False,
+                    auto_splitter_enabled=True,
                     order_goods_enabled=True,
                     shipping_bypasser_enabled=True,
                     processing_filter="rush",
@@ -8173,12 +8269,12 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertTrue(state["shipping_bypasser_enabled"])
         self.assertEqual(
             server._crm_processing_selected_steps_from_state(state),
-            ["address_validator_batch", "order_goods", "shipping_bypasser"],
+            ["address_validator_batch", "auto_splitter", "order_goods", "shipping_bypasser"],
         )
         self.assertEqual(reloaded["processing_filter"], "rush")
         self.assertEqual(
             server._crm_processing_selected_steps_from_state(reloaded),
-            ["address_validator_batch", "order_goods", "shipping_bypasser"],
+            ["address_validator_batch", "auto_splitter", "order_goods", "shipping_bypasser"],
         )
         self.assertFalse(reloaded["mode_preferences"]["813"]["order_goods_enabled"])
         self.assertTrue(reloaded["mode_preferences"]["813"]["shipping_bypasser_enabled"])
@@ -8414,7 +8510,7 @@ class CrmAddressServerTests(unittest.TestCase):
 
         self.assertIn("report", payload)
         self.assertEqual(set(payload["report"]["periods"]), {"daily", "weekly", "monthly", "all"})
-        self.assertEqual(len(payload["report"]["periods"]["all"]["rows"]), 7)
+        self.assertEqual(len(payload["report"]["periods"]["all"]["rows"]), 8)
 
     def test_processing_report_backfills_live_sheet_scanner_history(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -8475,6 +8571,7 @@ class CrmAddressServerTests(unittest.TestCase):
                     stock_unlocker_enabled=True,
                     address_validator_enabled=False,
                     product_separator_enabled=False,
+                    auto_splitter_enabled=False,
                     order_goods_enabled=True,
                     processing_filter="rush",
                 )
@@ -8937,6 +9034,7 @@ class CrmAddressServerTests(unittest.TestCase):
                     stock_unlocker_enabled=True,
                     address_validator_enabled=False,
                     product_separator_enabled=False,
+                    auto_splitter_enabled=False,
                     order_goods_enabled=True,
                     processing_filter="all",
                 )

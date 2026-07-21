@@ -283,6 +283,12 @@ def register_work_routes(
                 request.args.get("product_separator_enabled"),
                 request.args.get("productSeparatorEnabled"),
             ),
+            "auto_splitter_enabled": _first_present(
+                data.get("auto_splitter_enabled"),
+                data.get("autoSplitterEnabled"),
+                request.args.get("auto_splitter_enabled"),
+                request.args.get("autoSplitterEnabled"),
+            ),
             "processing_filter": _first_present(
                 data.get("processing_filter"),
                 data.get("processingFilter"),
@@ -372,6 +378,10 @@ def register_work_routes(
                 options.get("product_separator_enabled"),
                 fallback_state.get("product_separator_enabled", True),
             ),
+            "auto_splitter_enabled": _crm_processing_bool(
+                options.get("auto_splitter_enabled"),
+                fallback_state.get("auto_splitter_enabled", True),
+            ),
             "order_goods_enabled": _crm_processing_bool(
                 options.get("order_goods_enabled"),
                 fallback_state.get("order_goods_enabled", True),
@@ -392,6 +402,7 @@ def register_work_routes(
         elif processing_filter == "813":
             effective["stock_unlocker_enabled"] = False
             effective["product_separator_enabled"] = False
+            effective["auto_splitter_enabled"] = False
         elif processing_filter == "free":
             effective["shipping_bypasser_enabled"] = False
             effective["push_back_enabled"] = False
@@ -425,6 +436,8 @@ def register_work_routes(
             steps.append("validator")
         if effective.get("product_separator_enabled") and processing_filter != "813":
             steps.append("separator")
+        if effective.get("auto_splitter_enabled") and processing_filter != "813":
+            steps.append("auto_splitter")
         if effective.get("stock_unlocker_enabled") and (rush_like or processing_filter in {"free", "all"}):
             steps.append("unlocker")
         if (
@@ -488,6 +501,8 @@ def register_work_routes(
             steps.append("Validator")
         if effective.get("product_separator_enabled") and processing_filter != "813":
             steps.append("Separator")
+        if effective.get("auto_splitter_enabled") and processing_filter != "813":
+            steps.append("Auto Splitter")
         if effective.get("stock_unlocker_enabled") and (rush_like or processing_filter in {"free", "all"}):
             steps.append("Unlocker")
         if (
@@ -583,6 +598,7 @@ def register_work_routes(
                 "stock_unlocker_enabled",
                 "address_validator_enabled",
                 "product_separator_enabled",
+                "auto_splitter_enabled",
                 "order_goods_enabled",
                 "shipping_bypasser_enabled",
                 "push_back_enabled",

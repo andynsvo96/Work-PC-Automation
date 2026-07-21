@@ -98,6 +98,10 @@ Do not build a new automation as a single giant script if it needs to run from t
    PRODUCT_SEPARATOR_LIST_URL_RUSH = ""
    PRODUCT_SEPARATOR_LIST_URL_ALL = ""
    PRODUCT_SEPARATOR_LIST_URL_813 = CRM_SHIPPING_813_URL
+   CRM_AUTO_SPLITTER_LIST_URL_RUSH = ""
+   CRM_AUTO_SPLITTER_LIST_URL_FREE = ""
+   CRM_AUTO_SPLITTER_LIST_URL_ALL = ""
+   CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE = ""
    ```
 
 5. For first login on a new computer, temporarily set:

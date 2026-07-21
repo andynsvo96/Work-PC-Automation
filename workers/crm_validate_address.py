@@ -1178,6 +1178,14 @@ def _normalize_postal(postal_text):
     return re.sub(r"[^A-Z0-9]+", "", str(postal_text or "").upper())
 
 
+def _format_plain_us_zip_plus4(postal_text):
+    """Format a nine-digit US ZIP+4 that was entered without its separator."""
+    postal = _normalize_space(postal_text)
+    if re.fullmatch(r"\d{9}", postal):
+        return f"{postal[:5]}-{postal[5:]}"
+    return postal
+
+
 def _postal_base(postal_text):
     normalized = _normalize_postal(postal_text)
     if re.match(r"^\d{5}", normalized):
@@ -2529,6 +2537,21 @@ def _ensure_recipient_present(modal, original_recipient, warnings):
             return True, current
 
     return False, current
+
+
+def _normalize_plain_us_zip_plus4(modal, warnings):
+    """Rewrite an unseparated nine-digit ZIP+4 before CRM validates the form."""
+    zip_field = _find_address_form_input(modal, ZIP_INPUT_SELECTORS, "Zip:")
+    if zip_field is None:
+        return False
+    current_zip = _string_value(zip_field)
+    formatted_zip = _format_plain_us_zip_plus4(current_zip)
+    if formatted_zip == current_zip:
+        return False
+    _set_input_value(zip_field, formatted_zip)
+    time.sleep(0.2)
+    warnings.append(f"Formatted the nine-digit ZIP+4 from '{current_zip}' to '{formatted_zip}' before validation.")
+    return True
 
 
 def _recipient_missing_result(order_id, warnings, original_address, final_address):
@@ -4838,11 +4861,13 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
     if panel_valid_but_needs_split_street_normalization:
         warnings.append("The order already showed a valid shipping address, but Address only contained the house number and Address (cont) contained the street name. Opening the editor to merge them.")
 
+    zip_plus4_normalized = _normalize_plain_us_zip_plus4(shipping_modal, warnings)
     if _address_is_valid(shipping_modal):
         modal_needs_split_street_normalization = _shipping_address_needs_split_street_normalization(original_address)
         if (
             not _shipping_address_needs_caps_normalization(original_address)
             and not modal_needs_split_street_normalization
+            and not zip_plus4_normalized
         ):
             return _result_for(
                 order_id,
@@ -4859,6 +4884,8 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
             warnings.append("The shipping editor already showed Address is valid, but the current address was not all caps. Running Save & Verify Address to look for a normalized validated match.")
         if modal_needs_split_street_normalization:
             warnings.append("The shipping editor already showed Address is valid, but Address only contained the house number and Address (cont) contained the street name. Merging the street into Address before saving.")
+        if zip_plus4_normalized:
+            warnings.append("The shipping editor already showed Address is valid, but the ZIP+4 was normalized. Running Save & Verify Address so the corrected ZIP+4 is saved.")
 
     recipient_ok, current_address = _ensure_recipient_present(shipping_modal, original_address.get("recipient"), warnings)
     current_address = _merge_address_fields(current_address, panel_address)

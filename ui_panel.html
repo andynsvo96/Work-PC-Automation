@@ -598,6 +598,7 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
     <div class='row' style='align-items:center'>
       <button class='secondary toggle-btn active' id='crmProcessingAddressToggleBtn' onclick='toggleCrmProcessingSelection("address_validator_batch")'>Validator</button>
       <button class='secondary toggle-btn active' id='crmProcessingSeparatorToggleBtn' onclick='toggleCrmProcessingSelection("product_separator")'>Separator</button>
+      <button class='secondary toggle-btn active' id='crmProcessingAutoSplitterToggleBtn' onclick='toggleCrmProcessingSelection("auto_splitter")'>Auto Splitter</button>
       <button class='secondary toggle-btn active' id='crmProcessingUnlockToggleBtn' onclick='toggleCrmProcessingSelection("stock_unlocker")'>Unlocker</button>
       <button class='secondary toggle-btn active' id='crmProcessingOrderGoodsToggleBtn' onclick='toggleCrmProcessingSelection("order_goods")'>Order Goods</button>
       <button class='secondary toggle-btn' id='crmProcessingShippingBypasserToggleBtn' onclick='toggleCrmProcessingSelection("shipping_bypasser")'>Bypasser</button>
@@ -1303,6 +1304,7 @@ const CRM_PROCESSING_STEP_LABELS = {
   mass_emailer: 'Sheets Scanner',
   address_validator_batch: 'Address Validator (Batch)',
   product_separator: 'Product Separator',
+  auto_splitter: 'Auto Splitter',
   stock_unlocker: 'Stock Unlocker',
   order_goods: 'Order Goods',
   shipping_bypasser: 'Shipping Bypasser',
@@ -1351,6 +1353,10 @@ const CRM_LINK_SETTING_KEYS = [
   'PROCESSOR_LOGIN_URL',
   'PROCESSOR_LIST_URL',
   'PROCESSOR_ORDER_URL_TEMPLATE',
+  'CRM_AUTO_SPLITTER_LIST_URL_RUSH',
+  'CRM_AUTO_SPLITTER_LIST_URL_FREE',
+  'CRM_AUTO_SPLITTER_LIST_URL_ALL',
+  'CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE',
   'PRODUCT_SEPARATOR_LIST_URL_FREE',
   'PRODUCT_SEPARATOR_LIST_URL_RUSH',
   'PRODUCT_SEPARATOR_LIST_URL_ALL',
@@ -1382,6 +1388,10 @@ const CRM_LINK_LABEL_OVERRIDES = {
   PROCESSOR_LOGIN_URL: 'Processor Login',
   PROCESSOR_LIST_URL: 'Processor List',
   PROCESSOR_ORDER_URL_TEMPLATE: 'CRM Order URL Template',
+  CRM_AUTO_SPLITTER_LIST_URL_RUSH: 'Auto Splitter Rush List',
+  CRM_AUTO_SPLITTER_LIST_URL_FREE: 'Auto Splitter Free List',
+  CRM_AUTO_SPLITTER_LIST_URL_ALL: 'Auto Splitter All List',
+  CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE: 'Auto Splitter High Value List',
   PRODUCT_SEPARATOR_LIST_URL_FREE: 'Separator Free List',
   PRODUCT_SEPARATOR_LIST_URL_RUSH: 'Separator Rush List',
   PRODUCT_SEPARATOR_LIST_URL_ALL: 'Separator All List',
@@ -1392,19 +1402,19 @@ const CRM_LINK_LABEL_OVERRIDES = {
 const CRM_LINK_SETTING_GROUPS = [
   {
     title: 'Free',
-    keys: ['CRM_SHIPPING_FREE_URL', 'PRODUCT_SEPARATOR_LIST_URL_FREE', 'CRM_UNLOCKER_FREE_URL', 'CRM_ORDER_GOODS_FREE_URL'],
+    keys: ['CRM_SHIPPING_FREE_URL', 'PRODUCT_SEPARATOR_LIST_URL_FREE', 'CRM_AUTO_SPLITTER_LIST_URL_FREE', 'CRM_UNLOCKER_FREE_URL', 'CRM_ORDER_GOODS_FREE_URL'],
   },
   {
     title: 'Rush',
-    keys: ['CRM_SHIPPING_RUSH_URL', 'PRODUCT_SEPARATOR_LIST_URL_RUSH', 'CRM_ORDER_GOODS_RUSH_URL', 'CRM_SHIPPING_BYPASS_URL', 'CRM_PUSH_BACK_RUSH_URL'],
+    keys: ['CRM_SHIPPING_RUSH_URL', 'PRODUCT_SEPARATOR_LIST_URL_RUSH', 'CRM_AUTO_SPLITTER_LIST_URL_RUSH', 'CRM_ORDER_GOODS_RUSH_URL', 'CRM_SHIPPING_BYPASS_URL', 'CRM_PUSH_BACK_RUSH_URL'],
   },
   {
     title: 'High Value',
-    keys: ['CRM_SHIPPING_HIGH_VALUE_URL', 'PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE', 'CRM_ORDER_GOODS_HIGH_VALUE_URL', 'CRM_SHIPPING_BYPASS_HIGH_VALUE_URL', 'CRM_PUSH_BACK_HIGH_VALUE_URL'],
+    keys: ['CRM_SHIPPING_HIGH_VALUE_URL', 'PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE', 'CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE', 'CRM_ORDER_GOODS_HIGH_VALUE_URL', 'CRM_SHIPPING_BYPASS_HIGH_VALUE_URL', 'CRM_PUSH_BACK_HIGH_VALUE_URL'],
   },
   {
     title: 'All',
-    keys: ['CRM_SHIPPING_ALL_URL', 'PRODUCT_SEPARATOR_LIST_URL_ALL', 'CRM_UNLOCKER_ALL_URL', 'CRM_ORDER_GOODS_ALL_URL'],
+    keys: ['CRM_SHIPPING_ALL_URL', 'PRODUCT_SEPARATOR_LIST_URL_ALL', 'CRM_AUTO_SPLITTER_LIST_URL_ALL', 'CRM_UNLOCKER_ALL_URL', 'CRM_ORDER_GOODS_ALL_URL'],
   },
   {
     title: '813',
@@ -1444,6 +1454,7 @@ function formatCrmProcessingStepShortLabel(stepKey) {
   const key = String(stepKey || '').trim();
   if (key === 'address_validator_batch') return 'Validator';
   if (key === 'product_separator') return 'Separator';
+  if (key === 'auto_splitter') return 'Auto Splitter';
   if (key === 'stock_unlocker') return 'Unlocker';
   if (key === 'shipping_bypasser') return 'Bypasser';
   if (key === 'push_back') return 'Push Back';
@@ -1469,6 +1480,7 @@ function normalizeCrmProcessingStepList(stepList, state = {}) {
     : [
       state && state.address_validator_enabled ? 'address_validator_batch' : '',
       state && processingFilter !== '813' && state.product_separator_enabled !== false ? 'product_separator' : '',
+      state && processingFilter !== '813' && state.auto_splitter_enabled !== false ? 'auto_splitter' : '',
       state && state.stock_unlocker_enabled && unlockerCapable ? 'stock_unlocker' : '',
       orderGoodsEnabled ? 'order_goods' : '',
       shippingBypasserEnabled ? 'shipping_bypasser' : '',
@@ -1476,7 +1488,7 @@ function normalizeCrmProcessingStepList(stepList, state = {}) {
     ];
   for (const raw of source) {
     const key = String(raw || '').trim();
-    if ((key === 'address_validator_batch' || key === 'product_separator' || key === 'stock_unlocker' || key === 'order_goods' || key === 'shipping_bypasser' || key === 'push_back') && !steps.includes(key)) steps.push(key);
+    if ((key === 'address_validator_batch' || key === 'product_separator' || key === 'auto_splitter' || key === 'stock_unlocker' || key === 'order_goods' || key === 'shipping_bypasser' || key === 'push_back') && !steps.includes(key)) steps.push(key);
   }
   return steps;
 }
@@ -1486,6 +1498,7 @@ function crmProcessingAvailableStepsForFilter(processingFilter) {
   const rushLike = isCrmRushLikeProcessingFilter(filter);
   const steps = ['address_validator_batch'];
   if (filter !== '813') steps.push('product_separator');
+  if (filter !== '813') steps.push('auto_splitter');
   if (canCrmProcessingFilterRunUnlocker(filter)) steps.push('stock_unlocker');
   if (canCrmProcessingFilterRunOrderGoods(filter)) steps.push('order_goods');
   if (rushLike || filter === '813') {
@@ -1503,6 +1516,7 @@ function crmProcessingBulkPayload(processingFilter, enabled) {
     stock_unlocker_enabled: enabled && canCrmProcessingFilterRunUnlocker(filter),
     address_validator_enabled: enabled,
     product_separator_enabled: enabled && filter !== '813',
+    auto_splitter_enabled: enabled && filter !== '813',
     order_goods_enabled: enabled && canCrmProcessingFilterRunOrderGoods(filter),
     shipping_bypasser_enabled: enabled && canRunOrderSupport,
     push_back_enabled: enabled && canRunOrderSupport,
@@ -4852,6 +4866,7 @@ function renderCrmProcessingSelectionButtons(state = {}) {
   const unlockBtn = document.getElementById('crmProcessingUnlockToggleBtn');
   const addressBtn = document.getElementById('crmProcessingAddressToggleBtn');
   const separatorBtn = document.getElementById('crmProcessingSeparatorToggleBtn');
+  const autoSplitterBtn = document.getElementById('crmProcessingAutoSplitterToggleBtn');
   const orderGoodsBtn = document.getElementById('crmProcessingOrderGoodsToggleBtn');
   const shippingBypasserBtn = document.getElementById('crmProcessingShippingBypasserToggleBtn');
   const pushBackBtn = document.getElementById('crmProcessingPushBackToggleBtn');
@@ -4887,6 +4902,16 @@ function renderCrmProcessingSelectionButtons(state = {}) {
     separatorBtn.title = canRunSeparator
       ? 'Toggle Product Separator in Automate Processing.'
       : 'Separator is disabled in 813 mode.';
+  }
+  if (autoSplitterBtn) {
+    const enabled = selectedSteps.includes('auto_splitter');
+    autoSplitterBtn.classList.toggle('active', enabled);
+    autoSplitterBtn.classList.toggle('processing-disabled', !canRunSeparator);
+    autoSplitterBtn.disabled = !canRunSeparator;
+    autoSplitterBtn.textContent = 'Auto Splitter';
+    autoSplitterBtn.title = canRunSeparator
+      ? 'Toggle Auto Splitter in Automate Processing. Runs after Separator and before Unlocker.'
+      : 'Auto Splitter is disabled in 813 mode.';
   }
   if (unlockBtn) {
     const enabled = selectedSteps.includes('stock_unlocker');
@@ -5035,8 +5060,8 @@ async function toggleCrmProcessingSelection(stepKey) {
     setStatus('Unlocker is available in Rush, High Value, Free, and ALL modes.');
     return;
   }
-  if (stepKey === 'product_separator' && processingFilter === '813') {
-    setStatus('Separator is disabled in 813 mode.');
+  if ((stepKey === 'product_separator' || stepKey === 'auto_splitter') && processingFilter === '813') {
+    setStatus(`${stepKey === 'auto_splitter' ? 'Auto Splitter' : 'Separator'} is disabled in 813 mode.`);
     return;
   }
   if (stepKey === 'order_goods' && !canRunOrderGoods) {
@@ -5057,6 +5082,9 @@ async function toggleCrmProcessingSelection(stepKey) {
   const nextSeparator = stepKey === 'product_separator'
     ? !(state.product_separator_enabled !== false)
     : state.product_separator_enabled !== false;
+  const nextAutoSplitter = stepKey === 'auto_splitter'
+    ? !(state.auto_splitter_enabled !== false)
+    : state.auto_splitter_enabled !== false;
   let nextOrderGoods = Boolean(state.order_goods_enabled);
   let nextShippingBypasser = Boolean(state.shipping_bypasser_enabled);
   let nextPushBack = Boolean(state.push_back_enabled);
@@ -5073,6 +5101,7 @@ async function toggleCrmProcessingSelection(stepKey) {
     stock_unlocker_enabled: nextUnlock,
     address_validator_enabled: nextAddress,
     product_separator_enabled: processingFilter === '813' ? false : nextSeparator,
+    auto_splitter_enabled: processingFilter === '813' ? false : nextAutoSplitter,
     order_goods_enabled: nextOrderGoods,
     shipping_bypasser_enabled: nextShippingBypasser,
     push_back_enabled: nextPushBack,
@@ -5086,7 +5115,9 @@ async function toggleCrmProcessingSelection(stepKey) {
         ? 'Shipping Bypasser'
         : (stepKey === 'push_back'
           ? 'Push Back'
-          : (stepKey === 'product_separator' ? 'Product Separator' : 'Validator'))));
+          : (stepKey === 'product_separator'
+            ? 'Product Separator'
+            : (stepKey === 'auto_splitter' ? 'Auto Splitter' : 'Validator')))));
   try {
     await persistCrmProcessingSelection(selectionPayload, `${label} selection updated.`);
   } catch (e) {
@@ -5251,6 +5282,7 @@ async function startCrmProcessingRun(button = null) {
     stock_unlocker_enabled: unlockerCapable ? Boolean(state.stock_unlocker_enabled) : false,
     address_validator_enabled: Boolean(state.address_validator_enabled),
     product_separator_enabled: processingFilter === '813' ? false : state.product_separator_enabled !== false,
+    auto_splitter_enabled: processingFilter === '813' ? false : state.auto_splitter_enabled !== false,
     order_goods_enabled: canRunOrderGoods ? Boolean(state.order_goods_enabled) : false,
     shipping_bypasser_enabled: canRunOrderSupport ? Boolean(state.shipping_bypasser_enabled) : false,
     push_back_enabled: canRunOrderSupport ? Boolean(state.push_back_enabled) : false,
@@ -5268,7 +5300,7 @@ async function startCrmProcessingRun(button = null) {
     return;
   }
   if (processingFilter === 'all') {
-    const confirmed = window.confirm('ALL mode will run the selected Validator, Separator, Unlocker, and Order Goods steps against their configured queues/lists. Bypasser and Push Back will not run. Continue?');
+    const confirmed = window.confirm('ALL mode will run the selected Validator, Separator, Auto Splitter, Unlocker, and Order Goods steps against their configured queues/lists. Bypasser and Push Back will not run. Continue?');
     if (!confirmed) {
       setStatus('ALL mode Automate Processing canceled.');
       return;

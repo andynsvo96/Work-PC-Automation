@@ -2622,6 +2622,8 @@ def _extract_process_batch_order_ids(driver, list_url, exclude_order_ids=None):
             cleaned.append(order_id)
         if cleaned:
             return cleaned
+        if order_ids:
+            return []
         time.sleep(1)
     return []
 

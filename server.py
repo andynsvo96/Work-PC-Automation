@@ -117,6 +117,12 @@ CRM_PUSH_BACK_RUSH_URL = str(getattr(config_module, "CRM_PUSH_BACK_RUSH_URL", ""
 CRM_PUSH_BACK_813_URL = str(getattr(config_module, "CRM_PUSH_BACK_813_URL", "") or "").strip()
 CRM_ADDRESS_CONTINUOUS_BATCH_TIMEOUT_SECONDS = 12 * 60 * 60
 CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS = 10 * 60
+CRM_AUTO_SPLITTER_LIST_URL_RUSH = str(getattr(config_module, "CRM_AUTO_SPLITTER_LIST_URL_RUSH", "") or "").strip()
+CRM_AUTO_SPLITTER_LIST_URL_FREE = str(getattr(config_module, "CRM_AUTO_SPLITTER_LIST_URL_FREE", "") or "").strip()
+CRM_AUTO_SPLITTER_LIST_URL_ALL = str(getattr(config_module, "CRM_AUTO_SPLITTER_LIST_URL_ALL", "") or "").strip()
+CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE = str(
+    getattr(config_module, "CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE", "") or ""
+).strip()
 CRM_SHIPPING_BYPASSER_BASE_TIMEOUT_SECONDS = int(
     getattr(config_module, "CRM_SHIPPING_BYPASSER_BASE_TIMEOUT_SECONDS", 30 * 60)
     or (30 * 60)
@@ -328,9 +334,14 @@ crm_auto_splitter_runtime = {
     "lastAction": None,
     "targetOrderId": None,
     "orderUrl": None,
+    "listUrl": None,
+    "orderCount": 0,
+    "currentOrderIndex": 0,
+    "totalOrderCount": 0,
     "tabCount": None,
     "divisions": None,
     "minimumTabs": 10,
+    "parallelWorkers": 1,
     "lastMessage": "No Auto Splitter runs yet.",
     "lastSuccess": None,
     "dryRun": True,
@@ -1767,6 +1778,8 @@ def _apply_runtime_config_from_module():
     global PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE
     global CRM_PUSH_BACK_RUSH_URL, CRM_PUSH_BACK_813_URL
     global CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS
+    global CRM_AUTO_SPLITTER_LIST_URL_RUSH, CRM_AUTO_SPLITTER_LIST_URL_FREE
+    global CRM_AUTO_SPLITTER_LIST_URL_ALL, CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE
 
     WORK_CLOCK_CAPPED = bool(getattr(config_module, "WORK_CLOCK_CAPPED", WORK_CLOCK_CAPPED))
     WORK_CLOCK_CAP_HOURS = _safe_float(getattr(config_module, "WORK_CLOCK_CAP_HOURS", WORK_CLOCK_CAP_HOURS), 40.0)
@@ -1818,6 +1831,12 @@ def _apply_runtime_config_from_module():
         0,
         int(getattr(config_module, "CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS", CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS)),
     )
+    CRM_AUTO_SPLITTER_LIST_URL_RUSH = str(getattr(config_module, "CRM_AUTO_SPLITTER_LIST_URL_RUSH", CRM_AUTO_SPLITTER_LIST_URL_RUSH) or "").strip()
+    CRM_AUTO_SPLITTER_LIST_URL_FREE = str(getattr(config_module, "CRM_AUTO_SPLITTER_LIST_URL_FREE", CRM_AUTO_SPLITTER_LIST_URL_FREE) or "").strip()
+    CRM_AUTO_SPLITTER_LIST_URL_ALL = str(getattr(config_module, "CRM_AUTO_SPLITTER_LIST_URL_ALL", CRM_AUTO_SPLITTER_LIST_URL_ALL) or "").strip()
+    CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE = str(
+        getattr(config_module, "CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE", CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE) or ""
+    ).strip()
 
 
 def reload_runtime_config():
@@ -4998,6 +5017,7 @@ CRM_PROCESSING_REPORT_STEPS = (
     "mass_emailer",
     "address_validator_batch",
     "product_separator",
+    "auto_splitter",
     "stock_unlocker",
     "order_goods",
     "shipping_bypasser",
@@ -5008,6 +5028,7 @@ CRM_PROCESSING_MODE_PREF_KEYS = (
     "stock_unlocker_enabled",
     "address_validator_enabled",
     "product_separator_enabled",
+    "auto_splitter_enabled",
     "order_goods_enabled",
     "shipping_bypasser_enabled",
     "push_back_enabled",
@@ -5103,6 +5124,7 @@ def _default_crm_processing_mode_preferences(processing_filter):
         "stock_unlocker_enabled": _crm_processing_filter_supports_unlocker(key),
         "address_validator_enabled": True,
         "product_separator_enabled": key != "813",
+        "auto_splitter_enabled": key != "813",
         "order_goods_enabled": _crm_processing_filter_supports_order_goods(key),
         "shipping_bypasser_enabled": key == "813",
         "push_back_enabled": False,
@@ -5130,6 +5152,7 @@ def _default_crm_processing_mode_preferences(processing_filter):
             {
                 "stock_unlocker_enabled": False,
                 "product_separator_enabled": False,
+                "auto_splitter_enabled": False,
             }
         )
     return defaults
@@ -5148,6 +5171,7 @@ def _sanitize_crm_processing_mode_preferences(processing_filter, values=None):
     elif key == "813":
         prefs["stock_unlocker_enabled"] = False
         prefs["product_separator_enabled"] = False
+        prefs["auto_splitter_enabled"] = False
     elif key == "free":
         prefs["shipping_bypasser_enabled"] = False
         prefs["push_back_enabled"] = False
@@ -5195,6 +5219,8 @@ def _crm_processing_step_label(step_key):
         return "Address Validator (Batch)"
     if step_key == "product_separator":
         return "Product Separator"
+    if step_key == "auto_splitter":
+        return "Auto Splitter"
     if step_key == "order_goods":
         return "Order Goods"
     if step_key == "shipping_bypasser":
@@ -5211,6 +5237,8 @@ def _crm_processing_selected_steps_from_state(state):
         steps.append("address_validator_batch")
     if processing_filter != "813" and _normalize_crm_processing_enabled(state.get("product_separator_enabled"), default=True):
         steps.append("product_separator")
+    if processing_filter != "813" and _normalize_crm_processing_enabled(state.get("auto_splitter_enabled"), default=False):
+        steps.append("auto_splitter")
     rush_like = _crm_processing_filter_is_rush_like(processing_filter)
     if _crm_processing_filter_supports_unlocker(processing_filter) and _normalize_crm_processing_enabled(state.get("stock_unlocker_enabled"), default=True):
         steps.append("stock_unlocker")
@@ -5236,6 +5264,13 @@ def _crm_processing_address_list_url_for_filter(processing_filter):
 
 def _crm_processing_mode_list_url_for_step(processing_filter, step_key):
     normalized_filter = _normalize_crm_shipping_filter(processing_filter)
+    if step_key == "auto_splitter":
+        return {
+            "rush": CRM_AUTO_SPLITTER_LIST_URL_RUSH,
+            "free": CRM_AUTO_SPLITTER_LIST_URL_FREE,
+            "all": CRM_AUTO_SPLITTER_LIST_URL_ALL,
+            "high_value": CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE,
+        }.get(normalized_filter, "") or None
     if normalized_filter == "free":
         if step_key == "stock_unlocker":
             return str(CRM_UNLOCKER_FREE_URL or "").strip() or None
@@ -5284,6 +5319,13 @@ def _crm_processing_push_back_list_url_for_filter(processing_filter):
 
 def _crm_processing_mode_url_config_key_for_step(processing_filter, step_key):
     normalized_filter = _normalize_crm_shipping_filter(processing_filter)
+    if step_key == "auto_splitter":
+        return {
+            "rush": "CRM_AUTO_SPLITTER_LIST_URL_RUSH",
+            "free": "CRM_AUTO_SPLITTER_LIST_URL_FREE",
+            "all": "CRM_AUTO_SPLITTER_LIST_URL_ALL",
+            "high_value": "CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE",
+        }.get(normalized_filter, "CRM_AUTO_SPLITTER_LIST_URL_RUSH")
     if normalized_filter == "free":
         if step_key == "stock_unlocker":
             return "CRM_UNLOCKER_FREE_URL"
@@ -5328,6 +5370,7 @@ def _default_crm_processing_state():
         "stock_unlocker_enabled": True,
         "address_validator_enabled": True,
         "product_separator_enabled": True,
+        "auto_splitter_enabled": True,
         "order_goods_enabled": True,
         "shipping_bypasser_enabled": False,
         "push_back_enabled": False,
@@ -5341,7 +5384,7 @@ def _default_crm_processing_state():
         "last_run_message": None,
         "last_run_duration_seconds": None,
         "last_filter_used": "rush",
-        "last_selected_steps": ["address_validator_batch", "product_separator", "stock_unlocker", "order_goods"],
+        "last_selected_steps": ["address_validator_batch", "product_separator", "auto_splitter", "stock_unlocker", "order_goods"],
         "last_step_results": [],
         "total_runs": 0,
         "run_history": [],
@@ -5416,6 +5459,8 @@ def _crm_processing_step_metrics(step_key, payload, success, message=""):
         result_rows = _extract_crm_address_report(payload)
     elif step_key == "product_separator":
         result_rows = _build_crm_product_separator_order_results(payload)
+    elif step_key == "auto_splitter":
+        result_rows = payload.get("order_results") if isinstance(payload.get("order_results"), list) else []
     elif step_key == "stock_unlocker":
         result_rows = _normalize_crm_stock_order_results(
             [],
@@ -5514,6 +5559,8 @@ def _crm_processing_step_error_details(step_key, payload, success, message=""):
         result_rows = _extract_crm_address_report(payload)
     elif step_key == "product_separator":
         result_rows = _build_crm_product_separator_order_results(payload)
+    elif step_key == "auto_splitter":
+        result_rows = payload.get("order_results") if isinstance(payload.get("order_results"), list) else []
     elif step_key == "stock_unlocker":
         result_rows = _normalize_crm_stock_order_results(
             payload.get("order_results"),
@@ -5580,7 +5627,7 @@ def _normalize_crm_processing_step_results(items):
         if not isinstance(item, dict):
             continue
         step_key = str(item.get("key") or "").strip()
-        if step_key not in {"mass_emailer", "address_validator_batch", "product_separator", "stock_unlocker", "order_goods", "shipping_bypasser", "push_back"}:
+        if step_key not in {"mass_emailer", "address_validator_batch", "product_separator", "auto_splitter", "stock_unlocker", "order_goods", "shipping_bypasser", "push_back"}:
             continue
         metrics = _crm_processing_infer_step_metrics(item)
         cleaned.append(
@@ -5837,6 +5884,7 @@ def load_crm_processing_state():
     state["stock_unlocker_enabled"] = _normalize_crm_processing_enabled(state.get("stock_unlocker_enabled"), default=True)
     state["address_validator_enabled"] = _normalize_crm_processing_enabled(state.get("address_validator_enabled"), default=True)
     state["product_separator_enabled"] = _normalize_crm_processing_enabled(state.get("product_separator_enabled"), default=True)
+    state["auto_splitter_enabled"] = _normalize_crm_processing_enabled(state.get("auto_splitter_enabled"), default=True)
     state["order_goods_enabled"] = _normalize_crm_processing_enabled(state.get("order_goods_enabled"), default=True)
     state["shipping_bypasser_enabled"] = _normalize_crm_processing_enabled(state.get("shipping_bypasser_enabled"), default=False)
     state["push_back_enabled"] = _normalize_crm_processing_enabled(state.get("push_back_enabled"), default=False)
@@ -5955,6 +6003,8 @@ def _crm_processing_current_order_progress(current_step):
     step = str(current_step or "").strip()
     if step == "product_separator":
         return _crm_processing_order_progress_from_runtime(_crm_product_separator_runtime_snapshot(), source=step)
+    if step == "auto_splitter":
+        return _crm_processing_order_progress_from_runtime(_crm_auto_splitter_runtime_snapshot(), source=step)
     if step == "order_goods":
         return _crm_processing_order_progress_from_runtime(_crm_order_goods_runtime_snapshot(), source=step)
     if step == "shipping_bypasser":
@@ -6039,7 +6089,7 @@ def _persist_crm_processing_run_result(success, message, selected_steps, step_re
     normalized_steps = [
         step
         for step in selected_steps
-        if step in {"stock_unlocker", "address_validator_batch", "product_separator", "order_goods", "shipping_bypasser", "push_back"}
+        if step in {"stock_unlocker", "address_validator_batch", "product_separator", "auto_splitter", "order_goods", "shipping_bypasser", "push_back"}
     ]
     normalized_results = _normalize_crm_processing_step_results(step_results)
     normalized_filter = _normalize_crm_shipping_filter(processing_filter)
@@ -8645,6 +8695,10 @@ def _start_crm_auto_splitter_runtime(order_target, tab_count, divisions, minimum
         crm_auto_splitter_runtime["lastAction"] = "split_order"
         crm_auto_splitter_runtime["targetOrderId"] = order_id
         crm_auto_splitter_runtime["orderUrl"] = order_url
+        crm_auto_splitter_runtime["listUrl"] = None
+        crm_auto_splitter_runtime["orderCount"] = 1
+        crm_auto_splitter_runtime["currentOrderIndex"] = 0
+        crm_auto_splitter_runtime["totalOrderCount"] = 1
         crm_auto_splitter_runtime["tabCount"] = tab_count
         crm_auto_splitter_runtime["divisions"] = divisions
         crm_auto_splitter_runtime["minimumTabs"] = minimum_tabs
@@ -8652,6 +8706,28 @@ def _start_crm_auto_splitter_runtime(order_target, tab_count, divisions, minimum
         crm_auto_splitter_runtime["lastMessage"] = f"Auto Splitter queued for order {order_id or order_url}."
         crm_auto_splitter_runtime["lastSuccess"] = None
         crm_auto_splitter_runtime["dryRun"] = bool(dry_run)
+        crm_auto_splitter_runtime["payload"] = None
+
+
+def _start_crm_auto_splitter_batch_runtime(list_url, minimum_tabs=10, parallel_workers=1):
+    with crm_auto_splitter_runtime_lock:
+        crm_auto_splitter_runtime["running"] = True
+        crm_auto_splitter_runtime["startedAt"] = datetime.now().isoformat()
+        crm_auto_splitter_runtime["completedAt"] = None
+        crm_auto_splitter_runtime["lastAction"] = "auto_splitter_batch"
+        crm_auto_splitter_runtime["targetOrderId"] = None
+        crm_auto_splitter_runtime["orderUrl"] = None
+        crm_auto_splitter_runtime["listUrl"] = _normalize_crm_list_url(list_url)
+        crm_auto_splitter_runtime["orderCount"] = 0
+        crm_auto_splitter_runtime["currentOrderIndex"] = 0
+        crm_auto_splitter_runtime["totalOrderCount"] = 0
+        crm_auto_splitter_runtime["tabCount"] = None
+        crm_auto_splitter_runtime["divisions"] = None
+        crm_auto_splitter_runtime["minimumTabs"] = minimum_tabs
+        crm_auto_splitter_runtime["parallelWorkers"] = parallel_workers
+        crm_auto_splitter_runtime["lastMessage"] = "Auto Splitter is scanning the configured order list."
+        crm_auto_splitter_runtime["lastSuccess"] = None
+        crm_auto_splitter_runtime["dryRun"] = False
         crm_auto_splitter_runtime["payload"] = None
 
 
@@ -8664,6 +8740,9 @@ def _finish_crm_auto_splitter_runtime(ok, message, payload, release_lock=True):
         crm_auto_splitter_runtime["lastSuccess"] = bool(ok)
         crm_auto_splitter_runtime["targetOrderId"] = _normalize_crm_single_order_id(payload.get("target_order_id"))
         crm_auto_splitter_runtime["orderUrl"] = str(payload.get("order_url") or crm_auto_splitter_runtime.get("orderUrl") or "").strip() or None
+        crm_auto_splitter_runtime["orderCount"] = max(0, int(_safe_float(payload.get("order_count"), crm_auto_splitter_runtime.get("orderCount") or 0)))
+        crm_auto_splitter_runtime["currentOrderIndex"] = crm_auto_splitter_runtime["orderCount"]
+        crm_auto_splitter_runtime["totalOrderCount"] = crm_auto_splitter_runtime["orderCount"]
         tab_count = payload.get("expected_tab_count") or crm_auto_splitter_runtime.get("tabCount")
         divisions = payload.get("divisions") or crm_auto_splitter_runtime.get("divisions")
         crm_auto_splitter_runtime["tabCount"] = (
@@ -8895,6 +8974,136 @@ def _execute_crm_auto_splitter_worker(order_target, tab_count, divisions, minimu
     return ok, message, payload
 
 
+def _execute_crm_auto_splitter_batch(list_url, minimum_tabs=10, parallel_workers=1):
+    started = time.monotonic()
+    normalized_list_url = _normalize_crm_list_url(list_url)
+    normalized_workers = _normalize_crm_positive_int(
+        parallel_workers,
+        default=1,
+        minimum=1,
+        maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
+    )
+    scan_ok, scan_message, scan_payload = _run_script(
+        CRM_AUTO_SPLITTER_SCRIPT,
+        ["--action", "process_batch", "--list-url", normalized_list_url, "--dry-run"],
+        "CRMAutoSplitterListScan",
+        timeout=max(600, CRM_ACTION_TIMEOUT * 40),
+        show_terminal=False,
+    )
+    scan_payload = scan_payload if isinstance(scan_payload, dict) else {}
+    if not scan_ok:
+        payload = {
+            "success": False,
+            "message": f"Auto Splitter list scan failed: {scan_message}",
+            "action": "auto_splitter_batch",
+            "list_url": normalized_list_url,
+            "order_count": 0,
+            "order_ids": [],
+            "order_results": [],
+            "list_scan": scan_payload,
+            "duration_seconds": round(time.monotonic() - started, 2),
+        }
+        return False, payload["message"], payload
+
+    order_ids = _extract_crm_order_ids(scan_payload)
+    with crm_auto_splitter_runtime_lock:
+        crm_auto_splitter_runtime["orderCount"] = len(order_ids)
+        crm_auto_splitter_runtime["totalOrderCount"] = len(order_ids)
+
+    order_results = []
+    new_order_ids = []
+    for index, order_id in enumerate(order_ids, start=1):
+        if _automation_stop_is_blocking():
+            order_results.append({
+                "order_id": order_id,
+                "success": False,
+                "status": "Stopped",
+                "outcome": "stopped",
+                "message": _force_stop_message("Auto Splitter"),
+            })
+            break
+        with crm_auto_splitter_runtime_lock:
+            crm_auto_splitter_runtime["targetOrderId"] = order_id
+            crm_auto_splitter_runtime["currentOrderIndex"] = index
+            crm_auto_splitter_runtime["lastMessage"] = f"Auto-splitting order {order_id} ({index}/{len(order_ids)})."
+
+        preflight_ok, preflight_message, preflight_payload = _execute_crm_auto_splitter_worker(
+            order_id,
+            None,
+            None,
+            minimum_tabs=minimum_tabs,
+            dry_run=True,
+            parallel_workers=1,
+            show_terminal=False,
+        )
+        preflight_payload = preflight_payload if isinstance(preflight_payload, dict) else {}
+        if not preflight_ok:
+            order_results.append({
+                "order_id": order_id,
+                "success": False,
+                "status": "Preflight failed",
+                "outcome": "preflight_failed",
+                "message": str(preflight_message),
+                "preflight": preflight_payload,
+            })
+            continue
+
+        detected_tabs = preflight_payload.get("expected_tab_count") or preflight_payload.get("detected_tab_count")
+        divisions = preflight_payload.get("divisions")
+        live_ok, live_message, live_payload = _execute_crm_auto_splitter_worker(
+            order_id,
+            detected_tabs,
+            divisions,
+            minimum_tabs=minimum_tabs,
+            dry_run=False,
+            parallel_workers=normalized_workers,
+            show_terminal=False,
+        )
+        live_payload = live_payload if isinstance(live_payload, dict) else {}
+        created_ids = _extract_crm_order_ids({"order_ids": live_payload.get("new_order_ids")})
+        for created_id in created_ids:
+            if created_id not in new_order_ids:
+                new_order_ids.append(created_id)
+        order_results.append({
+            "order_id": order_id,
+            "success": bool(live_ok),
+            "status": "Completed" if live_ok else "Needs attention",
+            "outcome": "split_completed" if live_ok else "split_failed",
+            "message": str(live_message),
+            "detected_tab_count": detected_tabs,
+            "divisions": divisions,
+            "new_order_ids": created_ids,
+            "preflight": preflight_payload,
+            "result": live_payload,
+        })
+
+    failed_count = sum(1 for item in order_results if not item.get("success"))
+    completed_count = sum(1 for item in order_results if item.get("success"))
+    ok = failed_count == 0 and len(order_results) == len(order_ids)
+    if not order_ids:
+        message = "Auto Splitter found no orders on the configured list."
+        ok = True
+    elif ok:
+        message = f"Auto Splitter completed {completed_count}/{len(order_ids)} order(s)."
+    else:
+        message = f"Auto Splitter completed {completed_count}/{len(order_ids)} order(s); {failed_count} need attention."
+    payload = {
+        "success": ok,
+        "message": message,
+        "action": "auto_splitter_batch",
+        "dry_run": False,
+        "list_url": normalized_list_url,
+        "order_count": len(order_ids),
+        "order_ids": order_ids,
+        "new_order_ids": new_order_ids,
+        "order_results": order_results,
+        "parallel_workers": normalized_workers,
+        "list_scan": scan_payload,
+        "duration_seconds": round(time.monotonic() - started, 2),
+    }
+    return ok, message, payload
+
+
 def _persist_crm_auto_splitter_run_result(ok, message, payload, dry_run=True):
     ensure_crm_state_file()
     payload = payload if isinstance(payload, dict) else {"success": bool(ok), "message": str(message)}
@@ -8905,7 +9114,12 @@ def _persist_crm_auto_splitter_run_result(ok, message, payload, dry_run=True):
         for value in (payload.get("new_order_ids") if isinstance(payload.get("new_order_ids"), list) else [])
     ]
     new_order_ids = [value for value in new_order_ids if value]
-    order_ids = ([target_order_id] if target_order_id else []) + new_order_ids
+    order_ids = _extract_crm_order_ids(payload)
+    if target_order_id and target_order_id not in order_ids:
+        order_ids.insert(0, target_order_id)
+    for new_order_id in new_order_ids:
+        if new_order_id not in order_ids:
+            order_ids.append(new_order_id)
     duration_seconds = _normalize_duration_seconds(payload.get("duration_seconds"))
     if duration_seconds is None:
         duration_seconds = _runtime_duration_seconds(_crm_auto_splitter_runtime_snapshot())
@@ -9555,11 +9769,12 @@ def clear_crm_mass_emailer_history():
     return True, "Sheets Scanner history cleared."
 
 
-def update_crm_processing_preferences(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None):
+def update_crm_processing_preferences(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None):
     ensure_crm_processing_state_file()
     unlock_supplied = _crm_processing_value_supplied(stock_unlocker_enabled)
     address_supplied = _crm_processing_value_supplied(address_validator_enabled)
     separator_supplied = _crm_processing_value_supplied(product_separator_enabled)
+    auto_splitter_supplied = _crm_processing_value_supplied(auto_splitter_enabled)
     order_goods_supplied = _crm_processing_value_supplied(order_goods_enabled)
     shipping_bypasser_supplied = _crm_processing_value_supplied(shipping_bypasser_enabled)
     push_back_supplied = _crm_processing_value_supplied(push_back_enabled)
@@ -9587,6 +9802,11 @@ def update_crm_processing_preferences(stock_unlocker_enabled=None, mass_emailer_
             target_preferences["product_separator_enabled"] = _normalize_crm_processing_enabled(
                 product_separator_enabled,
                 default=target_preferences.get("product_separator_enabled"),
+            )
+        if auto_splitter_supplied:
+            target_preferences["auto_splitter_enabled"] = _normalize_crm_processing_enabled(
+                auto_splitter_enabled,
+                default=target_preferences.get("auto_splitter_enabled"),
             )
         if order_goods_supplied:
             target_preferences["order_goods_enabled"] = _normalize_crm_processing_enabled(
@@ -9656,6 +9876,47 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
         payload = payload if isinstance(payload, dict) else {"success": bool(ok), "message": str(message)}
         payload["state"] = state
         _finish_crm_product_separator_runtime(ok, message, payload, release_lock=False)
+        return {
+            "key": step_key,
+            "label": _crm_processing_step_label(step_key),
+            "success": bool(ok),
+            **_crm_processing_step_metrics(step_key, payload, ok, message),
+            "stage_timings": _normalize_stage_timings(payload.get("stage_timings") if isinstance(payload, dict) else []),
+            "message": str(message),
+            "errors": _crm_processing_step_error_details(step_key, payload, ok, message),
+        }
+
+    if step_key == "auto_splitter":
+        normalized_filter = _normalize_crm_shipping_filter(processing_filter)
+        list_url = _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
+        if not list_url:
+            message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
+            return {
+                "key": step_key,
+                "label": _crm_processing_step_label(step_key),
+                "success": False,
+                "message": message,
+            }
+        parallel_workers = _saved_crm_automation_parallel_workers(default=1)
+        _start_crm_auto_splitter_batch_runtime(list_url, minimum_tabs=10, parallel_workers=parallel_workers)
+        ok = False
+        message = "Auto Splitter did not run."
+        payload = {"success": False, "message": message}
+        try:
+            ok, message, payload = _execute_crm_auto_splitter_batch(
+                list_url,
+                minimum_tabs=10,
+                parallel_workers=parallel_workers,
+            )
+        except Exception as e:
+            logger.exception("Automate Processing Auto Splitter step failed unexpectedly")
+            ok = False
+            message = str(e)
+            payload = {"success": False, "message": message, "error_type": type(e).__name__}
+        state = _persist_crm_auto_splitter_run_result(ok, message, payload, dry_run=False)
+        payload = payload if isinstance(payload, dict) else {"success": bool(ok), "message": str(message)}
+        payload["state"] = state
+        _finish_crm_auto_splitter_runtime(ok, message, payload, release_lock=False)
         return {
             "key": step_key,
             "label": _crm_processing_step_label(step_key),
@@ -10007,6 +10268,7 @@ def start_crm_processing_run(
     mass_emailer_enabled=None,
     address_validator_enabled=None,
     product_separator_enabled=None,
+    auto_splitter_enabled=None,
     order_goods_enabled=None,
     shipping_bypasser_enabled=None,
     push_back_enabled=None,
@@ -10017,6 +10279,7 @@ def start_crm_processing_run(
     unlock_supplied = _crm_processing_value_supplied(stock_unlocker_enabled)
     address_supplied = _crm_processing_value_supplied(address_validator_enabled)
     separator_supplied = _crm_processing_value_supplied(product_separator_enabled)
+    auto_splitter_supplied = _crm_processing_value_supplied(auto_splitter_enabled)
     order_goods_supplied = _crm_processing_value_supplied(order_goods_enabled)
     shipping_bypasser_supplied = _crm_processing_value_supplied(shipping_bypasser_enabled)
     push_back_supplied = _crm_processing_value_supplied(push_back_enabled)
@@ -10044,6 +10307,11 @@ def start_crm_processing_run(
             target_preferences["product_separator_enabled"] = _normalize_crm_processing_enabled(
                 product_separator_enabled,
                 default=target_preferences.get("product_separator_enabled"),
+            )
+        if auto_splitter_supplied:
+            target_preferences["auto_splitter_enabled"] = _normalize_crm_processing_enabled(
+                auto_splitter_enabled,
+                default=target_preferences.get("auto_splitter_enabled"),
             )
         if order_goods_supplied:
             target_preferences["order_goods_enabled"] = _normalize_crm_processing_enabled(
@@ -10836,12 +11104,13 @@ def run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, limit=
     return _wait_for_status_completion(get_crm_mass_emailer_status_payload, msg)
 
 
-def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None):
+def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None):
     ok, msg = start_crm_processing_run(
         stock_unlocker_enabled=stock_unlocker_enabled,
         mass_emailer_enabled=mass_emailer_enabled,
         address_validator_enabled=address_validator_enabled,
         product_separator_enabled=product_separator_enabled,
+        auto_splitter_enabled=auto_splitter_enabled,
         order_goods_enabled=order_goods_enabled,
         shipping_bypasser_enabled=shipping_bypasser_enabled,
         push_back_enabled=push_back_enabled,
