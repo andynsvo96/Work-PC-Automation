@@ -419,6 +419,30 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertTrue(response.get_json()["retryable"])
         schedule.assert_not_called()
 
+    def test_update_payload_disables_manual_update_while_automation_is_running(self):
+        git_state = {
+            "available": True,
+            "dirty": False,
+            "relation": "behind",
+            "branch": "main",
+            "commit": "old-commit",
+            "origin_commit": "new-commit",
+        }
+        with (
+            mock.patch("server._automation_version_block_reason", return_value="Update required: behind origin/main."),
+            mock.patch(
+                "server._app_update_safety_block_reason",
+                return_value="Waiting for the running automation to finish before updating.",
+            ),
+        ):
+            payload = server.get_app_update_payload(git_state)
+
+        self.assertFalse(payload["automatic_enabled"])
+        self.assertEqual(
+            payload["safety_block_reason"],
+            "Waiting for the running automation to finish before updating.",
+        )
+
     def test_update_endpoint_saves_and_publishes_dirty_checkout(self):
         git_state = {
             "available": True,

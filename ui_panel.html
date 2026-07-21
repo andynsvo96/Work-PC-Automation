@@ -2634,29 +2634,25 @@ function renderAppUpdateState(update) {
 
   const automatic = Boolean(update.automatic_available);
   const interactive = Boolean(update.interactive_available);
-  const automaticEnabled = update.automatic_enabled !== false;
-  const unattended = automatic && automaticEnabled;
-  const waitingReason = String(update.automatic_wait_reason || '').trim();
-  const serverManaged = Object.prototype.hasOwnProperty.call(update, 'automatic_enabled');
+  const waitingReason = String(update.safety_block_reason || '').trim();
   const current = update.current_short_commit || 'unknown';
   const target = update.target_short_commit || 'unknown';
   if (message) {
-    message.textContent = unattended
-      ? (waitingReason || 'This computer will update and restart automatically as soon as it is safe.')
+    message.textContent = waitingReason
+      ? waitingReason
       : (automatic || interactive)
         ? 'Click Update to safely save local app changes, synchronize both computers, and restart.'
-      : 'This checkout needs manual Git attention before it can update safely.';
+        : 'This checkout needs manual Git attention before it can update safely.';
   }
-  if (details) details.textContent = `${update.reason || 'Update required.'}\nCurrent: ${current}\nAvailable: ${target}${unattended ? '\nMode: Automatic' : ''}${waitingReason ? `\nStatus: ${waitingReason}` : ''}`;
+  if (details) details.textContent = `${update.reason || 'Update required.'}\nCurrent: ${current}\nAvailable: ${target}\nMode: Manual${waitingReason ? `\nStatus: ${waitingReason}` : ''}`;
   if (updateButton) {
-    updateButton.disabled = (!automatic && !interactive) || unattended;
-    updateButton.textContent = unattended
-      ? (update.automatic_scheduled ? 'Updating Automatically...' : (waitingReason ? 'Waiting Safely...' : 'Automatic Update Pending'))
+    updateButton.disabled = (!automatic && !interactive) || Boolean(waitingReason);
+    updateButton.textContent = waitingReason
+      ? 'Waiting for Task...'
       : ((automatic || interactive) ? 'Update' : 'Manual Update Required');
   }
   if (dismissButton) dismissButton.disabled = false;
   if (dismissedAppUpdateTarget !== appUpdateIdentity(update)) modal.classList.add('active');
-  if (unattended && !serverManaged && !appUpdateInProgress) void updateAppNow(updateButton);
 }
 
 function dismissAppUpdateModal() {
@@ -7519,8 +7515,6 @@ if (!UI_OPENED_FROM_FILE) {
     const pendingUpdate = nodeRuntimePayload && nodeRuntimePayload.app_update ? nodeRuntimePayload.app_update : {};
     if (
       pendingUpdate.required
-      && pendingUpdate.automatic_available
-      && pendingUpdate.automatic_enabled !== false
       && Date.now() - appUpdateFastPollAt >= 10000
     ) {
       appUpdateFastPollAt = Date.now();

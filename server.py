@@ -1482,6 +1482,7 @@ def get_app_update_payload(git_state=None):
         automatic_scheduled = bool(app_update_restart_scheduled)
     with version_monitor_lock:
         automatic_wait_reason = str(version_monitor_state.get("automatic_wait_reason") or "").strip()
+    safety_block_reason = _app_update_safety_block_reason() if reason else None
     return {
         "required": bool(reason),
         "automatic_enabled": _automatic_app_updates_enabled(),
@@ -1489,6 +1490,7 @@ def get_app_update_payload(git_state=None):
         "interactive_available": interactive_available,
         "automatic_scheduled": automatic_scheduled,
         "automatic_wait_reason": automatic_wait_reason or None,
+        "safety_block_reason": safety_block_reason,
         "reason": reason or None,
         "relation": relation,
         "loaded_commit": str(SERVER_APP_COMMIT or "") or None,
@@ -1500,8 +1502,7 @@ def get_app_update_payload(git_state=None):
 
 
 def _automatic_app_updates_enabled():
-    value = getattr(config_module, "AUTOMATION_AUTO_UPDATE_ENABLED", True)
-    return value if isinstance(value, bool) else _is_trueish(value)
+    return False
 
 
 def _set_automatic_update_wait_reason(reason=None):
