@@ -5791,6 +5791,44 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
             ),
             "rush",
         )
+        self.assertEqual(
+            crm_validate_address._order_totals_shipping_class_from_text(
+                "Order Totals Design 1 Total: $71.80 Shipping: $25.00 Grand Total: $96.80"
+            ),
+            "international_standard",
+        )
+        self.assertEqual(
+            crm_validate_address._order_totals_shipping_class_from_text(
+                "Order Totals Design 1 Total: $71.80 Shipping: $25.01 Grand Total: $96.81"
+            ),
+            "rush",
+        )
+
+    def test_po_box_policy_allows_exact_international_standard_rate_even_from_rush_list(self):
+        warnings = []
+
+        policy = crm_validate_address._po_box_shipping_policy_filter(
+            mock.Mock(),
+            "rush",
+            warnings,
+            detected_shipping_class="international_standard",
+        )
+
+        self.assertEqual(policy, "free")
+        self.assertTrue(any("$25 standard international/military" in warning for warning in warnings))
+
+    def test_po_box_policy_treats_shipping_above_standard_international_rate_as_rush(self):
+        warnings = []
+
+        policy = crm_validate_address._po_box_shipping_policy_filter(
+            mock.Mock(),
+            "free",
+            warnings,
+            detected_shipping_class="rush",
+        )
+
+        self.assertEqual(policy, "rush")
+        self.assertTrue(any("rush" in warning.lower() for warning in warnings))
 
     def test_effective_address_cont_ignores_locality_overflow(self):
         address_fields = {

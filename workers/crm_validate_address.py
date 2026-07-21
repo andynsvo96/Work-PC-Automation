@@ -317,6 +317,7 @@ ORDER_TOTALS_SHIPPING_VALUE_PATTERN = re.compile(
     r"\bShipping:\s*(?:\S+\s+){0,2}?(?P<value>Free|\$?\s*[0-9][0-9,]*(?:\.\d{2})?)\b",
     re.IGNORECASE,
 )
+INTERNATIONAL_STANDARD_SHIPPING_RATE = 25.00
 ORDER_ID_PATTERN = re.compile(r"\b\d{7}\b")
 ADDRESS_VALID_TEXT = "Address is valid"
 NO_CANDIDATES_TEXT = "No Address Candidates found"
@@ -510,6 +511,8 @@ def _batch_collection_limit(requested_batch_size, attempted_count, worker_limit=
 
 
 def _shipping_filter_label(value):
+    if str(value or "").strip().lower() == "international_standard":
+        return "standard international shipping"
     key = _normalize_shipping_filter(value)
     if key == "813":
         return "813 orders"
@@ -4423,9 +4426,12 @@ def _order_totals_shipping_class_from_value(value):
     if not amount_text:
         return ""
     try:
-        return "rush" if float(amount_text) > 0 else "free"
+        amount = float(amount_text)
     except ValueError:
         return ""
+    if abs(amount - INTERNATIONAL_STANDARD_SHIPPING_RATE) < 0.0001:
+        return "international_standard"
+    return "rush" if amount > 0 else "free"
 
 
 def _order_totals_shipping_class_from_text(text):
@@ -4474,16 +4480,21 @@ def _read_order_totals_shipping_class(driver):
 
 def _po_box_shipping_policy_filter(driver, shipping_filter_key, warnings, detected_shipping_class=""):
     shipping_filter_key = _normalize_shipping_filter(shipping_filter_key)
-    if shipping_filter_key != "all":
-        return shipping_filter_key
     shipping_class = detected_shipping_class or _read_order_totals_shipping_class(driver)
+    if shipping_class == "international_standard":
+        warnings.append(
+            "Detected the $25 standard international/military shipping rate from Order Totals; allowing the PO Box override."
+        )
+        return "free"
     if shipping_class in {"free", "rush"}:
         warnings.append(
-            f"Detected this all-list order as {_shipping_filter_label(shipping_class)} from the Order Totals shipping charge."
+            f"Detected this order as {_shipping_filter_label(shipping_class)} from the Order Totals shipping charge."
         )
         return shipping_class
-    warnings.append("Could not determine the Order Totals shipping charge in all-list mode, so PO Box-only handling used rush-order restrictions.")
-    return "rush"
+    if shipping_filter_key == "all":
+        warnings.append("Could not determine the Order Totals shipping charge in all-list mode, so PO Box-only handling used rush-order restrictions.")
+        return "rush"
+    return shipping_filter_key
 
 
 def _persist_validated_address_via_modal_scope(driver, shipping_modal, use_override=False, timeout=45):
@@ -4845,9 +4856,9 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
                 final_address=current_address,
             )
     shipping_filter_key = _normalize_shipping_filter(shipping_filter)
-    all_mode_order_totals_shipping_class = ""
-    if shipping_filter_key == "all" and _classify_po_box_address(panel_address).get("has_po_box"):
-        all_mode_order_totals_shipping_class = _read_order_totals_shipping_class(driver)
+    po_box_order_totals_shipping_class = ""
+    if _classify_po_box_address(panel_address).get("has_po_box"):
+        po_box_order_totals_shipping_class = _read_order_totals_shipping_class(driver)
     shipping_modal = _open_shipping_editor(driver)
     original_address = _merge_address_fields(_extract_current_address(shipping_modal), panel_address)
     if not _normalize_space(original_address.get("recipient")):
@@ -4904,7 +4915,7 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
             driver,
             shipping_filter_key,
             warnings,
-            detected_shipping_class=all_mode_order_totals_shipping_class,
+            detected_shipping_class=po_box_order_totals_shipping_class,
         )
     if po_box_profile["needs_swap"]:
         current_address, po_box_profile = _swap_street_and_po_box_lines(shipping_modal, warnings)
