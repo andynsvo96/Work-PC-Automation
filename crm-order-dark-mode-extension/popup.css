@@ -1,0 +1,14 @@
+:root { color-scheme: dark; background: #1e1e1e; color: #d4d4d4; font-family: "Segoe UI", system-ui, sans-serif; }
+body { width: 270px; margin: 0; }
+main { padding: 16px; }
+h1 { margin: 0 0 10px; color: #f0f0f0; font-size: 16px; }
+p { margin: 0; }
+#page-status { min-height: 18px; color: #9d9d9d; font-size: 12px; }
+.toggle { display: flex; align-items: center; gap: 10px; margin: 16px 0 12px; color: #f0f0f0; cursor: pointer; font-size: 14px; font-weight: 600; }
+.toggle input { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; }
+.track { display: flex; align-items: center; width: 38px; height: 22px; padding: 2px; border: 1px solid #555; border-radius: 999px; background: #3c3c3c; transition: background 120ms ease, border-color 120ms ease; }
+.thumb { width: 18px; height: 18px; border-radius: 50%; background: #d4d4d4; transition: transform 120ms ease; }
+.toggle input:checked + .track { border-color: #1177bb; background: #0e639c; }
+.toggle input:checked + .track .thumb { transform: translateX(16px); background: #fff; }
+.toggle input:focus-visible + .track { outline: 2px solid #4fc1ff; outline-offset: 2px; }
+.hint { color: #9d9d9d; font-size: 12px; line-height: 1.4; }

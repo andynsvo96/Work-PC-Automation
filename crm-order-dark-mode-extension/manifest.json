@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "CRM Order Dark Mode",
+  "version": "1.0.0",
+  "description": "A local, screen-only dark theme for Printfly CRM order pages.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["https://crm2.legacy.printfly.com/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "CRM Order Dark Mode",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://crm2.legacy.printfly.com/*"],
+      "js": ["content.js"],
+      "css": ["dark-mode.css"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
+}

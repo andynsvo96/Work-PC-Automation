@@ -1,0 +1,158 @@
+/* Screen-only: CRM's normal light print CSS remains untouched. */
+@media screen {
+  html.crm-order-dark-mode {
+    color-scheme: dark;
+    background: #1e1e1e !important;
+  }
+
+  html.crm-order-dark-mode body,
+  html.crm-order-dark-mode #app,
+  html.crm-order-dark-mode .app,
+  html.crm-order-dark-mode .container,
+  html.crm-order-dark-mode .container-fluid,
+  html.crm-order-dark-mode .content,
+  html.crm-order-dark-mode .content-wrapper,
+  html.crm-order-dark-mode .page-content,
+  html.crm-order-dark-mode .main-content,
+  html.crm-order-dark-mode .record-form,
+  html.crm-order-dark-mode .recordForm {
+    background-color: #1e1e1e !important;
+    color: #d4d4d4 !important;
+  }
+
+  html.crm-order-dark-mode .panel,
+  html.crm-order-dark-mode .panel-default,
+  html.crm-order-dark-mode .card,
+  html.crm-order-dark-mode .well,
+  html.crm-order-dark-mode .modal-content,
+  html.crm-order-dark-mode .dropdown-menu,
+  html.crm-order-dark-mode .popover,
+  html.crm-order-dark-mode .tooltip-inner,
+  html.crm-order-dark-mode .ui-dialog,
+  html.crm-order-dark-mode .ui-datepicker,
+  html.crm-order-dark-mode .alert {
+    background-color: #252526 !important;
+    border-color: #3c3c3c !important;
+    color: #d4d4d4 !important;
+  }
+
+  html.crm-order-dark-mode input,
+  html.crm-order-dark-mode select,
+  html.crm-order-dark-mode textarea,
+  html.crm-order-dark-mode .form-control {
+    background-color: #2d2d30 !important;
+    border-color: #555 !important;
+    color: #f0f0f0 !important;
+  }
+
+  html.crm-order-dark-mode input::placeholder,
+  html.crm-order-dark-mode textarea::placeholder { color: #a6a6a6 !important; }
+
+  html.crm-order-dark-mode label,
+  html.crm-order-dark-mode legend,
+  html.crm-order-dark-mode .control-label,
+  html.crm-order-dark-mode .help-block,
+  html.crm-order-dark-mode .text-muted,
+  html.crm-order-dark-mode .muted,
+  html.crm-order-dark-mode p,
+  html.crm-order-dark-mode li,
+  html.crm-order-dark-mode dt,
+  html.crm-order-dark-mode dd { color: #d4d4d4 !important; }
+
+  html.crm-order-dark-mode a:not(.btn):not(.nav-link) { color: #4fc1ff !important; }
+
+  html.crm-order-dark-mode hr,
+  html.crm-order-dark-mode .panel-heading,
+  html.crm-order-dark-mode .panel-footer,
+  html.crm-order-dark-mode .modal-header,
+  html.crm-order-dark-mode .modal-footer,
+  html.crm-order-dark-mode .list-group-item,
+  html.crm-order-dark-mode .nav-tabs,
+  html.crm-order-dark-mode .nav-tabs > li > a {
+    background-color: #2d2d30 !important;
+    border-color: #3c3c3c !important;
+    color: #d4d4d4 !important;
+  }
+
+  html.crm-order-dark-mode .nav-tabs > li.active > a,
+  html.crm-order-dark-mode .nav-tabs > li.active > a:hover,
+  html.crm-order-dark-mode .nav-tabs > li.active > a:focus,
+  html.crm-order-dark-mode .nav-pills > li.active > a,
+  html.crm-order-dark-mode .nav-pills > li.active > a:hover,
+  html.crm-order-dark-mode .nav-pills > li.active > a:focus {
+    background-color: #04395e !important;
+    border-color: #007acc !important;
+    color: #f0f0f0 !important;
+  }
+
+  html.crm-order-dark-mode table,
+  html.crm-order-dark-mode .table { background-color: #252526 !important; color: #d4d4d4 !important; }
+
+  html.crm-order-dark-mode .table > thead > tr > th,
+  html.crm-order-dark-mode .table > tbody > tr > th,
+  html.crm-order-dark-mode .table > tfoot > tr > th {
+    background-color: #2d2d30 !important;
+    border-color: #3c3c3c !important;
+    color: #f0f0f0 !important;
+  }
+
+  html.crm-order-dark-mode .table > tbody > tr > td,
+  html.crm-order-dark-mode .table > tfoot > tr > td {
+    background-color: #252526 !important;
+    border-color: #3c3c3c !important;
+    color: #d4d4d4 !important;
+  }
+
+  html.crm-order-dark-mode .table-striped > tbody > tr:nth-of-type(odd) > td,
+  html.crm-order-dark-mode .table-striped > tbody > tr:nth-of-type(odd) > th { background-color: #2d2d30 !important; }
+
+  html.crm-order-dark-mode .table-hover > tbody > tr:hover > td,
+  html.crm-order-dark-mode .table-hover > tbody > tr:hover > th,
+  html.crm-order-dark-mode tr:hover > td { background-color: #04395e !important; }
+
+  html.crm-order-dark-mode .btn,
+  html.crm-order-dark-mode button,
+  html.crm-order-dark-mode input[type="button"],
+  html.crm-order-dark-mode input[type="submit"] {
+    background-color: #2d2d30 !important;
+    border-color: #555 !important;
+    color: #d4d4d4 !important;
+  }
+
+  html.crm-order-dark-mode .btn:hover,
+  html.crm-order-dark-mode button:hover,
+  html.crm-order-dark-mode input[type="button"]:hover,
+  html.crm-order-dark-mode input[type="submit"]:hover {
+    background-color: #3c3c3c !important;
+    border-color: #007acc !important;
+  }
+
+  html.crm-order-dark-mode .btn-primary,
+  html.crm-order-dark-mode .btn-info,
+  html.crm-order-dark-mode .btn-primary:hover,
+  html.crm-order-dark-mode .btn-info:hover {
+    background-color: #0e639c !important;
+    border-color: #1177bb !important;
+    color: #fff !important;
+  }
+
+  html.crm-order-dark-mode .btn-success,
+  html.crm-order-dark-mode .alert-success,
+  html.crm-order-dark-mode .success,
+  html.crm-order-dark-mode .bg-success { background-color: #1f3b2a !important; border-color: #3f6b4d !important; color: #c3e88d !important; }
+
+  html.crm-order-dark-mode .btn-warning,
+  html.crm-order-dark-mode .alert-warning,
+  html.crm-order-dark-mode .warning,
+  html.crm-order-dark-mode .bg-warning { background-color: #332b00 !important; border-color: #cca700 !important; color: #f0d48a !important; }
+
+  html.crm-order-dark-mode .btn-danger,
+  html.crm-order-dark-mode .alert-danger,
+  html.crm-order-dark-mode .danger,
+  html.crm-order-dark-mode .bg-danger,
+  html.crm-order-dark-mode .error { background-color: #431b1b !important; border-color: #a31515 !important; color: #ffb4ab !important; }
+
+  html.crm-order-dark-mode .modal-backdrop,
+  html.crm-order-dark-mode .ui-widget-overlay { background-color: rgba(0, 0, 0, 0.68) !important; }
+  html.crm-order-dark-mode ::selection { background: #264f78 !important; color: #fff !important; }
+}
