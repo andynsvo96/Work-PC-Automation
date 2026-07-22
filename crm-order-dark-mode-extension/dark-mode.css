@@ -417,4 +417,36 @@
     color: #fff !important;
     -webkit-text-fill-color: #fff !important;
   }
+
+  /* Retain CRM's familiar light-yellow treatment for goods that have been ordered. */
+  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered,
+  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered thead,
+  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered tbody,
+  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered tr,
+  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered th,
+  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered td {
+    background-color: #fdfd95 !important;
+    border-color: #d6c75c !important;
+    color: #1e1e1e !important;
+    -webkit-text-fill-color: #1e1e1e !important;
+  }
+  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered :is(div, span, strong, small, a):not(.btn) {
+    color: #1e1e1e !important;
+    -webkit-text-fill-color: #1e1e1e !important;
+  }
+
+  /* Restore the native validated-address green and the shipping completion warning. */
+  html.crm-order-dark-mode .greenAddress,
+  html.crm-order-dark-mode .greenAddress * {
+    background-color: rgb(174, 205, 136) !important;
+    color: #1e1e1e !important;
+    -webkit-text-fill-color: #1e1e1e !important;
+  }
+  html.crm-order-dark-mode .suggestedShippingMethod,
+  html.crm-order-dark-mode .suggestedShippingMethod * {
+    background-color: yellow !important;
+    border-color: #c9b400 !important;
+    color: #1e1e1e !important;
+    -webkit-text-fill-color: #1e1e1e !important;
+  }
 }
