@@ -312,4 +312,56 @@
     background-color: #2d2d30 !important;
     border: 1px solid #3c3c3c !important;
   }
+
+  /* The date/action row has a CRM inline #ccc background outside #order-dates. */
+  html.crm-order-dark-mode #main-header > [style*="background-color"] {
+    background-color: #181818 !important;
+    border-top-color: #3c3c3c !important;
+    border-bottom-color: #555 !important;
+  }
+  html.crm-order-dark-mode #main-header > [style*="background-color"] > * { background-color: #181818 !important; }
+
+  /* Notes and ordered-stock callouts use the native yellow with black text. */
+  html.crm-order-dark-mode #view-orders-index #content .quote-notes-light-highlight,
+  html.crm-order-dark-mode #view-orders-index #content .order-notes-light-highlight,
+  html.crm-order-dark-mode #view-orders-index #content .quote-notes-light-highlight *,
+  html.crm-order-dark-mode #view-orders-index #content .order-notes-light-highlight * {
+    background-color: #fdfd95 !important;
+    color: #1e1e1e !important;
+    -webkit-text-fill-color: #1e1e1e !important;
+  }
+
+  /* Slightly lift the issue field above the panel without making it bright. */
+  html.crm-order-dark-mode #art-changes .printAreaNote {
+    background-color: #5a5a60 !important;
+    border-color: #858585 !important;
+  }
+
+  /* Preserve the CRM status-control and auto-approval colors. */
+  html.crm-order-dark-mode .applied-status .btn-primary,
+  html.crm-order-dark-mode .status-apply-btn {
+    background-color: #222 !important;
+    border-color: #222 !important;
+    color: #fff !important;
+  }
+  html.crm-order-dark-mode #order-notes-art-notes .approval-success,
+  html.crm-order-dark-mode #order-notes-art-notes .order-success {
+    background-color: rgb(40, 193, 66) !important;
+    border-color: rgb(40, 193, 66) !important;
+    color: #1e1e1e !important;
+    -webkit-text-fill-color: #1e1e1e !important;
+  }
+
+  /* Remove the synthetic zebra gray from the totals and payment panels. */
+  html.crm-order-dark-mode #order-totals-panel-table,
+  html.crm-order-dark-mode #order-totals-panel-table tr,
+  html.crm-order-dark-mode #order-totals-panel-table th,
+  html.crm-order-dark-mode #order-totals-panel-table td,
+  html.crm-order-dark-mode #order-payments-credits table,
+  html.crm-order-dark-mode #order-payments-credits table tr,
+  html.crm-order-dark-mode #order-payments-credits table th,
+  html.crm-order-dark-mode #order-payments-credits table td {
+    background-color: #252526 !important;
+    border-color: #3c3c3c !important;
+  }
 }
