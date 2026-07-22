@@ -161,22 +161,6 @@
   html.crm-order-dark-mode #content,
   html.crm-order-dark-mode .contentSection { background-color: #1e1e1e !important; color: #d4d4d4 !important; }
 
-  html.crm-order-dark-mode #main-header,
-  html.crm-order-dark-mode #main-header .wrapper,
-  html.crm-order-dark-mode #order-info-panel,
-  html.crm-order-dark-mode #main-header .col-md-1,
-  html.crm-order-dark-mode #main-header .col-md-2,
-  html.crm-order-dark-mode #main-header .col-md-3,
-  html.crm-order-dark-mode #main-header .col-md-4,
-  html.crm-order-dark-mode #main-header .col-md-5,
-  html.crm-order-dark-mode #main-header .col-md-6,
-  html.crm-order-dark-mode #main-header .col-md-7,
-  html.crm-order-dark-mode #main-header .col-md-8,
-  html.crm-order-dark-mode #main-header .col-md-9,
-  html.crm-order-dark-mode #main-header .col-md-10,
-  html.crm-order-dark-mode #main-header .col-md-11,
-  html.crm-order-dark-mode #main-header .col-md-12 { background-color: #252526 !important; color: #d4d4d4 !important; }
-
   html.crm-order-dark-mode #view-orders-index .panel-body,
   html.crm-order-dark-mode #view-orders-index .panel-collapse,
   html.crm-order-dark-mode #view-orders-index .tab-content,
@@ -209,19 +193,26 @@
   html.crm-order-dark-mode #view-orders-index table tfoot th { background-color: #2d2d30 !important; color: #f0f0f0 !important; }
   html.crm-order-dark-mode #view-orders-index table tbody tr:nth-child(odd) > :is(th, td) { background-color: #2d2d30 !important; }
 
-  /* Preserve warnings and validated-address meaning without pale backgrounds. */
+  /* Keep order-note highlights in CRM's familiar yellow. */
   html.crm-order-dark-mode .quote-notes-light-highlight,
-  html.crm-order-dark-mode .tooltip-box,
-  html.crm-order-dark-mode .suggestedShippingMethod,
   html.crm-order-dark-mode .order-notes-light-highlight {
+    background-color: #fdfd95 !important;
+    border-color: cornflowerblue !important;
+    color: #1e1e1e !important;
+  }
+  html.crm-order-dark-mode .quote-notes-light-highlight *,
+  html.crm-order-dark-mode .order-notes-light-highlight * { color: #1e1e1e !important; }
+
+  /* Preserve warnings and validated-address meaning without pale backgrounds. */
+  html.crm-order-dark-mode .tooltip-box,
+  html.crm-order-dark-mode .suggestedShippingMethod {
     background-color: #332b00 !important;
     border-color: #cca700 !important;
     color: #f0d48a !important;
   }
 
-  html.crm-order-dark-mode .quote-notes-light-highlight *,
   html.crm-order-dark-mode .tooltip-box *,
-  html.crm-order-dark-mode .order-notes-light-highlight * { color: #f0d48a !important; }
+  html.crm-order-dark-mode .suggestedShippingMethod * { color: #f0d48a !important; }
 
   html.crm-order-dark-mode .greenAddress,
   html.crm-order-dark-mode .greenAddress * {
@@ -251,6 +242,7 @@
     border-bottom: 1px solid #3c3c3c !important;
   }
 
+  html.crm-order-dark-mode #view-orders-index .panel-heading,
   html.crm-order-dark-mode .panel-default > .panel-heading,
   html.crm-order-dark-mode .panel-default > .totals-panel,
   html.crm-order-dark-mode .panel-default > .misc-panel,
@@ -266,12 +258,22 @@
   html.crm-order-dark-mode #shipping-transactions .panel-heading * { color: #fff !important; }
 
   /* Stock and size availability remain CRM-yellow, with readable dark text. */
-  html.crm-order-dark-mode #view-orders-index .design-item-size-active,
-  html.crm-order-dark-mode #view-orders-index .design-item-size-active * {
+  html.crm-order-dark-mode #view-orders-index #content table.quantities .design-item-size-active,
+  html.crm-order-dark-mode #view-orders-index #content table.quantities .design-item-size-active * {
     background-color: #ffff99 !important;
     color: #1e1e1e !important;
     border-color: #d6c75c !important;
+    -webkit-text-fill-color: #1e1e1e !important;
+    font-weight: 700 !important;
   }
+
+  /* Preserve the customer/reorder/title header; darken only the date strip. */
+  html.crm-order-dark-mode #order-dates {
+    background-color: #181818 !important;
+    border-top: 1px solid #3c3c3c !important;
+    border-bottom: 1px solid #555 !important;
+  }
+  html.crm-order-dark-mode #order-dates * { color: #d4d4d4 !important; }
 
   /* Make the Art Changes/issue field distinct from the panel behind it. */
   html.crm-order-dark-mode #art-changes .printAreaNote {
