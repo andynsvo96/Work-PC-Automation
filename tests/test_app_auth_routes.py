@@ -30,6 +30,11 @@ class AppAuthRouteTests(unittest.TestCase):
 
         response = self.client.post("/api/auth/login", json={"pin": "123456"})
         self.assertEqual(response.status_code, 200)
+        self.assertIn("Expires=", response.headers.get("Set-Cookie", ""))
+        self.assertEqual(
+            server.app.config["PERMANENT_SESSION_LIFETIME"],
+            server.timedelta(days=server.APP_TRUSTED_DEVICE_DAYS),
+        )
         token = response.get_json()["csrf_token"]
 
         response = self.client.post("/api/queue/cancel-all")

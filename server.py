@@ -143,6 +143,13 @@ REMOTE_ACCESS_MODE = str(getattr(config_module, "AUTOMATION_REMOTE_ACCESS_MODE",
 if REMOTE_ACCESS_MODE not in {"local", "tailscale"}:
     REMOTE_ACCESS_MODE = "local"
 APP_PIN_REQUIRED = bool(getattr(config_module, "AUTOMATION_APP_PIN_REQUIRED", REMOTE_ACCESS_MODE == "tailscale"))
+try:
+    # A permanent Flask session is a signed, HttpOnly browser cookie. It acts
+    # as a trusted-device record without collecting a hardware fingerprint.
+    APP_TRUSTED_DEVICE_DAYS = int(getattr(config_module, "AUTOMATION_APP_TRUSTED_DEVICE_DAYS", 365) or 365)
+except (TypeError, ValueError):
+    APP_TRUSTED_DEVICE_DAYS = 365
+APP_TRUSTED_DEVICE_DAYS = max(1, min(APP_TRUSTED_DEVICE_DAYS, 3650))
 HOME_AUTOMATION_TRIGGERS_ENABLED = bool(
     getattr(config_module, "AUTOMATION_HOME_ASSISTANT_ENABLED", True)
 )
@@ -172,7 +179,8 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=REMOTE_ACCESS_MODE == "tailscale",
-    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+    # A new browser/device, cleared site data, logout, or expiry requires the PIN.
+    PERMANENT_SESSION_LIFETIME=timedelta(days=APP_TRUSTED_DEVICE_DAYS),
 )
 app_security_config = None
 app_security_initialization_error = None
