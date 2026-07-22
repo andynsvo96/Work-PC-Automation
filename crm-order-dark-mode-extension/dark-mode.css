@@ -235,7 +235,7 @@
   html.crm-order-dark-mode .order-balance-unpaid-color { color: #f44747 !important; }
   html.crm-order-dark-mode .text-warning { color: #f0d48a !important; }
 
-  /* Keep the CRM's title treatment consistent and visibly blue. */
+  /* Preserve CRM's title hierarchy instead of flattening every title to blue. */
   html.crm-order-dark-mode #main-header-design-tabs {
     background-color: #252526 !important;
     border-top: 1px solid #3c3c3c !important;
@@ -243,15 +243,35 @@
   }
 
   html.crm-order-dark-mode #view-orders-index .panel-heading,
-  html.crm-order-dark-mode .panel-default > .panel-heading,
-  html.crm-order-dark-mode .panel-default > .totals-panel,
-  html.crm-order-dark-mode .panel-default > .misc-panel,
-  html.crm-order-dark-mode .panel-default > .money-panel,
-  html.crm-order-dark-mode #shipping-transactions .ups-header-theme,
-  html.crm-order-dark-mode #shipping-transactions .fedex-header-theme {
-    background-color: #0e639c !important;
-    border-color: #1177bb !important;
+  html.crm-order-dark-mode .panel-default > .panel-heading {
+    background-color: rgb(91, 186, 211) !important;
+    border-color: rgb(91, 186, 211) !important;
     color: #fff !important;
+  }
+
+  html.crm-order-dark-mode #view-orders-index .panel-default > .totals-panel {
+    background-color: rgb(30, 57, 74) !important;
+    border-color: rgb(30, 57, 74) !important;
+  }
+
+  html.crm-order-dark-mode #view-orders-index .panel-default > .misc-panel {
+    background-color: rgb(39, 33, 33) !important;
+    border-color: rgb(39, 33, 33) !important;
+  }
+
+  html.crm-order-dark-mode #view-orders-index .panel-default > .money-panel {
+    background-color: rgb(34, 81, 124) !important;
+    border-color: rgb(34, 81, 124) !important;
+  }
+
+  html.crm-order-dark-mode #view-orders-index #shipping-transactions .ups-header-theme {
+    background-color: rgb(48, 32, 19) !important;
+    border-color: rgb(48, 32, 19) !important;
+  }
+
+  html.crm-order-dark-mode #view-orders-index #shipping-transactions .fedex-header-theme {
+    background-color: rgb(75, 36, 96) !important;
+    border-color: rgb(75, 36, 96) !important;
   }
 
   html.crm-order-dark-mode .panel-default > .panel-heading *,
@@ -341,7 +361,7 @@
   html.crm-order-dark-mode .applied-status .btn-primary,
   html.crm-order-dark-mode .status-apply-btn {
     background-color: #222 !important;
-    border-color: #222 !important;
+    border-color: #fff !important;
     color: #fff !important;
   }
   html.crm-order-dark-mode #order-notes-art-notes .approval-success,
@@ -363,5 +383,38 @@
   html.crm-order-dark-mode #order-payments-credits table td {
     background-color: #252526 !important;
     border-color: #3c3c3c !important;
+  }
+
+  /* These panels use plain tables, so match the generic stripe selector exactly. */
+  html.crm-order-dark-mode #view-orders-index #order-totals table tbody tr:nth-child(odd) > :is(th, td),
+  html.crm-order-dark-mode #view-orders-index #order-totals table tbody tr:nth-child(even) > :is(th, td),
+  html.crm-order-dark-mode #view-orders-index #order-totals-panel-table tbody tr:nth-child(odd) > :is(th, td),
+  html.crm-order-dark-mode #view-orders-index #order-totals-panel-table tbody tr:nth-child(even) > :is(th, td),
+  html.crm-order-dark-mode #view-orders-index #order-payments-credits table tbody tr:nth-child(odd) > :is(th, td),
+  html.crm-order-dark-mode #view-orders-index #order-payments-credits table tbody tr:nth-child(even) > :is(th, td) {
+    background-color: #252526 !important;
+  }
+
+  /* The CRM date row must read as one uninterrupted dark surface. */
+  html.crm-order-dark-mode #main-header > [style*="background-color"],
+  html.crm-order-dark-mode #order-dates,
+  html.crm-order-dark-mode #order-dates * {
+    border-top-color: transparent !important;
+    border-bottom-color: transparent !important;
+    box-shadow: none !important;
+  }
+
+  /* Keep the selected status field distinct, while leaving its arrow button black. */
+  html.crm-order-dark-mode #status-menu-inputs > input.form-control {
+    background-color: #4a4a50 !important;
+    border-color: #666 !important;
+    color: #f0f0f0 !important;
+  }
+
+  /* Colored print-area headings keep their native background but need white labels. */
+  html.crm-order-dark-mode #view-orders-index .panel-heading:has(+ .printarea),
+  html.crm-order-dark-mode #view-orders-index .panel-heading:has(+ .printarea) * {
+    color: #fff !important;
+    -webkit-text-fill-color: #fff !important;
   }
 }
