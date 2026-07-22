@@ -243,4 +243,71 @@
   html.crm-order-dark-mode .badQty,
   html.crm-order-dark-mode .order-balance-unpaid-color { color: #f44747 !important; }
   html.crm-order-dark-mode .text-warning { color: #f0d48a !important; }
+
+  /* Keep the CRM's title treatment consistent and visibly blue. */
+  html.crm-order-dark-mode #main-header-design-tabs {
+    background-color: #252526 !important;
+    border-top: 1px solid #3c3c3c !important;
+    border-bottom: 1px solid #3c3c3c !important;
+  }
+
+  html.crm-order-dark-mode .panel-default > .panel-heading,
+  html.crm-order-dark-mode .panel-default > .totals-panel,
+  html.crm-order-dark-mode .panel-default > .misc-panel,
+  html.crm-order-dark-mode .panel-default > .money-panel,
+  html.crm-order-dark-mode #shipping-transactions .ups-header-theme,
+  html.crm-order-dark-mode #shipping-transactions .fedex-header-theme {
+    background-color: #0e639c !important;
+    border-color: #1177bb !important;
+    color: #fff !important;
+  }
+
+  html.crm-order-dark-mode .panel-default > .panel-heading *,
+  html.crm-order-dark-mode #shipping-transactions .panel-heading * { color: #fff !important; }
+
+  /* Stock and size availability remain CRM-yellow, with readable dark text. */
+  html.crm-order-dark-mode #view-orders-index .design-item-size-active,
+  html.crm-order-dark-mode #view-orders-index .design-item-size-active * {
+    background-color: #ffff99 !important;
+    color: #1e1e1e !important;
+    border-color: #d6c75c !important;
+  }
+
+  /* Make the Art Changes/issue field distinct from the panel behind it. */
+  html.crm-order-dark-mode #art-changes .printAreaNote {
+    background-color: #4a4a50 !important;
+    border-color: #777 !important;
+    color: #f0f0f0 !important;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+  }
+  html.crm-order-dark-mode #art-changes .printAreaNote::placeholder { color: #d4d4d4 !important; opacity: 1 !important; }
+
+  /* Auto-approval is a status badge, not low-contrast plain text. */
+  html.crm-order-dark-mode #order-notes-art-notes .approval-success,
+  html.crm-order-dark-mode #order-notes-art-notes .order-success {
+    background-color: #198754 !important;
+    color: #fff !important;
+    border: 1px solid #45b978 !important;
+    padding: 3px 5px !important;
+  }
+
+  /* Darken only the preview chrome; the actual studio images stay unchanged. */
+  html.crm-order-dark-mode #record-form-view-images-container {
+    background-color: #1e1e1e !important;
+    border-top: 1px solid #3c3c3c !important;
+  }
+  html.crm-order-dark-mode .record-form-design-previews-column {
+    background-color: #252526 !important;
+    border: 1px solid #3c3c3c !important;
+    padding: 12px !important;
+  }
+  html.crm-order-dark-mode .record-form-design-previews-column h4 {
+    color: #f0f0f0 !important;
+    font-weight: 600 !important;
+  }
+  html.crm-order-dark-mode .record-form-design-previews-column > div,
+  html.crm-order-dark-mode .record-form-design-previews-column > div > a {
+    background-color: #2d2d30 !important;
+    border: 1px solid #3c3c3c !important;
+  }
 }
