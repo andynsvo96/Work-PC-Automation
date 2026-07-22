@@ -155,4 +155,92 @@
   html.crm-order-dark-mode .modal-backdrop,
   html.crm-order-dark-mode .ui-widget-overlay { background-color: rgba(0, 0, 0, 0.68) !important; }
   html.crm-order-dark-mode ::selection { background: #264f78 !important; color: #fff !important; }
+
+  /* CRM order-form components that use custom !important light surfaces. */
+  html.crm-order-dark-mode #view-orders-index,
+  html.crm-order-dark-mode #content,
+  html.crm-order-dark-mode .contentSection { background-color: #1e1e1e !important; color: #d4d4d4 !important; }
+
+  html.crm-order-dark-mode #main-header,
+  html.crm-order-dark-mode #main-header .wrapper,
+  html.crm-order-dark-mode #order-info-panel,
+  html.crm-order-dark-mode #main-header .col-md-1,
+  html.crm-order-dark-mode #main-header .col-md-2,
+  html.crm-order-dark-mode #main-header .col-md-3,
+  html.crm-order-dark-mode #main-header .col-md-4,
+  html.crm-order-dark-mode #main-header .col-md-5,
+  html.crm-order-dark-mode #main-header .col-md-6,
+  html.crm-order-dark-mode #main-header .col-md-7,
+  html.crm-order-dark-mode #main-header .col-md-8,
+  html.crm-order-dark-mode #main-header .col-md-9,
+  html.crm-order-dark-mode #main-header .col-md-10,
+  html.crm-order-dark-mode #main-header .col-md-11,
+  html.crm-order-dark-mode #main-header .col-md-12 { background-color: #252526 !important; color: #d4d4d4 !important; }
+
+  html.crm-order-dark-mode #view-orders-index .panel-body,
+  html.crm-order-dark-mode #view-orders-index .panel-collapse,
+  html.crm-order-dark-mode #view-orders-index .tab-content,
+  html.crm-order-dark-mode #view-orders-index .tab-pane,
+  html.crm-order-dark-mode #view-orders-index .info,
+  html.crm-order-dark-mode #view-orders-index .input-group-addon,
+  html.crm-order-dark-mode #view-orders-index .dropdown-menu > li > a {
+    background-color: #252526 !important;
+    border-color: #3c3c3c !important;
+    color: #d4d4d4 !important;
+  }
+
+  html.crm-order-dark-mode #view-orders-index #content :is(div, span, p, label, strong, small, address, td, th) { color: #d4d4d4 !important; }
+  html.crm-order-dark-mode #view-orders-index #content a { color: #4fc1ff !important; }
+
+  /* Several CRM tables omit Bootstrap's .table class entirely. */
+  html.crm-order-dark-mode #view-orders-index table,
+  html.crm-order-dark-mode #view-orders-index table thead,
+  html.crm-order-dark-mode #view-orders-index table tbody,
+  html.crm-order-dark-mode #view-orders-index table tfoot,
+  html.crm-order-dark-mode #view-orders-index table tr,
+  html.crm-order-dark-mode #view-orders-index table th,
+  html.crm-order-dark-mode #view-orders-index table td {
+    background-color: #252526 !important;
+    border-color: #3c3c3c !important;
+    color: #d4d4d4 !important;
+  }
+
+  html.crm-order-dark-mode #view-orders-index table thead th,
+  html.crm-order-dark-mode #view-orders-index table tfoot th { background-color: #2d2d30 !important; color: #f0f0f0 !important; }
+  html.crm-order-dark-mode #view-orders-index table tbody tr:nth-child(odd) > :is(th, td) { background-color: #2d2d30 !important; }
+
+  /* Preserve warnings and validated-address meaning without pale backgrounds. */
+  html.crm-order-dark-mode .quote-notes-light-highlight,
+  html.crm-order-dark-mode .tooltip-box,
+  html.crm-order-dark-mode .suggestedShippingMethod,
+  html.crm-order-dark-mode .order-notes-light-highlight {
+    background-color: #332b00 !important;
+    border-color: #cca700 !important;
+    color: #f0d48a !important;
+  }
+
+  html.crm-order-dark-mode .quote-notes-light-highlight *,
+  html.crm-order-dark-mode .tooltip-box *,
+  html.crm-order-dark-mode .order-notes-light-highlight * { color: #f0d48a !important; }
+
+  html.crm-order-dark-mode .greenAddress,
+  html.crm-order-dark-mode .greenAddress * {
+    background-color: #1f3b2a !important;
+    color: #c3e88d !important;
+  }
+
+  html.crm-order-dark-mode .specialAddress,
+  html.crm-order-dark-mode .specialAddress * {
+    background-color: #431b1b !important;
+    color: #ffb4ab !important;
+  }
+
+  html.crm-order-dark-mode .quote-notes-autoapproval-highlight,
+  html.crm-order-dark-mode .text-success,
+  html.crm-order-dark-mode .goodQty,
+  html.crm-order-dark-mode .order-balance-paid-color { color: #89d185 !important; }
+  html.crm-order-dark-mode .text-danger,
+  html.crm-order-dark-mode .badQty,
+  html.crm-order-dark-mode .order-balance-unpaid-color { color: #f44747 !important; }
+  html.crm-order-dark-mode .text-warning { color: #f0d48a !important; }
 }
