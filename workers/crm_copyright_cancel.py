@@ -45,6 +45,7 @@ from automation_runtime import (
 from config import (
     CONTENT_VIOLATION_CANCEL_ISSUE_TYPE,
     COPYRIGHT_CANCEL_ISSUE_TYPE,
+    EXISTING_DESIGNS_CANCEL_ISSUE_TYPE,
     GOOGLE_SHEET_ERROR_COLUMN,
     GOOGLE_SHEET_ID,
     GOOGLE_SHEET_ISSUE_TYPE_COLUMN,
@@ -61,7 +62,10 @@ from config import (
     SALESFORCE_COPYRIGHT_CANCEL_FROM_LABEL,
     SALESFORCE_COPYRIGHT_CANCEL_TEMPLATE,
     SALESFORCE_CONTENT_VIOLATION_CANCEL_TEMPLATE,
+    SALESFORCE_EXISTING_DESIGNS_CANCEL_TEMPLATE,
     SALESFORCE_EMAIL_TEMPLATE_FILE,
+    SALESFORCE_OUTSIDE_LIMIT_CANCEL_TEMPLATE,
+    OUTSIDE_LIMIT_CANCEL_ISSUE_TYPE,
 )
 import config as _config
 from runtime_paths import STATE_DIR, resolve_runtime_file
@@ -220,6 +224,32 @@ CONTENT_VIOLATION_CANCEL_PROCESS = CancelProcess(
     body_markers=("content policy", "refund"),
     display_name="Content violation cancel",
 )
+EXISTING_DESIGNS_CANCEL_PROCESS = CancelProcess(
+    key="existing_designs_cancel",
+    issue_type=EXISTING_DESIGNS_CANCEL_ISSUE_TYPE,
+    salesforce_template=SALESFORCE_EXISTING_DESIGNS_CANCEL_TEMPLATE,
+    template_search="existing t-shirt",
+    sales_note_reason_label="",
+    sales_note_email_line="",
+    subject_markers=(),
+    body_markers=(),
+    display_name="Existing designs cancel",
+    requires_reason=False,
+    fixed_sales_note="Cannot print an screenshot/photograph of a design on a t-shirt\nCancelled",
+)
+OUTSIDE_LIMIT_CANCEL_PROCESS = CancelProcess(
+    key="outside_limit_cancel",
+    issue_type=OUTSIDE_LIMIT_CANCEL_ISSUE_TYPE,
+    salesforce_template=SALESFORCE_OUTSIDE_LIMIT_CANCEL_TEMPLATE,
+    template_search="outside limit",
+    sales_note_reason_label="",
+    sales_note_email_line="",
+    subject_markers=(),
+    body_markers=(),
+    display_name="Outside limit cancel",
+    requires_reason=False,
+    fixed_sales_note="Cannot print beyond the designated area limit\nCancelled",
+)
 COMPLICATED_EMB_TO_HDD_PROCESS = CancelProcess(
     key="complicated_emb_to_hdd",
     issue_type=COMPLICATED_EMB_ISSUE_TYPE,
@@ -308,6 +338,8 @@ MANUAL_STOCK_ORDER_PROCESS = CancelProcess(
 CANCEL_PROCESSES = (
     COPYRIGHT_CANCEL_PROCESS,
     CONTENT_VIOLATION_CANCEL_PROCESS,
+    EXISTING_DESIGNS_CANCEL_PROCESS,
+    OUTSIDE_LIMIT_CANCEL_PROCESS,
     COMPLICATED_EMB_TO_HDD_PROCESS,
     OVERSIZE_EMB_TO_HDD_PROCESS,
     COPYRIGHT_REACHOUT_PROCESS,

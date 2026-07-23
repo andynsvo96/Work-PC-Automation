@@ -9382,6 +9382,8 @@ def _crm_mass_emailer_sheet_function_label(row):
     labels = {
         "copyright_cancel": getattr(config_module, "COPYRIGHT_CANCEL_ISSUE_TYPE", "Copyright - Cancel"),
         "content_violation_cancel": getattr(config_module, "CONTENT_VIOLATION_CANCEL_ISSUE_TYPE", "Content Violation - Cancel"),
+        "existing_designs_cancel": getattr(config_module, "EXISTING_DESIGNS_CANCEL_ISSUE_TYPE", "CANCEL - Existing Designs"),
+        "outside_limit_cancel": getattr(config_module, "OUTSIDE_LIMIT_CANCEL_ISSUE_TYPE", "CANCEL - Outside Limit"),
         "complicated_emb_to_hdd": getattr(config_module, "COMPLICATED_EMB_ISSUE_TYPE", "Complicated EMB to HDD"),
         "oversize_emb_to_hdd": getattr(config_module, "OVERSIZE_EMB_TO_HDD_ISSUE_TYPE", "Oversize EMB to HDD"),
         "copyright_reachout": getattr(config_module, "COPYRIGHT_REACHOUT_ISSUE_TYPE", "Copyright - Reachout"),

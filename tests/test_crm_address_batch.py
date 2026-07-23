@@ -299,6 +299,44 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             "Policy conflict content violation\nemailed content violation cancellation",
         )
 
+    def test_fixed_cancellation_sales_notes_do_not_require_reason(self):
+        self.assertEqual(
+            crm_copyright_cancel._cancel_sales_note(
+                "",
+                crm_copyright_cancel.EXISTING_DESIGNS_CANCEL_PROCESS,
+            ),
+            "Cannot print an screenshot/photograph of a design on a t-shirt\nCancelled",
+        )
+        self.assertEqual(
+            crm_copyright_cancel._cancel_sales_note(
+                "",
+                crm_copyright_cancel.OUTSIDE_LIMIT_CANCEL_PROCESS,
+            ),
+            "Cannot print beyond the designated area limit\nCancelled",
+        )
+
+    def test_scan_queue_rows_accepts_fixed_cancellations_without_reason(self):
+        headers = [
+            crm_copyright_cancel.GOOGLE_SHEET_ORDER_REFERENCE_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_ISSUE_TYPE_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_REASON_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_ERROR_COLUMN,
+        ]
+        worksheet = mock.Mock()
+        worksheet.get_all_values.return_value = [
+            headers,
+            ["1234567", crm_copyright_cancel.EXISTING_DESIGNS_CANCEL_ISSUE_TYPE, "", ""],
+            ["7654321", crm_copyright_cancel.OUTSIDE_LIMIT_CANCEL_ISSUE_TYPE, "", ""],
+        ]
+        spreadsheet = mock.Mock(title="Queue")
+
+        with mock.patch.object(crm_copyright_cancel, "_open_sheet", return_value=(spreadsheet, worksheet)):
+            _spreadsheet, _worksheet, _headers, eligible, skipped = crm_copyright_cancel._scan_queue_rows()
+
+        self.assertEqual(skipped, [])
+        self.assertEqual([row.process_key for row in eligible], ["existing_designs_cancel", "outside_limit_cancel"])
+        self.assertTrue(all(row.process.cancel_and_refund for row in eligible))
+
     def test_copyright_reachout_sales_note(self):
         self.assertEqual(
             crm_copyright_cancel._cancel_sales_note(
