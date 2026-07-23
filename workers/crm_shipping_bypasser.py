@@ -108,6 +108,7 @@ WAREHOUSE_ALIASES = {
     "seattle": "Seattle, WA",
 }
 SANMAR_WAREHOUSE_STOCK_BUFFER = 10
+SANMAR_UPS_OPTION_WAIT_SECONDS = 30
 SIZE_TOKENS = {
     "XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL", "6XL",
     "S/M", "L/XL", "2/3X", "4/5X",
@@ -4187,6 +4188,25 @@ def _wait_for_sanmar_checkout_shipping_methods(driver, timeout=75, settle_second
     raise RuntimeError(f"SanMar checkout shipping methods did not finish loading within {int(timeout)} seconds.{loader_detail}")
 
 
+def _wait_for_sanmar_checkout_ups_option(driver, timeout=SANMAR_UPS_OPTION_WAIT_SECONDS):
+    """Wait for the selectable UPS radio, which SanMar may render after the checkout shell."""
+    deadline = time.time() + max(1, float(timeout or 0))
+    last_state = {}
+    while time.time() <= deadline:
+        state = _sanmar_checkout_shipping_state(driver)
+        last_state = state
+        if state.get("syntheticReady") or int(state.get("upsRadioCount") or 0) > 0:
+            return state
+        time.sleep(0.5)
+    loader_detail = ""
+    loading_nodes = last_state.get("loadingNodes") if isinstance(last_state.get("loadingNodes"), list) else []
+    if loading_nodes:
+        loader_detail = f" Last visible loader: {loading_nodes[0]}."
+    raise RuntimeError(
+        f"UPS shipping option was not available after waiting {int(timeout)} seconds.{loader_detail}"
+    )
+
+
 def _capture_sanmar_checkout_diagnostic(driver, order_id=None, reason="ups_unavailable"):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_order_id = re.sub(r"[^0-9A-Za-z_-]+", "_", str(order_id or "order"))
@@ -4220,6 +4240,7 @@ def _capture_sanmar_checkout_diagnostic(driver, order_id=None, reason="ups_unava
 def _select_ups_eta_for_shipping_plan(driver, order_type, warehouse=None, selected_warehouses=None, multi_warehouse=False, order_id=None):
     try:
         _wait_for_sanmar_checkout_shipping_methods(driver)
+        _wait_for_sanmar_checkout_ups_option(driver)
     except RuntimeError as exc:
         if order_id:
             diagnostic = _capture_sanmar_checkout_diagnostic(driver, order_id=order_id, reason="shipping_methods_loading")
