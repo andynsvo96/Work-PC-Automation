@@ -3969,8 +3969,18 @@ return { success: false };
         ups_area = re.search(r"\bUPS\b(.{0,160})", text, flags=re.I)
         eta = _parse_sanmar_eta(ups_area.group(1) if ups_area else text)
     if eta is None:
+        if _has_sanmar_freight_calculation_error(text):
+            return None
         raise RuntimeError("UPS estimated delivery date could not be read.")
     return eta
+
+
+def _has_sanmar_freight_calculation_error(text):
+    normalized = _normalize_text(text).casefold()
+    return (
+        "error. unfortunately we are unable to provide freight calculation data at this time."
+        " please try again soon." in normalized
+    )
 
 
 def _select_ups_and_latest_eta_by_warehouse(driver, expected_warehouses=None):
@@ -4041,11 +4051,14 @@ return results;
     rows = rows if isinstance(rows, list) else []
     by_warehouse = {}
     selected_by_warehouse = {}
+    selected_ups_warehouses = set()
     missing = []
     for row in rows:
         if not isinstance(row, dict):
             continue
         warehouse = _normalize_text(row.get("warehouse"))
+        if warehouse:
+            selected_ups_warehouses.add(warehouse.casefold())
         eta = _parse_sanmar_eta(row.get("etaText"))
         if eta is None:
             eta = _parse_sanmar_eta(row.get("text"))
@@ -4055,6 +4068,20 @@ return results;
             continue
         by_warehouse[warehouse] = eta
         selected_by_warehouse[warehouse] = bool(row.get("selected"))
+    checkout_text = driver.execute_script(
+        "return String(document.body && (document.body.innerText || document.body.textContent) || '');"
+    )
+    expected_ups_selected = not expected or all(warehouse.casefold() in selected_ups_warehouses for warehouse in expected)
+    if (
+        _has_sanmar_freight_calculation_error(checkout_text)
+        and selected_ups_warehouses
+        and expected_ups_selected
+    ):
+        return {
+            "eta_by_warehouse": {},
+            "latest_eta": None,
+            "freight_calculation_unavailable": True,
+        }
     for warehouse in expected:
         if warehouse not in by_warehouse:
             missing.append(warehouse)
@@ -4260,6 +4287,7 @@ def _select_ups_eta_for_shipping_plan(driver, order_type, warehouse=None, select
                 name: str(value)
                 for name, value in (eta_state.get("eta_by_warehouse") or {}).items()
             },
+            "freight_calculation_unavailable": bool(eta_state.get("freight_calculation_unavailable")),
         }
     warehouse = str(warehouse or "").strip()
     scoped_error = None
@@ -4272,11 +4300,19 @@ def _select_ups_eta_for_shipping_plan(driver, order_type, warehouse=None, select
                     name: str(value)
                     for name, value in (eta_state.get("eta_by_warehouse") or {}).items()
                 },
+                "freight_calculation_unavailable": bool(eta_state.get("freight_calculation_unavailable")),
             }
         except RuntimeError as exc:
             scoped_error = exc
     try:
-        return {"eta": _select_ups_and_eta(driver, order_type), "eta_by_warehouse": None}
+        eta = _select_ups_and_eta(driver, order_type)
+        return {
+            "eta": eta,
+            "eta_by_warehouse": None,
+            "freight_calculation_unavailable": eta is None and _has_sanmar_freight_calculation_error(
+                driver.execute_script("return String(document.body && (document.body.innerText || document.body.textContent) || '');")
+            ),
+        }
     except RuntimeError as exc:
         diagnostic = _capture_sanmar_checkout_diagnostic(driver, order_id=order_id, reason="ups_unavailable") if order_id else None
         if scoped_error is not None:
@@ -5589,51 +5625,60 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
             ))
         eta = eta_state.get("eta")
         eta_by_warehouse = eta_state.get("eta_by_warehouse")
-        production_target = _shipping_bypasser_production_target_for_eta(eta)
-        if eta > order["due_date"]:
-            if order.get("shipping_class") == "free":
-                # Free-ship orders may be moved out to receive stock; paid/rush orders may not.
-                due_target = _next_business_day_on_or_after(eta)
-                if due_target <= production_target:
-                    due_target = _next_business_day_after(production_target)
-                _change_crm_due_date(crm_driver, order_id, due_target)
-                order["due_date"] = due_target
-            else:
-                return done(_result(order_id, False, "eta_after_due_date", f"SanMar ETA {eta.isoformat()} is after due date {order['due_date'].isoformat()}.", order=order, warehouse=warehouse, warehouses=selected_warehouses, eta=str(eta), eta_by_warehouse=eta_by_warehouse))
-        if production_target >= order["due_date"]:
-            return done(_result(
-                order_id,
-                False,
-                "eta_after_due_date",
-                f"SanMar ETA {eta.isoformat()} pushes production date to {production_target.isoformat()}, which is not before due date {order['due_date'].isoformat()}.",
-                order=order,
-                warehouse=warehouse,
-                warehouses=selected_warehouses,
-                eta=str(eta),
-                eta_by_warehouse=eta_by_warehouse,
-            ))
-        if production_target < order["due_date"] and production_target > order["production_date"]:
-            try:
-                order["production_date"] = _change_crm_production_date(crm_driver, order_id, production_target)
-            except RuntimeError as exc:
-                if "production date did not persist" in str(exc).lower():
-                    return done(_result(
-                        order_id,
-                        False,
-                        "crm_production_date_not_persisted",
-                        f"{exc} Skipped before submitting the SanMar order.",
-                        order=order,
-                        warehouse=warehouse,
-                        warehouses=selected_warehouses,
-                        products=product_lines,
-                        warehouse_plan=warehouse_plan,
-                        eta=str(eta) if eta else None,
-                        eta_by_warehouse=eta_by_warehouse,
-                        shipping=shipping,
-                        manual_review_required=True,
-                        retryable=False,
-                    ))
-                raise
+        if eta is None:
+            if not eta_state.get("freight_calculation_unavailable"):
+                raise RuntimeError("UPS was selected but no estimated delivery date was returned.")
+            _publish_status(
+                f"SanMar freight calculation is unavailable for order {order_id}; proceeding with selected UPS and no ETA.",
+                stage="selecting_sanmar_shipping",
+                order_id=order_id,
+            )
+        else:
+            production_target = _shipping_bypasser_production_target_for_eta(eta)
+            if eta > order["due_date"]:
+                if order.get("shipping_class") == "free":
+                    # Free-ship orders may be moved out to receive stock; paid/rush orders may not.
+                    due_target = _next_business_day_on_or_after(eta)
+                    if due_target <= production_target:
+                        due_target = _next_business_day_after(production_target)
+                    _change_crm_due_date(crm_driver, order_id, due_target)
+                    order["due_date"] = due_target
+                else:
+                    return done(_result(order_id, False, "eta_after_due_date", f"SanMar ETA {eta.isoformat()} is after due date {order['due_date'].isoformat()}.", order=order, warehouse=warehouse, warehouses=selected_warehouses, eta=str(eta), eta_by_warehouse=eta_by_warehouse))
+            if production_target >= order["due_date"]:
+                return done(_result(
+                    order_id,
+                    False,
+                    "eta_after_due_date",
+                    f"SanMar ETA {eta.isoformat()} pushes production date to {production_target.isoformat()}, which is not before due date {order['due_date'].isoformat()}.",
+                    order=order,
+                    warehouse=warehouse,
+                    warehouses=selected_warehouses,
+                    eta=str(eta),
+                    eta_by_warehouse=eta_by_warehouse,
+                ))
+            if production_target < order["due_date"] and production_target > order["production_date"]:
+                try:
+                    order["production_date"] = _change_crm_production_date(crm_driver, order_id, production_target)
+                except RuntimeError as exc:
+                    if "production date did not persist" in str(exc).lower():
+                        return done(_result(
+                            order_id,
+                            False,
+                            "crm_production_date_not_persisted",
+                            f"{exc} Skipped before submitting the SanMar order.",
+                            order=order,
+                            warehouse=warehouse,
+                            warehouses=selected_warehouses,
+                            products=product_lines,
+                            warehouse_plan=warehouse_plan,
+                            eta=str(eta) if eta else None,
+                            eta_by_warehouse=eta_by_warehouse,
+                            shipping=shipping,
+                            manual_review_required=True,
+                            retryable=False,
+                        ))
+                    raise
         _click_sanmar_button(sanmar_driver, r"Proceed\s+To\s+Payment")
     _wait_for_text(sanmar_driver, r"Review\s+&\s+Submit|Review\s+and\s+Submit|Customer\s+PO", timeout=20)
     _publish_status(f"Reviewing SanMar order {order_id} before submit.", stage="reviewing_sanmar_order", order_id=order_id)
