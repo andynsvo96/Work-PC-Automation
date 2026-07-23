@@ -199,6 +199,7 @@ class CancelProcess:
     sales_note_template: str = ""
     template_aliases: tuple = ()
     replace_body_placeholder_with_reason: bool = False
+    refund_case_subject: str = "Copyright"
 
 
 COPYRIGHT_CANCEL_PROCESS = CancelProcess(
@@ -223,6 +224,7 @@ CONTENT_VIOLATION_CANCEL_PROCESS = CancelProcess(
     subject_markers=(),
     body_markers=("content policy", "refund"),
     display_name="Content violation cancel",
+    refund_case_subject="Content Violation",
 )
 EXISTING_DESIGNS_CANCEL_PROCESS = CancelProcess(
     key="existing_designs_cancel",
@@ -232,10 +234,11 @@ EXISTING_DESIGNS_CANCEL_PROCESS = CancelProcess(
     sales_note_reason_label="",
     sales_note_email_line="",
     subject_markers=(),
-    body_markers=(),
+    body_markers=("photograph or screenshot of artwork printed on another shirt",),
     display_name="Existing designs cancel",
     requires_reason=False,
     fixed_sales_note="Cannot print an screenshot/photograph of a design on a t-shirt\nCancelled",
+    refund_case_subject="Existing design",
 )
 OUTSIDE_LIMIT_CANCEL_PROCESS = CancelProcess(
     key="outside_limit_cancel",
@@ -245,7 +248,7 @@ OUTSIDE_LIMIT_CANCEL_PROCESS = CancelProcess(
     sales_note_reason_label="",
     sales_note_email_line="",
     subject_markers=(),
-    body_markers=(),
+    body_markers=("part of the artwork extends outside the designated print area",),
     display_name="Outside limit cancel",
     requires_reason=False,
     fixed_sales_note="Cannot print beyond the designated area limit\nCancelled",
@@ -372,9 +375,7 @@ def _missing_reason_error(process):
 
 def _salesforce_refund_case_subject(process):
     process = _cancel_process_for_key(process) if isinstance(process, str) else process
-    if process.key == CONTENT_VIOLATION_CANCEL_PROCESS.key:
-        return "Content Violation"
-    return "Copyright"
+    return _clean_text(process.refund_case_subject) or "Copyright"
 
 
 def _profile_path():
@@ -7052,7 +7053,7 @@ def _crm_order_already_cancelled(driver):
         text = _clean_text(driver.execute_script("return document.body ? document.body.innerText : '';")).lower()
     except Exception:
         text = ""
-    return bool("cancelled" in text or "order cancelled" in text or "order canceled" in text)
+    return bool(re.search(r"\b(?:order\s+)?status\s*[:\-]?\s*(?:cancelled|canceled)\b", text))
 
 
 def _completed_stripe_refund_state(driver):

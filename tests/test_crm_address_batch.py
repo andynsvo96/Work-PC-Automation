@@ -336,7 +336,48 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertEqual(skipped, [])
         self.assertEqual([row.process_key for row in eligible], ["existing_designs_cancel", "outside_limit_cancel"])
         self.assertTrue(all(row.process.cancel_and_refund for row in eligible))
+        self.assertIn(
+            "photograph or screenshot of artwork printed on another shirt",
+            crm_copyright_cancel.EXISTING_DESIGNS_CANCEL_PROCESS.body_markers,
+        )
+        self.assertIn(
+            "part of the artwork extends outside the designated print area",
+            crm_copyright_cancel.OUTSIDE_LIMIT_CANCEL_PROCESS.body_markers,
+        )
 
+    def test_existing_designs_refund_case_subject_is_not_copyright(self):
+        self.assertEqual(
+            crm_copyright_cancel._salesforce_refund_case_subject(
+                crm_copyright_cancel.EXISTING_DESIGNS_CANCEL_PROCESS,
+            ),
+            "Existing design",
+        )
+        self.assertEqual(
+            crm_copyright_cancel._salesforce_refund_case_subject(
+                crm_copyright_cancel.CONTENT_VIOLATION_CANCEL_PROCESS,
+            ),
+            "Content Violation",
+        )
+
+    def test_order_number_replacement_preserves_the_rest_of_the_email_subject(self):
+        self.assertEqual(
+            crm_copyright_cancel._replace_order_placeholders(
+                "RushOrderTees Order #[ORDER-NUMBER] - A Refund Has Been Issued To Your Account",
+                "4904546",
+            ),
+            "RushOrderTees Order #4904546 - A Refund Has Been Issued To Your Account",
+        )
+
+    def test_sales_note_cancelled_text_is_not_treated_as_order_status(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = "Cannot print beyond the designated area limit\nCancelled"
+
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_order_scope",
+            return_value={"values": [], "history": []},
+        ):
+            self.assertFalse(crm_copyright_cancel._crm_order_already_cancelled(driver))
     def test_copyright_reachout_sales_note(self):
         self.assertEqual(
             crm_copyright_cancel._cancel_sales_note(
