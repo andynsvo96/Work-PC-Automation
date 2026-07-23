@@ -60,7 +60,7 @@ This repo intentionally does not commit real credentials, browser sessions, logs
 
 3. Fill in `config.py` with non-secret local values such as Slack channel URLs and CRM report URLs.
 
-4. Store login secrets in Windows Credential Manager (the prompts do not echo passwords):
+4. Store login secrets in Windows Credential Manager (the prompts do not echo passwords). Paycom setup prompts for its username, password, and four-digit PIN:
 
    ```powershell
    python manage_windows_credentials.py set paycom

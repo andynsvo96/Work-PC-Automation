@@ -50,11 +50,31 @@ from config import (
     WORK_CLOCK_BREAK_APPLIES_AFTER_HOURS,
     WORK_CLOCK_BREAK_MINUTES,
 )
-from credential_store import PAYCOM_CREDENTIAL_TARGET, read_windows_credential
+from credential_store import read_paycom_credential
 
 configure_console_utf8()
 
 AUDIT_AUTOMATION_NAME = "paycom_hours.week"
+
+PAYCOM_USERNAME_SELECTORS = [
+    "input[name='username']",
+    "input[name='userName']",
+    "input[id*='username']",
+    "input[autocomplete='username']",
+    "input[type='email']",
+]
+PAYCOM_PASSWORD_SELECTORS = [
+    "input[name='password']",
+    "input[id*='password']",
+    "input[autocomplete='current-password']",
+    "input[type='password']:not([maxlength='4'])",
+]
+PAYCOM_PIN_SELECTORS = [
+    "input[name='pin']",
+    "input[id*='pin']",
+    "input[placeholder*='PIN']",
+    "input[type='password'][maxlength='4']",
+]
 
 
 def write_result(success, message, week_hours=None, source="", day_rows=None):
@@ -977,20 +997,21 @@ def _run_once(headless_mode):
         print(f"Navigating to hours source page: {target_url}")
         safe_get_with_partial_load(driver, target_url, "hours source page")
 
-        # Fill PIN when login page appears.
-        pin_field = find_visible(
-            driver,
-            [
-                "input[name='pin']",
-                "input[id*='pin']",
-                "input[placeholder*='PIN']",
-                "input[type='password'][maxlength='4']",
-            ],
-            timeout=3,
-        )
-        if pin_field:
-            print("Entering PIN for hours sync...")
-            pin = read_windows_credential(PAYCOM_CREDENTIAL_TARGET).secret
+        # Fill every available Paycom login field from Credential Manager.
+        username_field = find_visible(driver, PAYCOM_USERNAME_SELECTORS, timeout=3)
+        password_field = find_visible(driver, PAYCOM_PASSWORD_SELECTORS, timeout=1)
+        pin_field = find_visible(driver, PAYCOM_PIN_SELECTORS, timeout=1)
+        if username_field or password_field or pin_field:
+            credentials = read_paycom_credential()
+            if username_field:
+                username_field.clear()
+                username_field.send_keys(credentials.username)
+            if password_field:
+                password_field.clear()
+                password_field.send_keys(credentials.password)
+            if pin_field:
+                print("Entering Paycom PIN for hours sync...")
+                pin = credentials.pin
             pin_field.clear()
             pin_field.send_keys(pin)
 

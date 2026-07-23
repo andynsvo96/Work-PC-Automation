@@ -29,12 +29,15 @@ from windows_credentials import (
     read_windows_credential,
     write_windows_credential,
 )
+from credential_store import build_paycom_secret
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = PROJECT_ROOT / "config.py"
 SENSITIVE_CONFIG_KEYS = {
     "PIN",
+    "PAYCOM_USERNAME",
+    "PAYCOM_PASSWORD",
     "CRM_USERNAME",
     "CRM_PASSWORD",
     "SANMAR_USERNAME",
@@ -103,9 +106,15 @@ def migrate_config(delete_source_files: bool = False) -> int:
     plans = []
     statuses = {}
 
+    paycom_username = str(getattr(module, "PAYCOM_USERNAME", "") or "").strip()
+    paycom_password = str(getattr(module, "PAYCOM_PASSWORD", "") or "")
     pin = str(getattr(module, "PIN", "") or "")
-    if pin:
-        plans.append((PAYCOM_CREDENTIAL_TARGET, "PIN", pin))
+    if any((paycom_username, paycom_password, pin)) and not all((paycom_username, paycom_password, pin)):
+        raise RuntimeError(
+            "Paycom migration requires PAYCOM_USERNAME, PAYCOM_PASSWORD, and PIN in config.py."
+        )
+    if paycom_username:
+        plans.append((PAYCOM_CREDENTIAL_TARGET, paycom_username, build_paycom_secret(paycom_password, pin)))
         statuses[PAYCOM_CREDENTIAL_TARGET] = "migrated"
     elif credential_exists(PAYCOM_CREDENTIAL_TARGET):
         statuses[PAYCOM_CREDENTIAL_TARGET] = "already present"
@@ -182,8 +191,10 @@ def migrate_config(delete_source_files: bool = False) -> int:
 def set_credential(service: str) -> int:
     target = CREDENTIAL_TARGETS[service]
     if service == "paycom":
-        username = "PIN"
-        secret = getpass.getpass("Paycom PIN: ")
+        username = input("Paycom username: ").strip()
+        password = getpass.getpass("Paycom password: ")
+        pin = getpass.getpass("Paycom 4-digit PIN: ")
+        secret = build_paycom_secret(password, pin)
     elif service == "google_sheets":
         source = Path(input("Service-account JSON path: ").strip().strip('"')).expanduser().resolve()
         info = json.loads(source.read_text(encoding="utf-8-sig"))

@@ -49,6 +49,15 @@ class StoredCredential:
     secret: str
 
 
+@dataclass(frozen=True)
+class PaycomCredential:
+    """The complete credential set needed by Paycom's login form."""
+
+    username: str
+    password: str
+    pin: str
+
+
 def _encode_payload(username, secret):
     username = str(username or "")
     secret = str(secret or "")
@@ -162,6 +171,43 @@ def read_json_credential(target):
     if not isinstance(payload, dict):
         raise CredentialStoreError(f"Credential '{target}' must contain a JSON object.")
     return payload
+
+
+def build_paycom_secret(password, pin):
+    """Return the structured secret stored alongside the Paycom username."""
+    password = str(password or "")
+    pin = str(pin or "").strip()
+    if not password:
+        raise CredentialStoreError("Paycom password cannot be empty.")
+    if not pin.isdigit() or len(pin) != 4:
+        raise CredentialStoreError("Paycom PIN must be exactly four digits.")
+    return json.dumps({"password": password, "pin": pin}, separators=(",", ":"))
+
+
+def read_paycom_credential():
+    """Read and validate the username, password, and PIN saved for Paycom."""
+    credential = read_credential(PAYCOM_CREDENTIAL_TARGET)
+    if credential.username == "PIN":
+        raise CredentialStoreError(
+            "The saved Paycom credential contains only a legacy PIN. "
+            "Run 'python manage_windows_credentials.py set paycom' to save the username, password, and PIN."
+        )
+    try:
+        payload = json.loads(credential.secret)
+    except json.JSONDecodeError as exc:
+        raise CredentialStoreError(
+            "The saved Paycom credential is incomplete. "
+            "Run 'python manage_windows_credentials.py set paycom' to replace it."
+        ) from exc
+    username = str(credential.username or "").strip()
+    password = str(payload.get("password") or "") if isinstance(payload, dict) else ""
+    pin = str(payload.get("pin") or "").strip() if isinstance(payload, dict) else ""
+    if not username or not password or not pin.isdigit() or len(pin) != 4:
+        raise CredentialStoreError(
+            "The saved Paycom credential must include a username, password, and four-digit PIN. "
+            "Run 'python manage_windows_credentials.py set paycom' to replace it."
+        )
+    return PaycomCredential(username=username, password=password, pin=pin)
 
 
 # Compatibility name used by the current workers while their call sites are

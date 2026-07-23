@@ -9,6 +9,7 @@ import os
 
 from credential_store import (
     CREDENTIAL_TARGETS,
+    build_paycom_secret,
     credential_exists,
     delete_credential,
     read_credential,
@@ -31,6 +32,13 @@ def command_status(_options):
 
 def command_set(options):
     target = _target(options.service)
+    if options.service == "paycom":
+        username = options.username or input("Paycom username: ").strip()
+        password = getpass.getpass("Paycom password: ")
+        pin = getpass.getpass("Paycom 4-digit PIN: ")
+        write_credential(target, username, build_paycom_secret(password, pin))
+        print("Stored Paycom username, password, and PIN in the operating system keychain.")
+        return 0
     username = options.username or input(f"{options.service} username/account label: ").strip()
     if options.json_file:
         with open(options.json_file, "r", encoding="utf-8-sig") as handle:

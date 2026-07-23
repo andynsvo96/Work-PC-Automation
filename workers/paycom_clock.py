@@ -34,11 +34,31 @@ from config import (
     PAYCOM_URL,
     PAYCOM_DRY_RUN as CONFIG_PAYCOM_DRY_RUN,
 )
-from credential_store import PAYCOM_CREDENTIAL_TARGET, read_windows_credential
+from credential_store import read_paycom_credential
 
 configure_console_utf8()
 
 AUDIT_AUTOMATION_NAME = "paycom_clock.unknown"
+
+PAYCOM_USERNAME_SELECTORS = [
+    "input[name='username']",
+    "input[name='userName']",
+    "input[id*='username']",
+    "input[autocomplete='username']",
+    "input[type='email']",
+]
+PAYCOM_PASSWORD_SELECTORS = [
+    "input[name='password']",
+    "input[id*='password']",
+    "input[autocomplete='current-password']",
+    "input[type='password']:not([maxlength='4'])",
+]
+PAYCOM_PIN_SELECTORS = [
+    "input[name='pin']",
+    "input[id*='pin']",
+    "input[placeholder*='PIN']",
+    "input[type='password'][maxlength='4']",
+]
 
 
 def write_result(success, message):
@@ -212,16 +232,21 @@ def _run_once(action, effective_dry_run, profile_path, headless_mode):
         print("Navigating to Paycom...")
         safe_get_with_partial_load(driver, PAYCOM_URL, "Paycom clock page")
 
-        # Step 2: Fill PIN if login page is shown (username/password auto-filled by Chrome)
-        pin_field = find_visible(driver, [
-            "input[name='pin']",
-            "input[id*='pin']",
-            "input[placeholder*='PIN']",
-            "input[type='password'][maxlength='4']",
-        ], timeout=3)
-        if pin_field:
-            print("Entering PIN...")
-            pin = read_windows_credential(PAYCOM_CREDENTIAL_TARGET).secret
+        # Step 2: Fill every available Paycom login field from Credential Manager.
+        username_field = find_visible(driver, PAYCOM_USERNAME_SELECTORS, timeout=3)
+        password_field = find_visible(driver, PAYCOM_PASSWORD_SELECTORS, timeout=1)
+        pin_field = find_visible(driver, PAYCOM_PIN_SELECTORS, timeout=1)
+        if username_field or password_field or pin_field:
+            credentials = read_paycom_credential()
+            if username_field:
+                username_field.clear()
+                username_field.send_keys(credentials.username)
+            if password_field:
+                password_field.clear()
+                password_field.send_keys(credentials.password)
+            if pin_field:
+                print("Entering Paycom PIN...")
+                pin = credentials.pin
             pin_field.clear()
             pin_field.send_keys(pin)
 
@@ -258,7 +283,7 @@ def _run_once(action, effective_dry_run, profile_path, headless_mode):
             print(f"Page state at login gate:\n{page_state}")
             msg = (
                 "Still on Paycom login page after submitting PIN. "
-                "Saved username/password may be missing in chrome_profile or an extra login challenge is required."
+                "The saved Paycom credentials were rejected or an extra login challenge is required."
             )
             safe_take_screenshot(driver, f"clock_{action}_login_required_{mode_name}")
             return False, msg, bool(headless_mode)

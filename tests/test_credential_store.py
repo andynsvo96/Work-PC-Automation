@@ -39,6 +39,31 @@ class CredentialStoreTests(unittest.TestCase):
             with self.assertRaises(credential_store.CredentialStoreError):
                 credential_store.read_json_credential("target")
 
+    def test_reads_complete_paycom_credential(self):
+        secret = credential_store.build_paycom_secret("correct horse", "0123")
+        with mock.patch.object(
+            credential_store,
+            "read_credential",
+            return_value=credential_store.StoredCredential(
+                credential_store.PAYCOM_CREDENTIAL_TARGET, "paycom-user", secret
+            ),
+        ):
+            value = credential_store.read_paycom_credential()
+        self.assertEqual(value.username, "paycom-user")
+        self.assertEqual(value.password, "correct horse")
+        self.assertEqual(value.pin, "0123")
+
+    def test_rejects_legacy_pin_only_paycom_credential(self):
+        with mock.patch.object(
+            credential_store,
+            "read_credential",
+            return_value=credential_store.StoredCredential(
+                credential_store.PAYCOM_CREDENTIAL_TARGET, "PIN", "0123"
+            ),
+        ):
+            with self.assertRaises(credential_store.CredentialStoreError):
+                credential_store.read_paycom_credential()
+
 
 if __name__ == "__main__":
     unittest.main()
