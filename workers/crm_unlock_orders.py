@@ -124,12 +124,10 @@ SELECTION_TEXT_SELECTORS = [
         By.XPATH,
         "//*[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'orders selected')]",
     ),
-    (
-        By.XPATH,
-        "//*[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'selected')]",
-    ),
 ]
 SELECTED_ROW_SELECTORS = [
+    # CRM applies this Angular-controlled class to selected report rows.
+    (By.CSS_SELECTOR, "table tbody tr.previewPaneSelected"),
     (By.CSS_SELECTOR, "table tbody tr.selected"),
     (By.CSS_SELECTOR, "table tbody tr.table-active"),
     (By.CSS_SELECTOR, "table tbody tr.bg-info"),
@@ -668,7 +666,31 @@ def select_all_orders(driver, rows=None):
     rows = rows if rows is not None else wait_for_order_rows(driver)
     if not rows:
         return 0
+
+    # CRM only creates a range when a normal click establishes the first
+    # selection.  Holding Shift while clicking the top row without that
+    # anchor selects only the top row, so the multi-order controls never
+    # appear.  Mirror the manual gesture: anchor on the bottom order, then
+    # Shift+Click the top order to include every visible order.
     first_row = rows[0]
+    last_row = rows[-1]
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", last_row)
+    except Exception:
+        pass
+
+    try:
+        ActionChains(driver).click(last_row).perform()
+    except Exception:
+        driver.execute_script(
+            "const row = arguments[0];"
+            "row.scrollIntoView({block: 'center'});"
+            "row.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));",
+            last_row,
+        )
+
+    _wait_for_selection_count(driver, 1)
+
     try:
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", first_row)
     except Exception:
