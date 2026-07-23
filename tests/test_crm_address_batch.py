@@ -1909,6 +1909,54 @@ class CrmPushBackTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "push_back_shipping_bypass_ordered")
         shipping_bypasser.assert_called_once_with(driver, "4882019", dry_run=False)
 
+    def test_push_back_records_inline_shipping_bypasser_failure_detail(self):
+        row = {
+            "orderId": "4882020",
+            "rowText": "Order 4882020 Production Date: 2026-07-20 Due Date: 2026-07-24",
+            "productionText": "Production Date: 2026-07-20",
+            "colorLabel": "tan",
+        }
+        shipment_cost = [{
+            "success": False,
+            "outcome": "auto_order_shipment_cost_exceeded",
+            "message": "Failed to auto order stock: Purchase plan exceeded maximum shipment cost as percentage of product cost",
+        }]
+        bypass_failure = "No SanMar warehouse can fulfill PC54SL XL while leaving the 10-piece stock buffer."
+        with mock.patch.object(
+            crm_push_back,
+            "_open_and_read_order",
+            return_value={
+                "production_date": crm_shipping_bypasser.datetime(2026, 7, 20).date(),
+                "due_date": crm_shipping_bypasser.datetime(2026, 7, 24).date(),
+            },
+        ), mock.patch.object(
+            crm_push_back,
+            "_page_indicates_push_back_stock_already_ordered",
+            return_value=False,
+        ), mock.patch.object(
+            crm_push_back,
+            "_change_crm_production_date_with_retry",
+            side_effect=lambda _driver, _order_id, target, _filter, _url: (target, 0, None),
+        ), mock.patch.object(
+            crm_push_back,
+            "_run_order_goods_with_push_back_status",
+            return_value=shipment_cost,
+        ), mock.patch.object(
+            crm_push_back,
+            "_run_shipping_bypasser_with_current_crm_driver",
+            return_value={
+                "success": False,
+                "message": "Shipping Bypasser processed 1 order(s). 1 order(s) need attention.",
+                "report": [{"success": False, "message": bypass_failure}],
+                "manual_review_required": True,
+            },
+        ):
+            result = crm_push_back._run_order_with_driver(mock.Mock(), row, "rush", "https://crm.example/report")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["outcome"], "push_back_shipping_bypass_failed")
+        self.assertIn("Shipping Bypasser error: " + bypass_failure, result["message"])
+
     def test_auto_order_feedback_classifier_matches_saved_crm_messages(self):
         self.assertEqual(
             crm_order_goods._classify_auto_order_feedback_text(

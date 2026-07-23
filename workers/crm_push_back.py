@@ -343,6 +343,22 @@ def _run_shipping_bypasser_with_current_crm_driver(driver, order_id, dry_run=Fal
     }
 
 
+def _shipping_bypass_failure_detail(shipping_bypass):
+    """Return the actionable failure from an inline Shipping Bypasser run."""
+    payload = shipping_bypass if isinstance(shipping_bypass, dict) else {}
+    report = payload.get("report") if isinstance(payload.get("report"), list) else []
+    messages = []
+    for item in report:
+        if not isinstance(item, dict) or item.get("success"):
+            continue
+        message = str(item.get("message") or "").strip()
+        if message and message not in messages:
+            messages.append(message)
+    if messages:
+        return "Shipping Bypasser error: " + "; ".join(messages[:3])
+    return ""
+
+
 def _precheck_row(row):
     order_id = str((row or {}).get("orderId") or "").strip()
     row_color = str((row or {}).get("colorLabel") or "").strip().lower()
@@ -869,6 +885,7 @@ def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=Fal
         if _stock_order_has_outcome(stock_results, "auto_order_shipment_cost_exceeded"):
             shipping_bypass = _run_shipping_bypasser_with_current_crm_driver(driver, order_id, dry_run=False)
             bypass_success = bool(shipping_bypass.get("success"))
+            bypass_failure_detail = "" if bypass_success else _shipping_bypass_failure_detail(shipping_bypass)
             return _result(
                 order_id,
                 bypass_success,
@@ -876,7 +893,7 @@ def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=Fal
                 (
                     f"Pushed production date from {_date_text(original_production_date)} to {_date_text(saved_date)}. "
                     "CRM rejected Auto Ordering because shipment cost exceeded the configured percentage, so Push Back "
-                    f"ran Shipping Bypasser. {shipping_bypass.get('message') or ''}"
+                    f"ran Shipping Bypasser. {shipping_bypass.get('message') or ''} {bypass_failure_detail}"
                 ).strip(),
                 manual_review_required=bool(shipping_bypass.get("manual_review_required", not bypass_success)),
                 production_date=original_production_date,
