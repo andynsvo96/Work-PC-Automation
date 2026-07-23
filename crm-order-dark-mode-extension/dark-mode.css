@@ -418,19 +418,22 @@
     -webkit-text-fill-color: #fff !important;
   }
 
-  /* Retain CRM's familiar light-yellow treatment for goods that have been ordered. */
-  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered,
+  /* Keep the ordered-goods header in the dark theme; only PO stock rows are yellow. */
   html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered thead,
-  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered tbody,
-  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered tr,
-  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered th,
-  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered td {
+  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered thead tr,
+  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered thead th {
+    background-color: #2d2d30 !important;
+    border-color: #3c3c3c !important;
+    color: #f0f0f0 !important;
+    -webkit-text-fill-color: #f0f0f0 !important;
+  }
+  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered tbody td {
     background-color: #fdfd95 !important;
     border-color: #d6c75c !important;
     color: #1e1e1e !important;
     -webkit-text-fill-color: #1e1e1e !important;
   }
-  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered :is(div, span, strong, small, a):not(.btn) {
+  html.crm-order-dark-mode #view-orders-index .order-inventory table.goods-ordered tbody td :is(div, span, strong, small, a):not(.btn) {
     color: #1e1e1e !important;
     -webkit-text-fill-color: #1e1e1e !important;
   }
