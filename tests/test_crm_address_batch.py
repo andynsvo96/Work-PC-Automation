@@ -5324,7 +5324,7 @@ class CrmProductSeparatorTests(unittest.TestCase):
 
     @mock.patch.object(server, "save_crm_state")
     @mock.patch.object(server, "load_crm_state")
-    def test_auto_splitter_persists_into_own_history(self, mock_load_state, _mock_save_state):
+    def test_auto_splitter_persists_into_stock_history_with_error_report(self, mock_load_state, _mock_save_state):
         mock_load_state.return_value = {
             "last_run_timestamp": None,
             "last_run_success": None,
@@ -5334,7 +5334,6 @@ class CrmProductSeparatorTests(unittest.TestCase):
             "total_orders_processed": 0,
             "last_order_ids": [],
             "run_history": [],
-            "auto_splitter_run_history": [],
         }
 
         state = server._persist_crm_auto_splitter_run_result(
@@ -5353,12 +5352,32 @@ class CrmProductSeparatorTests(unittest.TestCase):
             dry_run=False,
         )
 
-        self.assertEqual(state["run_history"], [])
-        self.assertEqual(state["auto_splitter_run_history"][0]["automation_key"], "auto_splitter")
-        self.assertEqual(state["auto_splitter_run_history"][0]["order_ids"], ["4536106", "4536164", "4536167"])
-        self.assertEqual(state["auto_splitter_run_history"][0]["expected_tab_count"], 12)
+        self.assertEqual(state["run_history"][0]["automation_key"], "auto_splitter")
+        self.assertEqual(state["run_history"][0]["order_ids"], ["4536106", "4536164", "4536167"])
+        self.assertEqual(state["run_history"][0]["expected_tab_count"], 12)
+        self.assertEqual(state["run_history"][0]["order_results"][0]["status"], "Success")
 
-    def test_stock_history_migrates_auto_splitter_entries_out(self):
+        failed_state = server._persist_crm_auto_splitter_run_result(
+            False,
+            "Order 4536106 could not be split.",
+            {
+                "success": False,
+                "dry_run": False,
+                "order_ids": ["4536106"],
+                "order_results": [{
+                    "order_id": "4536106",
+                    "success": False,
+                    "status": "Preflight failed",
+                    "message": "The order has 9 tabs, so it does not require a split.",
+                }],
+            },
+            dry_run=False,
+        )
+        error_report = failed_state["run_history"][0]["order_results"]
+        self.assertEqual(error_report[0]["status"], "Preflight failed")
+        self.assertIn("does not require a split", error_report[0]["message"])
+
+    def test_stock_history_migrates_auto_splitter_entries_in(self):
         saved_state = {
             "run_history": [
                 {
@@ -5388,8 +5407,8 @@ class CrmProductSeparatorTests(unittest.TestCase):
         finally:
             Path(state_path).unlink(missing_ok=True)
 
-        self.assertEqual([row["automation_key"] for row in state["run_history"]], ["stock_unlocker"])
-        self.assertEqual([row["automation_key"] for row in state["auto_splitter_run_history"]], ["auto_splitter"])
+        self.assertEqual([row["automation_key"] for row in state["run_history"]], ["stock_unlocker", "auto_splitter"])
+        self.assertNotIn("auto_splitter_run_history", state)
 
     @mock.patch.object(server, "_finish_crm_auto_splitter_runtime")
     @mock.patch.object(server, "_persist_crm_auto_splitter_run_result")

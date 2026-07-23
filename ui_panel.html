@@ -693,6 +693,7 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
         <label class='muted' for='crmHistoryFilterSelect'>Tool</label>
         <select class='select history-filter-select' id='crmHistoryFilterSelect' onchange='setCrmHistoryFilter(this.value)' title='Filter Stock Tools history'>
           <option value='all'>All Stock Tools</option>
+          <option value='auto_splitter'>Auto Splitter</option>
           <option value='product_separator'>Product Separator</option>
           <option value='order_goods'>Rush Order Goods</option>
           <option value='shipping_bypasser'>Shipping Bypasser</option>
@@ -822,36 +823,6 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
       <table class='tbl'>
         <thead><tr><th>When</th><th>Action</th><th>Orders</th><th>Failures</th><th>Skipped</th><th>Duration</th><th>Mode</th><th>Status</th><th>Message</th></tr></thead>
         <tbody id='crmMassEmailerHistoryRows'><tr><td colspan='9' class='muted'>No Sheets Scanner runs yet.</td></tr></tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class='card' style='margin-top:14px'>
-    <div class='card-title-row'>
-      <h2>Auto Splitter</h2>
-      <details class='section-note'>
-        <summary>Read More</summary>
-        <div class='section-note-body'>
-          <p>Auto Splitter first scans the original CRM order, detects the tab count, calculates the split plan, and confirms every split order stays within the 10-tab warehouse limit. If that dry run preflight passes, the live split creates the split orders and updates the original order.</p>
-          <p>If the dry run preflight fails, the live split is skipped and the error explains why.</p>
-        </div>
-      </details>
-    </div>
-    <div class='notice' id='crmAutoSplitterStatusText'>Auto Splitter status loading...</div>
-    <div class='muted' id='crmAutoSplitterRuntimeText'>Auto Splitter single-order work is submitted through Sheets Scanner.</div>
-    <div class='muted' id='crmAutoSplitterReportText'>No Auto Splitter report yet.</div>
-    <div class='row' style='justify-content:space-between;align-items:center;margin-top:12px'>
-      <h3 style='margin:0'>Auto Splitter History</h3>
-      <div class='row'>
-        <button class='secondary' id='crmAutoSplitterHistoryMoreBtn' onclick='toggleCrmAutoSplitterHistory()' style='display:none'>View More</button>
-        <button class='secondary' id='crmAutoSplitterClearHistoryBtn' onclick='clearCrmAutoSplitterHistory()'>Clear History</button>
-      </div>
-    </div>
-    <div class='muted' id='crmAutoSplitterHistoryMetaText'>Showing recent Auto Splitter runs.</div>
-    <div class='tbl-wrap'>
-      <table class='tbl'>
-        <thead><tr><th>When</th><th>Order IDs</th><th>Tabs</th><th>Divisions</th><th>Duration</th><th>Mode</th><th>Status</th><th>Message</th></tr></thead>
-        <tbody id='crmAutoSplitterHistoryRows'><tr><td colspan='8' class='muted'>No Auto Splitter runs yet.</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -1290,7 +1261,6 @@ let crmPushBackStatusPayload = null;
 let crmPushBackPollTimer = null;
 let crmAutoSplitterStatusPayload = null;
 let crmAutoSplitterPollTimer = null;
-let crmAutoSplitterHistoryExpanded = false;
 let crmMassEmailerStatusPayload = null;
 let crmMassEmailerPollTimer = null;
 let crmMassEmailerHistoryExpanded = false;
@@ -1312,6 +1282,7 @@ const CRM_PROCESSING_STEP_LABELS = {
 };
 const CRM_HISTORY_FILTER_LABELS = {
   all: 'All Stock Tools',
+  auto_splitter: 'Auto Splitter',
   product_separator: 'Product Separator',
   order_goods: 'Rush Order Goods',
   shipping_bypasser: 'Shipping Bypasser',
@@ -5677,9 +5648,13 @@ function renderCrmHistory(rows) {
       message: row && row.message ? row.message : '',
     });
     const orderDetailsJson = JSON.stringify(orderDetails);
-    const orderLabel = when === '-' ? `${automation} Order IDs` : `${automation} Order IDs From ${when}`;
+    const isAutoSplitter = normalizeCrmHistoryAutomationKey(row) === 'auto_splitter';
+    const orderLabel = row && row.success === false && isAutoSplitter
+      ? `Auto Splitter Error Report${when === '-' ? '' : ` From ${when}`}`
+      : (when === '-' ? `${automation} Order IDs` : `${automation} Order IDs From ${when}`);
+    const detailsButtonLabel = row && row.success === false && isAutoSplitter ? 'View Error Report' : 'View Order IDs';
     const details = orderIds.length > 0
-      ? `<button class='secondary' data-order-ids="${esc(orderIds.join(','))}" data-order-details="${esc(orderDetailsJson)}" data-order-label="${esc(orderLabel)}" onclick='openCrmOrderIdsDialogFromButton(this)'>View Order IDs</button>`
+      ? `<button class='secondary' data-order-ids="${esc(orderIds.join(','))}" data-order-details="${esc(orderDetailsJson)}" data-order-label="${esc(orderLabel)}" onclick='openCrmOrderIdsDialogFromButton(this)'>${esc(detailsButtonLabel)}</button>`
       : "<span class='muted'>-</span>";
     const messageHtml = `${esc(message)}${stageTimingsHtml(row && row.stage_timings, 4)}`;
     return `<tr>${historyWhenCellHtml(when, latestRows.has(row))}<td>${esc(automation)}</td><td>${esc(orders)}</td><td>${esc(duration)}</td><td>${details}</td><td>${esc(mode)}</td><td>${esc(status)}</td><td>${messageHtml}</td></tr>`;
@@ -6697,68 +6672,6 @@ function formatCrmAutoSplitterRunDetails(runtime = {}) {
   return parts.join(' | ');
 }
 
-function renderCrmAutoSplitterHistory(rows) {
-  const root = document.getElementById('crmAutoSplitterHistoryRows');
-  const moreBtn = document.getElementById('crmAutoSplitterHistoryMoreBtn');
-  const meta = document.getElementById('crmAutoSplitterHistoryMetaText');
-  if (!root) return;
-  const allItems = Array.isArray(rows) ? rows : [];
-  const collapsedCount = 5;
-  const visibleCount = crmAutoSplitterHistoryExpanded ? allItems.length : Math.min(allItems.length, collapsedCount);
-  const items = allItems.slice(0, visibleCount);
-  const latestRows = latestHistoryRows(allItems);
-
-  if (moreBtn) {
-    if (allItems.length > collapsedCount) {
-      moreBtn.style.display = '';
-      moreBtn.textContent = crmAutoSplitterHistoryExpanded ? 'Show Less' : `View More (${allItems.length - collapsedCount} more)`;
-    } else {
-      moreBtn.style.display = 'none';
-    }
-  }
-  if (meta) {
-    if (allItems.length === 0) meta.textContent = 'No Auto Splitter runs yet.';
-    else if (allItems.length > collapsedCount && !crmAutoSplitterHistoryExpanded) meta.textContent = `Showing ${items.length} of ${allItems.length} runs.`;
-    else meta.textContent = `Showing ${items.length} Auto Splitter run${items.length === 1 ? '' : 's'}.`;
-  }
-  if (items.length === 0) {
-    root.innerHTML = "<tr><td colspan='8' class='muted'>No Auto Splitter runs yet.</td></tr>";
-    return;
-  }
-
-  root.innerHTML = items.map((row) => {
-    const when = row && row.timestamp ? fmtDateTime(row.timestamp) : '-';
-    const orderIds = normalizeCrmOrderIds(row && row.order_ids);
-    const orderCell = orderIds.length ? buildCrmOrderLinksHtml(orderIds) : '-';
-    const tabs = row && row.expected_tab_count ? String(row.expected_tab_count) : '-';
-    const divisions = row && row.divisions ? String(row.divisions) : '-';
-    const duration = fmtDuration(row && row.duration_seconds);
-    const mode = row && row.dry_run ? 'Dry Run' : 'Dry Run + Live';
-    const status = row && row.success ? 'Success' : 'Failed';
-    const message = row && row.message ? row.message : '';
-    return `<tr>${historyWhenCellHtml(when, latestRows.has(row))}<td>${orderCell}</td><td>${esc(tabs)}</td><td>${esc(divisions)}</td><td>${esc(duration)}</td><td>${esc(mode)}</td><td>${esc(status)}</td><td>${esc(message)}</td></tr>`;
-  }).join('');
-}
-
-function toggleCrmAutoSplitterHistory() {
-  crmAutoSplitterHistoryExpanded = !crmAutoSplitterHistoryExpanded;
-  const rows = crmAutoSplitterStatusPayload && crmAutoSplitterStatusPayload.state ? crmAutoSplitterStatusPayload.state.auto_splitter_run_history || [] : [];
-  renderCrmAutoSplitterHistory(rows);
-}
-
-async function clearCrmAutoSplitterHistory() {
-  if (!confirm('Clear Auto Splitter run history?')) return;
-  setStatus('Clearing Auto Splitter history...');
-  try {
-    const d = await api('/crm/auto-splitter/history/clear', { method: 'POST' });
-    crmAutoSplitterHistoryExpanded = false;
-    renderCrmAutoSplitterStatus(d);
-    setStatus(d.message || 'Auto Splitter history cleared.');
-  } catch (e) {
-    setStatus('Auto Splitter history clear failed: ' + e.message);
-  }
-}
-
 function renderCrmAutoSplitterStatus(payload) {
   crmAutoSplitterStatusPayload = payload;
   const runtime = payload && payload.runtime ? payload.runtime : {};
@@ -6775,24 +6688,16 @@ function renderCrmAutoSplitterStatus(payload) {
     headline = 'Last Auto Splitter run needs attention.';
   }
 
-  setCrmAutoSplitterStatusText(headline);
-  const runtimeEl = document.getElementById('crmAutoSplitterRuntimeText');
-  if (runtimeEl) {
-    const idleMessage = (resultPayload && resultPayload.message) || runtime.lastMessage || 'Enter an order and add it to the queue. Dry run preflight runs before live split.';
-    runtimeEl.textContent = running
-      ? `${activeDetails || headline}${runtime.lastMessage ? ` | ${runtime.lastMessage}` : ''}`
-      : idleMessage;
-  }
-  const reportEl = document.getElementById('crmAutoSplitterReportText');
-  if (reportEl) reportEl.textContent = formatCrmAutoSplitterReport(resultPayload);
-
   const liveBtn = document.getElementById('crmAutoSplitterRunBtn');
   if (liveBtn) {
     setAutomationButtonRunning(liveBtn, false);
     liveBtn.textContent = 'Add to Queue';
     liveBtn.title = 'Queue this order. Use the Queue panel to cancel a running or waiting Auto Splitter task.';
   }
-  renderCrmAutoSplitterHistory(payload && payload.state ? payload.state.auto_splitter_run_history || [] : []);
+  if (payload && payload.state) {
+    crmStatusPayload = { ...(crmStatusPayload || {}), state: payload.state };
+    renderCrmHistory(payload.state.run_history || []);
+  }
   syncCrmAutoSplitterPolling();
 }
 

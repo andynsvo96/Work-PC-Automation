@@ -4417,7 +4417,6 @@ def _default_crm_state():
         "total_orders_processed": 0,
         "last_order_ids": [],
         "run_history": [],
-        "auto_splitter_run_history": [],
     }
 
 
@@ -4476,18 +4475,21 @@ def load_crm_state():
     state["total_orders_processed"] = max(0, int(_safe_float(state.get("total_orders_processed"), 0)))
     state["last_order_ids"] = _extract_crm_order_ids({"order_ids": state.get("last_order_ids")})
     history = state.get("run_history") if isinstance(state.get("run_history"), list) else []
+    # Auto Splitter used to keep a separate history. Fold those legacy entries
+    # into Stock Tools History so every stock automation has one shared log.
     auto_history = state.get("auto_splitter_run_history") if isinstance(state.get("auto_splitter_run_history"), list) else []
     last_result_payload = _load_last_result_payload()
     cleaned_history = []
-    migrated_auto_history = list(auto_history)
-    for entry in history[:20]:
+    for entry in list(history) + list(auto_history):
         if not isinstance(entry, dict):
             continue
         row = dict(entry)
         row["automation_key"] = str(row.get("automation_key") or "stock_unlocker")
         row["automation_label"] = str(row.get("automation_label") or "Stock Unlocker")
         if row["automation_key"] == "auto_splitter":
-            migrated_auto_history.append(row)
+            normalized_auto_rows = _normalize_crm_auto_splitter_history([row])
+            if normalized_auto_rows:
+                cleaned_history.append(normalized_auto_rows[0])
             continue
         row["duration_seconds"] = _normalize_duration_seconds(row.get("duration_seconds"))
         row["stage_timings"] = _normalize_stage_timings(row.get("stage_timings"))
@@ -4509,7 +4511,8 @@ def load_crm_state():
         if row["automation_key"] == "shipping_bypasser":
             row["message"] = _compact_crm_shipping_bypasser_history_message(row.get("message") or "")
         cleaned_history.append(row)
-    state["run_history"] = cleaned_history
+    cleaned_history.sort(key=lambda row: str(row.get("timestamp") or ""), reverse=True)
+    state["run_history"] = cleaned_history[:20]
     if cleaned_history:
         latest = cleaned_history[0]
         if (
@@ -4518,7 +4521,7 @@ def load_crm_state():
             and latest.get("message")
         ):
             state["last_run_message"] = latest.get("message")
-    state["auto_splitter_run_history"] = _normalize_crm_auto_splitter_history(migrated_auto_history)
+    state.pop("auto_splitter_run_history", None)
     state = _backfill_crm_address_state_from_last_result(state)
     return state
 
@@ -6471,7 +6474,11 @@ def clear_crm_auto_splitter_history():
     ensure_crm_state_file()
     with crm_state_lock:
         state = load_crm_state()
-        state["auto_splitter_run_history"] = []
+        history = state.get("run_history") if isinstance(state.get("run_history"), list) else []
+        state["run_history"] = [
+            row for row in history
+            if str(row.get("automation_key") or "") != "auto_splitter"
+        ]
         save_crm_state(state)
     return True, "Auto Splitter history cleared."
 
@@ -8893,6 +8900,13 @@ def _normalize_crm_auto_splitter_history(rows):
         row["divisions"] = int(_safe_float(row.get("divisions") or payload.get("divisions") or report.get("divisions"), 0))
         row["parallel_workers"] = _normalize_crm_positive_int(row.get("parallel_workers") or payload.get("parallel_workers") or report.get("parallel_workers"), default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
         row["report"] = report
+        order_results = row.get("order_results") if isinstance(row.get("order_results"), list) else payload.get("order_results")
+        row["order_results"] = _normalize_crm_stock_order_results(
+            order_results,
+            row["order_ids"],
+            row["success"],
+            row["message"],
+        )
         key = (
             str(row.get("timestamp") or ""),
             row["message"],
@@ -8925,6 +8939,7 @@ def _crm_auto_splitter_history_entry(timestamp, ok, message, payload, duration_s
         "divisions": payload.get("divisions") or report.get("divisions"),
         "parallel_workers": payload.get("parallel_workers") or report.get("parallel_workers"),
         "report": report,
+        "order_results": payload.get("order_results") if isinstance(payload.get("order_results"), list) else [],
     }
     return _normalize_crm_auto_splitter_history([entry])[0]
 
@@ -9167,8 +9182,8 @@ def _persist_crm_auto_splitter_run_result(ok, message, payload, dry_run=True):
                 max(0, int(_safe_float(state.get("total_orders_processed"), 0))) + len(new_order_ids)
             )
         entry = _crm_auto_splitter_history_entry(timestamp, ok, message, payload, duration_seconds, order_ids, dry_run)
-        history = state.get("auto_splitter_run_history") if isinstance(state.get("auto_splitter_run_history"), list) else []
-        state["auto_splitter_run_history"] = _normalize_crm_auto_splitter_history([entry] + history[:19])
+        history = state.get("run_history") if isinstance(state.get("run_history"), list) else []
+        state["run_history"] = _normalize_crm_auto_splitter_history([entry]) + history[:19]
         save_crm_state(state)
 
     _audit_result("crm.auto_splitter", ok, message)
