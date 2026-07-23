@@ -358,6 +358,12 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             ),
             "Content Violation",
         )
+        self.assertEqual(
+            crm_copyright_cancel._salesforce_refund_case_subject(
+                crm_copyright_cancel.OUTSIDE_LIMIT_CANCEL_PROCESS,
+            ),
+            "Outside Limit",
+        )
 
     def test_order_number_replacement_preserves_the_rest_of_the_email_subject(self):
         self.assertEqual(

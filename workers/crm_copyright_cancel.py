@@ -252,6 +252,7 @@ OUTSIDE_LIMIT_CANCEL_PROCESS = CancelProcess(
     display_name="Outside limit cancel",
     requires_reason=False,
     fixed_sales_note="Cannot print beyond the designated area limit\nCancelled",
+    refund_case_subject="Outside Limit",
 )
 COMPLICATED_EMB_TO_HDD_PROCESS = CancelProcess(
     key="complicated_emb_to_hdd",
