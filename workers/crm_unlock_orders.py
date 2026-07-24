@@ -291,8 +291,8 @@ def _element_rect(driver, element):
     return rect or {}
 
 
-def _find_best_preview_panel(driver):
-    deadline = time.time() + max(CRM_ACTION_TIMEOUT, 10)
+def _find_best_preview_panel(driver, timeout=None):
+    deadline = time.time() + max(timeout or CRM_ACTION_TIMEOUT, 1)
     while time.time() < deadline:
         try:
             viewport_width = float(driver.execute_script("return window.innerWidth || document.documentElement.clientWidth || 0;") or 0)
@@ -662,6 +662,31 @@ def _wait_for_selection_count(driver, expected_count):
     raise TimeoutException(f"The CRM never showed {expected_count} selected orders after Shift+Click.")
 
 
+def _shift_click_row(driver, row):
+    """Perform the CRM range-selection gesture, with a DOM-event fallback."""
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", row)
+    except Exception:
+        pass
+
+    try:
+        ActionChains(driver).key_down(Keys.SHIFT).click(row).key_up(Keys.SHIFT).perform()
+        return
+    except Exception:
+        # Release the modifier in case the native action failed mid-gesture.
+        try:
+            ActionChains(driver).key_up(Keys.SHIFT).perform()
+        except Exception:
+            pass
+
+    driver.execute_script(
+        "const row = arguments[0];"
+        "row.scrollIntoView({block: 'center'});"
+        "row.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, shiftKey: true, view: window}));",
+        row,
+    )
+
+
 def select_all_orders(driver, rows=None):
     rows = rows if rows is not None else wait_for_order_rows(driver)
     if not rows:
@@ -691,27 +716,32 @@ def select_all_orders(driver, rows=None):
 
     _wait_for_selection_count(driver, 1)
 
-    try:
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", first_row)
-    except Exception:
-        pass
-
-    try:
-        ActionChains(driver).key_down(Keys.SHIFT).click(first_row).key_up(Keys.SHIFT).perform()
-    except Exception:
-        driver.execute_script(
-            "const row = arguments[0];"
-            "row.scrollIntoView({block: 'center'});"
-            "row.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, shiftKey: true, view: window}));",
-            first_row,
-        )
+    _shift_click_row(driver, first_row)
 
     _wait_for_selection_count(driver, len(rows))
     return len(rows)
 
 
-def wait_for_order_preview_panel(driver):
-    return _find_best_preview_panel(driver)
+def wait_for_order_preview_panel(driver, timeout=None):
+    return _find_best_preview_panel(driver, timeout=timeout)
+
+
+def select_all_orders_with_preview(driver, rows=None):
+    """Select the report range and recover when CRM misses the preview update."""
+    rows = rows if rows is not None else wait_for_order_rows(driver)
+    selected_count = select_all_orders(driver, rows=rows)
+
+    # The selection count can update even when the Angular preview pane misses
+    # the first range event.  Give it a brief chance, then mirror the manual
+    # recovery gesture the team uses: hold Shift and click the top order again.
+    try:
+        return selected_count, wait_for_order_preview_panel(driver, timeout=3)
+    except TimeoutException:
+        print("Order Preview did not appear after range selection; retrying Shift+Click on the top order...")
+
+    _shift_click_row(driver, rows[0])
+    _wait_for_selection_count(driver, len(rows))
+    return selected_count, wait_for_order_preview_panel(driver)
 
 
 def _wait_for_unlock_status_selected(panel):
@@ -910,10 +940,9 @@ def _run_once(action, dry_run=False, headless_mode=True, list_url=None):
                     "refresh_passes": refresh_passes,
                 }
 
-            order_count = select_all_orders(driver, rows=rows)
+            order_count, preview_panel = select_all_orders_with_preview(driver, rows=rows)
             print(f"Selected {order_count} orders.")
 
-            preview_panel = wait_for_order_preview_panel(driver)
             choose_unlock_status(driver, preview_panel)
             get_apply_button(preview_panel)
 
