@@ -249,8 +249,12 @@ def _text_indicates_push_back_stock_already_ordered(text):
     if not normalized:
         return False
     stock_status_ordered = bool(re.search(r"\bstock\s+status\s*:\s*ordered\b", normalized))
-    stock_ordered = bool(re.search(r"\bstock\s*:\s*ordered\b", normalized))
-    return stock_status_ordered and stock_ordered
+    stock_value = re.search(r"\bstock\s*:\s*([^\n\r]+)", normalized)
+    if not stock_status_ordered:
+        return False
+    # CRM sometimes saves the order but omits the separate "Stock: Ordered"
+    # field.  An explicitly non-ordered Stock value must still fail.
+    return stock_value is None or bool(re.match(r"ordered\b", stock_value.group(1).strip()))
 
 
 def _page_indicates_push_back_stock_already_ordered(driver):

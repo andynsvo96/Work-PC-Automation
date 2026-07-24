@@ -1688,10 +1688,15 @@ class CrmPushBackTests(unittest.TestCase):
         self.assertEqual([row["orderId"] for row in rows], ["4883002"])
         self.assertEqual(rows[0]["colorLabel"], "tan")
 
-    def test_push_back_stock_ordered_precheck_requires_status_and_stock_ordered(self):
+    def test_push_back_stock_ordered_precheck_accepts_ordered_status_when_stock_value_is_missing(self):
         self.assertTrue(
             crm_push_back._text_indicates_push_back_stock_already_ordered(
                 "Stock Status: Ordered Stock : Ordered"
+            )
+        )
+        self.assertTrue(
+            crm_push_back._text_indicates_push_back_stock_already_ordered(
+                "Stock Status: Ordered"
             )
         )
         self.assertFalse(
