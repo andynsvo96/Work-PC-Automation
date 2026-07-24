@@ -205,16 +205,37 @@ class SharedQueueRuntime:
         self._update_state(running_task_id=task_id)
         lease_stop = threading.Event()
         cancel_dispatched = threading.Event()
+        lease_retry_delay_seconds = min(5.0, self.lease_renew_interval_seconds)
 
         def renew_loop():
-            while not lease_stop.wait(self.lease_renew_interval_seconds):
+            next_wait_seconds = self.lease_renew_interval_seconds
+            while not lease_stop.wait(next_wait_seconds):
+                try:
+                    # Renew first.  A node heartbeat is useful status information,
+                    # but it must never consume the task's lease-renewal window.
+                    response = self.client.renew_lease(task_id, lease_token)
+                    next_wait_seconds = self.lease_renew_interval_seconds
+                except SharedQueueError as exc:
+                    # A short Supabase/network interruption must not abandon a
+                    # running task.  Keep retrying well before the current lease
+                    # can expire; a later claimant will still protect the queue if
+                    # this worker actually goes away.
+                    logger.warning(
+                        "Could not renew shared queue task lease %s; retrying in %.1fs: %s",
+                        task_id,
+                        lease_retry_delay_seconds,
+                        exc,
+                    )
+                    self._update_state(connected=False, eligible=False, block_reason=str(exc), last_error=str(exc))
+                    next_wait_seconds = lease_retry_delay_seconds
+                    continue
+
                 try:
                     heartbeat = self.client.heartbeat(
                         commit=str(task.get("app_commit") or self.commit_provider()),
                         capabilities=self.capabilities_provider(),
                         runtime_status=self.node_status_provider(),
                     )
-                    response = self.client.renew_lease(task_id, lease_token)
                     self._update_state(
                         connected=True,
                         eligible=bool(heartbeat and heartbeat.get("eligible")),
@@ -235,8 +256,11 @@ class SharedQueueRuntime:
                                 cancel_message = f"Cancellation was requested, but force stop failed: {exc}"
                         self._update_state(last_error=cancel_message)
                 except SharedQueueError as exc:
+                    # The lease was already renewed.  Report a transient heartbeat
+                    # failure, then continue renewing instead of letting the task
+                    # become falsely interrupted.
+                    logger.warning("Could not heartbeat shared queue task %s: %s", task_id, exc)
                     self._update_state(connected=False, eligible=False, block_reason=str(exc), last_error=str(exc))
-                    return
 
         renewer = threading.Thread(target=renew_loop, name=f"queue-lease-{task_id[:8]}", daemon=True)
         renewer.start()

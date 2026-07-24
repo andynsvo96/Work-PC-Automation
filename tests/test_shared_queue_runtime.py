@@ -3,6 +3,7 @@ import time
 import unittest
 from unittest import mock
 
+from shared_queue import SharedQueueUnavailable
 from shared_queue_runtime import SharedQueueRuntime
 from task_registry import TaskRegistry
 
@@ -170,6 +171,48 @@ class SharedQueueRuntimeTests(unittest.TestCase):
 
         cancel_callback.assert_called_once_with()
         self.assertEqual(client.finished[0][2], {"success": False, "message": "Stopped by user."})
+
+    def test_transient_lease_renewal_failure_is_retried_before_task_finishes(self):
+        task = {
+            "id": "task-retry",
+            "lease_token": "lease-retry",
+            "task_type": "test.retry",
+            "arguments": {},
+        }
+        client = _FakeClient(task)
+        renewal_recovered = threading.Event()
+        attempts = 0
+
+        def renew_lease(task_id, token):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise SharedQueueUnavailable("temporary Supabase connection failure")
+            renewal_recovered.set()
+            return {"ok": True, "cancel_requested": False}
+
+        client.renew_lease = renew_lease
+        registry = TaskRegistry()
+        registry.register(
+            "test.retry",
+            lambda: (renewal_recovered.wait(7.0), "finished after lease renewal recovered"),
+        )
+        runtime = SharedQueueRuntime(
+            client,
+            registry,
+            commit_provider=lambda: "abc",
+            capabilities_provider=lambda: {"crm": True},
+            lease_renew_interval_seconds=1,
+        )
+
+        runtime._execute_claim(task)
+
+        self.assertTrue(renewal_recovered.is_set())
+        self.assertEqual(attempts, 2)
+        self.assertEqual(client.finished[0][2], {
+            "success": True,
+            "message": "finished after lease renewal recovered",
+        })
 
 
 if __name__ == "__main__":
