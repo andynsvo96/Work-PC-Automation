@@ -27,6 +27,15 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         self.assertEqual(response.get_json()["protocol"], server.CHROME_EXTENSION_BRIDGE_PROTOCOL)
 
+    def test_status_allows_a_loopback_extension_fetch_without_origin(self):
+        response = self.client.get(
+            "/api/extension/bridge/status",
+            environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("Access-Control-Allow-Origin", response.headers)
+
     def test_status_rejects_web_origins_and_non_loopback_clients(self):
         web_response = self.client.get(
             "/api/extension/bridge/status",

@@ -11621,7 +11621,11 @@ def api_chrome_extension_bridge_status():
         return jsonify({"success": False, "message": "Bridge requests must use loopback."}), 403
 
     origin = request.headers.get("Origin")
-    if not _is_chrome_extension_origin(origin):
+    # Extension service-worker fetches are authorized by Chrome host
+    # permissions and can omit Origin. The endpoint is loopback-only and
+    # contains no data, so permit that request shape while rejecting every web
+    # origin. Any future privileged bridge endpoint must use explicit pairing.
+    if origin and not _is_chrome_extension_origin(origin):
         return jsonify({"success": False, "message": "Chrome extension origin required."}), 403
 
     response = jsonify(
@@ -11631,8 +11635,9 @@ def api_chrome_extension_bridge_status():
             "message": "Local Automation app bridge is available.",
         }
     )
-    response.headers["Access-Control-Allow-Origin"] = origin
-    response.headers["Vary"] = "Origin"
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
     response.headers["Cache-Control"] = "no-store"
     return response
 
