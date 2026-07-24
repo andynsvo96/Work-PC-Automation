@@ -452,4 +452,51 @@
     color: #1e1e1e !important;
     -webkit-text-fill-color: #1e1e1e !important;
   }
+
+  /* Research Center is an off-canvas prior-orders view, outside #content. */
+  html.crm-order-dark-mode #order-form-prior-orders {
+    background-color: #1e1e1e !important;
+    border-right-color: #3c3c3c !important;
+    color: #d4d4d4 !important;
+  }
+
+  html.crm-order-dark-mode #order-form-prior-orders :is(div, span, strong, small, ng-pluralize) {
+    color: #d4d4d4 !important;
+    -webkit-text-fill-color: #d4d4d4 !important;
+  }
+
+  html.crm-order-dark-mode #order-form-prior-orders a {
+    color: #4fc1ff !important;
+    -webkit-text-fill-color: #4fc1ff !important;
+  }
+
+  html.crm-order-dark-mode #order-form-prior-orders .research-prior-orders-list-order {
+    background-color: #252526 !important;
+    border-color: #3c3c3c !important;
+  }
+
+  /* Retain the in-house/vendor and note cues while making them readable. */
+  html.crm-order-dark-mode #order-form-prior-orders .inhouse {
+    color: #5bbad3 !important;
+    -webkit-text-fill-color: #5bbad3 !important;
+  }
+  html.crm-order-dark-mode #order-form-prior-orders .subcontractor {
+    color: #ec008b !important;
+    -webkit-text-fill-color: #ec008b !important;
+  }
+  html.crm-order-dark-mode #order-form-prior-orders .research-prior-orders-note,
+  html.crm-order-dark-mode #order-form-prior-orders .research-prior-orders-note * {
+    background-color: #fdfd95 !important;
+    border-color: cornflowerblue !important;
+    color: #1e1e1e !important;
+    -webkit-text-fill-color: #1e1e1e !important;
+  }
+
+  html.crm-order-dark-mode #order-form-prior-orders::-webkit-scrollbar { width: 12px; }
+  html.crm-order-dark-mode #order-form-prior-orders::-webkit-scrollbar-track { background: #1e1e1e; }
+  html.crm-order-dark-mode #order-form-prior-orders::-webkit-scrollbar-thumb {
+    background: #555 !important;
+    border: 3px solid #1e1e1e !important;
+    border-radius: 8px;
+  }
 }
