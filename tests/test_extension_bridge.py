@@ -42,6 +42,12 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         self.assertEqual(web_response.status_code, 403)
         self.assertEqual(remote_response.status_code, 403)
 
+    def test_only_valid_chrome_extension_origins_are_accepted(self):
+        valid = "chrome-extension://abcdefghijklmnopabcdefghijklmnop"
+        self.assertTrue(server._is_chrome_extension_origin(valid))
+        self.assertFalse(server._is_chrome_extension_origin("chrome-extension://not-an-extension-id"))
+        self.assertFalse(server._is_chrome_extension_origin("https://example.com"))
+
 
 if __name__ == "__main__":
     unittest.main()

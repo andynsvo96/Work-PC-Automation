@@ -6,7 +6,7 @@
   "permissions": ["storage", "tabs"],
   "host_permissions": [
     "https://crm2.legacy.printfly.com/*",
-    "http://127.0.0.1:5123/*"
+    "http://127.0.0.1/*"
   ],
   "background": {
     "service_worker": "background.js",
