@@ -26,6 +26,7 @@ import webbrowser
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 
 from flask import Flask, Response, g, jsonify, redirect, request, session, url_for
 import pystray
@@ -166,6 +167,7 @@ SERVER_BIND_HOST = (
     else "127.0.0.1"
 )
 SERVER_PORT = 5123
+CHROME_EXTENSION_BRIDGE_PROTOCOL = "automation.chrome-extension.bridge/v1"
 CLIPBOARD_PEER_URL = str(getattr(config_module, "AUTOMATION_CLIPBOARD_PEER_URL", "") or "").strip()
 SERVER_STARTED_AT = datetime.now()
 SERVER_START_GIT_STATE = get_git_version_state(SCRIPT_DIR)
@@ -11458,7 +11460,13 @@ def enforce_app_access_security():
     if not APP_PIN_REQUIRED:
         return None
     initialize_app_security()
-    public_paths = {"/health", "/login", "/api/auth/login", "/api/auth/status"}
+    public_paths = {
+        "/health",
+        "/login",
+        "/api/auth/login",
+        "/api/auth/status",
+        "/api/extension/bridge/status",
+    }
     if request.path in public_paths:
         return None
     if app_security_config is None:
@@ -11485,6 +11493,23 @@ def add_security_headers(response):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "same-origin")
     return response
+
+
+def _is_chrome_extension_origin(origin):
+    """Return whether *origin* is a valid Chrome extension origin.
+
+    This is intentionally an origin check rather than authentication. The
+    initial bridge exposes availability only; future privileged routes must
+    use explicit pairing.
+    """
+    parsed = urlparse(str(origin or ""))
+    extension_id = parsed.netloc
+    return (
+        parsed.scheme == "chrome-extension"
+        and not parsed.path
+        and len(extension_id) == 32
+        and all("a" <= character <= "p" for character in extension_id)
+    )
 
 
 @app.route("/login", methods=["GET"])
@@ -11581,6 +11606,35 @@ def open_control_panel():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/extension/bridge/status", methods=["GET"])
+def api_chrome_extension_bridge_status():
+    """Provide the safe, unpaired endpoint used to establish the bridge.
+
+    It is deliberately limited to loopback Chrome-extension requests. The
+    response confirms that the local app and its v1 protocol are available;
+    it neither reads CRM content nor exposes app/session credentials.
+    """
+    client_address = str(request.remote_addr or "")
+    if client_address not in {"127.0.0.1", "::1"}:
+        return jsonify({"success": False, "message": "Bridge requests must use loopback."}), 403
+
+    origin = request.headers.get("Origin")
+    if not _is_chrome_extension_origin(origin):
+        return jsonify({"success": False, "message": "Chrome extension origin required."}), 403
+
+    response = jsonify(
+        {
+            "success": True,
+            "protocol": CHROME_EXTENSION_BRIDGE_PROTOCOL,
+            "message": "Local Automation app bridge is available.",
+        }
+    )
+    response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Vary"] = "Origin"
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/service-worker.js", methods=["GET"])

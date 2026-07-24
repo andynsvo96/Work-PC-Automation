@@ -1,5 +1,6 @@
 const toggle = document.getElementById("theme-toggle");
 const pageStatus = document.getElementById("page-status");
+const bridgeStatus = document.getElementById("bridge-status");
 
 function setStatus(message) { pageStatus.textContent = message; }
 
@@ -22,7 +23,13 @@ async function refreshPageStatus(tab) {
 async function initialize() {
   const response = await chrome.runtime.sendMessage({ type: "crm-dark-mode:get-theme" });
   toggle.checked = response && response.enabled === true;
-  await refreshPageStatus(await getActiveTab());
+  const [bridge] = await Promise.all([
+    chrome.runtime.sendMessage({ type: "crm-dark-mode:get-bridge-status" }),
+    refreshPageStatus(await getActiveTab())
+  ]);
+  bridgeStatus.textContent = bridge && bridge.connected
+    ? "Local Automation app bridge connected."
+    : (bridge && bridge.message) || "Local Automation app bridge is unavailable.";
 }
 
 toggle.addEventListener("change", async () => {

@@ -18,6 +18,8 @@ The preference is stored locally in that Chrome profile. Removing or reloading t
 
 The manifest injects across the CRM host only to reach the embedded order frame; `content.js` refuses to activate anywhere except these order routes. Styling exists only in screen media, so CRM printing stays light.
 
-## Future app bridge
+## Local app bridge
 
-`bridge.js` reserves `http://127.0.0.1:5123` as the only future Automation app endpoint. Version 1 has no server host permission and makes no network request. A later controls release must add a purpose-built paired authentication flow; it must not reuse app PINs, browser cookies, or CRM credentials.
+The extension checks `http://127.0.0.1:5123/api/extension/bridge/status` when its popup opens, so it can confirm the local Automation app is running. This bridge is deliberately read-only: it sends no CRM data and exposes no app data, automation controls, app PIN, browser cookie, or credential.
+
+A later controls release must add a purpose-built, user-approved pairing flow. It must not reuse app PINs, browser cookies, or CRM credentials.

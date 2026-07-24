@@ -24,8 +24,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message.type === "crm-dark-mode:get-bridge-status") {
-    sendResponse(getLocalBridgeStatus());
-    return false;
+    getLocalBridgeStatus().then(sendResponse);
+    return true;
   }
   return false;
 });
