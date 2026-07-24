@@ -57,6 +57,37 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         self.assertFalse(server._is_chrome_extension_origin("chrome-extension://not-an-extension-id"))
         self.assertFalse(server._is_chrome_extension_origin("https://example.com"))
 
+    def test_pairing_issues_a_token_and_requires_it_for_order_controls(self):
+        previous_required = server.APP_PIN_REQUIRED
+        server.APP_PIN_REQUIRED = False
+        try:
+            pair_response = self.client.post(
+                "/api/extension/bridge/pair",
+                json={},
+                headers={"Origin": self.ORIGIN},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+            self.assertEqual(pair_response.status_code, 200)
+            token = pair_response.get_json()["token"]
+
+            rejected = self.client.get(
+                "/api/extension/bridge/process-order/status",
+                headers={"Origin": self.ORIGIN},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+            self.assertEqual(rejected.status_code, 401)
+
+            invalid_order = self.client.post(
+                "/api/extension/bridge/process-order",
+                json={"order_id": "not-an-order"},
+                headers={"Origin": self.ORIGIN, "Authorization": f"Bearer {token}"},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+            self.assertEqual(invalid_order.status_code, 409)
+            self.assertFalse(invalid_order.get_json()["success"])
+        finally:
+            server.APP_PIN_REQUIRED = previous_required
+
 
 if __name__ == "__main__":
     unittest.main()

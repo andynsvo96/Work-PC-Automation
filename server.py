@@ -5,6 +5,7 @@ Paycom Automation HTTP Server
 import ast
 import base64
 import gzip
+import hashlib
 import importlib
 import json
 import logging
@@ -167,7 +168,8 @@ SERVER_BIND_HOST = (
     else "127.0.0.1"
 )
 SERVER_PORT = 5123
-CHROME_EXTENSION_BRIDGE_PROTOCOL = "automation.chrome-extension.bridge/v1"
+CHROME_EXTENSION_BRIDGE_PROTOCOL = "automation.chrome-extension.bridge/v2"
+CHROME_EXTENSION_BRIDGE_TOKEN_TTL_SECONDS = 12 * 60 * 60
 CLIPBOARD_PEER_URL = str(getattr(config_module, "AUTOMATION_CLIPBOARD_PEER_URL", "") or "").strip()
 SERVER_STARTED_AT = datetime.now()
 SERVER_START_GIT_STATE = get_git_version_state(SCRIPT_DIR)
@@ -203,6 +205,19 @@ crm_shipping_bypasser_runtime_lock = threading.Lock()
 crm_push_back_runtime_lock = threading.Lock()
 crm_auto_splitter_runtime_lock = threading.Lock()
 crm_processing_runtime_lock = threading.Lock()
+crm_extension_order_runtime_lock = threading.Lock()
+extension_bridge_token_lock = threading.Lock()
+extension_bridge_tokens = {}
+crm_extension_order_runtime = {
+    "running": False,
+    "startedAt": None,
+    "completedAt": None,
+    "orderId": None,
+    "currentStep": None,
+    "lastMessage": "No CRM extension order runs yet.",
+    "lastSuccess": None,
+    "steps": [],
+}
 crm_mass_emailer_state_lock = threading.Lock()
 crm_mass_emailer_runtime_lock = threading.Lock()
 automation_process_lock = threading.RLock()
@@ -10423,6 +10438,257 @@ def get_crm_processing_state_payload():
     }
 
 
+def _crm_extension_order_runtime_snapshot():
+    with crm_extension_order_runtime_lock:
+        return dict(crm_extension_order_runtime)
+
+
+def _set_crm_extension_order_progress(step, message):
+    with crm_extension_order_runtime_lock:
+        crm_extension_order_runtime["currentStep"] = step
+        crm_extension_order_runtime["lastMessage"] = str(message)
+
+
+def _crm_extension_order_stage(key, label, ok, message, payload=None, skipped=False):
+    return {
+        "key": key,
+        "label": label,
+        "success": bool(ok),
+        "skipped": bool(skipped),
+        "message": str(message or ""),
+        "payload": payload if isinstance(payload, dict) else {},
+    }
+
+
+def _crm_extension_order_split_not_needed(message, payload):
+    text = " ".join(
+        str(value or "")
+        for value in (
+            message,
+            (payload or {}).get("message") if isinstance(payload, dict) else "",
+        )
+    ).lower()
+    return "only splits orders with more than" in text
+
+
+def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
+    """Run the extension's intentionally single-order processing chain.
+
+    The existing Automate Processing flow is report based.  This companion
+    flow never opens a report, so a button on an open CRM order cannot affect
+    other orders by accident.
+    """
+    steps = []
+    target_order_ids = [order_id]
+    overall_success = False
+    summary = "CRM order processing did not run."
+    try:
+        _set_crm_extension_order_progress("address_validator", "Checking the order address.")
+        address_ok, address_message, address_payload = _run_crm_address_with_retry(
+            order_id,
+            "all",
+            dry_run=False,
+            action="validate_order",
+            batch_size=1,
+            parallel_workers=1,
+        )
+        steps.append(
+            _crm_extension_order_stage(
+                "address_validator", "Address validation", address_ok, address_message, address_payload
+            )
+        )
+        if not address_ok:
+            summary = "Stopped after address validation needs attention."
+            return
+
+        _set_crm_extension_order_progress("product_separator", "Separating listed and non-listed products when needed.")
+        separator_ok, separator_message, separator_payload = _execute_crm_product_separator_worker(
+            dry_run=False,
+            list_mode="all",
+            order_id=order_id,
+            visible=False,
+            show_terminal=False,
+        )
+        steps.append(
+            _crm_extension_order_stage(
+                "product_separator", "Product separation", separator_ok, separator_message, separator_payload
+            )
+        )
+        if not separator_ok:
+            summary = "Stopped after product separation needs attention."
+            return
+
+        _set_crm_extension_order_progress("auto_splitter", "Checking whether the order has more than 10 tabs.")
+        preflight_ok, preflight_message, preflight_payload = _execute_crm_auto_splitter_worker(
+            order_id,
+            None,
+            None,
+            minimum_tabs=10,
+            dry_run=True,
+            parallel_workers=1,
+            show_terminal=False,
+        )
+        preflight_payload = preflight_payload if isinstance(preflight_payload, dict) else {}
+        if _crm_extension_order_split_not_needed(preflight_message, preflight_payload):
+            steps.append(
+                _crm_extension_order_stage(
+                    "auto_splitter",
+                    "Auto splitter",
+                    True,
+                    "Skipped: the order has 10 or fewer tabs.",
+                    preflight_payload,
+                    skipped=True,
+                )
+            )
+        elif not preflight_ok:
+            steps.append(
+                _crm_extension_order_stage(
+                    "auto_splitter", "Auto splitter", False, preflight_message, preflight_payload
+                )
+            )
+            summary = "Stopped because the tab-split preflight needs attention."
+            return
+        else:
+            detected_tabs = preflight_payload.get("expected_tab_count") or preflight_payload.get("detected_tab_count")
+            divisions = preflight_payload.get("divisions")
+            _set_crm_extension_order_progress("auto_splitter", "Splitting the order into 10-tab groups.")
+            split_ok, split_message, split_payload = _execute_crm_auto_splitter_worker(
+                order_id,
+                detected_tabs,
+                divisions,
+                minimum_tabs=10,
+                dry_run=False,
+                parallel_workers=1,
+                show_terminal=False,
+            )
+            split_payload = split_payload if isinstance(split_payload, dict) else {}
+            steps.append(
+                _crm_extension_order_stage("auto_splitter", "Auto splitter", split_ok, split_message, split_payload)
+            )
+            if not split_ok:
+                summary = "Stopped because the tab split needs attention."
+                return
+            target_order_ids = _extract_crm_order_ids({"order_ids": split_payload.get("new_order_ids")})
+            if not target_order_ids:
+                summary = "Stopped because the split completed without reporting its new order numbers."
+                steps.append(
+                    _crm_extension_order_stage(
+                        "split_targets", "Split order verification", False, summary, split_payload
+                    )
+                )
+                return
+
+        _set_crm_extension_order_progress("order_goods", "Unlocking stock if needed and ordering goods for every stock tab.")
+        order_goods_results = []
+        for target_order_id in target_order_ids:
+            ok, message, payload = _execute_crm_order_goods_worker(
+                dry_run=False,
+                order_id=target_order_id,
+                visible=False,
+                show_terminal=False,
+            )
+            order_goods_results.append(
+                {"order_id": target_order_id, "success": bool(ok), "message": str(message), "payload": payload}
+            )
+        order_goods_ok = bool(order_goods_results) and all(item["success"] for item in order_goods_results)
+        steps.append(
+            _crm_extension_order_stage(
+                "order_goods",
+                "Order goods",
+                order_goods_ok,
+                "Order Goods completed." if order_goods_ok else "Order Goods needs attention.",
+                {"order_results": order_goods_results},
+            )
+        )
+
+        bypass_ok = True
+        if shipping_too_expensive:
+            _set_crm_extension_order_progress("shipping_bypasser", "Shipping is too expensive; running the bypasser.")
+            bypass_results = []
+            for target_order_id in target_order_ids:
+                ok, message, payload = _execute_crm_shipping_bypasser_worker(
+                    dry_run=False,
+                    order_id=target_order_id,
+                    visible=False,
+                    show_terminal=False,
+                )
+                bypass_results.append(
+                    {"order_id": target_order_id, "success": bool(ok), "message": str(message), "payload": payload}
+                )
+            bypass_ok = bool(bypass_results) and all(item["success"] for item in bypass_results)
+            steps.append(
+                _crm_extension_order_stage(
+                    "shipping_bypasser",
+                    "Shipping bypasser",
+                    bypass_ok,
+                    "Shipping bypass completed." if bypass_ok else "Shipping bypass needs attention.",
+                    {"order_results": bypass_results},
+                )
+            )
+        else:
+            steps.append(
+                _crm_extension_order_stage(
+                    "shipping_bypasser",
+                    "Shipping bypasser",
+                    True,
+                    "Skipped: this CRM page did not show 'Shipping is too expensive'.",
+                    skipped=True,
+                )
+            )
+
+        # A successful bypass resolves an Order Goods failure caused by the
+        # explicitly detected shipping-cost issue. Other failures still stop
+        # the order for review.
+        overall_success = bool(bypass_ok and (order_goods_ok or shipping_too_expensive))
+        summary = (
+            f"Finished processing order {order_id}."
+            if overall_success
+            else f"Order {order_id} needs attention in Order Goods or Shipping Bypasser."
+        )
+    except Exception as exc:
+        logger.exception("CRM extension order processing failed unexpectedly")
+        summary = f"CRM extension order processing failed: {type(exc).__name__}: {exc}"
+        steps.append(_crm_extension_order_stage("unexpected_error", "Unexpected error", False, summary))
+    finally:
+        _audit_result("crm.extension_order", overall_success, summary)
+        with crm_extension_order_runtime_lock:
+            crm_extension_order_runtime["running"] = False
+            crm_extension_order_runtime["completedAt"] = datetime.now().isoformat()
+            crm_extension_order_runtime["currentStep"] = None
+            crm_extension_order_runtime["lastMessage"] = summary
+            crm_extension_order_runtime["lastSuccess"] = bool(overall_success)
+            crm_extension_order_runtime["steps"] = list(steps)
+        if crm_lock.locked():
+            crm_lock.release()
+
+
+def start_crm_extension_order_run(order_id, shipping_too_expensive=False):
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    if not normalized_order_id:
+        return False, "Open a CRM order with a valid 7-digit order number first."
+    if not crm_lock.acquire(blocking=False):
+        return False, "A CRM automation run is already in progress."
+    with crm_extension_order_runtime_lock:
+        crm_extension_order_runtime.update(
+            {
+                "running": True,
+                "startedAt": datetime.now().isoformat(),
+                "completedAt": None,
+                "orderId": normalized_order_id,
+                "currentStep": "queued",
+                "lastMessage": f"Queued all-in-one processing for order {normalized_order_id}.",
+                "lastSuccess": None,
+                "steps": [],
+            }
+        )
+    threading.Thread(
+        target=_crm_extension_order_thread,
+        args=(normalized_order_id, bool(shipping_too_expensive)),
+        daemon=True,
+    ).start()
+    return True, f"All-in-one processing started for order {normalized_order_id}."
+
+
 def run_work(action, automatic=False):
     mode = "automatic" if automatic else "manual"
     automation_name = f"work.{action}.{mode}"
@@ -11466,6 +11732,9 @@ def enforce_app_access_security():
         "/api/auth/login",
         "/api/auth/status",
         "/api/extension/bridge/status",
+        "/api/extension/bridge/pair",
+        "/api/extension/bridge/process-order",
+        "/api/extension/bridge/process-order/status",
     }
     if request.path in public_paths:
         return None
@@ -11510,6 +11779,58 @@ def _is_chrome_extension_origin(origin):
         and len(extension_id) == 32
         and all("a" <= character <= "p" for character in extension_id)
     )
+
+
+def _extension_bridge_response(payload, status_code=200):
+    response = jsonify(payload)
+    response.status_code = status_code
+    origin = request.headers.get("Origin")
+    if origin and _is_chrome_extension_origin(origin):
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Vary"] = "Origin"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _extension_bridge_request_is_local_extension():
+    return (
+        str(request.remote_addr or "") in {"127.0.0.1", "::1"}
+        and _is_chrome_extension_origin(request.headers.get("Origin"))
+    )
+
+
+def _extension_bridge_token_digest(token):
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+
+def _issue_extension_bridge_token(origin):
+    token = secrets.token_urlsafe(32)
+    expires_at = time.monotonic() + CHROME_EXTENSION_BRIDGE_TOKEN_TTL_SECONDS
+    with extension_bridge_token_lock:
+        extension_bridge_tokens[_extension_bridge_token_digest(token)] = {
+            "origin": origin,
+            "expires_at": expires_at,
+        }
+    return token
+
+
+def _extension_bridge_authorized():
+    if not _extension_bridge_request_is_local_extension():
+        return False
+    token = str(request.headers.get("Authorization") or "")
+    if not token.startswith("Bearer "):
+        return False
+    digest = _extension_bridge_token_digest(token[7:].strip())
+    origin = request.headers.get("Origin")
+    now = time.monotonic()
+    with extension_bridge_token_lock:
+        expired = [key for key, value in extension_bridge_tokens.items() if value.get("expires_at", 0) <= now]
+        for key in expired:
+            extension_bridge_tokens.pop(key, None)
+        record = extension_bridge_tokens.get(digest)
+    return bool(record and record.get("origin") == origin and record.get("expires_at", 0) > now)
 
 
 @app.route("/login", methods=["GET"])
@@ -11613,7 +11934,7 @@ def api_chrome_extension_bridge_status():
     """Provide the safe, unpaired endpoint used to establish the bridge.
 
     It is deliberately limited to loopback Chrome-extension requests. The
-    response confirms that the local app and its v1 protocol are available;
+    response confirms that the local app and its v2 protocol are available;
     it neither reads CRM content nor exposes app/session credentials.
     """
     client_address = str(request.remote_addr or "")
@@ -11628,18 +11949,59 @@ def api_chrome_extension_bridge_status():
     if origin and not _is_chrome_extension_origin(origin):
         return jsonify({"success": False, "message": "Chrome extension origin required."}), 403
 
-    response = jsonify(
+    return _extension_bridge_response(
         {
             "success": True,
             "protocol": CHROME_EXTENSION_BRIDGE_PROTOCOL,
-            "message": "Local Automation app bridge is available.",
+            "message": "Local Automation app bridge is available. Pair the extension before using order controls.",
         }
     )
-    if origin:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Vary"] = "Origin"
-    response.headers["Cache-Control"] = "no-store"
-    return response
+
+
+@app.route("/api/extension/bridge/pair", methods=["POST", "OPTIONS"])
+def api_chrome_extension_bridge_pair():
+    if request.method == "OPTIONS":
+        return _extension_bridge_response({"success": True})
+    if not _extension_bridge_request_is_local_extension():
+        return _extension_bridge_response({"success": False, "message": "Chrome extension requests must use loopback."}, 403)
+    if APP_PIN_REQUIRED:
+        initialize_app_security()
+        data = request.get_json(silent=True) or {}
+        if app_security_config is None or not app_security_config.verify_pin(data.get("pin")):
+            return _extension_bridge_response({"success": False, "message": "The Automation app PIN is required to pair this extension."}, 401)
+    token = _issue_extension_bridge_token(request.headers.get("Origin"))
+    return _extension_bridge_response(
+        {
+            "success": True,
+            "token": token,
+            "expires_in_seconds": CHROME_EXTENSION_BRIDGE_TOKEN_TTL_SECONDS,
+            "message": "Extension paired with the local Automation app.",
+        }
+    )
+
+
+@app.route("/api/extension/bridge/process-order", methods=["POST", "OPTIONS"])
+def api_chrome_extension_bridge_process_order():
+    if request.method == "OPTIONS":
+        return _extension_bridge_response({"success": True})
+    if not _extension_bridge_authorized():
+        return _extension_bridge_response({"success": False, "message": "Pair the extension with the local app before starting an order."}, 401)
+    data = request.get_json(silent=True) or {}
+    ok, message = start_crm_extension_order_run(
+        data.get("order_id"),
+        shipping_too_expensive=bool(data.get("shipping_too_expensive")),
+    )
+    payload = _crm_extension_order_runtime_snapshot()
+    return _extension_bridge_response({"success": ok, "message": message, "runtime": payload}, 200 if ok else 409)
+
+
+@app.route("/api/extension/bridge/process-order/status", methods=["GET", "OPTIONS"])
+def api_chrome_extension_bridge_process_order_status():
+    if request.method == "OPTIONS":
+        return _extension_bridge_response({"success": True})
+    if not _extension_bridge_authorized():
+        return _extension_bridge_response({"success": False, "message": "Pair the extension with the local app to view order status."}, 401)
+    return _extension_bridge_response({"success": True, "runtime": _crm_extension_order_runtime_snapshot()})
 
 
 @app.route("/service-worker.js", methods=["GET"])

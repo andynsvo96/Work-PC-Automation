@@ -13,3 +13,10 @@ p { margin: 0; }
 .toggle input:checked + .track .thumb { transform: translateX(16px); background: #fff; }
 .toggle input:focus-visible + .track { outline: 2px solid #4fc1ff; outline-offset: 2px; }
 .hint { color: #9d9d9d; font-size: 12px; line-height: 1.4; }
+.processor { margin-top: 16px; padding-top: 14px; border-top: 1px solid #3c3c3c; }
+.processor h2 { margin: 0 0 8px; color: #f0f0f0; font-size: 14px; }
+.pair-row { display: flex; gap: 6px; margin-top: 10px; }
+.pair-row input { min-width: 0; flex: 1; padding: 7px; border: 1px solid #555; border-radius: 6px; background: #2d2d30; color: #f0f0f0; }
+.pair-row button, .process-button { padding: 7px 10px; border: 1px solid #1177bb; border-radius: 6px; background: #0e639c; color: #fff; font: 600 12px system-ui, sans-serif; cursor: pointer; }
+.process-button { width: 100%; margin-top: 9px; }
+.pair-row button:disabled, .process-button:disabled { cursor: wait; opacity: .65; }

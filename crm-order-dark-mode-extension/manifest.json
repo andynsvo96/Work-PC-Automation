@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "CRM Order Dark Mode",
-  "version": "1.1.0",
-  "description": "A local, screen-only dark theme for Printfly CRM order pages.",
+  "name": "CRM Order Assistant",
+  "version": "1.2.0",
+  "description": "Dark mode and paired, single-order processing controls for Printfly CRM order pages.",
   "permissions": ["storage", "tabs"],
   "host_permissions": [
     "https://crm2.legacy.printfly.com/*",
@@ -13,7 +13,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "CRM Order Dark Mode",
+    "default_title": "CRM Order Assistant",
     "default_popup": "popup.html"
   },
   "content_scripts": [

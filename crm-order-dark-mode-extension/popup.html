@@ -3,12 +3,12 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>CRM Order Dark Mode</title>
+    <title>CRM Order Assistant</title>
     <link rel="stylesheet" href="popup.css">
   </head>
   <body>
     <main>
-      <h1>CRM Order Dark Mode</h1>
+      <h1>CRM Order Assistant</h1>
       <p id="page-status" role="status">Checking this tab…</p>
       <p id="bridge-status" class="bridge-status" role="status">Checking local app bridge...</p>
       <label class="toggle" for="theme-toggle">
@@ -17,6 +17,15 @@
         <span>Enable dark mode</span>
       </label>
       <p class="hint">Only CRM order pages are styled. Print output stays light.</p>
+      <section class="processor" aria-label="Order processing controls">
+        <h2>Order processing</h2>
+        <p id="processor-status" class="bridge-status" role="status">Pair the extension to enable the CRM button.</p>
+        <div class="pair-row">
+          <input id="pair-pin" type="password" inputmode="numeric" minlength="6" maxlength="12" placeholder="Automation app PIN" aria-label="Automation app PIN">
+          <button id="pair-button" type="button">Pair</button>
+        </div>
+        <button id="process-button" class="process-button" type="button">Process current order</button>
+      </section>
     </main>
     <script src="popup.js"></script>
   </body>
