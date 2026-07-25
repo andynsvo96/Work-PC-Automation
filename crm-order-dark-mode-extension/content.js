@@ -14,39 +14,62 @@ function pageShowsShippingTooExpensive() {
   return /shipping\s+is\s+too\s+expensive/i.test(document.body && document.body.innerText || "");
 }
 
+function crmControlLabel(element) {
+  return String(
+    element && (element.value || element.innerText || element.textContent || element.getAttribute("aria-label") || element.title) || ""
+  ).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function findSendInvoiceButton() {
+  return Array.from(document.querySelectorAll("button, input[type='button'], input[type='submit'], a"))
+    .find((element) => crmControlLabel(element) === "send invoice");
+}
+
 function ensureOrderProcessorButton() {
-  if (!isOrderDocument() || !document.body || document.getElementById("crm-order-automation-button")) return;
-  const button = document.createElement("button");
-  button.id = "crm-order-automation-button";
-  button.type = "button";
-  button.textContent = "Process order";
-  button.title = "Validate address, separate products, split over 10 tabs, unlock/order goods, and bypass flagged shipping.";
+  if (!isOrderDocument() || !document.body) return;
+  const sendInvoiceButton = findSendInvoiceButton();
+  const existingButton = document.getElementById("crm-order-automation-button");
+  if (!sendInvoiceButton) {
+    existingButton?.remove();
+    return;
+  }
+
+  const button = existingButton || document.createElement("button");
+  if (!existingButton) {
+    button.id = "crm-order-automation-button";
+    button.type = "button";
+    button.textContent = "Auto-Process";
+    button.title = "Validate address, separate products, split over 10 tabs, unlock/order goods, and bypass flagged shipping.";
+    button.addEventListener("click", async () => {
+      const orderId = currentOrderId();
+      if (!orderId) return;
+      button.disabled = true;
+      button.textContent = "Starting…";
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "crm-order-automation:start",
+          orderId,
+          shippingTooExpensive: pageShowsShippingTooExpensive()
+        });
+        button.textContent = response && response.success ? "Processing started" : "Pair in extension";
+        if (!response || !response.success) button.title = (response && response.message) || "Pair the extension from its toolbar popup, then try again.";
+      } catch (_error) {
+        button.textContent = "Pair in extension";
+        button.title = "Pair the extension from its toolbar popup, then try again.";
+      } finally {
+        setTimeout(() => { button.disabled = false; button.textContent = "Auto-Process"; }, 4000);
+      }
+    });
+  }
+
   Object.assign(button.style, {
-    position: "fixed", right: "16px", bottom: "16px", zIndex: "2147483647", padding: "10px 14px",
-    border: "1px solid #075985", borderRadius: "7px", background: "#0369a1", color: "#fff",
-    font: "600 13px system-ui, sans-serif", boxShadow: "0 3px 12px rgba(0,0,0,.35)", cursor: "pointer"
+    position: "static", marginLeft: "8px", padding: "6px 12px", minHeight: "30px",
+    borderRadius: "2px", font: "600 12px system-ui, sans-serif", cursor: "pointer"
   });
-  button.addEventListener("click", async () => {
-    const orderId = currentOrderId();
-    if (!orderId) return;
-    button.disabled = true;
-    button.textContent = "Starting…";
-    try {
-      const response = await chrome.runtime.sendMessage({
-        type: "crm-order-automation:start",
-        orderId,
-        shippingTooExpensive: pageShowsShippingTooExpensive()
-      });
-      button.textContent = response && response.success ? "Processing started" : "Pair in extension";
-      if (!response || !response.success) button.title = (response && response.message) || "Pair the extension from its toolbar popup, then try again.";
-    } catch (_error) {
-      button.textContent = "Pair in extension";
-      button.title = "Pair the extension from its toolbar popup, then try again.";
-    } finally {
-      setTimeout(() => { button.disabled = false; button.textContent = "Process order"; }, 4000);
-    }
-  });
-  document.body.appendChild(button);
+  button.style.setProperty("background", "#0369a1", "important");
+  button.style.setProperty("border", "1px solid #075985", "important");
+  button.style.setProperty("color", "#fff", "important");
+  if (sendInvoiceButton.nextElementSibling !== button) sendInvoiceButton.insertAdjacentElement("afterend", button);
 }
 
 function isOrderDocument() {
