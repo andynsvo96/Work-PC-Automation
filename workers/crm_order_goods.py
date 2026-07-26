@@ -1466,6 +1466,26 @@ def _stock_unlock_not_confirmed_result(order_id, state, stock_tab_index=None):
     }
 
 
+def _retry_stock_unlock_via_preview_panel(driver, order_id, stock_tab_index=None):
+    """Retry a still-locked order through CRM's order-preview status editor once."""
+    _publish_status(
+        f"Stock remained locked after the first status update for order {order_id}; retrying through Order Preview.",
+        stage="retrying_stock_unlock",
+        order_id=order_id,
+    )
+    retry_result = _unlock_current_order_for_auto_ordering(driver, order_id, dry_run=False, force=True)
+    if not retry_result or not retry_result.get("success"):
+        return retry_result, "locked"
+    try:
+        driver.refresh()
+        time.sleep(1.0)
+    except Exception:
+        pass
+    _open_target_order_with_refresh(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
+    _require_order_goods_page_ready(driver, order_id)
+    return retry_result, _wait_after_stock_unlock(driver, order_id, stock_tab_index=stock_tab_index)
+
+
 def _stock_unlock_message(unlock_result):
     if isinstance(unlock_result, dict):
         return unlock_result.get("message") or "Applied Stock Auto Ordering Unlocked before Order Goods."
@@ -2158,6 +2178,13 @@ def _run_order_with_driver(
         _require_order_goods_page_ready(driver, normalized_order_id)
         unlocked_message = unlock_result.get("message") or "Applied Stock Auto Ordering Unlocked before Order Goods."
         post_unlock_state = _wait_after_stock_unlock(driver, normalized_order_id)
+        if post_unlock_state == "locked":
+            retry_unlock_result, post_unlock_state = _retry_stock_unlock_via_preview_panel(
+                driver,
+                normalized_order_id,
+            )
+            if retry_unlock_result and retry_unlock_result.get("success"):
+                unlock_result = retry_unlock_result
         if post_unlock_state == "ordered":
             unlock_result["verified"] = True
             result = _stock_already_ordered_result(
@@ -2168,7 +2195,10 @@ def _run_order_with_driver(
             result["warnings"] = [unlocked_message]
             return [result]
         if post_unlock_state != "orderable":
-            return [_stock_unlock_not_confirmed_result(normalized_order_id, post_unlock_state)]
+            failure = _stock_unlock_not_confirmed_result(normalized_order_id, post_unlock_state)
+            if post_unlock_state == "locked":
+                failure["message"] += " Retried once through Order Preview before stopping."
+            return [failure]
         unlock_result["verified"] = True
         _publish_status(f"Ordering stock tabs for order {normalized_order_id}.", stage="ordering_stock", order_id=normalized_order_id)
         if wait_for_auto_order_result:

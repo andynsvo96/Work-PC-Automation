@@ -10533,6 +10533,21 @@ def _crm_extension_order_shipping_cost_detected(order_goods_results):
     return False
 
 
+def _crm_extension_order_order_goods_failure_detail(order_goods_results):
+    """Keep the queue message specific when Order Goods could not proceed."""
+    for item in order_goods_results if isinstance(order_goods_results, list) else []:
+        if not isinstance(item, dict) or item.get("success"):
+            continue
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        report = payload.get("report") if isinstance(payload.get("report"), list) else []
+        for row in report:
+            if isinstance(row, dict) and not row.get("success") and str(row.get("message") or "").strip():
+                return str(row["message"]).strip()
+        if str(item.get("message") or "").strip():
+            return str(item["message"]).strip()
+    return ""
+
+
 def _crm_extension_order_no_purchase_plan_decisions(order_goods_results):
     decisions = {}
     for item in order_goods_results if isinstance(order_goods_results, list) else []:
@@ -10839,7 +10854,12 @@ def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
         elif overall_success:
             summary = f"Finished processing order {order_id}."
         else:
-            summary = f"Order {order_id} needs attention in Order Goods, Push Back, or Shipping Bypasser."
+            order_goods_failure = _crm_extension_order_order_goods_failure_detail(order_goods_results)
+            summary = (
+                f"Order {order_id} needs attention: {order_goods_failure}"
+                if order_goods_failure
+                else f"Order {order_id} needs attention in Order Goods, Push Back, or Shipping Bypasser."
+            )
     except Exception as exc:
         logger.exception("CRM extension order processing failed unexpectedly")
         summary = f"CRM extension order processing failed: {type(exc).__name__}: {exc}"

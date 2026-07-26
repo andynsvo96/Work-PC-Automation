@@ -152,6 +152,27 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
             )
         )
 
+    def test_auto_process_queue_message_uses_exact_order_goods_failure(self):
+        detail = server._crm_extension_order_order_goods_failure_detail(
+            [
+                {
+                    "success": False,
+                    "message": "Order Goods needs attention.",
+                    "payload": {
+                        "report": [
+                            {
+                                "success": False,
+                                "outcome": "stock_unlock_not_confirmed",
+                                "message": "Stock Auto Ordering Unlocked was not confirmed: CRM still shows 'Locked for Auto Ordering'.",
+                            }
+                        ]
+                    },
+                }
+            ]
+        )
+
+        self.assertIn("Stock Auto Ordering Unlocked was not confirmed", detail)
+
     def test_order_controls_do_not_require_pairing_and_validate_order_id(self):
         previous_required = server.APP_PIN_REQUIRED
         server.APP_PIN_REQUIRED = False

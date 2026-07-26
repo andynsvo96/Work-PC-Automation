@@ -8013,6 +8013,31 @@ class CrmAddressServerTests(unittest.TestCase):
         mock_order_tabs.assert_not_called()
 
     @mock.patch.object(crm_order_goods, "_order_goods_for_all_stock_tabs")
+    @mock.patch.object(crm_order_goods, "_wait_after_stock_unlock", side_effect=["locked", "orderable"])
+    @mock.patch.object(crm_order_goods, "_unlock_current_order_for_auto_ordering")
+    @mock.patch.object(crm_order_goods, "_wait_for_order_goods_page_ready", return_value=True)
+    @mock.patch.object(crm_order_goods, "_open_target_order")
+    def test_order_goods_retries_locked_status_through_order_preview(self, mock_open, _mock_ready, mock_unlock, _mock_wait_after_unlock, mock_order_tabs):
+        driver = mock.Mock()
+        mock_unlock.side_effect = [
+            {"order_id": "4418860", "success": True, "outcome": "stock_unlocked", "message": "First unlock attempt."},
+            {"order_id": "4418860", "success": True, "outcome": "stock_unlocked", "message": "Order Preview unlock."},
+        ]
+        mock_order_tabs.return_value = [
+            {"order_id": "4418860", "success": True, "outcome": "order_goods_clicked", "message": "clicked"}
+        ]
+
+        results = crm_order_goods._run_order_with_driver(driver, "4418860", dry_run=False)
+
+        self.assertEqual(mock_unlock.call_args_list[0].args[1], "4418860")
+        self.assertNotIn("force", mock_unlock.call_args_list[0].kwargs)
+        self.assertEqual(mock_unlock.call_args_list[1].kwargs.get("force"), True)
+        self.assertEqual(mock_open.call_count, 3)
+        self.assertEqual(driver.refresh.call_count, 2)
+        self.assertTrue(results[0]["stock_unlocked_before_order_goods"])
+        self.assertIn("Order Preview unlock.", results[0]["warnings"])
+
+    @mock.patch.object(crm_order_goods, "_order_goods_for_all_stock_tabs")
     @mock.patch.object(crm_order_goods, "_wait_after_stock_unlock", return_value="timeout")
     @mock.patch.object(crm_order_goods, "_unlock_current_order_for_auto_ordering")
     @mock.patch.object(crm_order_goods, "_wait_for_order_goods_page_ready", return_value=True)
