@@ -98,19 +98,31 @@ def read_credential(target, *, required=True):
     target = str(target or "").strip()
     if not target:
         raise CredentialStoreError("Credential target cannot be empty.")
+
+    # Do not access Windows Credential Manager through both keyring and the
+    # native ctypes implementation.  They use the same target names but store
+    # different payload formats, which allowed a restart using another Python
+    # environment to misread a valid native credential as an incomplete
+    # keyring payload.  Windows therefore has one authoritative format.
+    if os.name == "nt":
+        native = _legacy_windows_read(target, required=False)
+        if native is not None:
+            return native
+        if required:
+            raise CredentialNotFoundError(
+                f"Credential '{target}' was not found in Windows Credential Manager. "
+                "Run 'python manage_windows_credentials.py set <service>' to create it."
+            )
+        return None
+
     if keyring is not None:
         try:
             payload = keyring.get_password(target, KEYRING_ACCOUNT)
         except KeyringError as exc:
-            if os.name != "nt":
-                raise CredentialStoreError(f"Could not read '{target}' from the OS keychain: {exc}") from exc
-            payload = None
+            raise CredentialStoreError(f"Could not read '{target}' from the OS keychain: {exc}") from exc
         if payload:
             return _decode_payload(target, payload)
 
-    legacy = _legacy_windows_read(target, required=False)
-    if legacy is not None:
-        return legacy
     if required:
         raise CredentialNotFoundError(
             f"Credential '{target}' was not found in the OS keychain. "
@@ -123,13 +135,15 @@ def write_credential(target, username, secret):
     target = str(target or "").strip()
     if not target:
         raise CredentialStoreError("Credential target cannot be empty.")
+
+    if os.name == "nt":
+        from windows_credentials import write_windows_credential
+
+        write_windows_credential(target, username, secret)
+        return
+
     payload = _encode_payload(username, secret)
     if keyring is None:
-        if os.name == "nt":
-            from windows_credentials import write_windows_credential
-
-            write_windows_credential(target, username, secret)
-            return
         raise CredentialStoreError("The 'keyring' package is required for macOS Keychain access.")
     try:
         keyring.set_password(target, KEYRING_ACCOUNT, payload)
@@ -139,19 +153,16 @@ def write_credential(target, username, secret):
 
 def delete_credential(target, *, missing_ok=True):
     target = str(target or "").strip()
+    if os.name == "nt":
+        from windows_credentials import delete_windows_credential
+
+        return delete_windows_credential(target, missing_ok=missing_ok)
+
     removed = False
     if keyring is not None:
         try:
             keyring.delete_password(target, KEYRING_ACCOUNT)
             removed = True
-        except Exception:
-            if not missing_ok:
-                raise
-    if os.name == "nt":
-        try:
-            from windows_credentials import delete_windows_credential
-
-            removed = delete_windows_credential(target, missing_ok=True) or removed
         except Exception:
             if not missing_ok:
                 raise

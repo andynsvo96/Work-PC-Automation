@@ -9,14 +9,18 @@ class CredentialStoreTests(unittest.TestCase):
     def test_keyring_round_trip_payload(self):
         fake_keyring = mock.Mock()
         fake_keyring.get_password.return_value = json.dumps({"username": "andy", "secret": "safe"})
-        with mock.patch.object(credential_store, "keyring", fake_keyring):
+        with mock.patch.object(credential_store.os, "name", "posix"), mock.patch.object(
+            credential_store, "keyring", fake_keyring
+        ):
             value = credential_store.read_credential("WorkAutomation/Test")
         self.assertEqual(value.username, "andy")
         self.assertEqual(value.secret, "safe")
 
     def test_write_uses_fixed_keyring_account(self):
         fake_keyring = mock.Mock()
-        with mock.patch.object(credential_store, "keyring", fake_keyring):
+        with mock.patch.object(credential_store.os, "name", "posix"), mock.patch.object(
+            credential_store, "keyring", fake_keyring
+        ):
             credential_store.write_credential("WorkAutomation/Test", "andy", "safe")
         args = fake_keyring.set_password.call_args.args
         self.assertEqual(args[:2], ("WorkAutomation/Test", credential_store.KEYRING_ACCOUNT))
@@ -25,10 +29,29 @@ class CredentialStoreTests(unittest.TestCase):
     def test_missing_optional_credential_returns_none(self):
         fake_keyring = mock.Mock()
         fake_keyring.get_password.return_value = None
-        with mock.patch.object(credential_store, "keyring", fake_keyring), mock.patch.object(
-            credential_store, "_legacy_windows_read", return_value=None
+        with mock.patch.object(credential_store.os, "name", "posix"), mock.patch.object(
+            credential_store, "keyring", fake_keyring
         ):
             self.assertIsNone(credential_store.read_credential("WorkAutomation/Missing", required=False))
+
+    def test_windows_reads_native_credential_without_calling_keyring(self):
+        fake_keyring = mock.Mock()
+        native = credential_store.StoredCredential("WorkAutomation/Test", "andy", "safe")
+        with mock.patch.object(credential_store.os, "name", "nt"), mock.patch.object(
+            credential_store, "keyring", fake_keyring
+        ), mock.patch.object(credential_store, "_legacy_windows_read", return_value=native):
+            value = credential_store.read_credential("WorkAutomation/Test")
+        self.assertEqual(value, native)
+        fake_keyring.get_password.assert_not_called()
+
+    def test_windows_writes_native_credential_without_calling_keyring(self):
+        fake_keyring = mock.Mock()
+        with mock.patch.object(credential_store.os, "name", "nt"), mock.patch.object(
+            credential_store, "keyring", fake_keyring
+        ), mock.patch("windows_credentials.write_windows_credential") as write_native:
+            credential_store.write_credential("WorkAutomation/Test", "andy", "safe")
+        write_native.assert_called_once_with("WorkAutomation/Test", "andy", "safe")
+        fake_keyring.set_password.assert_not_called()
 
     def test_invalid_json_secret_is_rejected(self):
         with mock.patch.object(
