@@ -62,18 +62,27 @@ PAYCOM_USERNAME_SELECTORS = [
     "input[id*='username']",
     "input[autocomplete='username']",
     "input[type='email']",
+    "input[name*='user' i]",
+    "input[id*='user' i]",
 ]
 PAYCOM_PASSWORD_SELECTORS = [
     "input[name='password']",
     "input[id*='password']",
     "input[autocomplete='current-password']",
     "input[type='password']:not([maxlength='4'])",
+    "input[name*='pass' i]",
+    "input[id*='pass' i]",
 ]
 PAYCOM_PIN_SELECTORS = [
     "input[name='pin']",
     "input[id*='pin']",
     "input[placeholder*='PIN']",
     "input[type='password'][maxlength='4']",
+    "input[name*='pin' i]",
+    "input[id*='pin' i]",
+    "input[name*='ssn' i]",
+    "input[id*='ssn' i]",
+    "input[placeholder*='last 4' i]",
 ]
 
 
@@ -97,6 +106,18 @@ def write_result(success, message, week_hours=None, source="", day_rows=None):
 
 def _normalize_text(text):
     return " ".join((text or "").replace("\xa0", " ").split())
+
+
+def is_paycom_login_page(driver):
+    """Return whether the current page is still Paycom's credential form."""
+    try:
+        text = _normalize_text(driver.find_element(By.TAG_NAME, "body").text).lower()
+    except Exception:
+        return False
+    has_login_labels = "username" in text and "password" in text
+    has_pin_label = "last 4 digits" in text or "pin" in text
+    has_submit_label = "log in" in text or "login" in text
+    return has_login_labels and has_pin_label and has_submit_label
 
 
 def _is_missing_punch_marker(text):
@@ -1012,8 +1033,8 @@ def _run_once(headless_mode):
             if pin_field:
                 print("Entering Paycom PIN for hours sync...")
                 pin = credentials.pin
-            pin_field.clear()
-            pin_field.send_keys(pin)
+                pin_field.clear()
+                pin_field.send_keys(pin)
 
         login_btn = find_visible(
             driver,
@@ -1033,6 +1054,17 @@ def _run_once(headless_mode):
 
         # Give the page a moment to hydrate numbers.
         time.sleep(2)
+
+        if is_paycom_login_page(driver):
+            take_screenshot(driver, "paycom_hours_login_required")
+            return (
+                False,
+                "Paycom hours sync is still on the login page after submitting saved credentials. "
+                "Verify the Paycom username, password, and PIN, or complete any required login challenge in the Paycom setup profile.",
+                None,
+                target_url,
+                [],
+            )
 
         week_hours, match_text, body_text, parsed_from_url = find_week_hours_with_fallback_navigation(driver)
         day_rows = extract_day_rows_from_timesheet(driver)
