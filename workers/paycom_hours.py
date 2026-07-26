@@ -120,6 +120,17 @@ def is_paycom_login_page(driver):
     return has_login_labels and has_pin_label and has_submit_label
 
 
+def is_paycom_two_factor_page(driver):
+    """Return whether Paycom is awaiting an interactive MFA approval."""
+    try:
+        text = _normalize_text(driver.find_element(By.TAG_NAME, "body").text).lower()
+    except Exception:
+        return False
+    return "two-factor authentication" in text and (
+        "verify your account" in text or "verification code" in text
+    )
+
+
 def _is_missing_punch_marker(text):
     raw = _normalize_text(text).lower()
     if not raw:
@@ -1054,6 +1065,17 @@ def _run_once(headless_mode):
 
         # Give the page a moment to hydrate numbers.
         time.sleep(2)
+
+        if is_paycom_two_factor_page(driver):
+            take_screenshot(driver, "paycom_hours_two_factor_required")
+            return (
+                False,
+                "Paycom requires two-factor authentication. Open the Paycom setup profile, complete the "
+                "verification there, and choose the trusted-device option if Paycom offers it; then retry the sync.",
+                None,
+                target_url,
+                [],
+            )
 
         if is_paycom_login_page(driver):
             take_screenshot(driver, "paycom_hours_login_required")
