@@ -10497,6 +10497,41 @@ def _crm_extension_order_shipping_cost_detected(order_goods_results):
     return False
 
 
+def _crm_extension_order_no_purchase_plan_decisions(order_goods_results):
+    decisions = {}
+    for item in order_goods_results if isinstance(order_goods_results, list) else []:
+        fallback_order_id = _normalize_crm_single_order_id(item.get("order_id") if isinstance(item, dict) else None)
+        payload = item.get("payload") if isinstance(item, dict) and isinstance(item.get("payload"), dict) else {}
+        report = payload.get("report") if isinstance(payload.get("report"), list) else []
+        for row in report:
+            if not isinstance(row, dict) or str(row.get("outcome") or "") != "auto_order_no_purchase_plan":
+                continue
+            order_id = _normalize_crm_single_order_id(row.get("order_id")) or fallback_order_id
+            notes = row.get("auto_order_feedback") if isinstance(row.get("auto_order_feedback"), dict) else {}
+            automated_notes = notes.get("automated_notes") if isinstance(notes.get("automated_notes"), dict) else {}
+            classification = str(automated_notes.get("classification") or "unclassified").strip().lower()
+            if order_id:
+                decisions[order_id] = {
+                    "classification": classification,
+                    "note": str(automated_notes.get("note") or "").strip(),
+                    "message": str(automated_notes.get("message") or "").strip(),
+                }
+    return decisions
+
+
+def _crm_extension_order_report_result(order_ids, success, summary, started_at):
+    count = len(order_ids if isinstance(order_ids, list) else [])
+    return {
+        "key": "auto_process",
+        "success": bool(success),
+        "order_count": count,
+        "successful_order_count": count if success else 0,
+        "error_count": 0 if success else 1,
+        "duration_seconds": _normalize_duration_seconds(time.monotonic() - started_at),
+        "message": str(summary or ""),
+    }
+
+
 def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
     """Run the extension's intentionally single-order processing chain.
 
@@ -10506,6 +10541,7 @@ def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
     """
     steps = []
     target_order_ids = [order_id]
+    started_at = time.monotonic()
     overall_success = False
     summary = "CRM order processing did not run."
     try:
@@ -10627,6 +10663,64 @@ def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
             )
         )
 
+        no_purchase_plan_decisions = _crm_extension_order_no_purchase_plan_decisions(order_goods_results)
+        push_back_order_ids = [
+            target_order_id for target_order_id in target_order_ids
+            if no_purchase_plan_decisions.get(target_order_id, {}).get("classification") == "push_back"
+        ]
+        stock_issue_order_ids = [
+            target_order_id for target_order_id in target_order_ids
+            if no_purchase_plan_decisions.get(target_order_id, {}).get("classification") == "stock_issue"
+        ]
+        unclassified_no_purchase_plan_ids = [
+            target_order_id for target_order_id in target_order_ids
+            if no_purchase_plan_decisions.get(target_order_id, {}).get("classification") == "unclassified"
+        ]
+        if no_purchase_plan_decisions:
+            _set_crm_extension_order_progress("automated_notes", "Refreshing once and checking CRM Automated Notes after the No Purchase Plan result.")
+            steps.append(
+                _crm_extension_order_stage(
+                    "automated_notes",
+                    "Automated Notes",
+                    not bool(stock_issue_order_ids or unclassified_no_purchase_plan_ids),
+                    "Automated Notes identified delivery-delay products for Push Back."
+                    if push_back_order_ids and not stock_issue_order_ids and not unclassified_no_purchase_plan_ids
+                    else (
+                        f"Stock issue: order(s) {', '.join(stock_issue_order_ids)} have no available inventory and were skipped."
+                        if stock_issue_order_ids
+                        else "Automated Notes did not identify a supported No Purchase Plan outcome."
+                    ),
+                    {"decisions": no_purchase_plan_decisions},
+                )
+            )
+
+        push_back_ok = True
+        if push_back_order_ids:
+            _set_crm_extension_order_progress("push_back", "CRM Automated Notes show a delivery delay; running Push Back.")
+            push_back_results = []
+            for target_order_id in push_back_order_ids:
+                ok, message, payload = _execute_crm_push_back_worker(
+                    dry_run=False,
+                    order_id=target_order_id,
+                    processing_filter="rush",
+                    visible=False,
+                    show_terminal=False,
+                    parallel_workers=1,
+                )
+                push_back_results.append(
+                    {"order_id": target_order_id, "success": bool(ok), "message": str(message), "payload": payload}
+                )
+            push_back_ok = bool(push_back_results) and all(item["success"] for item in push_back_results)
+            steps.append(
+                _crm_extension_order_stage(
+                    "push_back",
+                    "Push Back",
+                    push_back_ok,
+                    "Push Back completed." if push_back_ok else "Push Back needs attention.",
+                    {"order_results": push_back_results},
+                )
+            )
+
         bypass_ok = True
         shipping_bypass_needed = bool(shipping_too_expensive or _crm_extension_order_shipping_cost_detected(order_goods_results))
         if shipping_bypass_needed:
@@ -10666,18 +10760,37 @@ def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
         # A successful bypass resolves an Order Goods failure caused by the
         # explicitly detected shipping-cost issue. Other failures still stop
         # the order for review.
-        overall_success = bool(bypass_ok and (order_goods_ok or shipping_bypass_needed))
-        summary = (
-            f"Finished processing order {order_id}."
-            if overall_success
-            else f"Order {order_id} needs attention in Order Goods or Shipping Bypasser."
+        order_goods_resolved = bool(order_goods_ok or shipping_bypass_needed or (push_back_order_ids and push_back_ok))
+        overall_success = bool(
+            bypass_ok
+            and push_back_ok
+            and order_goods_resolved
+            and not stock_issue_order_ids
+            and not unclassified_no_purchase_plan_ids
         )
+        if stock_issue_order_ids:
+            summary = (
+                f"Stock issue: order(s) {', '.join(stock_issue_order_ids)} have no available inventory. "
+                "Skipped for the future Stock Swap automation."
+            )
+        elif unclassified_no_purchase_plan_ids:
+            summary = f"Order {order_id} needs attention: CRM Automated Notes did not classify the No Purchase Plan result."
+        elif overall_success:
+            summary = f"Finished processing order {order_id}."
+        else:
+            summary = f"Order {order_id} needs attention in Order Goods, Push Back, or Shipping Bypasser."
     except Exception as exc:
         logger.exception("CRM extension order processing failed unexpectedly")
         summary = f"CRM extension order processing failed: {type(exc).__name__}: {exc}"
         steps.append(_crm_extension_order_stage("unexpected_error", "Unexpected error", False, summary))
     finally:
         _audit_result("crm.extension_order", overall_success, summary)
+        try:
+            _record_crm_processing_report_result(
+                _crm_extension_order_report_result(target_order_ids, overall_success, summary, started_at)
+            )
+        except Exception as exc:
+            logger.warning("Could not update Processing Quick Report with Auto-Process result: %s", exc)
         with crm_extension_order_runtime_lock:
             crm_extension_order_runtime["queued"] = False
             crm_extension_order_runtime["running"] = False

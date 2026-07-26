@@ -1982,6 +1982,20 @@ class CrmPushBackTests(unittest.TestCase):
             "ordered",
         )
 
+    def test_automated_notes_classifier_matches_saved_crm_messages(self):
+        self.assertEqual(
+            crm_order_goods._classify_automated_notes_text(
+                "Unable to order stock - The following products are unable to be delivered on time: LPC380TT - White - M"
+            ),
+            "push_back",
+        )
+        self.assertEqual(
+            crm_order_goods._classify_automated_notes_text(
+                "Unable to order stock - The following products do not have available inventory: 3321 - HOT PINK - 7T"
+            ),
+            "stock_issue",
+        )
+
     def test_auto_order_feedback_prefers_failure_over_visible_stale_success(self):
         driver = mock.Mock()
         driver.execute_script.return_value = [
@@ -8777,7 +8791,7 @@ class CrmAddressServerTests(unittest.TestCase):
 
         self.assertIn("report", payload)
         self.assertEqual(set(payload["report"]["periods"]), {"daily", "weekly", "monthly", "all"})
-        self.assertEqual(len(payload["report"]["periods"]["all"]["rows"]), 8)
+        self.assertEqual(len(payload["report"]["periods"]["all"]["rows"]), 9)
 
     def test_processing_report_backfills_live_sheet_scanner_history(self):
         with tempfile.TemporaryDirectory() as tmp:

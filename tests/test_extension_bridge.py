@@ -65,6 +65,62 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         )
         self.assertFalse(server._crm_extension_order_shipping_cost_detected([{"payload": {"success": True}}]))
 
+    def test_no_purchase_plan_decisions_use_automated_notes_classification(self):
+        decisions = server._crm_extension_order_no_purchase_plan_decisions(
+            [
+                {
+                    "order_id": "4917538",
+                    "payload": {
+                        "report": [
+                            {
+                                "order_id": "4917538",
+                                "outcome": "auto_order_no_purchase_plan",
+                                "auto_order_feedback": {
+                                    "automated_notes": {
+                                        "classification": "push_back",
+                                        "note": "The following products are unable to be delivered on time",
+                                    }
+                                },
+                            }
+                        ]
+                    },
+                },
+                {
+                    "order_id": "4918203",
+                    "payload": {
+                        "report": [
+                            {
+                                "order_id": "4918203",
+                                "outcome": "auto_order_no_purchase_plan",
+                                "auto_order_feedback": {
+                                    "automated_notes": {
+                                        "classification": "stock_issue",
+                                        "note": "The following products do not have available inventory",
+                                    }
+                                },
+                            }
+                        ]
+                    },
+                },
+            ]
+        )
+
+        self.assertEqual(decisions["4917538"]["classification"], "push_back")
+        self.assertEqual(decisions["4918203"]["classification"], "stock_issue")
+
+    def test_auto_process_report_result_uses_its_own_quick_report_row(self):
+        result = server._crm_extension_order_report_result(
+            ["4918203"],
+            False,
+            "Stock issue: order(s) 4918203 have no available inventory.",
+            server.time.monotonic(),
+        )
+
+        self.assertEqual(result["key"], "auto_process")
+        self.assertEqual(result["order_count"], 1)
+        self.assertEqual(result["error_count"], 1)
+        self.assertEqual(server._crm_processing_step_label("auto_process"), "Auto-Process")
+
     def test_order_controls_do_not_require_pairing_and_validate_order_id(self):
         previous_required = server.APP_PIN_REQUIRED
         server.APP_PIN_REQUIRED = False
