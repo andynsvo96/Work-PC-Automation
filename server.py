@@ -10470,6 +10470,42 @@ def _crm_extension_order_stage(key, label, ok, message, payload=None, skipped=Fa
     }
 
 
+def _crm_extension_order_step_not_needed(key, message, payload):
+    """Return whether a successful single-order worker only checked, not changed, the order."""
+    payload = payload if isinstance(payload, dict) else {}
+    normalized_key = str(key or "").strip()
+    normalized_message = " ".join(str(message or "").lower().split())
+
+    if normalized_key == "address_validator":
+        report = _extract_crm_address_report(payload)
+        if report:
+            report_items = [item for item in report if isinstance(item, dict)]
+            return all(
+                bool(item.get("success"))
+                and (
+                    str(item.get("resolution") or "").strip().lower() == "already_valid"
+                    or str(item.get("outcome") or "").strip().lower().startswith("already_valid")
+                )
+                for item in report_items
+            ) and len(report_items) == len(report)
+        return "already showed a valid shipping address" in normalized_message
+
+    if normalized_key == "product_separator":
+        resolution = str(payload.get("resolution") or "").strip().lower()
+        return resolution.startswith("skipped_") or "product separator skipped order" in normalized_message
+
+    if normalized_key == "order_goods":
+        report = payload.get("report") if isinstance(payload.get("report"), list) else []
+        return bool(report) and all(
+            isinstance(item, dict)
+            and str(item.get("outcome") or "").strip().lower() == "already_stock_ordered"
+            and not item.get("stock_unlocked_before_order_goods")
+            for item in report
+        )
+
+    return False
+
+
 def _crm_extension_order_split_not_needed(message, payload):
     text = " ".join(
         str(value or "")
@@ -10554,9 +10590,17 @@ def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
             batch_size=1,
             parallel_workers=1,
         )
+        address_skipped = _crm_extension_order_step_not_needed(
+            "address_validator", address_message, address_payload
+        )
         steps.append(
             _crm_extension_order_stage(
-                "address_validator", "Address validation", address_ok, address_message, address_payload
+                "address_validator",
+                "Address validation",
+                address_ok,
+                address_message,
+                address_payload,
+                skipped=address_skipped,
             )
         )
         if not address_ok:
@@ -10571,9 +10615,17 @@ def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
             visible=False,
             show_terminal=False,
         )
+        separator_skipped = _crm_extension_order_step_not_needed(
+            "product_separator", separator_message, separator_payload
+        )
         steps.append(
             _crm_extension_order_stage(
-                "product_separator", "Product separation", separator_ok, separator_message, separator_payload
+                "product_separator",
+                "Product separation",
+                separator_ok,
+                separator_message,
+                separator_payload,
+                skipped=separator_skipped,
             )
         )
         if not separator_ok:
@@ -10653,6 +10705,14 @@ def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
                 {"order_id": target_order_id, "success": bool(ok), "message": str(message), "payload": payload}
             )
         order_goods_ok = bool(order_goods_results) and all(item["success"] for item in order_goods_results)
+        order_goods_skipped = bool(order_goods_results) and all(
+            _crm_extension_order_step_not_needed(
+                "order_goods",
+                item.get("message"),
+                item.get("payload"),
+            )
+            for item in order_goods_results
+        )
         steps.append(
             _crm_extension_order_stage(
                 "order_goods",
@@ -10660,6 +10720,7 @@ def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
                 order_goods_ok,
                 "Order Goods completed." if order_goods_ok else "Order Goods needs attention.",
                 {"order_results": order_goods_results},
+                skipped=order_goods_skipped,
             )
         )
 

@@ -121,6 +121,37 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         self.assertEqual(result["error_count"], 1)
         self.assertEqual(server._crm_processing_step_label("auto_process"), "Auto-Process")
 
+    def test_auto_process_marks_no_change_steps_as_not_needed(self):
+        self.assertTrue(
+            server._crm_extension_order_step_not_needed(
+                "address_validator",
+                "Skipped because the order already showed a valid shipping address before opening edit.",
+                {
+                    "report": [
+                        {
+                            "success": True,
+                            "outcome": "already_valid_skipped",
+                            "resolution": "already_valid",
+                        }
+                    ]
+                },
+            )
+        )
+        self.assertTrue(
+            server._crm_extension_order_step_not_needed(
+                "product_separator",
+                "Product Separator skipped order 4917538: no mixed product tabs detected.",
+                {"resolution": "skipped_no_split_needed"},
+            )
+        )
+        self.assertFalse(
+            server._crm_extension_order_step_not_needed(
+                "address_validator",
+                "Address validation completed.",
+                {"report": [{"success": True, "outcome": "validated", "resolution": "validated"}]},
+            )
+        )
+
     def test_order_controls_do_not_require_pairing_and_validate_order_id(self):
         previous_required = server.APP_PIN_REQUIRED
         server.APP_PIN_REQUIRED = False

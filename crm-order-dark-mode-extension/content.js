@@ -53,14 +53,28 @@ function setOrderProcessorButtonStyle(button, background, border) {
 function orderProcessorResultSummary(runtime) {
   const steps = Array.isArray(runtime && runtime.steps) ? runtime.steps : [];
   if (!steps.length) return String((runtime && runtime.lastMessage) || "");
-  const completed = steps.filter((step) => step && step.success && !step.skipped)
-    .map((step) => String(step.label || step.key || "Completed"));
+  const used = steps.filter((step) => step && step.success && !step.skipped)
+    .map((step) => String(step.label || step.key || "Used"));
   const skipped = steps.filter((step) => step && step.skipped)
     .map((step) => String(step.label || step.key || "Skipped"));
   const parts = [];
-  if (completed.length) parts.push(`Completed: ${completed.join(", ")}.`);
+  if (used.length) parts.push(`Used: ${used.join(", ")}.`);
   if (skipped.length) parts.push(`Not needed: ${skipped.join(", ")}.`);
   return parts.join(" ") || String((runtime && runtime.lastMessage) || "");
+}
+
+function refreshOrderAfterProcessorCompletion(runtime) {
+  if (!runtime || runtime.queued || runtime.running || runtime.lastSuccess === null || runtime.lastSuccess === undefined) return;
+  const orderId = currentOrderId();
+  const completedAt = String(runtime.completedAt || "");
+  if (!orderId || !completedAt || String(runtime.orderId || "") !== orderId) return;
+  const activeRunKey = `crm-auto-process-active:${orderId}`;
+  if (!sessionStorage.getItem(activeRunKey)) return;
+  const refreshKey = `crm-auto-process-refresh:${orderId}:${completedAt}`;
+  if (sessionStorage.getItem(refreshKey)) return;
+  sessionStorage.setItem(refreshKey, "1");
+  sessionStorage.removeItem(activeRunKey);
+  window.setTimeout(() => window.location.reload(), 300);
 }
 
 function setOrderProcessorResult(button, text, tone) {
@@ -122,6 +136,7 @@ function renderOrderProcessorStatus(button, response) {
     setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
     setOrderProcessorResult(button, "", "progress");
   }
+  refreshOrderAfterProcessorCompletion(runtime);
   return false;
 }
 
@@ -155,6 +170,17 @@ function beginOrderProcessorPolling(button) {
   orderProcessorPollTimer = setInterval(() => { void poll(); }, 2000);
 }
 
+async function loadOrderProcessorStatus(button) {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "crm-order-automation:status" });
+    if (response && response.success && renderOrderProcessorStatus(button, response)) {
+      beginOrderProcessorPolling(button);
+    }
+  } catch (_error) {
+    // The local app may not be running yet; the button remains available to start a run.
+  }
+}
+
 function ensureOrderProcessorButton() {
   if (!isOrderDocument() || !document.body) return;
   const sendInvoiceButton = findSendInvoiceButton();
@@ -184,6 +210,7 @@ function ensureOrderProcessorButton() {
           shippingTooExpensive: pageShowsShippingTooExpensive()
         });
         if (response && response.success) {
+          sessionStorage.setItem(`crm-auto-process-active:${orderId}`, "1");
           renderOrderProcessorStatus(button, response);
           beginOrderProcessorPolling(button);
         } else {
@@ -212,6 +239,7 @@ function ensureOrderProcessorButton() {
   if (!button.dataset.autoProcessState) setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
   button.style.setProperty("color", "#fff", "important");
   if (sendInvoiceButton.nextElementSibling !== button) sendInvoiceButton.insertAdjacentElement("afterend", button);
+  if (!existingButton) void loadOrderProcessorStatus(button);
 }
 
 function isOrderDocument() {
