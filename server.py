@@ -5038,6 +5038,9 @@ def _normalize_crm_single_order_id(raw):
 
 
 CRM_PROCESSING_FILTERS = ("rush", "free", "all", "813", "high_value")
+# "all" is a Processing mode.  "all_reports" deliberately has a different key so
+# report filtering can never confuse the two meanings of All.
+CRM_PROCESSING_REPORT_FILTERS = CRM_PROCESSING_FILTERS + ("all_reports",)
 CRM_PROCESSING_REPORT_STEPS = (
     "auto_process",
     "mass_emailer",
@@ -5420,6 +5423,8 @@ def _default_crm_processing_state():
         "report_tracking_started_at": None,
         "report_totals": {},
         "report_daily": {},
+        "report_mode_totals": {},
+        "report_mode_daily": {},
     }
 
 
@@ -5801,7 +5806,59 @@ def _normalize_crm_processing_report_daily(raw_daily):
     return cleaned
 
 
-def _add_crm_processing_report_result_at(state, timestamp, result):
+def _empty_crm_processing_report_mode_totals():
+    return {
+        processing_filter: _normalize_crm_processing_report_rows({})
+        for processing_filter in CRM_PROCESSING_FILTERS
+    }
+
+
+def _normalize_crm_processing_report_mode_totals(raw_totals):
+    source = raw_totals if isinstance(raw_totals, dict) else {}
+    return {
+        processing_filter: _normalize_crm_processing_report_rows(source.get(processing_filter))
+        for processing_filter in CRM_PROCESSING_FILTERS
+    }
+
+
+def _normalize_crm_processing_report_mode_daily(raw_daily):
+    source = raw_daily if isinstance(raw_daily, dict) else {}
+    return {
+        processing_filter: _normalize_crm_processing_report_daily(source.get(processing_filter))
+        for processing_filter in CRM_PROCESSING_FILTERS
+    }
+
+
+def _add_crm_processing_report_mode_result_at(mode_totals, mode_daily, processing_filter, timestamp, result):
+    if processing_filter not in CRM_PROCESSING_FILTERS:
+        return
+    try:
+        day_key = datetime.fromisoformat(str(timestamp)).date().isoformat()
+    except Exception:
+        day_key = datetime.now().date().isoformat()
+    totals = mode_totals.setdefault(processing_filter, _normalize_crm_processing_report_rows({}))
+    daily = mode_daily.setdefault(processing_filter, {})
+    day_rows = daily.setdefault(day_key, _normalize_crm_processing_report_rows({}))
+    _add_crm_processing_report_step(totals, result)
+    _add_crm_processing_report_step(day_rows, result)
+
+
+def _crm_processing_report_modes_from_history(history):
+    mode_totals = _empty_crm_processing_report_mode_totals()
+    mode_daily = {processing_filter: {} for processing_filter in CRM_PROCESSING_FILTERS}
+    for entry in history if isinstance(history, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        timestamp = str(entry.get("timestamp") or "").strip()
+        processing_filter = _normalize_crm_shipping_filter(entry.get("processing_filter") or "rush")
+        for result in _normalize_crm_processing_step_results(entry.get("step_results")):
+            _add_crm_processing_report_mode_result_at(
+                mode_totals, mode_daily, processing_filter, timestamp, result
+            )
+    return mode_totals, mode_daily
+
+
+def _add_crm_processing_report_result_at(state, timestamp, result, processing_filter=None):
     totals = _normalize_crm_processing_report_rows(state.get("report_totals"))
     daily = _normalize_crm_processing_report_daily(state.get("report_daily"))
     try:
@@ -5813,22 +5870,27 @@ def _add_crm_processing_report_result_at(state, timestamp, result):
     _add_crm_processing_report_step(day_rows, result)
     state["report_totals"] = totals
     state["report_daily"] = daily
+    mode_totals = _normalize_crm_processing_report_mode_totals(state.get("report_mode_totals"))
+    mode_daily = _normalize_crm_processing_report_mode_daily(state.get("report_mode_daily"))
+    _add_crm_processing_report_mode_result_at(mode_totals, mode_daily, processing_filter, timestamp, result)
+    state["report_mode_totals"] = mode_totals
+    state["report_mode_daily"] = mode_daily
     current_tracking = str(state.get("report_tracking_started_at") or "").strip()
     timestamp_text = str(timestamp)
     if not current_tracking or timestamp_text < current_tracking:
         state["report_tracking_started_at"] = timestamp_text
 
 
-def _append_crm_processing_report(state, timestamp, step_results):
+def _append_crm_processing_report(state, timestamp, step_results, processing_filter=None):
     for result in _normalize_crm_processing_step_results(step_results):
-        _add_crm_processing_report_result_at(state, timestamp, result)
+        _add_crm_processing_report_result_at(state, timestamp, result, processing_filter=processing_filter)
 
 
-def _record_crm_processing_report_result(timestamp, result):
+def _record_crm_processing_report_result(timestamp, result, processing_filter=None):
     ensure_crm_processing_state_file()
     with crm_processing_state_lock:
         state = load_crm_processing_state()
-        _add_crm_processing_report_result_at(state, timestamp, result)
+        _add_crm_processing_report_result_at(state, timestamp, result, processing_filter=processing_filter)
         save_crm_processing_state(state)
 
 
@@ -5847,9 +5909,8 @@ def _crm_processing_report_summary(rows):
     }
 
 
-def _build_crm_processing_report(state, now=None):
-    now = now or datetime.now()
-    daily = _normalize_crm_processing_report_daily(state.get("report_daily"))
+def _crm_processing_report_periods(totals, daily, now):
+    daily = _normalize_crm_processing_report_daily(daily)
     today = now.date()
     week_start = today - timedelta(days=today.weekday())
     month_start = today.replace(day=1)
@@ -5870,13 +5931,31 @@ def _build_crm_processing_report(state, now=None):
         return rows
 
     return {
+        "daily": _crm_processing_report_summary(_rows_for_period(today)),
+        "weekly": _crm_processing_report_summary(_rows_for_period(week_start)),
+        "monthly": _crm_processing_report_summary(_rows_for_period(month_start)),
+        "all": _crm_processing_report_summary(totals),
+    }
+
+
+def _build_crm_processing_report(state, now=None):
+    now = now or datetime.now()
+    all_periods = _crm_processing_report_periods(state.get("report_totals"), state.get("report_daily"), now)
+    mode_totals = _normalize_crm_processing_report_mode_totals(state.get("report_mode_totals"))
+    mode_daily = _normalize_crm_processing_report_mode_daily(state.get("report_mode_daily"))
+    filters = {"all_reports": all_periods}
+    filters.update({
+        processing_filter: _crm_processing_report_periods(
+            mode_totals.get(processing_filter), mode_daily.get(processing_filter), now
+        )
+        for processing_filter in CRM_PROCESSING_FILTERS
+    })
+
+    return {
         "tracking_started_at": state.get("report_tracking_started_at"),
-        "periods": {
-            "daily": _crm_processing_report_summary(_rows_for_period(today)),
-            "weekly": _crm_processing_report_summary(_rows_for_period(week_start)),
-            "monthly": _crm_processing_report_summary(_rows_for_period(month_start)),
-            "all": _crm_processing_report_summary(state.get("report_totals")),
-        },
+        # Kept for existing clients; new clients should select from filters.
+        "periods": all_periods,
+        "filters": filters,
     }
 
 
@@ -5884,6 +5963,8 @@ def _crm_processing_state_for_response(state):
     public_state = dict(state or {})
     public_state.pop("report_totals", None)
     public_state.pop("report_daily", None)
+    public_state.pop("report_mode_totals", None)
+    public_state.pop("report_mode_daily", None)
     return public_state
 
 
@@ -5893,6 +5974,7 @@ def load_crm_processing_state():
     loaded_free_unlocker_mode_available = False
     loaded_expanded_modes_available = False
     loaded_has_processing_report = False
+    loaded_has_processing_report_modes = False
     loaded_has_sheet_scanner_report = False
     if os.path.exists(CRM_PROCESSING_STATE_FILE):
         try:
@@ -5903,6 +5985,9 @@ def load_crm_processing_state():
                 loaded_free_unlocker_mode_available = bool(loaded.get("free_unlocker_mode_available"))
                 loaded_expanded_modes_available = bool(loaded.get("expanded_unlocker_order_goods_modes_available"))
                 loaded_has_processing_report = "report_totals" in loaded
+                loaded_has_processing_report_modes = (
+                    "report_mode_totals" in loaded and "report_mode_daily" in loaded
+                )
                 loaded_has_sheet_scanner_report = bool(loaded.get("report_sheet_scanner_available"))
                 state.update(loaded)
         except Exception as e:
@@ -5974,6 +6059,11 @@ def load_crm_processing_state():
         state["report_totals"] = report_totals
         state["report_daily"] = report_daily
         state["report_tracking_started_at"] = tracking_started_at
+    if loaded_has_processing_report_modes:
+        state["report_mode_totals"] = _normalize_crm_processing_report_mode_totals(state.get("report_mode_totals"))
+        state["report_mode_daily"] = _normalize_crm_processing_report_mode_daily(state.get("report_mode_daily"))
+    else:
+        state["report_mode_totals"], state["report_mode_daily"] = _crm_processing_report_modes_from_history(cleaned_history)
     if not loaded_has_sheet_scanner_report:
         for scanner_timestamp, scanner_result in _crm_processing_sheet_scanner_history_results():
             _add_crm_processing_report_result_at(state, scanner_timestamp, scanner_result)
@@ -6144,7 +6234,7 @@ def _persist_crm_processing_run_result(success, message, selected_steps, step_re
         }
         history = state.get("run_history") if isinstance(state.get("run_history"), list) else []
         state["run_history"] = [entry] + history[:19]
-        _append_crm_processing_report(state, timestamp, normalized_results)
+        _append_crm_processing_report(state, timestamp, normalized_results, processing_filter=normalized_filter)
         save_crm_processing_state(state)
 
     return state

@@ -225,7 +225,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .processing-report-header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}
 .processing-report-header h3{margin:0}
 .processing-report-filters{display:flex;gap:6px;flex-wrap:wrap}
-.processing-report-filter.active{background:#2563eb;border-color:#2563eb;color:#fff}
+.processing-report-filter.active,.processing-report-period.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .processing-report-metrics{display:grid;grid-template-columns:repeat(4,minmax(135px,1fr));gap:8px;margin-bottom:8px}
 .processing-report-metric{border:1px solid #d9e2ec;border-radius:8px;padding:8px;background:#f8fafc}
 .processing-report-metric .k{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.04em}
@@ -291,7 +291,7 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 :root[data-theme='dark'] button.toggle-btn.active,
 :root[data-theme='dark'] button.icon-btn.active,
 :root[data-theme='dark'] .tab-btn.active,
-:root[data-theme='dark'] .processing-report-filter.active{background:var(--vscode-blue);border-color:#007acc;color:#fff}
+:root[data-theme='dark'] .processing-report-filter.active,:root[data-theme='dark'] .processing-report-period.active{background:var(--vscode-blue);border-color:#007acc;color:#fff}
 :root[data-theme='dark'] button:disabled{background:#2d2d30!important;border-color:#3c3c3c!important;color:#777!important}
 :root[data-theme='dark'] .status{background:#181818;color:#d4d4d4;border:1px solid #3c3c3c}
 :root[data-theme='dark'] .muted,
@@ -628,11 +628,19 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
           <h3 class='vscode-blue-title'>Quick Report</h3>
           <div class='muted'>Orders, errors, and total automation time by processing tool.</div>
         </div>
+        <div class='processing-report-filters' aria-label='Processing report filter'>
+          <button class='secondary tiny processing-report-filter active' data-report-filter='all_reports' onclick="setCrmProcessingReportFilter('all_reports')">All Reports</button>
+          <button class='secondary tiny processing-report-filter' data-report-filter='free' onclick="setCrmProcessingReportFilter('free')">Free</button>
+          <button class='secondary tiny processing-report-filter' data-report-filter='rush' onclick="setCrmProcessingReportFilter('rush')">Rush</button>
+          <button class='secondary tiny processing-report-filter' data-report-filter='813' onclick="setCrmProcessingReportFilter('813')">813</button>
+          <button class='secondary tiny processing-report-filter' data-report-filter='all' onclick="setCrmProcessingReportFilter('all')">All</button>
+          <button class='secondary tiny processing-report-filter' data-report-filter='high_value' onclick="setCrmProcessingReportFilter('high_value')">High Value</button>
+        </div>
         <div class='processing-report-filters' aria-label='Processing report period'>
-          <button class='secondary tiny processing-report-filter active' data-period='daily' onclick="setCrmProcessingReportPeriod('daily')">Daily</button>
-          <button class='secondary tiny processing-report-filter' data-period='weekly' onclick="setCrmProcessingReportPeriod('weekly')">Weekly</button>
-          <button class='secondary tiny processing-report-filter' data-period='monthly' onclick="setCrmProcessingReportPeriod('monthly')">Monthly</button>
-          <button class='secondary tiny processing-report-filter' data-period='all' onclick="setCrmProcessingReportPeriod('all')">All Time</button>
+          <button class='secondary tiny processing-report-period active' data-period='daily' onclick="setCrmProcessingReportPeriod('daily')">Daily</button>
+          <button class='secondary tiny processing-report-period' data-period='weekly' onclick="setCrmProcessingReportPeriod('weekly')">Weekly</button>
+          <button class='secondary tiny processing-report-period' data-period='monthly' onclick="setCrmProcessingReportPeriod('monthly')">Monthly</button>
+          <button class='secondary tiny processing-report-period' data-period='all' onclick="setCrmProcessingReportPeriod('all')">All Time</button>
         </div>
       </div>
       <div class='processing-report-metrics'>
@@ -1245,6 +1253,7 @@ let crmProcessingStatusPayload = null;
 let crmProcessingPollTimer = null;
 let crmProcessingPollIntervalMs = 0;
 let crmProcessingReportPeriod = 'daily';
+let crmProcessingReportFilter = 'all_reports';
 let crmStatusPayload = null;
 let crmPollTimer = null;
 const CRM_HISTORY_PAGE_SIZE = 6;
@@ -1521,9 +1530,16 @@ function setCrmProcessingReportPeriod(period) {
   renderCrmProcessingReport(crmProcessingStatusPayload);
 }
 
+function setCrmProcessingReportFilter(filter) {
+  const normalized = ['all_reports', 'free', 'rush', '813', 'all', 'high_value'].includes(filter) ? filter : 'all_reports';
+  crmProcessingReportFilter = normalized;
+  renderCrmProcessingReport(crmProcessingStatusPayload);
+}
+
 function renderCrmProcessingReport(payload) {
   const report = payload && payload.report ? payload.report : {};
-  const periods = report && report.periods ? report.periods : {};
+  const reportFilters = report && report.filters ? report.filters : {};
+  const periods = reportFilters[crmProcessingReportFilter] || report.periods || {};
   const period = periods[crmProcessingReportPeriod] || {};
   const rows = Array.isArray(period.rows) ? period.rows : [];
   const periodLabels = {
@@ -1533,6 +1549,9 @@ function renderCrmProcessingReport(payload) {
     all: 'All tracked time',
   };
   document.querySelectorAll('.processing-report-filter').forEach((button) => {
+    button.classList.toggle('active', button.dataset.reportFilter === crmProcessingReportFilter);
+  });
+  document.querySelectorAll('.processing-report-period').forEach((button) => {
     button.classList.toggle('active', button.dataset.period === crmProcessingReportPeriod);
   });
   document.getElementById('crmProcessingReportOrders').textContent = String(Number(period.total_orders_processed || 0));
@@ -1559,7 +1578,10 @@ function renderCrmProcessingReport(payload) {
     if (crmProcessingReportPeriod === 'all' && report.tracking_started_at) {
       trackingText = ` Tracking began ${fmtDateTime(report.tracking_started_at)}.`;
     }
-    rangeEl.textContent = `${periodLabels[crmProcessingReportPeriod] || 'Selected period'}. Time saved is the total runtime recorded across the selected automations.${trackingText}`;
+    const filterLabels = {
+      all_reports: 'All Reports', free: 'Free', rush: 'Rush', '813': '813', all: 'All', high_value: 'High Value',
+    };
+    rangeEl.textContent = `${filterLabels[crmProcessingReportFilter] || 'All Reports'} — ${periodLabels[crmProcessingReportPeriod] || 'Selected period'}. Time saved is the total runtime recorded across the selected automations.${trackingText}`;
   }
   renderCrmProcessingErrorMore(payload);
 }

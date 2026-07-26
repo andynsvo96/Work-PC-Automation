@@ -8807,6 +8807,24 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertEqual(report["periods"]["all"]["total_errors"], 3)
         self.assertEqual(report["periods"]["all"]["total_duration_seconds"], 90.0)
 
+    def test_processing_report_mode_filters_keep_all_mode_separate_from_all_reports(self):
+        state = server._default_crm_processing_state()
+        result = {
+            "key": "address_validator_batch",
+            "success": True,
+            "order_count": 3,
+            "error_count": 0,
+            "duration_seconds": 12,
+        }
+        server._append_crm_processing_report(state, "2026-07-16T09:00:00", [result], processing_filter="free")
+        server._append_crm_processing_report(state, "2026-07-16T10:00:00", [result], processing_filter="all")
+
+        report = server._build_crm_processing_report(state, now=server.datetime(2026, 7, 16, 12, 0, 0))
+
+        self.assertEqual(report["filters"]["free"]["daily"]["total_orders_processed"], 3)
+        self.assertEqual(report["filters"]["all"]["daily"]["total_orders_processed"], 3)
+        self.assertEqual(report["filters"]["all_reports"]["daily"]["total_orders_processed"], 6)
+
     def test_processing_status_payload_includes_quick_report(self):
         with tempfile.TemporaryDirectory() as tmp:
             state_path = Path(tmp) / "crm_processing_state.json"
@@ -8816,6 +8834,7 @@ class CrmAddressServerTests(unittest.TestCase):
 
         self.assertIn("report", payload)
         self.assertEqual(set(payload["report"]["periods"]), {"daily", "weekly", "monthly", "all"})
+        self.assertEqual(set(payload["report"]["filters"]), {"free", "rush", "813", "all", "high_value", "all_reports"})
         self.assertEqual(len(payload["report"]["periods"]["all"]["rows"]), 9)
 
     def test_processing_report_backfills_live_sheet_scanner_history(self):
