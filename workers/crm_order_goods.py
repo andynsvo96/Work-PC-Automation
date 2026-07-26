@@ -1548,6 +1548,8 @@ AUTO_ORDER_SHIPMENT_COST_EXCEEDED = (
     "failed to auto order stock: purchase plan exceeded maximum shipment cost as percentage of product cost"
 )
 AUTO_ORDER_SUCCEEDED = "(auto order) goods have been ordered successfully"
+AUTOMATED_NOTES_PUSH_BACK_TEXT = "the following products are unable to be delivered on time"
+AUTOMATED_NOTES_STOCK_ISSUE_TEXT = "the following products do not have available inventory"
 
 
 def _classify_auto_order_feedback_text(text):
@@ -1559,6 +1561,76 @@ def _classify_auto_order_feedback_text(text):
     if AUTO_ORDER_SUCCEEDED in normalized:
         return "ordered"
     return None
+
+
+def _classify_automated_notes_text(text):
+    normalized = " ".join(str(text or "").lower().split())
+    if AUTOMATED_NOTES_PUSH_BACK_TEXT in normalized:
+        return "push_back"
+    if AUTOMATED_NOTES_STOCK_ISSUE_TEXT in normalized:
+        return "stock_issue"
+    return "unclassified"
+
+
+def _automated_notes_excerpt(text, maximum=500):
+    normalized = " ".join(str(text or "").split())
+    for marker in (AUTOMATED_NOTES_PUSH_BACK_TEXT, AUTOMATED_NOTES_STOCK_ISSUE_TEXT):
+        index = normalized.lower().find(marker)
+        if index >= 0:
+            return normalized[max(0, index - 80):index + len(marker) + 220][:maximum]
+    return normalized[:maximum]
+
+
+def _read_automated_notes_after_no_purchase_plan(driver, order_id):
+    """Refresh once, open Automated Notes, and classify CRM's stock explanation."""
+    try:
+        driver.refresh()
+        time.sleep(1.0)
+        _require_order_goods_page_ready(driver, order_id)
+        notes_tab = None
+        deadline = time.time() + 8
+        while time.time() < deadline and notes_tab is None:
+            for candidate in driver.find_elements(By.CSS_SELECTOR, "a[ng-click*='toggleAutomatedSalesNotes']"):
+                try:
+                    if candidate.is_displayed() and "automated notes" in (candidate.text or "").lower():
+                        notes_tab = candidate
+                        break
+                except Exception:
+                    continue
+            if notes_tab is None:
+                time.sleep(0.2)
+        if notes_tab is None:
+            return {
+                "classification": "unclassified",
+                "message": "CRM Automated Notes tab was not available after the No Purchase Plan error.",
+            }
+        _click_with_fallback(driver, notes_tab)
+        deadline = time.time() + 8
+        latest_text = ""
+        while time.time() < deadline:
+            try:
+                latest_text = str(driver.execute_script("return document.body ? document.body.innerText : '';"))
+            except Exception:
+                latest_text = ""
+            classification = _classify_automated_notes_text(latest_text)
+            if classification != "unclassified":
+                return {
+                    "classification": classification,
+                    "note": _automated_notes_excerpt(latest_text),
+                    "refreshed_once": True,
+                }
+            time.sleep(0.25)
+        return {
+            "classification": "unclassified",
+            "note": _automated_notes_excerpt(latest_text),
+            "message": "Automated Notes did not identify a delivery-delay or inventory issue.",
+            "refreshed_once": True,
+        }
+    except Exception as exc:
+        return {
+            "classification": "unclassified",
+            "message": f"Could not read Automated Notes after the No Purchase Plan error: {exc}",
+        }
 
 
 def _read_visible_auto_order_feedback(driver):
@@ -1834,6 +1906,8 @@ def _order_goods_for_open_order(
     if wait_for_auto_order_result:
         feedback = _wait_for_auto_order_feedback(driver)
         feedback_kind = str(feedback.get("kind") or "")
+        if feedback_kind == "no_purchase_plan":
+            feedback["automated_notes"] = _read_automated_notes_after_no_purchase_plan(driver, order_id)
         outcomes = {
             "ordered": (True, "auto_order_succeeded"),
             "no_purchase_plan": (False, "auto_order_no_purchase_plan"),

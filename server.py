@@ -5039,6 +5039,7 @@ def _normalize_crm_single_order_id(raw):
 
 CRM_PROCESSING_FILTERS = ("rush", "free", "all", "813", "high_value")
 CRM_PROCESSING_REPORT_STEPS = (
+    "auto_process",
     "mass_emailer",
     "address_validator_batch",
     "product_separator",
@@ -5238,6 +5239,8 @@ def _apply_crm_processing_mode_preferences_to_state(state, processing_filter=Non
 
 
 def _crm_processing_step_label(step_key):
+    if step_key == "auto_process":
+        return "Auto-Process"
     if step_key == "mass_emailer":
         return "Sheets Scanner"
     if step_key == "address_validator_batch":
@@ -5652,7 +5655,7 @@ def _normalize_crm_processing_step_results(items):
         if not isinstance(item, dict):
             continue
         step_key = str(item.get("key") or "").strip()
-        if step_key not in {"mass_emailer", "address_validator_batch", "product_separator", "auto_splitter", "stock_unlocker", "order_goods", "shipping_bypasser", "push_back"}:
+        if step_key not in {"auto_process", "mass_emailer", "address_validator_batch", "product_separator", "auto_splitter", "stock_unlocker", "order_goods", "shipping_bypasser", "push_back"}:
             continue
         metrics = _crm_processing_infer_step_metrics(item)
         cleaned.append(
