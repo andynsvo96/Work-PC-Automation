@@ -57,6 +57,14 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         self.assertFalse(server._is_chrome_extension_origin("chrome-extension://not-an-extension-id"))
         self.assertFalse(server._is_chrome_extension_origin("https://example.com"))
 
+    def test_shipping_cost_feedback_requests_bypass(self):
+        self.assertTrue(
+            server._crm_extension_order_shipping_cost_detected(
+                [{"payload": {"report": [{"outcome": "auto_order_shipment_cost_exceeded"}]}}]
+            )
+        )
+        self.assertFalse(server._crm_extension_order_shipping_cost_detected([{"payload": {"success": True}}]))
+
     def test_order_controls_do_not_require_pairing_and_validate_order_id(self):
         previous_required = server.APP_PIN_REQUIRED
         server.APP_PIN_REQUIRED = False

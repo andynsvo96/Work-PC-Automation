@@ -7799,6 +7799,56 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertTrue(crm_order_goods._text_indicates_stock_already_ordered("Stock Status: Ordered"))
         self.assertTrue(crm_order_goods._text_indicates_stock_already_ordered("Stock : Ordered"))
 
+    @mock.patch.object(crm_order_goods, "_page_indicates_stock_already_ordered", return_value=False)
+    @mock.patch.object(crm_order_goods, "_refresh_order_after_stock_unlock", return_value="locked")
+    @mock.patch.object(crm_order_goods, "_unlock_current_order_for_auto_ordering")
+    @mock.patch.object(crm_order_goods, "_page_indicates_stock_locked_for_auto_ordering", return_value=True)
+    @mock.patch.object(crm_order_goods, "_find_sanmar_order_goods_button")
+    def test_order_goods_uses_visible_locked_status_before_button_enabled_state(
+        self,
+        mock_button,
+        _mock_locked,
+        mock_unlock,
+        _mock_refresh,
+        _mock_ordered,
+    ):
+        mock_unlock.return_value = {"order_id": "4418860", "success": True, "outcome": "stock_unlocked"}
+
+        result = crm_order_goods._order_goods_for_open_order(mock.Mock(), "4418860", dry_run=False)
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["outcome"], "stock_unlock_not_confirmed")
+        mock_unlock.assert_called_once_with(mock.ANY, "4418860", dry_run=False, force=True)
+        mock_button.assert_not_called()
+
+    @mock.patch.object(crm_order_goods, "_click_confirmation_ok_if_present")
+    @mock.patch.object(crm_order_goods, "_click_with_fallback")
+    @mock.patch.object(crm_order_goods.time, "sleep")
+    def test_header_unlock_selects_typeahead_option_before_applying(self, _mock_sleep, mock_click, _mock_confirmation):
+        field = mock.Mock()
+        option = mock.Mock()
+        option.is_displayed.return_value = True
+        option.text = "Stock Auto Ordering Unlocked"
+        apply_button = mock.Mock()
+        apply_button.is_displayed.return_value = True
+        apply_button.is_enabled.return_value = True
+        driver = mock.Mock()
+
+        def find_elements(_by, selector):
+            if "orderStatusName" in selector:
+                return [field]
+            if "typeahead-popup" in selector:
+                return [option]
+            if "status-apply-btn" in selector:
+                return [apply_button]
+            return []
+
+        driver.find_elements.side_effect = find_elements
+
+        self.assertTrue(crm_order_goods._apply_stock_unlock_from_order_header(driver))
+        field.send_keys.assert_any_call(crm_order_goods.STOCK_UNLOCK_STATUS)
+        self.assertEqual(mock_click.call_args_list[-1].args[1], apply_button)
+
     def test_stock_tab_script_prefers_unique_header_design_tabs(self):
         self.assertIn("#main-header-design-tabs button", crm_order_goods.STOCK_TAB_SCRIPT)
         self.assertIn("if (!tabs.length)", crm_order_goods.STOCK_TAB_SCRIPT)
@@ -7874,7 +7924,8 @@ class CrmAddressServerTests(unittest.TestCase):
 
         self.assertIs(result, enabled_order_goods_button)
         script = driver.execute_script.call_args.args[0]
-        self.assertIn("directMatches", script)
+        self.assertIn("ancestorMatches", script)
+        self.assertIn("Never prefer an enabled Manual Order button", script)
         self.assertIn("!== 'order goods'", script)
 
     @mock.patch.object(crm_order_goods, "_order_goods_for_all_stock_tabs")
@@ -7945,6 +7996,27 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertTrue(results[0]["success"])
         self.assertEqual(results[0]["outcome"], "already_stock_ordered")
         self.assertTrue(results[0]["stock_unlocked_before_order_goods"])
+        mock_order_tabs.assert_not_called()
+
+    @mock.patch.object(crm_order_goods, "_order_goods_for_all_stock_tabs")
+    @mock.patch.object(crm_order_goods, "_wait_after_stock_unlock", return_value="timeout")
+    @mock.patch.object(crm_order_goods, "_unlock_current_order_for_auto_ordering")
+    @mock.patch.object(crm_order_goods, "_wait_for_order_goods_page_ready", return_value=True)
+    @mock.patch.object(crm_order_goods, "_open_target_order")
+    def test_order_goods_refuses_to_claim_unlock_without_confirmation(self, _mock_open, _mock_ready, mock_unlock, _mock_wait_after_unlock, mock_order_tabs):
+        mock_unlock.return_value = {
+            "order_id": "4418860",
+            "success": True,
+            "outcome": "stock_unlocked",
+            "message": "Unlock clicked.",
+            "manual_review_required": False,
+        }
+
+        results = crm_order_goods._run_order_with_driver(mock.Mock(), "4418860", dry_run=False)
+
+        self.assertFalse(results[0]["success"])
+        self.assertEqual(results[0]["outcome"], "stock_unlock_not_confirmed")
+        self.assertNotIn("stock_unlocked_before_order_goods", results[0])
         mock_order_tabs.assert_not_called()
 
     @mock.patch.object(crm_order_goods, "_order_goods_for_all_stock_tabs")

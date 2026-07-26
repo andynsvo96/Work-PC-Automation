@@ -10478,6 +10478,22 @@ def _crm_extension_order_split_not_needed(message, payload):
     return "only splits orders with more than" in text
 
 
+def _crm_extension_order_shipping_cost_detected(order_goods_results):
+    for item in order_goods_results if isinstance(order_goods_results, list) else []:
+        payload = item.get("payload") if isinstance(item, dict) else {}
+        try:
+            text = json.dumps(payload or {}, default=str).lower()
+        except Exception:
+            text = str(payload or "").lower()
+        if (
+            "auto_order_shipment_cost_exceeded" in text
+            or "shipping is too expensive" in text
+            or "shipment cost exceeded" in text
+        ):
+            return True
+    return False
+
+
 def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
     """Run the extension's intentionally single-order processing chain.
 
@@ -10609,7 +10625,8 @@ def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
         )
 
         bypass_ok = True
-        if shipping_too_expensive:
+        shipping_bypass_needed = bool(shipping_too_expensive or _crm_extension_order_shipping_cost_detected(order_goods_results))
+        if shipping_bypass_needed:
             _set_crm_extension_order_progress("shipping_bypasser", "Shipping is too expensive; running the bypasser.")
             bypass_results = []
             for target_order_id in target_order_ids:
@@ -10646,7 +10663,7 @@ def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
         # A successful bypass resolves an Order Goods failure caused by the
         # explicitly detected shipping-cost issue. Other failures still stop
         # the order for review.
-        overall_success = bool(bypass_ok and (order_goods_ok or shipping_too_expensive))
+        overall_success = bool(bypass_ok and (order_goods_ok or shipping_bypass_needed))
         summary = (
             f"Finished processing order {order_id}."
             if overall_success

@@ -227,10 +227,6 @@ const directMatches = controls
     disabled: !!control.disabled || control.getAttribute('disabled') !== null || /(?:^|\s)disabled(?:\s|$)/i.test(String(control.className || '')),
     top: centerY(control)
   }));
-if (directMatches.length) {
-  directMatches.sort((a, b) => Number(a.disabled) - Number(b.disabled) || a.top - b.top);
-  return directMatches[0].control;
-}
 const matches = [];
 for (const control of controls) {
   const controlText = lower(control.innerText || control.textContent || control.value || control.getAttribute('aria-label'));
@@ -252,6 +248,12 @@ const ancestorMatches = matches.filter((item) => item.score !== null);
 if (ancestorMatches.length) {
   ancestorMatches.sort((a, b) => a.score - b.score);
   return ancestorMatches[0].control;
+}
+// Never prefer an enabled Manual Order button over the disabled vendor button.
+// If no vendor context is available, fall back to the first direct match only.
+if (directMatches.length) {
+  directMatches.sort((a, b) => a.top - b.top);
+  return directMatches[0].control;
 }
 if (matches.length === 1) return matches[0].control;
 const vendorNodes = Array.from(document.querySelectorAll('body *')).filter((node) => {
@@ -1024,6 +1026,57 @@ return controls.find((node) => lower(node.innerText || node.textContent || node.
         return None
 
 
+def _apply_stock_unlock_from_order_header(driver):
+    """Select the actual Angular typeahead option in the order-header status input."""
+    fields = driver.find_elements(By.CSS_SELECTOR, "#status-menu-inputs input[ng-model='orderStatusName']")
+    if not fields:
+        return False
+    field = fields[0]
+    try:
+        _click_with_fallback(driver, field)
+        field.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
+        field.send_keys(Keys.DELETE)
+        field.send_keys(STOCK_UNLOCK_STATUS)
+    except Exception:
+        return False
+
+    option = None
+    deadline = time.time() + 6
+    while time.time() < deadline:
+        for candidate in driver.find_elements(By.CSS_SELECTOR, "#status-menu-inputs ul[typeahead-popup] li"):
+            try:
+                if candidate.is_displayed() and STOCK_UNLOCK_STATUS.lower() in (candidate.text or "").lower():
+                    option = candidate
+                    break
+            except Exception:
+                continue
+        if option is not None:
+            break
+        time.sleep(0.15)
+    if option is None:
+        return False
+    try:
+        _click_with_fallback(driver, option)
+    except Exception:
+        return False
+
+    deadline = time.time() + 4
+    while time.time() < deadline:
+        buttons = driver.find_elements(By.CSS_SELECTOR, "button.status-apply-btn")
+        if buttons:
+            try:
+                apply_button = buttons[0]
+                if apply_button.is_displayed() and apply_button.is_enabled():
+                    _click_with_fallback(driver, apply_button)
+                    time.sleep(0.8)
+                    _click_confirmation_ok_if_present(driver, timeout=2)
+                    return True
+            except Exception:
+                pass
+        time.sleep(0.15)
+    return False
+
+
 def _apply_stock_unlock_with_top_panel_script(driver):
     script = r"""
 const done = arguments[arguments.length - 1];
@@ -1200,6 +1253,8 @@ const timer = setInterval(() => {
 
 
 def _unlock_current_order_via_preview_panel(driver):
+    if _apply_stock_unlock_from_order_header(driver):
+        return
     scripted = _apply_stock_unlock_with_top_panel_script(driver)
     if scripted.get("success"):
         time.sleep(0.8)
@@ -1360,8 +1415,12 @@ def _unlock_current_order_for_auto_ordering(driver, order_id, dry_run=False, for
 
 
 def _wait_after_stock_unlock(driver, order_id, timeout=None, stock_tab_index=None):
-    timeout = timeout or 12
+    # CRM acknowledges the added status immediately but its separate Stock
+    # Status can take tens of seconds to move from Locked to Need To Order.
+    # Keep the single-order chain serialized until that transition is visible.
+    timeout = timeout or 75
     deadline = time.time() + timeout
+    stock_remained_locked = False
     while time.time() < deadline:
         _wait_for_order_goods_page_ready(driver, order_id, timeout=4)
         if stock_tab_index is not None:
@@ -1372,6 +1431,14 @@ def _wait_after_stock_unlock(driver, order_id, timeout=None, stock_tab_index=Non
                 pass
         if _page_indicates_stock_already_ordered(driver):
             return "ordered"
+        # A rendered Order Goods button alone is not enough: CRM keeps the
+        # button in the page while the order is still locked.  Do not report
+        # the unlock as successful until the visible Stock Status is no longer
+        # "Locked for Auto Ordering" as well.
+        if _page_indicates_stock_locked_for_auto_ordering(driver):
+            stock_remained_locked = True
+            time.sleep(1.0)
+            continue
         button = _find_sanmar_order_goods_button(driver, timeout=1)
         if button is not None:
             try:
@@ -1380,7 +1447,23 @@ def _wait_after_stock_unlock(driver, order_id, timeout=None, stock_tab_index=Non
             except Exception:
                 pass
         time.sleep(1.0)
-    return "timeout"
+    return "locked" if stock_remained_locked else "timeout"
+
+
+def _stock_unlock_not_confirmed_result(order_id, state, stock_tab_index=None):
+    suffix = f" on stock tab {int(stock_tab_index) + 1}" if stock_tab_index is not None else ""
+    if state == "locked":
+        detail = "CRM still shows 'Locked for Auto Ordering'"
+    else:
+        detail = "CRM did not expose an enabled Order Goods control after the status update"
+    return {
+        "order_id": order_id,
+        "success": False,
+        "outcome": "stock_unlock_not_confirmed",
+        "message": f"Stock Auto Ordering Unlocked was not confirmed{suffix}: {detail}. No Order Goods action was taken.",
+        "manual_review_required": True,
+        "stock_unlock_required": True,
+    }
 
 
 def _stock_unlock_message(unlock_result):
@@ -1391,6 +1474,8 @@ def _stock_unlock_message(unlock_result):
 
 def _mark_result_stock_unlocked(result, unlock_result):
     if not isinstance(result, dict):
+        return result
+    if not isinstance(unlock_result, dict) or not unlock_result.get("verified"):
         return result
     result["stock_unlocked_before_order_goods"] = True
     warnings = result.get("warnings")
@@ -1612,6 +1697,42 @@ def _order_goods_for_open_order(
 ):
     if not ignore_already_ordered and _page_indicates_stock_already_ordered(driver):
         return _stock_already_ordered_result(order_id)
+    # CRM sometimes leaves the disabled Order Goods control in the DOM and
+    # Selenium can report it as enabled.  The visible stock-status banner is
+    # authoritative, so unlock first whenever it still says Locked.
+    if allow_unlock_retry and _page_indicates_stock_locked_for_auto_ordering(driver):
+        unlock_result = _unlock_current_order_for_auto_ordering(driver, order_id, dry_run=dry_run, force=True)
+        if dry_run or not unlock_result or not unlock_result.get("success"):
+            return unlock_result or {
+                "order_id": order_id,
+                "success": False,
+                "outcome": "order_goods_locked",
+                "message": "Order still shows Locked for Auto Ordering and could not be unlocked.",
+                "manual_review_required": True,
+            }
+        post_unlock_state = _refresh_order_after_stock_unlock(driver, order_id, stock_tab_index=stock_tab_index)
+        if post_unlock_state == "ordered":
+            unlock_result["verified"] = True
+            return _mark_result_stock_unlocked(
+                _stock_already_ordered_result(
+                    order_id,
+                    "Skipped because stock was already ordered after applying Stock Auto Ordering Unlocked.",
+                ),
+                unlock_result,
+            )
+        if post_unlock_state != "orderable":
+            return _stock_unlock_not_confirmed_result(order_id, post_unlock_state, stock_tab_index=stock_tab_index)
+        unlock_result["verified"] = True
+        result = _order_goods_for_open_order(
+            driver,
+            order_id,
+            dry_run=dry_run,
+            allow_unlock_retry=False,
+            stock_tab_index=stock_tab_index,
+            ignore_already_ordered=ignore_already_ordered,
+            wait_for_auto_order_result=wait_for_auto_order_result,
+        )
+        return _mark_result_stock_unlocked(result, unlock_result)
     button = _find_sanmar_order_goods_button(driver)
     if button is None:
         button = _recover_missing_order_goods_button_once(driver, order_id, stock_tab_index=stock_tab_index)
@@ -1628,6 +1749,7 @@ def _order_goods_for_open_order(
                 }
             post_unlock_state = _refresh_order_after_stock_unlock(driver, order_id, stock_tab_index=stock_tab_index)
             if post_unlock_state == "ordered":
+                unlock_result["verified"] = True
                 return _mark_result_stock_unlocked(
                     _stock_already_ordered_result(
                         order_id,
@@ -1635,6 +1757,9 @@ def _order_goods_for_open_order(
                     ),
                     unlock_result,
                 )
+            if post_unlock_state != "orderable":
+                return _stock_unlock_not_confirmed_result(order_id, post_unlock_state, stock_tab_index=stock_tab_index)
+            unlock_result["verified"] = True
             result = _order_goods_for_open_order(
                 driver,
                 order_id,
@@ -1665,6 +1790,7 @@ def _order_goods_for_open_order(
                 }
             post_unlock_state = _refresh_order_after_stock_unlock(driver, order_id, stock_tab_index=stock_tab_index)
             if post_unlock_state == "ordered":
+                unlock_result["verified"] = True
                 return _mark_result_stock_unlocked(
                     _stock_already_ordered_result(
                         order_id,
@@ -1672,6 +1798,9 @@ def _order_goods_for_open_order(
                     ),
                     unlock_result,
                 )
+            if post_unlock_state != "orderable":
+                return _stock_unlock_not_confirmed_result(order_id, post_unlock_state, stock_tab_index=stock_tab_index)
+            unlock_result["verified"] = True
             result = _order_goods_for_open_order(
                 driver,
                 order_id,
@@ -1956,6 +2085,7 @@ def _run_order_with_driver(
         unlocked_message = unlock_result.get("message") or "Applied Stock Auto Ordering Unlocked before Order Goods."
         post_unlock_state = _wait_after_stock_unlock(driver, normalized_order_id)
         if post_unlock_state == "ordered":
+            unlock_result["verified"] = True
             result = _stock_already_ordered_result(
                 normalized_order_id,
                 "Skipped because stock was already ordered after applying Stock Auto Ordering Unlocked.",
@@ -1963,6 +2093,9 @@ def _run_order_with_driver(
             result["stock_unlocked_before_order_goods"] = True
             result["warnings"] = [unlocked_message]
             return [result]
+        if post_unlock_state != "orderable":
+            return [_stock_unlock_not_confirmed_result(normalized_order_id, post_unlock_state)]
+        unlock_result["verified"] = True
         _publish_status(f"Ordering stock tabs for order {normalized_order_id}.", stage="ordering_stock", order_id=normalized_order_id)
         if wait_for_auto_order_result:
             kwargs = {"dry_run": dry_run, "wait_for_auto_order_result": True}
@@ -2593,7 +2726,15 @@ def _run_single_with_mode(headless_mode, order_id, dry_run=False, profile_path=N
     )
     report_items = []
     try:
-        report_items = _run_order_with_driver(driver, normalized_order_id, dry_run=dry_run)
+        # A single-order run is used by Auto-Process. Wait for CRM's actual
+        # Auto Ordering response so a shipping-cost failure can be bypassed
+        # instead of being mistaken for a finished order.
+        report_items = _run_order_with_driver(
+            driver,
+            normalized_order_id,
+            dry_run=dry_run,
+            wait_for_auto_order_result=not dry_run,
+        )
         _publish_status(
             f"Finished Rush Order Goods order {normalized_order_id} (1/1 done).",
             stage="finished_order",
