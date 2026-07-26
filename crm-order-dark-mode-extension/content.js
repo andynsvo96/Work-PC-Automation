@@ -4,6 +4,7 @@ const ROOT_ATTRIBUTE = "data-crm-order-dark-mode";
 
 let themeEnabled = false;
 let refreshQueued = false;
+let orderProcessorPollTimer = null;
 
 function currentOrderId() {
   const match = `${window.location.pathname || ""}${window.location.hash || ""}`.match(/\/order\/(\d{7})\b/);
@@ -25,12 +26,95 @@ function findSendInvoiceButton() {
     .find((element) => crmControlLabel(element) === "send invoice");
 }
 
+function stopOrderProcessorPolling() {
+  if (orderProcessorPollTimer) {
+    clearInterval(orderProcessorPollTimer);
+    orderProcessorPollTimer = null;
+  }
+}
+
+function orderProcessorStageLabel(stage) {
+  const labels = {
+    queued: "Queued",
+    address_validator: "Address",
+    product_separator: "Separating",
+    auto_splitter: "Splitting",
+    order_goods: "Ordering goods",
+    shipping_bypasser: "Shipping bypass"
+  };
+  return labels[String(stage || "")] || "Processing";
+}
+
+function setOrderProcessorButtonStyle(button, background, border) {
+  button.style.setProperty("background", background, "important");
+  button.style.setProperty("border", `1px solid ${border}`, "important");
+}
+
+function renderOrderProcessorStatus(button, response) {
+  const runtime = response && response.runtime;
+  if (!runtime || (runtime.orderId && runtime.orderId !== currentOrderId())) return false;
+  const message = String(runtime.lastMessage || "");
+  button.title = message || "Validate address, separate products, split over 10 tabs, unlock/order goods, and bypass flagged shipping.";
+  if (runtime.running) {
+    button.dataset.autoProcessState = "running";
+    button.disabled = true;
+    button.textContent = `Auto-Process: ${orderProcessorStageLabel(runtime.currentStep)}`;
+    setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
+    return true;
+  }
+  button.disabled = false;
+  if (runtime.lastSuccess === true) {
+    button.dataset.autoProcessState = "complete";
+    const skipped = Array.isArray(runtime.steps) && runtime.steps.some((step) => step && step.skipped);
+    button.textContent = skipped ? "Auto-Process: Complete" : "Auto-Process: Done";
+    setOrderProcessorButtonStyle(button, skipped ? "#a16207" : "#15803d", skipped ? "#854d0e" : "#166534");
+  } else if (runtime.lastSuccess === false) {
+    button.dataset.autoProcessState = "review";
+    button.textContent = "Auto-Process: Review";
+    setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
+  } else {
+    delete button.dataset.autoProcessState;
+    button.textContent = "Auto-Process";
+    setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
+  }
+  return false;
+}
+
+function beginOrderProcessorPolling(button) {
+  stopOrderProcessorPolling();
+  const poll = async () => {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "crm-order-automation:status" });
+      if (!response || !response.success) {
+        button.dataset.autoProcessState = "review";
+        button.disabled = false;
+        button.textContent = "Pair in extension";
+        button.title = (response && response.message) || "Pair the extension from its toolbar popup, then try again.";
+        setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
+        stopOrderProcessorPolling();
+        return;
+      }
+      if (!renderOrderProcessorStatus(button, response)) stopOrderProcessorPolling();
+    } catch (_error) {
+      button.dataset.autoProcessState = "review";
+      button.disabled = false;
+      button.textContent = "Auto-Process: Review";
+      button.title = "Could not read the local Automation app status. Open the extension popup and pair again if needed.";
+      setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
+      stopOrderProcessorPolling();
+    }
+  };
+  void poll();
+  orderProcessorPollTimer = setInterval(() => { void poll(); }, 2000);
+}
+
 function ensureOrderProcessorButton() {
   if (!isOrderDocument() || !document.body) return;
   const sendInvoiceButton = findSendInvoiceButton();
   const existingButton = document.getElementById("crm-order-automation-button");
   if (!sendInvoiceButton) {
     existingButton?.remove();
+    stopOrderProcessorPolling();
     return;
   }
 
@@ -51,13 +135,22 @@ function ensureOrderProcessorButton() {
           orderId,
           shippingTooExpensive: pageShowsShippingTooExpensive()
         });
-        button.textContent = response && response.success ? "Processing started" : "Pair in extension";
-        if (!response || !response.success) button.title = (response && response.message) || "Pair the extension from its toolbar popup, then try again.";
+        if (response && response.success) {
+          renderOrderProcessorStatus(button, response);
+          beginOrderProcessorPolling(button);
+        } else {
+          button.dataset.autoProcessState = "review";
+          button.disabled = false;
+          button.textContent = "Pair in extension";
+          button.title = (response && response.message) || "Pair the extension from its toolbar popup, then try again.";
+          setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
+        }
       } catch (_error) {
+        button.dataset.autoProcessState = "review";
+        button.disabled = false;
         button.textContent = "Pair in extension";
         button.title = "Pair the extension from its toolbar popup, then try again.";
-      } finally {
-        setTimeout(() => { button.disabled = false; button.textContent = "Auto-Process"; }, 4000);
+        setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
       }
     });
   }
@@ -66,8 +159,7 @@ function ensureOrderProcessorButton() {
     position: "static", marginLeft: "8px", padding: "6px 12px", minHeight: "30px",
     borderRadius: "2px", font: "600 12px system-ui, sans-serif", cursor: "pointer"
   });
-  button.style.setProperty("background", "#0369a1", "important");
-  button.style.setProperty("border", "1px solid #075985", "important");
+  if (!button.dataset.autoProcessState) setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
   button.style.setProperty("color", "#fff", "important");
   if (sendInvoiceButton.nextElementSibling !== button) sendInvoiceButton.insertAdjacentElement("afterend", button);
 }
