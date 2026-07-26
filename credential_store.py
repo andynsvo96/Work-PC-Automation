@@ -184,9 +184,8 @@ def build_paycom_secret(password, pin):
     return json.dumps({"password": password, "pin": pin}, separators=(",", ":"))
 
 
-def read_paycom_credential():
-    """Read and validate the username, password, and PIN saved for Paycom."""
-    credential = read_credential(PAYCOM_CREDENTIAL_TARGET)
+def _parse_paycom_credential(credential):
+    """Validate a Paycom credential without exposing its secret in errors."""
     if credential.username == "PIN":
         raise CredentialStoreError(
             "The saved Paycom credential contains only a legacy PIN. "
@@ -208,6 +207,30 @@ def read_paycom_credential():
             "Run 'python manage_windows_credentials.py set paycom' to replace it."
         )
     return PaycomCredential(username=username, password=password, pin=pin)
+
+
+def read_paycom_credential():
+    """Read Paycom credentials, recovering from a stale portable Windows entry.
+
+    Older releases could leave a PIN-only or otherwise incomplete portable
+    credential behind.  The Windows setup command writes the native Windows
+    Credential Manager entry, so prefer that complete fallback when the
+    portable entry cannot satisfy Paycom's full login requirements.
+    """
+    credential = read_credential(PAYCOM_CREDENTIAL_TARGET)
+    try:
+        return _parse_paycom_credential(credential)
+    except CredentialStoreError as primary_error:
+        # On Windows, a stale keyring value may take precedence over the
+        # credential most recently saved with manage_windows_credentials.py.
+        # Only use the native value when it is distinct and fully valid.
+        native = _legacy_windows_read(PAYCOM_CREDENTIAL_TARGET, required=False)
+        if native is not None and native != credential:
+            try:
+                return _parse_paycom_credential(native)
+            except CredentialStoreError:
+                pass
+        raise primary_error
 
 
 # Compatibility name used by the current workers while their call sites are

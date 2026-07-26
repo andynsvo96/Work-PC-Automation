@@ -64,6 +64,23 @@ class CredentialStoreTests(unittest.TestCase):
             with self.assertRaises(credential_store.CredentialStoreError):
                 credential_store.read_paycom_credential()
 
+    def test_paycom_uses_complete_native_credential_when_primary_is_stale(self):
+        stale = credential_store.StoredCredential(
+            credential_store.PAYCOM_CREDENTIAL_TARGET, "paycom-user", "old-password"
+        )
+        native = credential_store.StoredCredential(
+            credential_store.PAYCOM_CREDENTIAL_TARGET,
+            "paycom-user",
+            credential_store.build_paycom_secret("new-password", "0123"),
+        )
+        with mock.patch.object(credential_store, "read_credential", return_value=stale), mock.patch.object(
+            credential_store, "_legacy_windows_read", return_value=native
+        ):
+            value = credential_store.read_paycom_credential()
+        self.assertEqual(value.username, "paycom-user")
+        self.assertEqual(value.password, "new-password")
+        self.assertEqual(value.pin, "0123")
+
 
 if __name__ == "__main__":
     unittest.main()

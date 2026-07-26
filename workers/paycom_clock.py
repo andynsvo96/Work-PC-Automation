@@ -247,8 +247,8 @@ def _run_once(action, effective_dry_run, profile_path, headless_mode):
             if pin_field:
                 print("Entering Paycom PIN...")
                 pin = credentials.pin
-            pin_field.clear()
-            pin_field.send_keys(pin)
+                pin_field.clear()
+                pin_field.send_keys(pin)
 
         # Click Log In
         login_btn = find_visible(driver, [
