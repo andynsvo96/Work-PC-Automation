@@ -3,6 +3,7 @@ const pageStatus = document.getElementById("page-status");
 const bridgeStatus = document.getElementById("bridge-status");
 const processorStatus = document.getElementById("processor-status");
 const processButton = document.getElementById("process-button");
+let processorPollTimer = null;
 
 function setStatus(message) { pageStatus.textContent = message; }
 
@@ -38,9 +39,36 @@ async function refreshProcessorStatus() {
     return;
   }
   const runtime = response.runtime || {};
-  processorStatus.textContent = runtime.running
-    ? `${runtime.currentStep || "Processing"}: ${runtime.lastMessage || "Working…"}`
-    : (runtime.lastMessage || "Ready to process the current order.");
+  const steps = Array.isArray(runtime.steps) ? runtime.steps : [];
+  if (runtime.queued) {
+    processorStatus.textContent = "Queued behind any active CRM automation.";
+    return true;
+  }
+  if (runtime.running) {
+    processorStatus.textContent = `${runtime.currentStep || "Processing"}: ${runtime.lastMessage || "Working…"}`;
+    return true;
+  }
+  if (runtime.lastSuccess === true && steps.length) {
+    const completed = steps.filter((step) => step && step.success && !step.skipped).map((step) => step.label || step.key);
+    const skipped = steps.filter((step) => step && step.skipped).map((step) => step.label || step.key);
+    processorStatus.textContent = `Completed: ${completed.join(", ") || "no action needed"}.${skipped.length ? ` Not needed: ${skipped.join(", ")}.` : ""}`;
+    return false;
+  }
+  processorStatus.textContent = runtime.lastMessage || "Ready to process the current order.";
+  return false;
+}
+
+function startProcessorPolling() {
+  if (processorPollTimer) clearInterval(processorPollTimer);
+  const poll = async () => {
+    const stillActive = await refreshProcessorStatus();
+    if (!stillActive && processorPollTimer) {
+      clearInterval(processorPollTimer);
+      processorPollTimer = null;
+    }
+  };
+  void poll();
+  processorPollTimer = setInterval(() => { void poll(); }, 2000);
 }
 
 async function initialize() {
@@ -53,7 +81,7 @@ async function initialize() {
   bridgeStatus.textContent = bridge && bridge.connected
     ? "Local Automation app bridge connected."
     : (bridge && bridge.message) || "Local Automation app bridge is unavailable.";
-  await refreshProcessorStatus();
+  if (await refreshProcessorStatus()) startProcessorPolling();
 }
 
 toggle.addEventListener("change", async () => {
@@ -70,7 +98,7 @@ processButton.addEventListener("click", async () => {
     return;
   }
   processButton.disabled = true;
-  processorStatus.textContent = "Starting all-in-one processing…";
+  processorStatus.textContent = "Sending the order to the CRM automation queue…";
   try {
     const response = await chrome.runtime.sendMessage({
       type: "crm-order-automation:start",
@@ -78,6 +106,7 @@ processButton.addEventListener("click", async () => {
       shippingTooExpensive: context.shippingTooExpensive === true
     });
     processorStatus.textContent = (response && response.message) || "Processing request sent.";
+    if (response && response.success) startProcessorPolling();
   } finally {
     processButton.disabled = false;
   }

@@ -50,6 +50,39 @@ function setOrderProcessorButtonStyle(button, background, border) {
   button.style.setProperty("border", `1px solid ${border}`, "important");
 }
 
+function orderProcessorResultSummary(runtime) {
+  const steps = Array.isArray(runtime && runtime.steps) ? runtime.steps : [];
+  if (!steps.length) return String((runtime && runtime.lastMessage) || "");
+  const completed = steps.filter((step) => step && step.success && !step.skipped)
+    .map((step) => String(step.label || step.key || "Completed"));
+  const skipped = steps.filter((step) => step && step.skipped)
+    .map((step) => String(step.label || step.key || "Skipped"));
+  const parts = [];
+  if (completed.length) parts.push(`Completed: ${completed.join(", ")}.`);
+  if (skipped.length) parts.push(`Not needed: ${skipped.join(", ")}.`);
+  return parts.join(" ") || String((runtime && runtime.lastMessage) || "");
+}
+
+function setOrderProcessorResult(button, text, tone) {
+  let result = document.getElementById("crm-order-automation-result");
+  if (!text) {
+    result?.remove();
+    return;
+  }
+  if (!result) {
+    result = document.createElement("span");
+    result.id = "crm-order-automation-result";
+    result.setAttribute("role", "status");
+    result.setAttribute("aria-live", "polite");
+    Object.assign(result.style, {
+      marginLeft: "8px", font: "600 11px system-ui, sans-serif", verticalAlign: "middle"
+    });
+    button.insertAdjacentElement("afterend", result);
+  }
+  result.textContent = text;
+  result.style.color = tone === "error" ? "#b91c1c" : (tone === "success" ? "#15803d" : "#075985");
+}
+
 function renderOrderProcessorStatus(button, response) {
   const runtime = response && response.runtime;
   if (!runtime || (runtime.orderId && runtime.orderId !== currentOrderId())) return false;
@@ -60,6 +93,7 @@ function renderOrderProcessorStatus(button, response) {
     button.disabled = true;
     button.textContent = "Auto-Process: Queued";
     setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
+    setOrderProcessorResult(button, "Queued behind any active CRM automation.", "progress");
     return true;
   }
   if (runtime.running) {
@@ -67,6 +101,7 @@ function renderOrderProcessorStatus(button, response) {
     button.disabled = true;
     button.textContent = `Auto-Process: ${orderProcessorStageLabel(runtime.currentStep)}`;
     setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
+    setOrderProcessorResult(button, message || "Working…", "progress");
     return true;
   }
   button.disabled = false;
@@ -75,14 +110,17 @@ function renderOrderProcessorStatus(button, response) {
     const skipped = Array.isArray(runtime.steps) && runtime.steps.some((step) => step && step.skipped);
     button.textContent = skipped ? "Auto-Process: Complete" : "Auto-Process: Done";
     setOrderProcessorButtonStyle(button, skipped ? "#a16207" : "#15803d", skipped ? "#854d0e" : "#166534");
+    setOrderProcessorResult(button, orderProcessorResultSummary(runtime), "success");
   } else if (runtime.lastSuccess === false) {
     button.dataset.autoProcessState = "review";
     button.textContent = "Auto-Process: Review";
     setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
+    setOrderProcessorResult(button, message || "Processing stopped and needs review.", "error");
   } else {
     delete button.dataset.autoProcessState;
     button.textContent = "Auto-Process";
     setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
+    setOrderProcessorResult(button, "", "progress");
   }
   return false;
 }
@@ -98,6 +136,7 @@ function beginOrderProcessorPolling(button) {
         button.textContent = "Auto-Process: Review";
         button.title = (response && response.message) || "Could not read the local Automation app status.";
         setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
+        setOrderProcessorResult(button, button.title, "error");
         stopOrderProcessorPolling();
         return;
       }
@@ -108,6 +147,7 @@ function beginOrderProcessorPolling(button) {
       button.textContent = "Auto-Process: Review";
       button.title = "Could not read the local Automation app status. Confirm the local app is running, then try again.";
       setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
+      setOrderProcessorResult(button, button.title, "error");
       stopOrderProcessorPolling();
     }
   };
@@ -136,6 +176,7 @@ function ensureOrderProcessorButton() {
       if (!orderId) return;
       button.disabled = true;
       button.textContent = "Starting…";
+      setOrderProcessorResult(button, "Sending the order to the CRM automation queue…", "progress");
       try {
         const response = await chrome.runtime.sendMessage({
           type: "crm-order-automation:start",
@@ -151,6 +192,7 @@ function ensureOrderProcessorButton() {
           button.textContent = "Auto-Process: Review";
           button.title = (response && response.message) || "Could not queue the order in the local Automation app.";
           setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
+          setOrderProcessorResult(button, button.title, "error");
         }
       } catch (_error) {
         button.dataset.autoProcessState = "review";
@@ -158,6 +200,7 @@ function ensureOrderProcessorButton() {
         button.textContent = "Auto-Process: Review";
         button.title = "Could not queue the order in the local Automation app.";
         setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
+        setOrderProcessorResult(button, button.title, "error");
       }
     });
   }
