@@ -55,6 +55,13 @@ function renderOrderProcessorStatus(button, response) {
   if (!runtime || (runtime.orderId && runtime.orderId !== currentOrderId())) return false;
   const message = String(runtime.lastMessage || "");
   button.title = message || "Validate address, separate products, split over 10 tabs, unlock/order goods, and bypass flagged shipping.";
+  if (runtime.queued) {
+    button.dataset.autoProcessState = "running";
+    button.disabled = true;
+    button.textContent = "Auto-Process: Queued";
+    setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
+    return true;
+  }
   if (runtime.running) {
     button.dataset.autoProcessState = "running";
     button.disabled = true;
@@ -88,8 +95,8 @@ function beginOrderProcessorPolling(button) {
       if (!response || !response.success) {
         button.dataset.autoProcessState = "review";
         button.disabled = false;
-        button.textContent = "Pair in extension";
-        button.title = (response && response.message) || "Pair the extension from its toolbar popup, then try again.";
+        button.textContent = "Auto-Process: Review";
+        button.title = (response && response.message) || "Could not read the local Automation app status.";
         setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
         stopOrderProcessorPolling();
         return;
@@ -99,7 +106,7 @@ function beginOrderProcessorPolling(button) {
       button.dataset.autoProcessState = "review";
       button.disabled = false;
       button.textContent = "Auto-Process: Review";
-      button.title = "Could not read the local Automation app status. Open the extension popup and pair again if needed.";
+      button.title = "Could not read the local Automation app status. Confirm the local app is running, then try again.";
       setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
       stopOrderProcessorPolling();
     }
@@ -141,15 +148,15 @@ function ensureOrderProcessorButton() {
         } else {
           button.dataset.autoProcessState = "review";
           button.disabled = false;
-          button.textContent = "Pair in extension";
-          button.title = (response && response.message) || "Pair the extension from its toolbar popup, then try again.";
+          button.textContent = "Auto-Process: Review";
+          button.title = (response && response.message) || "Could not queue the order in the local Automation app.";
           setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
         }
       } catch (_error) {
         button.dataset.autoProcessState = "review";
         button.disabled = false;
-        button.textContent = "Pair in extension";
-        button.title = "Pair the extension from its toolbar popup, then try again.";
+        button.textContent = "Auto-Process: Review";
+        button.title = "Could not queue the order in the local Automation app.";
         setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
       }
     });

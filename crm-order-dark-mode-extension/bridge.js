@@ -1,10 +1,9 @@
-// The v2 bridge keeps availability checks read-only and uses a separate,
-// loopback-only pairing token for the explicit single-order control path.
+// The v2 bridge is limited to the local Automation app and queues a single
+// CRM order without reading or storing the app PIN.
 
 export const LOCAL_AUTOMATION_ENDPOINT = "http://127.0.0.1:5123";
 export const LOCAL_BRIDGE_STATUS_ENDPOINT = `${LOCAL_AUTOMATION_ENDPOINT}/api/extension/bridge/status`;
 export const LOCAL_BRIDGE_PROTOCOL = "automation.chrome-extension.bridge/v2";
-export const LOCAL_BRIDGE_PAIR_ENDPOINT = `${LOCAL_AUTOMATION_ENDPOINT}/api/extension/bridge/pair`;
 export const LOCAL_ORDER_PROCESS_ENDPOINT = `${LOCAL_AUTOMATION_ENDPOINT}/api/extension/bridge/process-order`;
 export const LOCAL_ORDER_PROCESS_STATUS_ENDPOINT = `${LOCAL_ORDER_PROCESS_ENDPOINT}/status`;
 const REQUEST_TIMEOUT_MS = 2500;
@@ -55,21 +54,10 @@ export async function getLocalBridgeStatus() {
   }
 }
 
-export async function pairLocalBridge(pin) {
-  return bridgeFetch(LOCAL_BRIDGE_PAIR_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pin: String(pin || "") })
-  });
-}
-
-export async function startLocalOrderProcessing(token, orderId, shippingTooExpensive) {
+export async function startLocalOrderProcessing(orderId, shippingTooExpensive) {
   return bridgeFetch(LOCAL_ORDER_PROCESS_ENDPOINT, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       order_id: String(orderId || ""),
       shipping_too_expensive: shippingTooExpensive === true
@@ -77,9 +65,8 @@ export async function startLocalOrderProcessing(token, orderId, shippingTooExpen
   });
 }
 
-export async function getLocalOrderProcessingStatus(token) {
+export async function getLocalOrderProcessingStatus() {
   return bridgeFetch(LOCAL_ORDER_PROCESS_STATUS_ENDPOINT, {
-    method: "GET",
-    headers: { "Authorization": `Bearer ${token}` }
+    method: "GET"
   });
 }

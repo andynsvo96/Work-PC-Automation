@@ -2,8 +2,6 @@ const toggle = document.getElementById("theme-toggle");
 const pageStatus = document.getElementById("page-status");
 const bridgeStatus = document.getElementById("bridge-status");
 const processorStatus = document.getElementById("processor-status");
-const pairPin = document.getElementById("pair-pin");
-const pairButton = document.getElementById("pair-button");
 const processButton = document.getElementById("process-button");
 
 function setStatus(message) { pageStatus.textContent = message; }
@@ -36,7 +34,7 @@ async function getOrderContext(tab) {
 async function refreshProcessorStatus() {
   const response = await chrome.runtime.sendMessage({ type: "crm-order-automation:status" });
   if (!response || !response.success) {
-    processorStatus.textContent = (response && response.message) || "Pair the extension to enable order processing.";
+    processorStatus.textContent = (response && response.message) || "Local Automation app status is unavailable.";
     return;
   }
   const runtime = response.runtime || {};
@@ -62,18 +60,6 @@ toggle.addEventListener("change", async () => {
   const response = await chrome.runtime.sendMessage({ type: "crm-dark-mode:set-theme", enabled: toggle.checked });
   toggle.checked = response && response.enabled === true;
   await refreshPageStatus(await getActiveTab());
-});
-
-pairButton.addEventListener("click", async () => {
-  pairButton.disabled = true;
-  processorStatus.textContent = "Pairing…";
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "crm-order-automation:pair", pin: pairPin.value });
-    processorStatus.textContent = (response && response.message) || "Extension paired.";
-    if (response && response.success) pairPin.value = "";
-  } finally {
-    pairButton.disabled = false;
-  }
 });
 
 processButton.addEventListener("click", async () => {

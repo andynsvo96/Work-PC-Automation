@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "CRM Order Assistant",
   "version": "1.2.0",
-  "description": "Dark mode and paired, single-order processing controls for Printfly CRM order pages.",
+  "description": "Dark mode and queued, single-order processing controls for Printfly CRM order pages.",
   "permissions": ["storage", "tabs"],
   "host_permissions": [
     "https://crm2.legacy.printfly.com/*",

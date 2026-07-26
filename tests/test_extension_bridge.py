@@ -57,30 +57,21 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         self.assertFalse(server._is_chrome_extension_origin("chrome-extension://not-an-extension-id"))
         self.assertFalse(server._is_chrome_extension_origin("https://example.com"))
 
-    def test_pairing_issues_a_token_and_requires_it_for_order_controls(self):
+    def test_order_controls_do_not_require_pairing_and_validate_order_id(self):
         previous_required = server.APP_PIN_REQUIRED
         server.APP_PIN_REQUIRED = False
         try:
-            pair_response = self.client.post(
-                "/api/extension/bridge/pair",
-                json={},
-                headers={"Origin": self.ORIGIN},
-                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
-            )
-            self.assertEqual(pair_response.status_code, 200)
-            token = pair_response.get_json()["token"]
-
-            rejected = self.client.get(
+            status = self.client.get(
                 "/api/extension/bridge/process-order/status",
                 headers={"Origin": self.ORIGIN},
                 environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
             )
-            self.assertEqual(rejected.status_code, 401)
+            self.assertEqual(status.status_code, 200)
 
             invalid_order = self.client.post(
                 "/api/extension/bridge/process-order",
                 json={"order_id": "not-an-order"},
-                headers={"Origin": self.ORIGIN, "Authorization": f"Bearer {token}"},
+                headers={"Origin": self.ORIGIN},
                 environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
             )
             self.assertEqual(invalid_order.status_code, 409)
@@ -88,17 +79,17 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         finally:
             server.APP_PIN_REQUIRED = previous_required
 
-    def test_pairing_supports_chrome_service_worker_requests_without_origin(self):
+    def test_order_controls_support_chrome_service_worker_requests_without_origin(self):
         previous_required = server.APP_PIN_REQUIRED
         server.APP_PIN_REQUIRED = False
         try:
             response = self.client.post(
-                "/api/extension/bridge/pair",
-                json={},
+                "/api/extension/bridge/process-order",
+                json={"order_id": "not-an-order"},
                 environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
             )
-            self.assertEqual(response.status_code, 200)
-            self.assertTrue(response.get_json()["token"])
+            self.assertEqual(response.status_code, 409)
+            self.assertFalse(response.get_json()["success"])
         finally:
             server.APP_PIN_REQUIRED = previous_required
 

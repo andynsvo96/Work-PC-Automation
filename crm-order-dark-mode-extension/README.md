@@ -1,6 +1,6 @@
 # CRM Order Assistant
 
-Private Manifest V3 extension for the Automation project's CRM order pages. It provides local dark mode and a paired, single-order processing control. It never processes CRM report lists from the extension.
+Private Manifest V3 extension for the Automation project's CRM order pages. It provides local dark mode and a queued, single-order processing control. It never processes CRM report lists from the extension.
 
 ## Install locally
 
@@ -20,6 +20,6 @@ The manifest injects across the CRM host only to reach the embedded order frame;
 
 ## Local app bridge and processing button
 
-The extension checks `http://127.0.0.1:5123/api/extension/bridge/status` when its popup opens, so it can confirm the local Automation app is running. Before the processing control can be used, enter the local Automation app PIN in the popup and select **Pair**. The app returns a loopback-only token that expires after 12 hours and is scoped to this Chrome extension origin. The PIN is not stored by the extension.
+The extension checks `http://127.0.0.1:5123/api/extension/bridge/status` when its popup opens, so it can confirm the local Automation app is running. It never asks for, reads, or stores the Automation app PIN. The control bridge accepts only loopback Chrome-extension requests.
 
-Once paired, the **Process order** button on an open CRM order sends only that order number to the local app. It validates the address, separates mixed listed/non-listed products, splits orders with more than 10 tabs, unlocks stock as part of Order Goods, and orders every applicable stock tab. If the visible CRM page contains `Shipping is too expensive`, it then runs the shipping bypasser. The chain stops for manual review on an address, separation, or split failure; it does not fall back to batch reports.
+The **Process order** button on an open CRM order sends only that order number to the local app. It is placed in the Automation queue, so it waits for any active task instead of overlapping another automation. It validates the address, separates mixed listed/non-listed products, splits orders with more than 10 tabs, unlocks stock as part of Order Goods, and orders every applicable stock tab. If the visible CRM page contains `Shipping is too expensive`, it then runs the shipping bypasser. The chain stops for manual review on an address, separation, or split failure; it does not fall back to batch reports.

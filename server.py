@@ -5,7 +5,6 @@ Paycom Automation HTTP Server
 import ast
 import base64
 import gzip
-import hashlib
 import importlib
 import json
 import logging
@@ -169,7 +168,6 @@ SERVER_BIND_HOST = (
 )
 SERVER_PORT = 5123
 CHROME_EXTENSION_BRIDGE_PROTOCOL = "automation.chrome-extension.bridge/v2"
-CHROME_EXTENSION_BRIDGE_TOKEN_TTL_SECONDS = 12 * 60 * 60
 CLIPBOARD_PEER_URL = str(getattr(config_module, "AUTOMATION_CLIPBOARD_PEER_URL", "") or "").strip()
 SERVER_STARTED_AT = datetime.now()
 SERVER_START_GIT_STATE = get_git_version_state(SCRIPT_DIR)
@@ -206,9 +204,8 @@ crm_push_back_runtime_lock = threading.Lock()
 crm_auto_splitter_runtime_lock = threading.Lock()
 crm_processing_runtime_lock = threading.Lock()
 crm_extension_order_runtime_lock = threading.Lock()
-extension_bridge_token_lock = threading.Lock()
-extension_bridge_tokens = {}
 crm_extension_order_runtime = {
+    "queued": False,
     "running": False,
     "startedAt": None,
     "completedAt": None,
@@ -10443,6 +10440,16 @@ def _crm_extension_order_runtime_snapshot():
         return dict(crm_extension_order_runtime)
 
 
+def get_crm_extension_order_status_payload():
+    runtime = _crm_extension_order_runtime_snapshot()
+    return {
+        "success": True,
+        "queued": bool(runtime.get("queued")),
+        "running": bool(runtime.get("running")),
+        "runtime": runtime,
+    }
+
+
 def _set_crm_extension_order_progress(step, message):
     with crm_extension_order_runtime_lock:
         crm_extension_order_runtime["currentStep"] = step
@@ -10652,6 +10659,7 @@ def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
     finally:
         _audit_result("crm.extension_order", overall_success, summary)
         with crm_extension_order_runtime_lock:
+            crm_extension_order_runtime["queued"] = False
             crm_extension_order_runtime["running"] = False
             crm_extension_order_runtime["completedAt"] = datetime.now().isoformat()
             crm_extension_order_runtime["currentStep"] = None
@@ -10671,6 +10679,7 @@ def start_crm_extension_order_run(order_id, shipping_too_expensive=False):
     with crm_extension_order_runtime_lock:
         crm_extension_order_runtime.update(
             {
+                "queued": False,
                 "running": True,
                 "startedAt": datetime.now().isoformat(),
                 "completedAt": None,
@@ -10687,6 +10696,46 @@ def start_crm_extension_order_run(order_id, shipping_too_expensive=False):
         daemon=True,
     ).start()
     return True, f"All-in-one processing started for order {normalized_order_id}."
+
+
+def queue_crm_extension_order_run(order_id, shipping_too_expensive=False):
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    if not normalized_order_id:
+        return False, "Open a CRM order with a valid 7-digit order number first.", None
+    with crm_extension_order_runtime_lock:
+        crm_extension_order_runtime.update(
+            {
+                "queued": True,
+                "running": False,
+                "startedAt": None,
+                "completedAt": None,
+                "orderId": normalized_order_id,
+                "currentStep": "queued",
+                "lastMessage": f"Order {normalized_order_id} is waiting in the Automation queue.",
+                "lastSuccess": None,
+                "steps": [],
+            }
+        )
+    ok, message, task = enqueue_automation(
+        f"Auto-Process Order {normalized_order_id}",
+        "Processing",
+        lambda: run_crm_extension_order_run_queued(normalized_order_id, bool(shipping_too_expensive)),
+        details=f"Single CRM order {normalized_order_id}",
+        status_fn=get_crm_extension_order_status_payload,
+        task_type="crm.extension_order",
+        task_arguments={
+            "order_id": normalized_order_id,
+            "shipping_too_expensive": bool(shipping_too_expensive),
+        },
+        required_capability="crm",
+    )
+    if not ok:
+        with crm_extension_order_runtime_lock:
+            crm_extension_order_runtime["queued"] = False
+            crm_extension_order_runtime["currentStep"] = None
+            crm_extension_order_runtime["lastMessage"] = str(message)
+            crm_extension_order_runtime["lastSuccess"] = False
+    return ok, message, task
 
 
 def run_work(action, automatic=False):
@@ -11415,6 +11464,13 @@ def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enab
     return _wait_for_status_completion(get_crm_processing_status_payload, msg)
 
 
+def run_crm_extension_order_run_queued(order_id, shipping_too_expensive=False):
+    ok, msg = start_crm_extension_order_run(order_id, shipping_too_expensive=shipping_too_expensive)
+    if not ok:
+        return ok, msg
+    return _wait_for_status_completion(get_crm_extension_order_status_payload, msg)
+
+
 def _run_system_power_task(action):
     if not get_platform_snapshot().capabilities.get("system_power"):
         return False, "Windows only"
@@ -11446,6 +11502,7 @@ def register_shared_queue_task_executors():
         "crm.auto_splitter": run_crm_auto_splitter_run_queued,
         "crm.mass_emailer": run_crm_mass_emailer_run_queued,
         "crm.processing": run_crm_processing_run_queued,
+        "crm.extension_order": run_crm_extension_order_run_queued,
         "system.power": _run_system_power_task,
     }
     for task_type, executor in registrations.items():
@@ -11732,7 +11789,6 @@ def enforce_app_access_security():
         "/api/auth/login",
         "/api/auth/status",
         "/api/extension/bridge/status",
-        "/api/extension/bridge/pair",
         "/api/extension/bridge/process-order",
         "/api/extension/bridge/process-order/status",
     }
@@ -11767,9 +11823,8 @@ def add_security_headers(response):
 def _is_chrome_extension_origin(origin):
     """Return whether *origin* is a valid Chrome extension origin.
 
-    This is intentionally an origin check rather than authentication. The
-    initial bridge exposes availability only; future privileged routes must
-    use explicit pairing.
+    This is intentionally an origin check rather than application-session
+    authentication. The control routes remain loopback-only and queue work.
     """
     parsed = urlparse(str(origin or ""))
     extension_id = parsed.netloc
@@ -11798,42 +11853,10 @@ def _extension_bridge_request_is_local_extension():
     if str(request.remote_addr or "") not in {"127.0.0.1", "::1"}:
         return False
     # Chrome service-worker requests covered by an extension host permission
-    # can omit Origin. In that case the pairing PIN/token remains mandatory;
-    # a web page's cross-origin request still supplies (and fails) its Origin.
+    # can omit Origin. A web page's cross-origin request supplies (and fails)
+    # its Origin; this bridge is limited to loopback Chrome extension traffic.
     origin = request.headers.get("Origin")
     return not origin or _is_chrome_extension_origin(origin)
-
-
-def _extension_bridge_token_digest(token):
-    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
-
-
-def _issue_extension_bridge_token(origin):
-    token = secrets.token_urlsafe(32)
-    expires_at = time.monotonic() + CHROME_EXTENSION_BRIDGE_TOKEN_TTL_SECONDS
-    with extension_bridge_token_lock:
-        extension_bridge_tokens[_extension_bridge_token_digest(token)] = {
-            "origin": origin,
-            "expires_at": expires_at,
-        }
-    return token
-
-
-def _extension_bridge_authorized():
-    if not _extension_bridge_request_is_local_extension():
-        return False
-    token = str(request.headers.get("Authorization") or "")
-    if not token.startswith("Bearer "):
-        return False
-    digest = _extension_bridge_token_digest(token[7:].strip())
-    origin = request.headers.get("Origin")
-    now = time.monotonic()
-    with extension_bridge_token_lock:
-        expired = [key for key, value in extension_bridge_tokens.items() if value.get("expires_at", 0) <= now]
-        for key in expired:
-            extension_bridge_tokens.pop(key, None)
-        record = extension_bridge_tokens.get(digest)
-    return bool(record and record.get("origin") == origin and record.get("expires_at", 0) > now)
 
 
 @app.route("/login", methods=["GET"])
@@ -11948,7 +11971,7 @@ def api_chrome_extension_bridge_status():
     # Extension service-worker fetches are authorized by Chrome host
     # permissions and can omit Origin. The endpoint is loopback-only and
     # contains no data, so permit that request shape while rejecting every web
-    # origin. Any future privileged bridge endpoint must use explicit pairing.
+    # origin.
     if origin and not _is_chrome_extension_origin(origin):
         return jsonify({"success": False, "message": "Chrome extension origin required."}), 403
 
@@ -11956,29 +11979,7 @@ def api_chrome_extension_bridge_status():
         {
             "success": True,
             "protocol": CHROME_EXTENSION_BRIDGE_PROTOCOL,
-            "message": "Local Automation app bridge is available. Pair the extension before using order controls.",
-        }
-    )
-
-
-@app.route("/api/extension/bridge/pair", methods=["POST", "OPTIONS"])
-def api_chrome_extension_bridge_pair():
-    if request.method == "OPTIONS":
-        return _extension_bridge_response({"success": True})
-    if not _extension_bridge_request_is_local_extension():
-        return _extension_bridge_response({"success": False, "message": "Chrome extension requests must use loopback."}, 403)
-    if APP_PIN_REQUIRED:
-        initialize_app_security()
-        data = request.get_json(silent=True) or {}
-        if app_security_config is None or not app_security_config.verify_pin(data.get("pin")):
-            return _extension_bridge_response({"success": False, "message": "The Automation app PIN is required to pair this extension."}, 401)
-    token = _issue_extension_bridge_token(request.headers.get("Origin"))
-    return _extension_bridge_response(
-        {
-            "success": True,
-            "token": token,
-            "expires_in_seconds": CHROME_EXTENSION_BRIDGE_TOKEN_TTL_SECONDS,
-            "message": "Extension paired with the local Automation app.",
+            "message": "Local Automation app bridge is available.",
         }
     )
 
@@ -11987,24 +11988,25 @@ def api_chrome_extension_bridge_pair():
 def api_chrome_extension_bridge_process_order():
     if request.method == "OPTIONS":
         return _extension_bridge_response({"success": True})
-    if not _extension_bridge_authorized():
-        return _extension_bridge_response({"success": False, "message": "Pair the extension with the local app before starting an order."}, 401)
+    if not _extension_bridge_request_is_local_extension():
+        return _extension_bridge_response({"success": False, "message": "Chrome extension requests must use loopback."}, 403)
     data = request.get_json(silent=True) or {}
-    ok, message = start_crm_extension_order_run(
+    ok, message, task = queue_crm_extension_order_run(
         data.get("order_id"),
         shipping_too_expensive=bool(data.get("shipping_too_expensive")),
     )
-    payload = _crm_extension_order_runtime_snapshot()
-    return _extension_bridge_response({"success": ok, "message": message, "runtime": payload}, 200 if ok else 409)
+    payload = get_crm_extension_order_status_payload()
+    payload.update({"success": ok, "message": message, "queued": ok, "queue_task": task})
+    return _extension_bridge_response(payload, 202 if ok else 409)
 
 
 @app.route("/api/extension/bridge/process-order/status", methods=["GET", "OPTIONS"])
 def api_chrome_extension_bridge_process_order_status():
     if request.method == "OPTIONS":
         return _extension_bridge_response({"success": True})
-    if not _extension_bridge_authorized():
-        return _extension_bridge_response({"success": False, "message": "Pair the extension with the local app to view order status."}, 401)
-    return _extension_bridge_response({"success": True, "runtime": _crm_extension_order_runtime_snapshot()})
+    if not _extension_bridge_request_is_local_extension():
+        return _extension_bridge_response({"success": False, "message": "Chrome extension requests must use loopback."}, 403)
+    return _extension_bridge_response(get_crm_extension_order_status_payload())
 
 
 @app.route("/service-worker.js", methods=["GET"])
