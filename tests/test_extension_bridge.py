@@ -88,6 +88,20 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         finally:
             server.APP_PIN_REQUIRED = previous_required
 
+    def test_pairing_supports_chrome_service_worker_requests_without_origin(self):
+        previous_required = server.APP_PIN_REQUIRED
+        server.APP_PIN_REQUIRED = False
+        try:
+            response = self.client.post(
+                "/api/extension/bridge/pair",
+                json={},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.get_json()["token"])
+        finally:
+            server.APP_PIN_REQUIRED = previous_required
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11795,10 +11795,13 @@ def _extension_bridge_response(payload, status_code=200):
 
 
 def _extension_bridge_request_is_local_extension():
-    return (
-        str(request.remote_addr or "") in {"127.0.0.1", "::1"}
-        and _is_chrome_extension_origin(request.headers.get("Origin"))
-    )
+    if str(request.remote_addr or "") not in {"127.0.0.1", "::1"}:
+        return False
+    # Chrome service-worker requests covered by an extension host permission
+    # can omit Origin. In that case the pairing PIN/token remains mandatory;
+    # a web page's cross-origin request still supplies (and fails) its Origin.
+    origin = request.headers.get("Origin")
+    return not origin or _is_chrome_extension_origin(origin)
 
 
 def _extension_bridge_token_digest(token):
