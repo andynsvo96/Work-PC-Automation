@@ -6,6 +6,7 @@ export const LOCAL_BRIDGE_STATUS_ENDPOINT = `${LOCAL_AUTOMATION_ENDPOINT}/api/ex
 export const LOCAL_BRIDGE_PROTOCOL = "automation.chrome-extension.bridge/v2";
 export const LOCAL_ORDER_PROCESS_ENDPOINT = `${LOCAL_AUTOMATION_ENDPOINT}/api/extension/bridge/process-order`;
 export const LOCAL_ORDER_PROCESS_STATUS_ENDPOINT = `${LOCAL_ORDER_PROCESS_ENDPOINT}/status`;
+export const LOCAL_MANUAL_ORDER_PROCESS_ENDPOINT = `${LOCAL_ORDER_PROCESS_ENDPOINT}/manual`;
 const REQUEST_TIMEOUT_MS = 2500;
 
 async function bridgeFetch(endpoint, options = {}) {
@@ -61,6 +62,17 @@ export async function startLocalOrderProcessing(orderId, shippingTooExpensive) {
     body: JSON.stringify({
       order_id: String(orderId || ""),
       shipping_too_expensive: shippingTooExpensive === true
+    })
+  });
+}
+
+export async function startLocalManualOrderProcessing(orderId, automation) {
+  return bridgeFetch(LOCAL_MANUAL_ORDER_PROCESS_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      order_id: String(orderId || ""),
+      automation: String(automation || "")
     })
   });
 }

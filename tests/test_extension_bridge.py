@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 import server
 
@@ -245,6 +246,35 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
             self.assertFalse(response.get_json()["success"])
         finally:
             server.APP_PIN_REQUIRED = previous_required
+
+    def test_manual_order_control_queues_only_the_selected_single_order_automation(self):
+        with mock.patch(
+            "server.enqueue_automation",
+            return_value=(True, "Product Separator queued.", {"id": "task-1", "status": "queued"}),
+        ) as enqueue:
+            response = self.client.post(
+                "/api/extension/bridge/process-order/manual",
+                json={"order_id": "4917538", "automation": "product_separator"},
+                headers={"Origin": self.ORIGIN},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.get_json()["success"])
+        self.assertEqual(enqueue.call_args.kwargs["task_type"], "crm.product_separator")
+        self.assertEqual(enqueue.call_args.kwargs["task_arguments"]["order_id"], "4917538")
+        self.assertEqual(enqueue.call_args.kwargs["task_arguments"]["list_mode"], "all")
+
+    def test_manual_order_control_rejects_unknown_automation(self):
+        response = self.client.post(
+            "/api/extension/bridge/process-order/manual",
+            json={"order_id": "4917538", "automation": "not-real"},
+            headers={"Origin": self.ORIGIN},
+            environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.get_json()["success"])
 
 
 if __name__ == "__main__":

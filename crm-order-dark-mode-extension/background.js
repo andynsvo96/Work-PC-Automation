@@ -1,6 +1,7 @@
 import {
   getLocalBridgeStatus,
   getLocalOrderProcessingStatus,
+  startLocalManualOrderProcessing,
   startLocalOrderProcessing
 } from "./bridge.js";
 
@@ -35,6 +36,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     startLocalOrderProcessing(message.orderId, message.shippingTooExpensive)
       .then(sendResponse)
       .catch((error) => sendResponse({ success: false, message: error.message || "Could not queue processing." }));
+    return true;
+  }
+  if (message.type === "crm-order-automation:manual-start") {
+    startLocalManualOrderProcessing(message.orderId, message.automation)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ success: false, message: error.message || "Could not queue manual processing." }));
     return true;
   }
   if (message.type === "crm-order-automation:status") {

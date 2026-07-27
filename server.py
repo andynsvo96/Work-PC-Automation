@@ -11079,6 +11079,93 @@ def queue_crm_extension_order_run(order_id, shipping_too_expensive=False):
     return ok, message, task
 
 
+# These are intentionally limited to operations that can safely target the
+# single order currently open in CRM.  The extension must never use this
+# bridge to start a report-wide batch automation.
+CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS = {
+    "address_validator": {
+        "label": "Address Validator",
+        "task_type": "crm.address_validator",
+        "status_fn": get_crm_address_status_payload,
+        "task_arguments": lambda order_id: {
+            "order_id": order_id,
+            "dry_run": False,
+            "action": "validate_order",
+            "parallel_workers": 1,
+        },
+        "runner": lambda order_id: run_crm_address_run_queued(
+            order_id=order_id, dry_run=False, action="validate_order", parallel_workers=1
+        ),
+    },
+    "product_separator": {
+        "label": "Product Separator",
+        "task_type": "crm.product_separator",
+        "status_fn": get_crm_product_separator_status_payload,
+        "task_arguments": lambda order_id: {
+            "order_id": order_id,
+            "dry_run": False,
+            "list_mode": "all",
+            "parallel_workers": 1,
+        },
+        "runner": lambda order_id: run_crm_product_separator_run_queued(
+            order_id=order_id, dry_run=False, list_mode="all", parallel_workers=1
+        ),
+    },
+    "order_goods": {
+        "label": "Order Goods",
+        "task_type": "crm.order_goods",
+        "status_fn": get_crm_order_goods_status_payload,
+        "task_arguments": lambda order_id: {"order_id": order_id, "dry_run": False, "parallel_workers": 1},
+        "runner": lambda order_id: run_crm_order_goods_run_queued(
+            order_id=order_id, dry_run=False, parallel_workers=1
+        ),
+    },
+    "shipping_bypasser": {
+        "label": "Shipping Bypasser",
+        "task_type": "crm.shipping_bypasser",
+        "status_fn": get_crm_shipping_bypasser_status_payload,
+        "task_arguments": lambda order_id: {"order_id": order_id, "dry_run": False},
+        "runner": lambda order_id: run_crm_shipping_bypasser_run_queued(order_id=order_id, dry_run=False),
+    },
+    "push_back": {
+        "label": "Push Back",
+        "task_type": "crm.push_back",
+        "status_fn": get_crm_push_back_status_payload,
+        "task_arguments": lambda order_id: {
+            "order_id": order_id,
+            "dry_run": False,
+            "processing_filter": "rush",
+            "parallel_workers": 1,
+        },
+        "runner": lambda order_id: run_crm_push_back_run_queued(
+            order_id=order_id, dry_run=False, processing_filter="rush", parallel_workers=1
+        ),
+    },
+}
+
+
+def queue_crm_extension_manual_order_run(order_id, automation_key):
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    if not normalized_order_id:
+        return False, "Open a CRM order with a valid 7-digit order number first.", None
+    automation = CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS.get(str(automation_key or "").strip().lower())
+    if not automation:
+        return False, "Choose a supported manual automation.", None
+
+    label = automation["label"]
+    ok, message, task = enqueue_automation(
+        f"{label} Order {normalized_order_id}",
+        "Processing",
+        lambda: automation["runner"](normalized_order_id),
+        details=f"Single CRM order {normalized_order_id}",
+        status_fn=automation["status_fn"],
+        task_type=automation["task_type"],
+        task_arguments=automation["task_arguments"](normalized_order_id),
+        required_capability="crm",
+    )
+    return ok, message, task
+
+
 def run_work(action, automatic=False):
     mode = "automatic" if automatic else "manual"
     automation_name = f"work.{action}.{mode}"
@@ -12132,6 +12219,7 @@ def enforce_app_access_security():
         "/api/extension/bridge/status",
         "/api/extension/bridge/process-order",
         "/api/extension/bridge/process-order/status",
+        "/api/extension/bridge/process-order/manual",
     }
     if request.path in public_paths:
         return None
@@ -12348,6 +12436,28 @@ def api_chrome_extension_bridge_process_order_status():
     if not _extension_bridge_request_is_local_extension():
         return _extension_bridge_response({"success": False, "message": "Chrome extension requests must use loopback."}, 403)
     return _extension_bridge_response(get_crm_extension_order_status_payload())
+
+
+@app.route("/api/extension/bridge/process-order/manual", methods=["POST", "OPTIONS"])
+def api_chrome_extension_bridge_manual_process_order():
+    if request.method == "OPTIONS":
+        return _extension_bridge_response({"success": True})
+    if not _extension_bridge_request_is_local_extension():
+        return _extension_bridge_response({"success": False, "message": "Chrome extension requests must use loopback."}, 403)
+    data = request.get_json(silent=True) or {}
+    ok, message, task = queue_crm_extension_manual_order_run(
+        data.get("order_id"),
+        data.get("automation"),
+    )
+    return _extension_bridge_response(
+        {
+            "success": ok,
+            "message": message,
+            "automation": str(data.get("automation") or "").strip().lower(),
+            "queue_task": task,
+        },
+        202 if ok else 409,
+    )
 
 
 @app.route("/service-worker.js", methods=["GET"])

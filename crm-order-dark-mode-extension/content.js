@@ -6,6 +6,14 @@ let themeEnabled = false;
 let refreshQueued = false;
 let orderProcessorPollTimer = null;
 
+const MANUAL_ORDER_AUTOMATIONS = [
+  { key: "address_validator", label: "Address Validator" },
+  { key: "product_separator", label: "Product Separator" },
+  { key: "order_goods", label: "Order Goods" },
+  { key: "shipping_bypasser", label: "Shipping Bypasser" },
+  { key: "push_back", label: "Push Back" }
+];
+
 function currentOrderId() {
   const match = `${window.location.pathname || ""}${window.location.hash || ""}`.match(/\/order\/(\d{7})\b/);
   return match ? match[1] : "";
@@ -181,12 +189,93 @@ async function loadOrderProcessorStatus(button) {
   }
 }
 
+function ensureManualOrderProcessorControl(autoProcessButton) {
+  const existing = document.getElementById("crm-order-manual-process-control");
+  if (existing) return existing;
+
+  const control = document.createElement("span");
+  control.id = "crm-order-manual-process-control";
+  Object.assign(control.style, { position: "relative", display: "inline-block", marginLeft: "8px", verticalAlign: "middle" });
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.id = "crm-order-manual-process-button";
+  button.textContent = "Manual Process";
+  button.title = "Choose one automation to run for this order only.";
+  Object.assign(button.style, {
+    padding: "6px 12px", minHeight: "30px", borderRadius: "2px", cursor: "pointer",
+    font: "600 12px system-ui, sans-serif", color: "#fff", background: "#475569", border: "1px solid #334155"
+  });
+
+  const menu = document.createElement("div");
+  menu.hidden = true;
+  menu.setAttribute("role", "menu");
+  menu.setAttribute("aria-label", "Manual automation choices");
+  Object.assign(menu.style, {
+    position: "absolute", zIndex: "2147483647", top: "calc(100% + 4px)", left: "0", minWidth: "190px",
+    padding: "4px", borderRadius: "4px", background: "#fff", border: "1px solid #94a3b8",
+    boxShadow: "0 6px 18px rgba(15,23,42,.22)"
+  });
+
+  for (const automation of MANUAL_ORDER_AUTOMATIONS) {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.textContent = automation.label;
+    option.setAttribute("role", "menuitem");
+    Object.assign(option.style, {
+      display: "block", width: "100%", padding: "7px 9px", border: "0", borderRadius: "3px", cursor: "pointer",
+      textAlign: "left", color: "#0f172a", background: "transparent", font: "600 12px system-ui, sans-serif"
+    });
+    option.addEventListener("mouseenter", () => { option.style.background = "#e0f2fe"; });
+    option.addEventListener("mouseleave", () => { option.style.background = "transparent"; });
+    option.addEventListener("click", async () => {
+      const orderId = currentOrderId();
+      if (!orderId) return;
+      menu.hidden = true;
+      button.disabled = true;
+      button.textContent = `Queuing ${automation.label}…`;
+      setOrderProcessorResult(autoProcessButton, `Sending ${automation.label} for order ${orderId} to the CRM automation queue…`, "progress");
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "crm-order-automation:manual-start",
+          orderId,
+          automation: automation.key
+        });
+        if (response && response.success) {
+          button.textContent = "Manual Process: Queued";
+          button.title = `${automation.label} is queued for order ${orderId}.`;
+          setOrderProcessorResult(autoProcessButton, `${automation.label} is queued for order ${orderId}.`, "success");
+        } else {
+          button.disabled = false;
+          button.textContent = "Manual Process";
+          button.title = (response && response.message) || "Could not queue the selected automation.";
+          setOrderProcessorResult(autoProcessButton, button.title, "error");
+        }
+      } catch (_error) {
+        button.disabled = false;
+        button.textContent = "Manual Process";
+        button.title = "Could not queue the selected automation. Confirm the local Automation app is running, then try again.";
+        setOrderProcessorResult(autoProcessButton, button.title, "error");
+      }
+    });
+    menu.appendChild(option);
+  }
+
+  button.addEventListener("click", () => {
+    menu.hidden = !menu.hidden;
+  });
+  control.append(button, menu);
+  autoProcessButton.insertAdjacentElement("afterend", control);
+  return control;
+}
+
 function ensureOrderProcessorButton() {
   if (!isOrderDocument() || !document.body) return;
   const sendInvoiceButton = findSendInvoiceButton();
   const existingButton = document.getElementById("crm-order-automation-button");
   if (!sendInvoiceButton) {
     existingButton?.remove();
+    document.getElementById("crm-order-manual-process-control")?.remove();
     stopOrderProcessorPolling();
     return;
   }
@@ -239,6 +328,7 @@ function ensureOrderProcessorButton() {
   if (!button.dataset.autoProcessState) setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
   button.style.setProperty("color", "#fff", "important");
   if (sendInvoiceButton.nextElementSibling !== button) sendInvoiceButton.insertAdjacentElement("afterend", button);
+  ensureManualOrderProcessorControl(button);
   if (!existingButton) void loadOrderProcessorStatus(button);
 }
 
