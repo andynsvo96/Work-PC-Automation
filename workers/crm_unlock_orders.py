@@ -726,8 +726,13 @@ def wait_for_order_preview_panel(driver, timeout=None):
     return _find_best_preview_panel(driver, timeout=timeout)
 
 
-def select_all_orders_with_preview(driver, rows=None):
-    """Select the report range and recover when CRM misses the preview update."""
+def select_all_orders_with_preview(driver, rows=None, list_url=None):
+    """Select the report range and recover when CRM misses the preview update.
+
+    CRM sometimes acknowledges the range selection without rendering its Angular
+    Order Preview pane.  Reopening the report is safe here because Apply has
+    not been clicked yet; it resets that stale client-side selection state.
+    """
     rows = rows if rows is not None else wait_for_order_rows(driver)
     selected_count = select_all_orders(driver, rows=rows)
 
@@ -741,6 +746,22 @@ def select_all_orders_with_preview(driver, rows=None):
 
     _shift_click_row(driver, rows[0])
     _wait_for_selection_count(driver, len(rows))
+    try:
+        return selected_count, wait_for_order_preview_panel(driver)
+    except TimeoutException:
+        print(
+            "Order Preview still did not appear after reselection; reopening the CRM report "
+            "and selecting the current rows again..."
+        )
+
+    refreshed_rows = _open_locked_report_rows(driver, list_url=list_url)
+    if not refreshed_rows:
+        raise TimeoutException(
+            "The CRM did not render Order Preview after selection or a safe report refresh, "
+            "and the refreshed report contained no order rows."
+        )
+
+    selected_count = select_all_orders(driver, rows=refreshed_rows)
     return selected_count, wait_for_order_preview_panel(driver)
 
 
@@ -940,7 +961,11 @@ def _run_once(action, dry_run=False, headless_mode=True, list_url=None):
                     "refresh_passes": refresh_passes,
                 }
 
-            order_count, preview_panel = select_all_orders_with_preview(driver, rows=rows)
+            order_count, preview_panel = select_all_orders_with_preview(
+                driver,
+                rows=rows,
+                list_url=list_url,
+            )
             print(f"Selected {order_count} orders.")
 
             choose_unlock_status(driver, preview_panel)

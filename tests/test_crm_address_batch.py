@@ -1562,6 +1562,46 @@ class CrmCopyrightCancelTests(unittest.TestCase):
 
 
 class CrmUnlockOrdersTests(unittest.TestCase):
+    def test_unlocker_reopens_report_when_preview_stays_missing_after_reselection(self):
+        driver = mock.Mock()
+        initial_rows = [object(), object()]
+        refreshed_rows = [object(), object(), object()]
+        preview_panel = object()
+
+        with mock.patch.object(
+            crm_unlock_orders,
+            "select_all_orders",
+            side_effect=[len(initial_rows), len(refreshed_rows)],
+        ) as select_orders, mock.patch.object(
+            crm_unlock_orders,
+            "wait_for_order_preview_panel",
+            side_effect=[
+                crm_unlock_orders.TimeoutException("preview absent"),
+                crm_unlock_orders.TimeoutException("preview still absent"),
+                preview_panel,
+            ],
+        ), mock.patch.object(crm_unlock_orders, "_shift_click_row") as shift_click, mock.patch.object(
+            crm_unlock_orders,
+            "_wait_for_selection_count",
+        ) as wait_for_selection, mock.patch.object(
+            crm_unlock_orders,
+            "_open_locked_report_rows",
+            return_value=refreshed_rows,
+        ) as reopen_report:
+            count, panel = crm_unlock_orders.select_all_orders_with_preview(
+                driver,
+                rows=initial_rows,
+                list_url="https://crm.example/locked-orders",
+            )
+
+        self.assertEqual(count, len(refreshed_rows))
+        self.assertIs(panel, preview_panel)
+        self.assertEqual(select_orders.call_args_list[0].kwargs["rows"], initial_rows)
+        self.assertEqual(select_orders.call_args_list[1].kwargs["rows"], refreshed_rows)
+        shift_click.assert_called_once_with(driver, initial_rows[0])
+        wait_for_selection.assert_called_once_with(driver, len(initial_rows))
+        reopen_report.assert_called_once_with(driver, list_url="https://crm.example/locked-orders")
+
     def test_blank_locked_report_reloads_once_before_returning_no_orders(self):
         driver = mock.Mock()
         with mock.patch.object(crm_unlock_orders, "safe_get_with_partial_load") as safe_get, \
