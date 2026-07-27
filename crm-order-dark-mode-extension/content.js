@@ -195,7 +195,9 @@ function ensureManualOrderProcessorControl(autoProcessButton) {
 
   const control = document.createElement("span");
   control.id = "crm-order-manual-process-control";
-  Object.assign(control.style, { position: "relative", display: "inline-block", marginLeft: "8px", verticalAlign: "middle" });
+  Object.assign(control.style, {
+    position: "relative", display: "inline-block", height: "32px", marginLeft: "4px", verticalAlign: "top"
+  });
 
   const button = document.createElement("button");
   button.type = "button";
@@ -203,8 +205,8 @@ function ensureManualOrderProcessorControl(autoProcessButton) {
   button.textContent = "Manual Process";
   button.title = "Choose one automation to run for this order only.";
   Object.assign(button.style, {
-    padding: "6px 12px", minHeight: "30px", borderRadius: "2px", cursor: "pointer",
-    font: "600 12px system-ui, sans-serif", color: "#fff", background: "#475569", border: "1px solid #334155"
+    display: "block", boxSizing: "border-box", height: "32px", padding: "6px 12px", borderRadius: "2px", cursor: "pointer",
+    font: "600 12px/18px system-ui, sans-serif", color: "#fff", background: "#475569", border: "1px solid #334155"
   });
 
   const menu = document.createElement("div");
@@ -322,8 +324,8 @@ function ensureOrderProcessorButton() {
   }
 
   Object.assign(button.style, {
-    position: "static", marginLeft: "8px", padding: "6px 12px", minHeight: "30px",
-    borderRadius: "2px", font: "600 12px system-ui, sans-serif", cursor: "pointer"
+    position: "static", display: "inline-block", boxSizing: "border-box", height: "32px", marginLeft: "4px",
+    padding: "6px 12px", borderRadius: "2px", verticalAlign: "top", font: "600 12px/18px system-ui, sans-serif", cursor: "pointer"
   });
   if (!button.dataset.autoProcessState) setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
   button.style.setProperty("color", "#fff", "important");
