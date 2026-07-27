@@ -3508,6 +3508,9 @@ class CrmAutoSplitterTests(unittest.TestCase):
              mock.patch.object(crm_auto_splitter, "_open_record_transaction") as open_transaction, \
              mock.patch.object(crm_auto_splitter, "_save_transaction_modal_with_amount") as save_transaction, \
              mock.patch.object(crm_auto_splitter, "_add_original_transfer_note") as add_note, \
+             mock.patch.object(crm_auto_splitter, "_original_order_is_cancelled", return_value=False), \
+             mock.patch.object(crm_auto_splitter, "_original_transfer_note_is_present", return_value=False), \
+             mock.patch.object(crm_auto_splitter, "_verify_original_finalization_after_reload", return_value=[]), \
              mock.patch.object(
                  crm_auto_splitter,
                  "_read_order_totals",
@@ -3519,6 +3522,7 @@ class CrmAutoSplitterTests(unittest.TestCase):
                 crm_auto_splitter.Decimal("125.00"),
                 crm_auto_splitter.Decimal("125.00"),
                 "transferred to 4882000, 4882001",
+                "4881999",
             )
 
         cancel_order.assert_called_once_with(driver)
@@ -3540,6 +3544,11 @@ class CrmAutoSplitterTests(unittest.TestCase):
              mock.patch.object(crm_auto_splitter, "_open_record_transaction") as open_transaction, \
              mock.patch.object(crm_auto_splitter, "_save_transaction_modal_with_amount") as save_transaction, \
              mock.patch.object(crm_auto_splitter, "_add_original_transfer_note") as add_note, \
+             mock.patch.object(crm_auto_splitter, "_original_refund_fee_already_present", return_value=False), \
+             mock.patch.object(crm_auto_splitter, "_original_order_is_cancelled", return_value=False), \
+             mock.patch.object(crm_auto_splitter, "_original_refund_transaction_is_present", return_value=False), \
+             mock.patch.object(crm_auto_splitter, "_original_transfer_note_is_present", return_value=False), \
+             mock.patch.object(crm_auto_splitter, "_verify_original_finalization_after_reload", return_value=[]), \
              mock.patch.object(crm_auto_splitter, "_read_order_totals", side_effect=totals), \
              mock.patch.object(crm_auto_splitter.time, "sleep"):
             result = crm_auto_splitter._finalize_original_order_after_split(
@@ -3548,6 +3557,7 @@ class CrmAutoSplitterTests(unittest.TestCase):
                 crm_auto_splitter.Decimal("125.00"),
                 crm_auto_splitter.Decimal("125.00"),
                 "transferred to 4882000, 4882001",
+                "4881999",
             )
 
         add_refund_fee.assert_called_once_with(driver, crm_auto_splitter.Decimal("125.00"))
@@ -3562,6 +3572,45 @@ class CrmAutoSplitterTests(unittest.TestCase):
         add_note.assert_called_once_with(driver, "transferred to 4882000, 4882001")
         self.assertFalse(result["payment_actions_skipped"])
         self.assertEqual(result["refund_fee_amount"], "125.00")
+
+    def test_original_finalization_reloads_and_repairs_unsaved_sales_note_once(self):
+        driver = mock.Mock()
+        with mock.patch.object(crm_auto_splitter, "_add_refund_fee_to_original") as add_refund_fee, \
+             mock.patch.object(crm_auto_splitter, "_cancel_original_order") as cancel_order, \
+             mock.patch.object(crm_auto_splitter, "_open_record_transaction") as open_transaction, \
+             mock.patch.object(crm_auto_splitter, "_save_transaction_modal_with_amount") as save_transaction, \
+             mock.patch.object(crm_auto_splitter, "_add_original_transfer_note") as add_note, \
+             mock.patch.object(crm_auto_splitter, "_original_refund_fee_already_present", side_effect=[False, True]), \
+             mock.patch.object(crm_auto_splitter, "_original_order_is_cancelled", side_effect=[False, True]), \
+             mock.patch.object(crm_auto_splitter, "_original_refund_transaction_is_present", side_effect=[False, True]), \
+             mock.patch.object(crm_auto_splitter, "_original_transfer_note_is_present", side_effect=[False, False]), \
+             mock.patch.object(
+                 crm_auto_splitter,
+                 "_verify_original_finalization_after_reload",
+                 side_effect=[["sales note"], []],
+             ) as verify, \
+             mock.patch.object(
+                 crm_auto_splitter,
+                 "_read_order_totals",
+                 return_value={"grand_total": "0.00", "paid": "0.00", "balance_due": "0.00"},
+             ), \
+             mock.patch.object(crm_auto_splitter.time, "sleep"):
+            result = crm_auto_splitter._finalize_original_order_after_split(
+                driver,
+                True,
+                crm_auto_splitter.Decimal("125.00"),
+                crm_auto_splitter.Decimal("125.00"),
+                "transferred to 4882000, 4882001",
+                "4881999",
+            )
+
+        add_refund_fee.assert_called_once()
+        cancel_order.assert_called_once()
+        open_transaction.assert_called_once_with(driver, quote=False)
+        save_transaction.assert_called_once()
+        self.assertEqual(add_note.call_count, 2)
+        self.assertEqual(verify.call_count, 2)
+        self.assertEqual(result["verification"], {"passed": True, "attempts": 2})
 
     def test_cancel_confirmation_accepts_crm_cancel_order_status(self):
         self.assertTrue(crm_auto_splitter._is_cancel_order_status("Cancel Order"))

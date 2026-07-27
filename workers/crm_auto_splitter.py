@@ -2196,6 +2196,93 @@ def _cancel_original_order(driver):
     raise SplitterError(f"Original order cancellation was not confirmed on the page.{detail}")
 
 
+def _original_order_is_cancelled(driver):
+    """Return whether the currently loaded original order is already cancelled."""
+    try:
+        status_summary = _order_scope(
+            driver,
+            """
+            const values = [
+              s.orderStatusName,
+              s.statusName,
+              r.orderStatusName,
+              r.statusName,
+              (r.orderStatus || {}).statusName
+            ];
+            const history = [];
+            for (const rows of [r.orderStatuses, r.status, r.statusHistory, r.orderStatusHistory]) {
+              if (!Array.isArray(rows)) continue;
+              for (const row of rows) history.push(row.statusName || row.name || row.status || '');
+            }
+            return {values, history};
+            """,
+        )
+        statuses = status_summary.get("values", []) + status_summary.get("history", [])
+        if any(_is_cancel_order_status(value) for value in statuses):
+            return True
+    except Exception:
+        pass
+    try:
+        return _status_history_confirms_cancel_order(
+            driver.execute_script("return document.body ? document.body.innerText : '';")
+        )
+    except Exception:
+        return False
+
+
+def _original_transfer_note_is_present(driver, transfer_note):
+    try:
+        state = _get_order_live_state(driver)
+        return _clean_text(transfer_note).lower() in _clean_text(state.get("sales_notes")).lower()
+    except Exception:
+        return False
+
+
+def _original_refund_transaction_is_present(driver, transfer_note, original_grand_total):
+    try:
+        for transaction in _get_order_live_state(driver).get("transactions", []):
+            tag = _clean_text(transaction.get("tag") or transaction.get("type")).lower()
+            note = _clean_text(transaction.get("note")).lower()
+            if (
+                "refund" in tag
+                and _clean_text(transfer_note).lower() in note
+                and _money_amount_matches(transaction.get("amount"), original_grand_total)
+            ):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _verify_original_finalization_after_reload(
+    driver,
+    original_order_id,
+    payment_detected,
+    refund_amount,
+    original_grand_total,
+    transfer_note,
+):
+    """Reload the original order and report every finalization action still missing."""
+    _open_order_scope_with_reload(
+        driver,
+        _order_url(order_id=original_order_id),
+        order_id=original_order_id,
+        label="original CRM order finalization verification",
+    )
+    missing = []
+    if payment_detected and not _original_refund_fee_already_present(driver, refund_amount):
+        missing.append("refund fee")
+    if not _original_order_is_cancelled(driver):
+        missing.append("cancellation")
+    if payment_detected and not _original_refund_transaction_is_present(
+        driver, transfer_note, original_grand_total
+    ):
+        missing.append("manual Refund transaction")
+    if not _original_transfer_note_is_present(driver, transfer_note):
+        missing.append("sales note")
+    return missing
+
+
 def _add_original_transfer_note(driver, note):
     _order_scope(
         driver,
@@ -2216,27 +2303,64 @@ def _add_original_transfer_note(driver, note):
     return _save_order_and_wait(driver)
 
 
-def _finalize_original_order_after_split(driver, payment_detected, refund_amount, original_grand_total, transfer_note):
-    if payment_detected:
-        _add_refund_fee_to_original(driver, refund_amount)
-        refunded_totals = _read_order_totals(driver)
-        _cancel_original_order(driver)
-        _open_record_transaction(driver, quote=False)
-        _save_transaction_modal_with_amount(driver, "Refund", transfer_note, amount=-original_grand_total)
-        time.sleep(2)
-    else:
-        refunded_totals = None
-        _cancel_original_order(driver)
+def _finalize_original_order_after_split(
+    driver,
+    payment_detected,
+    refund_amount,
+    original_grand_total,
+    transfer_note,
+    original_order_id,
+):
+    """Complete and persist the original-order cleanup after all split orders exist.
 
-    _add_original_transfer_note(driver, transfer_note)
-    return {
-        "refund_fee_amount": _money_text(refund_amount) if payment_detected else "0.00",
-        "refund_transaction_id": transfer_note if payment_detected else "",
-        "payment_actions_skipped": not payment_detected,
-        "sales_note": transfer_note,
-        "refunded_totals": refunded_totals,
-        "final_totals": _read_order_totals(driver),
-    }
+    CRM can occasionally report a completed order save before the edit reaches the
+    server.  Each action is therefore idempotent, and the whole final state is
+    checked after a full order reload.  One repair pass is allowed; a remaining
+    mismatch fails the split rather than reporting a misleading success.
+    """
+    refunded_totals = None
+    for attempt in range(1, 3):
+        if payment_detected:
+            if not _original_refund_fee_already_present(driver, refund_amount):
+                _add_refund_fee_to_original(driver, refund_amount)
+            refunded_totals = _read_order_totals(driver)
+
+        if not _original_order_is_cancelled(driver):
+            _cancel_original_order(driver)
+
+        if payment_detected and not _original_refund_transaction_is_present(
+            driver, transfer_note, original_grand_total
+        ):
+            _open_record_transaction(driver, quote=False)
+            _save_transaction_modal_with_amount(driver, "Refund", transfer_note, amount=-original_grand_total)
+            time.sleep(2)
+
+        if not _original_transfer_note_is_present(driver, transfer_note):
+            _add_original_transfer_note(driver, transfer_note)
+
+        missing = _verify_original_finalization_after_reload(
+            driver,
+            original_order_id,
+            payment_detected,
+            refund_amount,
+            original_grand_total,
+            transfer_note,
+        )
+        if not missing:
+            return {
+                "refund_fee_amount": _money_text(refund_amount) if payment_detected else "0.00",
+                "refund_transaction_id": transfer_note if payment_detected else "",
+                "payment_actions_skipped": not payment_detected,
+                "sales_note": transfer_note,
+                "refunded_totals": refunded_totals,
+                "final_totals": _read_order_totals(driver),
+                "verification": {"passed": True, "attempts": attempt},
+            }
+
+    raise SplitterError(
+        "Original order finalization did not persist after refreshing and retrying once. "
+        f"Still missing: {', '.join(missing)}."
+    )
 
 
 def _visible_design_tab_numbers(driver):
@@ -3045,6 +3169,7 @@ def run_split_order(
                 refund_amount,
                 original_grand_total,
                 transfer_note,
+                resolved_order_id,
             )
             if stock_routing.get("action") == "slack_mach6_cancelled":
                 report["stock_cancel_slack"] = _send_mach6_stock_cancel_slack(target_url, dry_run=False)
