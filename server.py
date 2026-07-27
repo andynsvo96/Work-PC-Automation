@@ -10639,7 +10639,7 @@ def _crm_extension_order_order_goods_failure_detail(order_goods_results):
 
 
 def _crm_extension_order_no_purchase_plan_decisions(order_goods_results):
-    decisions = {}
+    per_order_tab_decisions = {}
     for item in order_goods_results if isinstance(order_goods_results, list) else []:
         fallback_order_id = _normalize_crm_single_order_id(item.get("order_id") if isinstance(item, dict) else None)
         payload = item.get("payload") if isinstance(item, dict) and isinstance(item.get("payload"), dict) else {}
@@ -10652,11 +10652,48 @@ def _crm_extension_order_no_purchase_plan_decisions(order_goods_results):
             automated_notes = notes.get("automated_notes") if isinstance(notes.get("automated_notes"), dict) else {}
             classification = str(automated_notes.get("classification") or "unclassified").strip().lower()
             if order_id:
-                decisions[order_id] = {
+                stock_tab_index = row.get("stock_tab_index")
+                stock_tab_label = str(row.get("stock_tab_label") or "").strip()
+                tab_reference = stock_tab_label or (
+                    f"Stock tab {stock_tab_index}" if stock_tab_index is not None else "Stock tab"
+                )
+                per_order_tab_decisions.setdefault(order_id, []).append({
                     "classification": classification,
                     "note": str(automated_notes.get("note") or "").strip(),
                     "message": str(automated_notes.get("message") or "").strip(),
-                }
+                    "stock_tab_index": stock_tab_index,
+                    "stock_tab_label": stock_tab_label,
+                    "tab_reference": tab_reference,
+                })
+
+    decisions = {}
+    for order_id, tab_decisions in per_order_tab_decisions.items():
+        classifications = {str(decision.get("classification") or "unclassified") for decision in tab_decisions}
+        # Any unavailable-inventory result must stop Push Back.  Likewise, an
+        # unclassified result should not be hidden by a matching result from a
+        # different tab.  This keeps every PO/tab outcome explicit.
+        if "stock_issue" in classifications:
+            classification = "stock_issue"
+        elif "unclassified" in classifications:
+            classification = "unclassified"
+        else:
+            classification = "push_back"
+        tab_notes = [
+            f"{decision['tab_reference']}: {decision['note']}"
+            for decision in tab_decisions
+            if decision.get("note")
+        ]
+        tab_messages = [
+            f"{decision['tab_reference']}: {decision['message']}"
+            for decision in tab_decisions
+            if decision.get("message")
+        ]
+        decisions[order_id] = {
+            "classification": classification,
+            "note": " | ".join(tab_notes),
+            "message": " | ".join(tab_messages),
+            "tab_decisions": tab_decisions,
+        }
     return decisions
 
 

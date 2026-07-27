@@ -1996,6 +1996,30 @@ class CrmPushBackTests(unittest.TestCase):
             "stock_issue",
         )
 
+    def test_latest_automated_note_ignores_earlier_duplicate_messages(self):
+        notes = """Automated Notes
+Rule Runner  Jul 27th, 2026 @ 11:57 AM
+Swapped RT2000 - Natural - M for 5250T - NATURAL - M
+Auto Ordering  Jul 27, 2026 @ 12:07 PM
+Unable to order stock - The following products are unable to be delivered on time: 5250T - NATURAL - M
+Auto Ordering  Jul 27, 2026 @ 12:22 PM
+Unable to order stock - The following products do not have available inventory: 5250T - NATURAL - M"""
+
+        latest_note = crm_order_goods._latest_automated_note_text(notes)
+
+        self.assertIn("do not have available inventory", latest_note)
+        self.assertEqual(crm_order_goods._classify_automated_notes_text(latest_note), "stock_issue")
+
+    def test_latest_automated_note_prefers_final_visible_note_card(self):
+        cards = [
+            "Auto Ordering\nUnable to order stock - The following products are unable to be delivered on time: 5250T - NATURAL - M",
+            "Auto Ordering\nUnable to order stock - The following products do not have available inventory: 5250T - NATURAL - M",
+        ]
+
+        latest_note = crm_order_goods._latest_automated_note_text("stale page text", cards)
+
+        self.assertIn("do not have available inventory", latest_note)
+
     def test_auto_order_feedback_prefers_failure_over_visible_stale_success(self):
         driver = mock.Mock()
         driver.execute_script.return_value = [

@@ -1570,6 +1570,7 @@ AUTO_ORDER_SHIPMENT_COST_EXCEEDED = (
 AUTO_ORDER_SUCCEEDED = "(auto order) goods have been ordered successfully"
 AUTOMATED_NOTES_PUSH_BACK_TEXT = "the following products are unable to be delivered on time"
 AUTOMATED_NOTES_STOCK_ISSUE_TEXT = "the following products do not have available inventory"
+AUTOMATED_NOTE_HEADER_RE = re.compile(r"(?im)^\s*(?:rule runner|auto ordering)\b[^\r\n]*$")
 
 
 def _classify_auto_order_feedback_text(text):
@@ -1590,6 +1591,60 @@ def _classify_automated_notes_text(text):
     if AUTOMATED_NOTES_STOCK_ISSUE_TEXT in normalized:
         return "stock_issue"
     return "unclassified"
+
+
+def _latest_automated_note_text(notes_text, note_cards=None):
+    """Return only the bottom-most Automated Note, never a stale earlier note."""
+    cards = [str(card or "").strip() for card in (note_cards or []) if str(card or "").strip()]
+    if cards:
+        return cards[-1]
+
+    text = str(notes_text or "").strip()
+    headers = list(AUTOMATED_NOTE_HEADER_RE.finditer(text))
+    if not headers:
+        return text
+    return text[headers[-1].start():].strip()
+
+
+def _read_visible_automated_note_cards(driver):
+    """Read individual visible Automated Note cards in top-to-bottom screen order."""
+    return driver.execute_script(
+        r"""
+const header = /^\s*(?:Rule Runner|Auto Ordering)\b/i;
+function visible(node) {
+  if (!node) return false;
+  const rect = node.getBoundingClientRect && node.getBoundingClientRect();
+  if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+  for (let current = node; current; current = current.parentElement) {
+    const style = window.getComputedStyle(current);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+  }
+  return true;
+}
+function startsWithNoteHeader(text) {
+  return header.test(String(text || '').split(/\r?\n/, 1)[0] || '');
+}
+const candidates = [];
+for (const node of document.querySelectorAll('body *')) {
+  const text = String(node.innerText || '').trim();
+  if (!visible(node) || !startsWithNoteHeader(text)) continue;
+  // A header span inside its own card is not another card. Only discard a
+  // container when it contains a substantial nested card (as a notes list
+  // wrapper does).
+  const hasNestedCard = Array.from(node.querySelectorAll('*')).some((child) => {
+    const childText = String(child.innerText || '').trim();
+    return child !== node && childText.length > 80 && startsWithNoteHeader(childText);
+  });
+  if (!hasNestedCard) {
+    const rect = node.getBoundingClientRect();
+    candidates.push({ text, top: rect.top, left: rect.left, index: candidates.length });
+  }
+}
+return candidates
+  .sort((left, right) => left.top - right.top || left.left - right.left || left.index - right.index)
+  .map((candidate) => candidate.text);
+"""
+    )
 
 
 def _automated_notes_excerpt(text, maximum=500):
@@ -1627,22 +1682,30 @@ def _read_automated_notes_after_no_purchase_plan(driver, order_id):
         _click_with_fallback(driver, notes_tab)
         deadline = time.time() + 8
         latest_text = ""
+        latest_note_text = ""
         while time.time() < deadline:
             try:
                 latest_text = str(driver.execute_script("return document.body ? document.body.innerText : '';"))
             except Exception:
                 latest_text = ""
-            classification = _classify_automated_notes_text(latest_text)
-            if classification != "unclassified":
+            try:
+                note_cards = _read_visible_automated_note_cards(driver)
+            except Exception:
+                note_cards = []
+            latest_note_text = _latest_automated_note_text(latest_text, note_cards)
+            classification = _classify_automated_notes_text(latest_note_text)
+            # Do not let a matching note higher in the list override the newest
+            # note. A newer card can be written shortly after the page refresh.
+            if classification != "unclassified" and latest_note_text:
                 return {
                     "classification": classification,
-                    "note": _automated_notes_excerpt(latest_text),
+                    "note": _automated_notes_excerpt(latest_note_text),
                     "refreshed_once": True,
                 }
             time.sleep(0.25)
         return {
             "classification": "unclassified",
-            "note": _automated_notes_excerpt(latest_text),
+            "note": _automated_notes_excerpt(latest_note_text or latest_text),
             "message": "Automated Notes did not identify a delivery-delay or inventory issue.",
             "refreshed_once": True,
         }

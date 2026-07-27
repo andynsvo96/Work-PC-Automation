@@ -108,6 +108,43 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         self.assertEqual(decisions["4917538"]["classification"], "push_back")
         self.assertEqual(decisions["4918203"]["classification"], "stock_issue")
 
+    def test_no_purchase_plan_decisions_preserve_every_stock_tab(self):
+        decisions = server._crm_extension_order_no_purchase_plan_decisions(
+            [{
+                "order_id": "4924912",
+                "payload": {
+                    "report": [
+                        {
+                            "order_id": "4924912",
+                            "outcome": "auto_order_no_purchase_plan",
+                            "stock_tab_index": 1,
+                            "stock_tab_label": "PO 1001",
+                            "auto_order_feedback": {"automated_notes": {
+                                "classification": "push_back",
+                                "note": "The following products are unable to be delivered on time",
+                            }},
+                        },
+                        {
+                            "order_id": "4924912",
+                            "outcome": "auto_order_no_purchase_plan",
+                            "stock_tab_index": 2,
+                            "stock_tab_label": "PO 1002",
+                            "auto_order_feedback": {"automated_notes": {
+                                "classification": "stock_issue",
+                                "note": "The following products do not have available inventory",
+                            }},
+                        },
+                    ]
+                },
+            }]
+        )
+
+        decision = decisions["4924912"]
+        self.assertEqual(decision["classification"], "stock_issue")
+        self.assertEqual(len(decision["tab_decisions"]), 2)
+        self.assertIn("PO 1001", decision["note"])
+        self.assertIn("PO 1002", decision["note"])
+
     def test_auto_process_report_result_uses_its_own_quick_report_row(self):
         result = server._crm_extension_order_report_result(
             ["4918203"],
