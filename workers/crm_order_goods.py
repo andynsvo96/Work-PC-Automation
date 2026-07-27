@@ -1570,7 +1570,10 @@ AUTO_ORDER_SHIPMENT_COST_EXCEEDED = (
 AUTO_ORDER_SUCCEEDED = "(auto order) goods have been ordered successfully"
 AUTOMATED_NOTES_PUSH_BACK_TEXT = "the following products are unable to be delivered on time"
 AUTOMATED_NOTES_STOCK_ISSUE_TEXT = "the following products do not have available inventory"
-AUTOMATED_NOTE_HEADER_RE = re.compile(r"(?im)^\s*(?:rule runner|auto ordering)\b[^\r\n]*$")
+# CRM renders the timestamp and message on the same line (for example,
+# "... 12:36 PMUnable to order stock...").  The timestamp is therefore the
+# reliable boundary between a note's header and its message.
+AUTOMATED_NOTE_HEADER_RE = re.compile(r"(?im)^\s*(?:rule runner|auto ordering)\b.*?(?:am|pm)")
 
 
 def _classify_auto_order_feedback_text(text):
@@ -1595,7 +1598,10 @@ def _classify_automated_notes_text(text):
 
 def _latest_automated_note_text(notes_text, note_cards=None):
     """Return only the bottom-most Automated Note, never a stale earlier note."""
-    cards = [str(card or "").strip() for card in (note_cards or []) if str(card or "").strip()]
+    cards = [
+        text for card in (note_cards or [])
+        if (text := str(card or "").strip()) and AUTOMATED_NOTE_HEADER_RE.match(text)
+    ]
     if cards:
         return cards[-1]
 
@@ -1610,7 +1616,7 @@ def _read_visible_automated_note_cards(driver):
     """Read individual visible Automated Note cards in top-to-bottom screen order."""
     return driver.execute_script(
         r"""
-const header = /^\s*(?:Rule Runner|Auto Ordering)\b/i;
+const header = /^\s*(?:Rule Runner|Auto Ordering)\b[\s\S]*?(?:AM|PM)/i;
 function visible(node) {
   if (!node) return false;
   const rect = node.getBoundingClientRect && node.getBoundingClientRect();
@@ -1624,6 +1630,13 @@ function visible(node) {
 function startsWithNoteHeader(text) {
   return header.test(String(text || '').split(/\r?\n/, 1)[0] || '');
 }
+function hasNoteBody(text) {
+  const body = String(text || '').replace(
+    header,
+    ''
+  ).trim();
+  return body.length > 0;
+}
 const candidates = [];
 for (const node of document.querySelectorAll('body *')) {
   const text = String(node.innerText || '').trim();
@@ -1635,7 +1648,10 @@ for (const node of document.querySelectorAll('body *')) {
     const childText = String(child.innerText || '').trim();
     return child !== node && childText.length > 80 && startsWithNoteHeader(childText);
   });
-  if (!hasNestedCard) {
+  // CRM exposes a nested header-only element after each real card.  It is
+  // lower on the page than the card and must not be mistaken for the newest
+  // Automated Note.
+  if (!hasNestedCard && hasNoteBody(text)) {
     const rect = node.getBoundingClientRect();
     candidates.push({ text, top: rect.top, left: rect.left, index: candidates.length });
   }
@@ -1649,6 +1665,10 @@ return candidates
 
 def _automated_notes_excerpt(text, maximum=500):
     normalized = " ".join(str(text or "").split())
+    # Callers now pass a single card whenever possible, so preserve its header
+    # and timestamp instead of trimming into the middle of the card's header.
+    if AUTOMATED_NOTE_HEADER_RE.match(normalized):
+        return normalized[:maximum]
     for marker in (AUTOMATED_NOTES_PUSH_BACK_TEXT, AUTOMATED_NOTES_STOCK_ISSUE_TEXT):
         index = normalized.lower().find(marker)
         if index >= 0:

@@ -2012,13 +2012,40 @@ Unable to order stock - The following products do not have available inventory: 
 
     def test_latest_automated_note_prefers_final_visible_note_card(self):
         cards = [
-            "Auto Ordering\nUnable to order stock - The following products are unable to be delivered on time: 5250T - NATURAL - M",
-            "Auto Ordering\nUnable to order stock - The following products do not have available inventory: 5250T - NATURAL - M",
+            "Auto Ordering Jul 27, 2026 @ 12:07 PM\nUnable to order stock - The following products are unable to be delivered on time: 5250T - NATURAL - M",
+            "Auto Ordering Jul 27, 2026 @ 12:22 PM\nUnable to order stock - The following products do not have available inventory: 5250T - NATURAL - M",
         ]
 
         latest_note = crm_order_goods._latest_automated_note_text("stale page text", cards)
 
         self.assertIn("do not have available inventory", latest_note)
+
+    def test_latest_automated_note_handles_crm_header_and_message_on_one_line(self):
+        notes = """Auto Ordering  Jul 27, 2026 @ 12:32 PMUnable to order stock for JessicaKapla457 - The following products are unable to be delivered on time: 5250T - NATURAL - M
+Auto Ordering  Jul 27, 2026 @ 12:36 PMUnable to order stock for JessicaKapla457 - The following products are unable to be delivered on time: 5250T - NATURAL - M"""
+
+        latest_note = crm_order_goods._latest_automated_note_text(notes)
+
+        self.assertIn("12:36 PM", latest_note)
+        self.assertEqual(crm_order_goods._classify_automated_notes_text(latest_note), "push_back")
+
+    def test_latest_automated_note_ignores_auto_ordering_unlocked_status_entry(self):
+        cards = [
+            "Auto Ordering Jul 27, 2026 @ 12:36 PMUnable to order stock - The following products are unable to be delivered on time: 5250T - NATURAL - M",
+            "Auto Ordering Unlocked",
+        ]
+
+        latest_note = crm_order_goods._latest_automated_note_text("", cards)
+
+        self.assertIn("Unable to order stock", latest_note)
+        self.assertEqual(crm_order_goods._classify_automated_notes_text(latest_note), "push_back")
+
+    def test_automated_note_excerpt_preserves_a_scoped_note_header(self):
+        note = "Auto Ordering Jul 27, 2026 @ 12:36 PMUnable to order stock - The following products are unable to be delivered on time: 5250T - NATURAL - M"
+
+        excerpt = crm_order_goods._automated_notes_excerpt(note)
+
+        self.assertTrue(excerpt.startswith("Auto Ordering Jul 27, 2026 @ 12:36 PM"))
 
     def test_auto_order_feedback_prefers_failure_over_visible_stale_success(self):
         driver = mock.Mock()
