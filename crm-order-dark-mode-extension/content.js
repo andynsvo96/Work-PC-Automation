@@ -58,6 +58,21 @@ function setOrderProcessorButtonStyle(button, background, border) {
   button.style.setProperty("border", `1px solid ${border}`, "important");
 }
 
+function manualOrderProcessorButton() {
+  return document.getElementById("crm-order-manual-process-button");
+}
+
+function setOrderProcessorControlsDisabled(disabled) {
+  const autoProcessButton = document.getElementById("crm-order-automation-button");
+  const manualProcessButton = manualOrderProcessorButton();
+  if (autoProcessButton) autoProcessButton.disabled = disabled;
+  if (manualProcessButton) manualProcessButton.disabled = disabled;
+  if (disabled) {
+    const menu = document.querySelector("#crm-order-manual-process-control [role='menu']");
+    if (menu) menu.hidden = true;
+  }
+}
+
 function orderProcessorResultSummary(runtime) {
   const steps = Array.isArray(runtime && runtime.steps) ? runtime.steps : [];
   if (!steps.length) return String((runtime && runtime.lastMessage) || "");
@@ -99,8 +114,12 @@ function setOrderProcessorResult(button, text, tone) {
     Object.assign(result.style, {
       marginLeft: "8px", font: "600 11px system-ui, sans-serif", verticalAlign: "middle"
     });
-    button.insertAdjacentElement("afterend", result);
   }
+  // Keep the result after the complete action group, rather than between its
+  // Auto-Process and Manual Process buttons.
+  const manualControl = document.getElementById("crm-order-manual-process-control");
+  const resultAnchor = manualControl || button;
+  if (result.previousElementSibling !== resultAnchor) resultAnchor.insertAdjacentElement("afterend", result);
   result.textContent = text;
   result.style.color = tone === "error" ? "#b91c1c" : (tone === "success" ? "#15803d" : "#075985");
 }
@@ -109,24 +128,44 @@ function renderOrderProcessorStatus(button, response) {
   const runtime = response && response.runtime;
   if (!runtime || (runtime.orderId && runtime.orderId !== currentOrderId())) return false;
   const message = String(runtime.lastMessage || "");
+  const manualProcess = runtime.runKind === "manual";
+  const manualButton = manualOrderProcessorButton();
   button.title = message || "Validate address, separate products, split over 10 tabs, unlock/order goods, and bypass flagged shipping.";
   if (runtime.queued) {
+    setOrderProcessorControlsDisabled(true);
+    if (manualProcess && manualButton) {
+      manualButton.textContent = "Manual Process: Queued";
+      manualButton.title = message || "Queued behind any active CRM automation.";
+      setOrderProcessorResult(manualButton, message || "Queued behind any active CRM automation.", "progress");
+      return true;
+    }
     button.dataset.autoProcessState = "running";
-    button.disabled = true;
     button.textContent = "Auto-Process: Queued";
     setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
     setOrderProcessorResult(button, "Queued behind any active CRM automation.", "progress");
     return true;
   }
   if (runtime.running) {
+    setOrderProcessorControlsDisabled(true);
+    if (manualProcess && manualButton) {
+      manualButton.textContent = "Manual Process: Working";
+      manualButton.title = message || "Working…";
+      setOrderProcessorResult(manualButton, message || "Working…", "progress");
+      return true;
+    }
     button.dataset.autoProcessState = "running";
-    button.disabled = true;
     button.textContent = `Auto-Process: ${orderProcessorStageLabel(runtime.currentStep)}`;
     setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
     setOrderProcessorResult(button, message || "Working…", "progress");
     return true;
   }
-  button.disabled = false;
+  setOrderProcessorControlsDisabled(false);
+  if (manualProcess && manualButton) {
+    manualButton.textContent = runtime.lastSuccess === false ? "Manual Process: Review" : "Manual Process";
+    manualButton.title = message || "Choose one automation to run for this order only.";
+    setOrderProcessorResult(manualButton, message, runtime.lastSuccess === false ? "error" : "success");
+    return false;
+  }
   if (runtime.lastSuccess === true) {
     button.dataset.autoProcessState = "complete";
     const skipped = Array.isArray(runtime.steps) && runtime.steps.some((step) => step && step.skipped);
@@ -155,7 +194,7 @@ function beginOrderProcessorPolling(button) {
       const response = await chrome.runtime.sendMessage({ type: "crm-order-automation:status" });
       if (!response || !response.success) {
         button.dataset.autoProcessState = "review";
-        button.disabled = false;
+        setOrderProcessorControlsDisabled(false);
         button.textContent = "Auto-Process: Review";
         button.title = (response && response.message) || "Could not read the local Automation app status.";
         setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
@@ -166,7 +205,7 @@ function beginOrderProcessorPolling(button) {
       if (!renderOrderProcessorStatus(button, response)) stopOrderProcessorPolling();
     } catch (_error) {
       button.dataset.autoProcessState = "review";
-      button.disabled = false;
+      setOrderProcessorControlsDisabled(false);
       button.textContent = "Auto-Process: Review";
       button.title = "Could not read the local Automation app status. Confirm the local app is running, then try again.";
       setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
@@ -234,9 +273,9 @@ function ensureManualOrderProcessorControl(autoProcessButton) {
       const orderId = currentOrderId();
       if (!orderId) return;
       menu.hidden = true;
-      button.disabled = true;
+      setOrderProcessorControlsDisabled(true);
       button.textContent = `Queuing ${automation.label}…`;
-      setOrderProcessorResult(autoProcessButton, `Sending ${automation.label} for order ${orderId} to the CRM automation queue…`, "progress");
+      setOrderProcessorResult(button, `Sending ${automation.label} for order ${orderId} to the CRM automation queue…`, "progress");
       try {
         const response = await chrome.runtime.sendMessage({
           type: "crm-order-automation:manual-start",
@@ -244,20 +283,19 @@ function ensureManualOrderProcessorControl(autoProcessButton) {
           automation: automation.key
         });
         if (response && response.success) {
-          button.textContent = "Manual Process: Queued";
-          button.title = `${automation.label} is queued for order ${orderId}.`;
-          setOrderProcessorResult(autoProcessButton, `${automation.label} is queued for order ${orderId}.`, "success");
+          renderOrderProcessorStatus(autoProcessButton, response);
+          beginOrderProcessorPolling(autoProcessButton);
         } else {
-          button.disabled = false;
+          setOrderProcessorControlsDisabled(false);
           button.textContent = "Manual Process";
           button.title = (response && response.message) || "Could not queue the selected automation.";
-          setOrderProcessorResult(autoProcessButton, button.title, "error");
+          setOrderProcessorResult(button, button.title, "error");
         }
       } catch (_error) {
-        button.disabled = false;
+        setOrderProcessorControlsDisabled(false);
         button.textContent = "Manual Process";
         button.title = "Could not queue the selected automation. Confirm the local Automation app is running, then try again.";
-        setOrderProcessorResult(autoProcessButton, button.title, "error");
+        setOrderProcessorResult(button, button.title, "error");
       }
     });
     menu.appendChild(option);
@@ -291,7 +329,7 @@ function ensureOrderProcessorButton() {
     button.addEventListener("click", async () => {
       const orderId = currentOrderId();
       if (!orderId) return;
-      button.disabled = true;
+      setOrderProcessorControlsDisabled(true);
       button.textContent = "Starting…";
       setOrderProcessorResult(button, "Sending the order to the CRM automation queue…", "progress");
       try {
@@ -306,7 +344,7 @@ function ensureOrderProcessorButton() {
           beginOrderProcessorPolling(button);
         } else {
           button.dataset.autoProcessState = "review";
-          button.disabled = false;
+          setOrderProcessorControlsDisabled(false);
           button.textContent = "Auto-Process: Review";
           button.title = (response && response.message) || "Could not queue the order in the local Automation app.";
           setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
@@ -314,7 +352,7 @@ function ensureOrderProcessorButton() {
         }
       } catch (_error) {
         button.dataset.autoProcessState = "review";
-        button.disabled = false;
+        setOrderProcessorControlsDisabled(false);
         button.textContent = "Auto-Process: Review";
         button.title = "Could not queue the order in the local Automation app.";
         setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");

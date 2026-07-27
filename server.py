@@ -210,6 +210,7 @@ crm_extension_order_runtime = {
     "startedAt": None,
     "completedAt": None,
     "orderId": None,
+    "runKind": None,
     "currentStep": None,
     "lastMessage": "No CRM extension order runs yet.",
     "lastSuccess": None,
@@ -11025,6 +11026,7 @@ def start_crm_extension_order_run(order_id, shipping_too_expensive=False):
                 "startedAt": datetime.now().isoformat(),
                 "completedAt": None,
                 "orderId": normalized_order_id,
+                "runKind": "auto",
                 "currentStep": "queued",
                 "lastMessage": f"Queued all-in-one processing for order {normalized_order_id}.",
                 "lastSuccess": None,
@@ -11051,6 +11053,7 @@ def queue_crm_extension_order_run(order_id, shipping_too_expensive=False):
                 "startedAt": None,
                 "completedAt": None,
                 "orderId": normalized_order_id,
+                "runKind": "auto",
                 "currentStep": "queued",
                 "lastMessage": f"Order {normalized_order_id} is waiting in the Automation queue.",
                 "lastSuccess": None,
@@ -11144,6 +11147,51 @@ CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS = {
 }
 
 
+def run_crm_extension_manual_order_run_queued(order_id, automation_key):
+    """Run one extension-triggered manual action while exposing its shared UI state."""
+    automation_key = str(automation_key or "").strip().lower()
+    automation = CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS[automation_key]
+    label = automation["label"]
+    started_at = datetime.now().isoformat()
+    ok = False
+    message = f"{label} did not run."
+    try:
+        with crm_extension_order_runtime_lock:
+            crm_extension_order_runtime.update(
+                {
+                    "queued": False,
+                    "running": True,
+                    "startedAt": started_at,
+                    "completedAt": None,
+                    "orderId": order_id,
+                    "runKind": "manual",
+                    "currentStep": automation_key,
+                    "lastMessage": f"Running {label} for order {order_id}.",
+                    "lastSuccess": None,
+                    "steps": [],
+                }
+            )
+        ok, message = automation["runner"](order_id)
+        return ok, message
+    except Exception as exc:
+        logger.exception("Extension manual CRM action failed")
+        message = f"{label} failed unexpectedly: {type(exc).__name__}: {exc}"
+        return False, message
+    finally:
+        with crm_extension_order_runtime_lock:
+            crm_extension_order_runtime.update(
+                {
+                    "queued": False,
+                    "running": False,
+                    "completedAt": datetime.now().isoformat(),
+                    "currentStep": None,
+                    "lastMessage": str(message),
+                    "lastSuccess": bool(ok),
+                    "steps": [_crm_extension_order_stage(automation_key, label, ok, message)],
+                }
+            )
+
+
 def queue_crm_extension_manual_order_run(order_id, automation_key):
     normalized_order_id = _normalize_crm_single_order_id(order_id)
     if not normalized_order_id:
@@ -11153,16 +11201,38 @@ def queue_crm_extension_manual_order_run(order_id, automation_key):
         return False, "Choose a supported manual automation.", None
 
     label = automation["label"]
+    automation_key = str(automation_key or "").strip().lower()
+    with crm_extension_order_runtime_lock:
+        crm_extension_order_runtime.update(
+            {
+                "queued": True,
+                "running": False,
+                "startedAt": None,
+                "completedAt": None,
+                "orderId": normalized_order_id,
+                "runKind": "manual",
+                "currentStep": automation_key,
+                "lastMessage": f"{label} for order {normalized_order_id} is waiting in the Automation queue.",
+                "lastSuccess": None,
+                "steps": [],
+            }
+        )
     ok, message, task = enqueue_automation(
         f"{label} Order {normalized_order_id}",
         "Processing",
-        lambda: automation["runner"](normalized_order_id),
+        lambda: run_crm_extension_manual_order_run_queued(normalized_order_id, automation_key),
         details=f"Single CRM order {normalized_order_id}",
-        status_fn=automation["status_fn"],
+        status_fn=get_crm_extension_order_status_payload,
         task_type=automation["task_type"],
         task_arguments=automation["task_arguments"](normalized_order_id),
         required_capability="crm",
     )
+    if not ok:
+        with crm_extension_order_runtime_lock:
+            crm_extension_order_runtime["queued"] = False
+            crm_extension_order_runtime["currentStep"] = None
+            crm_extension_order_runtime["lastMessage"] = str(message)
+            crm_extension_order_runtime["lastSuccess"] = False
     return ok, message, task
 
 
@@ -12449,15 +12519,16 @@ def api_chrome_extension_bridge_manual_process_order():
         data.get("order_id"),
         data.get("automation"),
     )
-    return _extension_bridge_response(
+    payload = get_crm_extension_order_status_payload()
+    payload.update(
         {
             "success": ok,
             "message": message,
             "automation": str(data.get("automation") or "").strip().lower(),
             "queue_task": task,
-        },
-        202 if ok else 409,
+        }
     )
+    return _extension_bridge_response(payload, 202 if ok else 409)
 
 
 @app.route("/service-worker.js", methods=["GET"])
