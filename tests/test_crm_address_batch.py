@@ -9874,6 +9874,42 @@ class AutomationRuntimeTests(unittest.TestCase):
         self.assertEqual(payload["action"], "validate_batch")
         mock_audit.assert_not_called()
 
+    @mock.patch.object(automation_runtime, "Service", return_value=mock.Mock())
+    @mock.patch.object(automation_runtime.ChromeDriverManager, "install", return_value="/tmp/chromedriver")
+    @mock.patch.object(automation_runtime.webdriver, "Chrome")
+    def test_build_chrome_driver_blocks_mailto_handoff(self, mock_chrome, _mock_install, _mock_service):
+        driver = mock.Mock()
+        mock_chrome.return_value = driver
+
+        result = automation_runtime.build_chrome_driver("/tmp/profile")
+
+        self.assertIs(result, driver)
+        options = mock_chrome.call_args.kwargs["options"]
+        prefs = options.experimental_options["prefs"]
+        self.assertTrue(prefs["protocol_handler.excluded_schemes"]["mailto"])
+        self.assertEqual(prefs["profile.default_content_setting_values.protocol_handlers"], 2)
+        driver.execute_cdp_cmd.assert_called_once_with(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": automation_runtime.MAILTO_CLICK_GUARD_SCRIPT},
+        )
+        driver.execute_script.assert_called_once_with(automation_runtime.MAILTO_CLICK_GUARD_SCRIPT)
+
+    @mock.patch.object(automation_runtime, "Service", return_value=mock.Mock())
+    @mock.patch.object(automation_runtime.ChromeDriverManager, "install", return_value="/tmp/chromedriver")
+    @mock.patch.object(automation_runtime.webdriver, "Chrome")
+    def test_attached_chrome_driver_installs_mailto_guard(self, mock_chrome, _mock_install, _mock_service):
+        driver = mock.Mock()
+        mock_chrome.return_value = driver
+
+        result = automation_runtime.build_attached_chrome_driver("127.0.0.1:9222")
+
+        self.assertIs(result, driver)
+        driver.execute_cdp_cmd.assert_called_once_with(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": automation_runtime.MAILTO_CLICK_GUARD_SCRIPT},
+        )
+        driver.execute_script.assert_called_once_with(automation_runtime.MAILTO_CLICK_GUARD_SCRIPT)
+
 
 if __name__ == "__main__":
     unittest.main()

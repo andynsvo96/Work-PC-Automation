@@ -33,6 +33,54 @@ from runtime_paths import SCREENSHOTS_DIR, result_file, state_file
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULT_FILE = result_file("last_result.json")
 STATUS_FILE = state_file("automation_status.json")
+MAILTO_CLICK_GUARD_SCRIPT = r"""
+(function () {
+  if (window.__automationMailtoClickGuardInstalled) return;
+  window.__automationMailtoClickGuardInstalled = true;
+
+  const CRM_HOST_RE = /(^|\.)crm2\.legacy\.printfly\.com$/i;
+  const BLOCKED_CRM_TEXT_RE = /\b(email\s+customer|send\s+invoice)\b/i;
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  function textOf(node) {
+    if (!node) return "";
+    return [
+      node.innerText,
+      node.textContent,
+      node.value,
+      node.getAttribute && node.getAttribute("aria-label"),
+      node.getAttribute && node.getAttribute("title"),
+      node.getAttribute && node.getAttribute("data-original-title")
+    ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  }
+
+  function closestInteractive(node) {
+    for (let cur = node; cur && cur !== document; cur = cur.parentElement) {
+      if (cur.matches && cur.matches("a[href],button,input,[role='button'],[onclick],[ng-click],.btn,[class*='btn']")) {
+        return cur;
+      }
+    }
+    return null;
+  }
+
+  function shouldBlock(target) {
+    const interactive = closestInteractive(target);
+    if (!interactive) return false;
+    const href = String(interactive.getAttribute && interactive.getAttribute("href") || "");
+    if (/^\s*mailto:/i.test(href)) return true;
+    if (!CRM_HOST_RE.test(window.location.hostname || "")) return false;
+    const text = textOf(interactive);
+    return BLOCKED_CRM_TEXT_RE.test(text) || EMAIL_RE.test(text);
+  }
+
+  document.addEventListener("click", function (event) {
+    if (!shouldBlock(event.target)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    console.warn("Automation blocked a customer email/mailto click.");
+  }, true);
+})();
+"""
 
 FAILURE_SCREENSHOT_MARKERS = (
     "error",
@@ -59,6 +107,21 @@ def configure_console_utf8():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if sys.stderr and hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
+def install_mailto_click_guard(driver):
+    """Block accidental browser handoff to the OS email client."""
+    try:
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": MAILTO_CLICK_GUARD_SCRIPT},
+        )
+    except Exception:
+        pass
+    try:
+        driver.execute_script(MAILTO_CLICK_GUARD_SCRIPT)
+    except Exception:
+        pass
 
 
 def write_result_payload(
@@ -728,10 +791,18 @@ def build_chrome_driver(
 
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
+    options.add_experimental_option(
+        "prefs",
+        {
+            "protocol_handler.excluded_schemes": {"mailto": True},
+            "profile.default_content_setting_values.protocol_handlers": 2,
+        },
+    )
 
     os.environ["WDM_LOCAL"] = "1"
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
+    install_mailto_click_guard(driver)
 
     if page_load_timeout:
         driver.set_page_load_timeout(page_load_timeout)
@@ -746,4 +817,6 @@ def build_attached_chrome_driver(debugger_address="127.0.0.1:9222"):
 
     os.environ["WDM_LOCAL"] = "1"
     service = Service(ChromeDriverManager().install())
-    return webdriver.Chrome(service=service, options=options)
+    driver = webdriver.Chrome(service=service, options=options)
+    install_mailto_click_guard(driver)
+    return driver
