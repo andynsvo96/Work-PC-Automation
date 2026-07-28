@@ -900,6 +900,18 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
     </div>
   </div>
 </dialog>
+<dialog id='paycomTwoFactorDialog' style='max-width:440px;width:min(440px, calc(100vw - 32px));border:none;border-radius:14px;padding:0;'>
+  <div class='card' style='margin:0'>
+    <h3 style='margin-top:0'>Paycom verification code</h3>
+    <p class='muted'>A text message was requested from Paycom. Enter its six-digit code to continue syncing hours.</p>
+    <label for='paycomTwoFactorCode'>6-digit code</label>
+    <input id='paycomTwoFactorCode' type='text' inputmode='numeric' autocomplete='one-time-code' pattern='[0-9]{6}' maxlength='6' style='width:100%;box-sizing:border-box;margin-top:6px' />
+    <div class='muted' id='paycomTwoFactorMessage' style='margin-top:10px'></div>
+    <div class='row' style='justify-content:flex-end;margin-top:14px'>
+      <button id='paycomTwoFactorSubmitBtn' onclick='submitPaycomTwoFactorCode()'>Continue</button>
+    </div>
+  </div>
+</dialog>
 <div id='tabMetrics' class='tab-panel'>
   <div class='status' id='metricsStatusBox'>Desktop metrics status: waiting for first update...</div>
   <div class='card'>
@@ -7382,6 +7394,75 @@ async function syncPaycomNow(button = null) {
   await callEndpoint('/work/sync', button, 'Sync underway...');
 }
 
+let paycomTwoFactorRequestId = null;
+let paycomTwoFactorSubmitting = false;
+
+function closePaycomTwoFactorDialog() {
+  const dialog = document.getElementById('paycomTwoFactorDialog');
+  if (dialog && dialog.open && typeof dialog.close === 'function') dialog.close();
+  paycomTwoFactorRequestId = null;
+  paycomTwoFactorSubmitting = false;
+}
+
+function showPaycomTwoFactorDialog(requestId) {
+  const dialog = document.getElementById('paycomTwoFactorDialog');
+  const input = document.getElementById('paycomTwoFactorCode');
+  const message = document.getElementById('paycomTwoFactorMessage');
+  if (!dialog || !input) return;
+  const isNewRequest = paycomTwoFactorRequestId !== requestId;
+  paycomTwoFactorRequestId = requestId;
+  if (isNewRequest) {
+    paycomTwoFactorSubmitting = false;
+    input.value = '';
+    input.disabled = false;
+    if (message) message.textContent = '';
+  }
+  if (!dialog.open && typeof dialog.showModal === 'function') dialog.showModal();
+  if (!paycomTwoFactorSubmitting) setTimeout(() => input.focus(), 0);
+}
+
+async function pollPaycomTwoFactor() {
+  try {
+    const payload = await api('/paycom/2fa/status');
+    if (payload.awaiting_code && payload.request_id) {
+      showPaycomTwoFactorDialog(payload.request_id);
+    } else {
+      closePaycomTwoFactorDialog();
+    }
+  } catch (_) {
+    // The ordinary app polling loop will surface connectivity/auth errors.
+  }
+}
+
+async function submitPaycomTwoFactorCode() {
+  const input = document.getElementById('paycomTwoFactorCode');
+  const message = document.getElementById('paycomTwoFactorMessage');
+  const button = document.getElementById('paycomTwoFactorSubmitBtn');
+  const code = String(input && input.value || '').replace(/\s+/g, '');
+  if (!/^\d{6}$/.test(code)) {
+    if (message) message.textContent = 'Enter the six-digit code from the text message.';
+    if (input) input.focus();
+    return;
+  }
+  try {
+    paycomTwoFactorSubmitting = true;
+    if (input) input.disabled = true;
+    if (button) button.disabled = true;
+    if (message) message.textContent = 'Sending code to Paycom…';
+    const payload = await api('/paycom/2fa/code', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({request_id: paycomTwoFactorRequestId, code}),
+    });
+    if (message) message.textContent = payload.message || 'Code sent. Waiting for Paycom…';
+  } catch (error) {
+    paycomTwoFactorSubmitting = false;
+    if (input) input.disabled = false;
+    if (button) button.disabled = false;
+    if (message) message.textContent = error.message || 'Could not submit the verification code.';
+  }
+}
+
 async function saveConfig() {
   try {
     await saveSettings({ manual: true });
@@ -7431,8 +7512,12 @@ if (!UI_OPENED_FROM_FILE) {
   setTemperatureUnit(temperatureUnit);
   renderCrmAddressModeControls();
   reloadAll();
+  pollPaycomTwoFactor();
   startWorkHoursTimer();
   startDesktopMetricsTimer();
+  setInterval(() => {
+    pollPaycomTwoFactor();
+  }, 1500);
   setInterval(() => {
     loadStatus(false);
     loadCrmProcessingStatus(false);
