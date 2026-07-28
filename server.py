@@ -2990,6 +2990,11 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False):
         env = os.environ.copy()
         env["AUTOMATION_STATUS_FILE"] = AUTOMATION_STATUS_FILE
         env["AUTOMATION_HEADLESS"] = "1" if headless else "0"
+        # Visible runs are a debugging mode: let Chrome remain available after
+        # the worker returns so the final page and console state can be
+        # inspected. A later run still performs its normal stale-profile
+        # cleanup before opening a new session.
+        env["AUTOMATION_KEEP_BROWSER_OPEN"] = "0" if headless else "1"
         popen_kwargs = {
             "cwd": SCRIPT_DIR,
             "creationflags": creation_flags,
@@ -12938,7 +12943,7 @@ def api_headless_mode():
         payload["message"] = (
             "Headless mode is on. New automations will run in the background."
             if enabled
-            else "Headless mode is off. New automations will use visible browser windows."
+            else "Headless mode is off. New automations will use visible browser windows and leave them open for debugging."
         )
         return jsonify(payload)
     except Exception as e:

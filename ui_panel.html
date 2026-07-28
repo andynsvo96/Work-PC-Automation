@@ -1848,7 +1848,7 @@ function renderHeadlessMode(enabled) {
   button.classList.toggle('active', isHeadless);
   button.title = isHeadless
     ? 'Headless mode is on. Click to use visible browser windows.'
-    : 'Headless mode is off. Click to run automations in the background.';
+    : 'Headless mode is off. Visible browser windows stay open for debugging.';
   button.setAttribute('aria-label', button.title);
 }
 
