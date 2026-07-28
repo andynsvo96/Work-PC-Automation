@@ -31,6 +31,7 @@ from automation_runtime import (
     configure_console_utf8,
     kill_stale_chrome,
     refresh_if_crm_challenge_attempts_exceeded,
+    resolve_existing_automation_profile_path,
     safe_driver_quit,
     safe_get_with_partial_load,
     safe_take_screenshot,
@@ -71,8 +72,8 @@ class SplitterError(Exception):
 
 def _profile_path():
     if os.path.isabs(PROCESSOR_PROFILE_DIR):
-        return PROCESSOR_PROFILE_DIR
-    return os.path.join(PROJECT_ROOT, PROCESSOR_PROFILE_DIR)
+        return resolve_existing_automation_profile_path(PROCESSOR_PROFILE_DIR)
+    return resolve_existing_automation_profile_path(os.path.join(PROJECT_ROOT, PROCESSOR_PROFILE_DIR))
 
 
 def _normalize_parallel_workers(value, divisions=1):

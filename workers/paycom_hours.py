@@ -62,6 +62,7 @@ AUDIT_AUTOMATION_NAME = "paycom_hours.week"
 PAYCOM_2FA_REQUEST_FILE = state_file("paycom_2fa_request.json")
 PAYCOM_2FA_RESPONSE_FILE = state_file("paycom_2fa_response.json")
 PAYCOM_2FA_CODE_TIMEOUT_SECONDS = 180
+PAYCOM_HUMAN_VERIFICATION_TIMEOUT_SECONDS = 180
 
 PAYCOM_USERNAME_SELECTORS = [
     "input[name='username']",
@@ -263,7 +264,27 @@ def _wait_for_two_factor_code(automation_name=AUDIT_AUTOMATION_NAME):
     return None
 
 
-def complete_paycom_two_factor(driver, automation_name=AUDIT_AUTOMATION_NAME):
+def _wait_for_paycom_hcaptcha_completion(driver, automation_name=AUDIT_AUTOMATION_NAME):
+    """Pause a visible run while an operator completes Paycom's hCaptcha."""
+    write_status_payload(
+        automation_name,
+        "Paycom hCaptcha verification required. Complete it in the visible Paycom browser to continue.",
+        stage="human_verification_required",
+        extra_fields={"human_verification_required": True, "challenge": "hcaptcha"},
+    )
+    deadline = time.monotonic() + PAYCOM_HUMAN_VERIFICATION_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if not _has_paycom_captcha_challenge(driver):
+            try:
+                WebDriverWait(driver, 20).until(lambda d: _visible_two_factor_code_input(d) is None)
+                return True, ""
+            except TimeoutException:
+                return False, "Paycom hCaptcha closed, but the verification code form is still active. Request a new code and try again."
+        time.sleep(0.5)
+    return False, "Timed out waiting for Paycom hCaptcha verification in the visible browser."
+
+
+def complete_paycom_two_factor(driver, automation_name=AUDIT_AUTOMATION_NAME, allow_interactive_wait=False):
     """Request a Paycom text, collect its code in the app, then verify it."""
     code_input = _visible_two_factor_code_input(driver)
     if not code_input:
@@ -288,10 +309,12 @@ def complete_paycom_two_factor(driver, automation_name=AUDIT_AUTOMATION_NAME):
             WebDriverWait(driver, 20).until(lambda d: _visible_two_factor_code_input(d) is None)
         except TimeoutException:
             if _has_paycom_captcha_challenge(driver):
+                if allow_interactive_wait:
+                    return _wait_for_paycom_hcaptcha_completion(driver, automation_name=automation_name)
                 return (
                     False,
-                    "Paycom accepted the code page but requires an interactive hCaptcha challenge. "
-                    "The automation will not solve or bypass that challenge.",
+                    "Paycom requires an interactive hCaptcha challenge after the verification code. "
+                    "Retry in a visible browser and complete the challenge; the automation will not solve or bypass it.",
                 )
             return False, "Paycom did not accept the verification code. Check the code and try the sync again."
         return True, ""
@@ -1238,7 +1261,10 @@ def _run_once(headless_mode):
         time.sleep(2)
 
         if is_paycom_two_factor_page(driver):
-            ok, two_factor_message = complete_paycom_two_factor(driver)
+            ok, two_factor_message = complete_paycom_two_factor(
+                driver,
+                allow_interactive_wait=not headless_mode,
+            )
             if not ok:
                 take_screenshot(driver, "paycom_hours_two_factor_required")
                 return False, two_factor_message, None, target_url, []
@@ -1342,9 +1368,10 @@ def run():
         print(f"RESULT:SUCCESS:{msg}")
         return
 
-    # If the headless renderer hangs, retry once in visible mode.
-    if headless_enabled and "timed out receiving message from renderer" in msg.lower():
-        print("Headless sync hit renderer timeout. Retrying once in visible mode...")
+    # A CAPTCHA needs a visible browser, just like a renderer crash does.
+    retry_visible = "timed out receiving message from renderer" in msg.lower() or "hcaptcha" in msg.lower()
+    if headless_enabled and retry_visible:
+        print("Headless sync needs a visible browser. Retrying once in visible mode...")
         success2, msg2, week_hours2, source2, day_rows2 = _run_once(headless_mode=False)
         if success2:
             write_result(True, msg2, week_hours=week_hours2, source=source2, day_rows=day_rows2)

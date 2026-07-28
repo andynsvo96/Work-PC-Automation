@@ -286,12 +286,17 @@ def _run_once(action, effective_dry_run, profile_path, headless_mode):
             pass
 
         if is_paycom_two_factor_page(driver):
-            ok, two_factor_message = complete_paycom_two_factor(driver, automation_name=AUDIT_AUTOMATION_NAME)
+            ok, two_factor_message = complete_paycom_two_factor(
+                driver,
+                automation_name=AUDIT_AUTOMATION_NAME,
+                allow_interactive_wait=not headless_mode,
+            )
             if not ok:
                 safe_take_screenshot(driver, f"clock_{action}_two_factor_required_{mode_name}")
-                # A bad/expired code should not silently send a second text in
-                # the visible-mode fallback.
-                return False, two_factor_message, False
+                # A CAPTCHA cannot be solved in headless Chrome; retry once in
+                # visible mode. A bad/expired code still stops immediately.
+                retry_visible = bool(headless_mode and "hcaptcha" in two_factor_message.lower())
+                return False, two_factor_message, retry_visible
 
         if is_paycom_login_page(driver):
             page_state = dump_page_state(driver)

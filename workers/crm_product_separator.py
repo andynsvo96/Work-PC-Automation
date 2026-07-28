@@ -29,6 +29,7 @@ from automation_runtime import (
     configure_console_utf8,
     kill_stale_chrome,
     refresh_if_crm_challenge_attempts_exceeded,
+    resolve_existing_automation_profile_path,
     safe_driver_quit,
     safe_get_with_partial_load,
     safe_take_screenshot,
@@ -93,8 +94,8 @@ class ManualReviewRequired(ProductSeparatorError):
 def _profile_path(profile_dir=None):
     profile_dir = profile_dir or PROCESSOR_PROFILE_DIR
     if os.path.isabs(profile_dir):
-        return profile_dir
-    return os.path.join(PROJECT_ROOT, profile_dir)
+        return resolve_existing_automation_profile_path(profile_dir)
+    return resolve_existing_automation_profile_path(os.path.join(PROJECT_ROOT, profile_dir))
 
 
 def _write_result(success, message, result_file=None, **extra_fields):

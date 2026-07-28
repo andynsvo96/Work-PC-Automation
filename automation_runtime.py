@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -33,6 +34,8 @@ from runtime_paths import SCREENSHOTS_DIR, result_file, state_file
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULT_FILE = result_file("last_result.json")
 STATUS_FILE = state_file("automation_status.json")
+PLATFORM_PROFILE_ROOT = os.path.join(SCRIPT_DIR, "runtime", "browser_profiles")
+LEGACY_PROFILE_FALLBACK_ENV = "AUTOMATION_USE_LEGACY_PROFILES"
 MAILTO_CLICK_GUARD_SCRIPT = r"""
 (function () {
   if (window.__automationMailtoClickGuardInstalled) return;
@@ -325,14 +328,28 @@ def safe_take_screenshot(driver, name, timeout=8, screenshots_dir=None):
 
 def _kill_process(pid):
     if os.name != "nt":
-        if psutil is None:
-            return False, "psutil is required to terminate Chrome on this platform."
+        if psutil is not None:
+            try:
+                process = psutil.Process(int(pid))
+                process.terminate()
+                process.wait(timeout=8)
+                return True, ""
+            except psutil.NoSuchProcess:
+                return True, "Process was already stopped."
+            except Exception as err:
+                return False, str(err)
         try:
-            process = psutil.Process(int(pid))
-            process.terminate()
-            process.wait(timeout=8)
-            return True, ""
-        except psutil.NoSuchProcess:
+            process_id = int(pid)
+            os.kill(process_id, signal.SIGTERM)
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(process_id, 0)
+                except ProcessLookupError:
+                    return True, ""
+                time.sleep(0.2)
+            return False, "Timed out waiting for the Chrome process to exit."
+        except ProcessLookupError:
             return True, "Process was already stopped."
         except Exception as err:
             return False, str(err)
@@ -401,6 +418,32 @@ def _collect_chrome_process_entries_with_psutil():
     return entries
 
 
+def _collect_chrome_process_entries_with_posix_ps():
+    """Collect Chrome process command lines on macOS/Linux without psutil."""
+    if os.name == "nt":
+        return None
+    ps_bin = shutil.which("ps")
+    if not ps_bin:
+        return None
+    try:
+        result = subprocess.run(
+            [ps_bin, "-ax", "-o", "pid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return []
+    entries = []
+    for line in (result.stdout or "").splitlines():
+        pid_text, _separator, command = line.strip().partition(" ")
+        if pid_text.isdigit() and command:
+            entries.append((pid_text, command.strip()))
+    return entries
+
+
 def _collect_chrome_process_entries_with_powershell():
     powershell_bin = shutil.which("powershell") or shutil.which("powershell.exe")
     if not powershell_bin:
@@ -461,6 +504,65 @@ def _normalize_profile_path_for_match(path):
     return os.path.normcase(os.path.normpath(os.path.abspath(text)))
 
 
+def _platform_profile_name(system_name=None):
+    """Return a stable directory name for local, OS-specific browser state."""
+    raw = str(system_name or sys.platform or "").strip().lower()
+    if raw in {"darwin", "mac", "macos"}:
+        return "macos"
+    if raw.startswith("win"):
+        return "windows"
+    if raw.startswith("linux"):
+        return "linux"
+    return raw or "unknown"
+
+
+def resolve_automation_profile_path(profile_path, *, system_name=None, profiles_root=None):
+    """Resolve persistent automation profiles into local OS-specific folders.
+
+    Only top-level, repository-managed profile directories are remapped.  This
+    leaves temporary/parallel worker profiles and explicit external paths
+    untouched.  The original top-level profile is never moved or deleted, so
+    setting ``AUTOMATION_USE_LEGACY_PROFILES=1`` is an immediate rollback.
+    """
+    legacy_path = _normalize_profile_path_for_match(profile_path)
+    if not legacy_path:
+        return legacy_path
+    if os.getenv(LEGACY_PROFILE_FALLBACK_ENV, "").strip().lower() in {"1", "true", "yes", "on"}:
+        return legacy_path
+
+    try:
+        relative_path = os.path.relpath(legacy_path, SCRIPT_DIR)
+    except ValueError:
+        return legacy_path
+    if os.path.dirname(relative_path) or relative_path.startswith(".."):
+        return legacy_path
+
+    profile_name = os.path.basename(relative_path)
+    if profile_name != "slack_chrome_profile" and not profile_name.startswith("chrome_profile"):
+        return legacy_path
+
+    root = os.path.abspath(profiles_root or os.getenv("AUTOMATION_PROFILE_ROOT") or PLATFORM_PROFILE_ROOT)
+    return os.path.join(root, _platform_profile_name(system_name), profile_name)
+
+
+def resolve_existing_automation_profile_path(profile_path, *, system_name=None, profiles_root=None):
+    """Use the OS-specific profile when initialized, otherwise retain legacy state.
+
+    Parallel workers clone an existing signed-in profile before starting Chrome.
+    This compatibility helper lets those workers continue using the untouched
+    legacy profile until the new per-OS profile has been set up once.
+    """
+    legacy_path = _normalize_profile_path_for_match(profile_path)
+    resolved_path = resolve_automation_profile_path(
+        legacy_path,
+        system_name=system_name,
+        profiles_root=profiles_root,
+    )
+    if resolved_path != legacy_path and not os.path.isdir(resolved_path) and os.path.isdir(legacy_path):
+        return legacy_path
+    return resolved_path
+
+
 def _chrome_cmdline_profile_path(cmdline):
     text = str(cmdline or "")
     match = re.search(r"--user-data-dir(?:=|\s+)(\"[^\"]+\"|'[^']+'|[^\s]+)", text, flags=re.IGNORECASE)
@@ -477,9 +579,13 @@ def _chrome_cmdline_uses_profile(cmdline, profile_path):
 
 def kill_stale_chrome(profile_path, profile_label="automation"):
     """Kill Chrome processes tied to the given Selenium profile path only."""
+    profile_path = resolve_automation_profile_path(profile_path)
     try:
         entries = _collect_chrome_process_entries_with_psutil()
         source_name = "psutil"
+        if entries is None:
+            entries = _collect_chrome_process_entries_with_posix_ps()
+            source_name = "posix ps"
         if entries is None:
             entries = _collect_chrome_process_entries_with_wmic()
             source_name = "wmic"
@@ -487,7 +593,7 @@ def kill_stale_chrome(profile_path, profile_label="automation"):
             entries = _collect_chrome_process_entries_with_powershell()
             source_name = "powershell/cim"
         if entries is None:
-            print("Stale Chrome check skipped: neither wmic nor PowerShell is available on this system.")
+            print("Stale Chrome check skipped: no supported process inspector is available on this system.")
             return 0
     except Exception as err:
         print(f"Warning: could not check for stale Chrome: {err}")
@@ -774,6 +880,15 @@ def build_chrome_driver(
     script_timeout=None,
     extra_args=None,
 ):
+    legacy_profile_path = _normalize_profile_path_for_match(profile_path)
+    profile_path = resolve_automation_profile_path(profile_path)
+    if profile_path != legacy_profile_path and not os.path.exists(profile_path):
+        print(
+            f"Initializing local {_platform_profile_name()} Chrome profile: {profile_path}. "
+            f"Legacy profile remains unchanged at {legacy_profile_path}; set "
+            f"{LEGACY_PROFILE_FALLBACK_ENV}=1 to roll back."
+        )
+    os.makedirs(profile_path, exist_ok=True)
     options = Options()
     options.add_argument(f"--user-data-dir={profile_path}")
     if headless_mode:

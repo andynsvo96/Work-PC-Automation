@@ -34,6 +34,7 @@ import pystray
 from PIL import Image, ImageDraw
 
 from automation_audit import AUDIT_LOG_FILE, log_automation_event, log_automation_result
+from automation_runtime import resolve_automation_profile_path
 from app_security import load_app_security
 from clipboard_runtime import (
     ClipboardPeerClient,
@@ -2990,11 +2991,11 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False):
         env = os.environ.copy()
         env["AUTOMATION_STATUS_FILE"] = AUTOMATION_STATUS_FILE
         env["AUTOMATION_HEADLESS"] = "1" if headless else "0"
-        # Visible runs are a debugging mode: let Chrome remain available after
-        # the worker returns so the final page and console state can be
-        # inspected. A later run still performs its normal stale-profile
-        # cleanup before opening a new session.
-        env["AUTOMATION_KEEP_BROWSER_OPEN"] = "0" if headless else "1"
+        # A visible browser is required for some human verification steps, but
+        # it should still close when the worker finishes.  Keep a browser open
+        # only when an operator explicitly enables the debugging override.
+        visible_debug = os.getenv("AUTOMATION_VISIBLE_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
+        env["AUTOMATION_KEEP_BROWSER_OPEN"] = "1" if visible_debug else "0"
         popen_kwargs = {
             "cwd": SCRIPT_DIR,
             "creationflags": creation_flags,
@@ -13154,8 +13155,8 @@ def _resolve_profile_path(profile_dir):
     if not profile_text:
         raise ValueError("Chrome profile directory is empty.")
     if os.path.isabs(profile_text):
-        return os.path.normpath(profile_text)
-    return os.path.normpath(os.path.join(SCRIPT_DIR, profile_text))
+        return resolve_automation_profile_path(os.path.normpath(profile_text))
+    return resolve_automation_profile_path(os.path.normpath(os.path.join(SCRIPT_DIR, profile_text)))
 
 
 def _chrome_profile_setup_targets():

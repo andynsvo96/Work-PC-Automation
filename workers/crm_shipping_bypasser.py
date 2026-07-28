@@ -28,6 +28,7 @@ from automation_runtime import (
     configure_console_utf8,
     kill_stale_chrome,
     refresh_if_crm_challenge_attempts_exceeded,
+    resolve_existing_automation_profile_path,
     safe_driver_quit,
     safe_get_with_partial_load,
     safe_take_screenshot,
@@ -66,8 +67,8 @@ from runtime_paths import SCREENSHOTS_DIR, state_file
 configure_console_utf8()
 
 AUTOMATION_NAME = "crm.shipping_bypasser"
-PROFILE_PATH = os.path.join(SCRIPT_DIR, CRM_PROFILE_DIR)
-SANMAR_PROFILE_PATH = os.path.join(SCRIPT_DIR, SANMAR_PROFILE_DIR)
+PROFILE_PATH = resolve_existing_automation_profile_path(os.path.join(SCRIPT_DIR, CRM_PROFILE_DIR))
+SANMAR_PROFILE_PATH = resolve_existing_automation_profile_path(os.path.join(SCRIPT_DIR, SANMAR_PROFILE_DIR))
 RUSH_FILTER = "rush"
 CONTINUOUS_ORDER_FETCH_LIMIT = 25
 CRM_STATE_PATH = state_file("crm_state.json")

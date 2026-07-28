@@ -36,6 +36,7 @@ from automation_runtime import (
     build_chrome_driver,
     configure_console_utf8,
     kill_stale_chrome,
+    resolve_existing_automation_profile_path,
     safe_driver_quit,
     safe_get_with_partial_load,
     safe_take_screenshot,
@@ -64,7 +65,7 @@ from rush_order_notifications import send_paid_rush_notification
 configure_console_utf8()
 
 AUTOMATION_NAME = "crm.address_validator"
-PROFILE_PATH = os.path.join(SCRIPT_DIR, CRM_PROFILE_DIR)
+PROFILE_PATH = resolve_existing_automation_profile_path(os.path.join(SCRIPT_DIR, CRM_PROFILE_DIR))
 CONTINUOUS_BATCH_FETCH_LIMIT = 25
 PROFILE_CLONE_IGNORE_NAMES = (
     "ActorSafetyLists",
@@ -6947,4 +6948,3 @@ if __name__ == "__main__":
             visible=bool(options.visible),
         )
     )
-
