@@ -59,6 +59,7 @@ from config import (
 )
 from runtime_paths import GENERATED_PROFILES_DIR
 from credential_store import CRM_CREDENTIAL_TARGET, read_windows_credential
+from rush_order_notifications import send_paid_rush_notification
 
 configure_console_utf8()
 
@@ -2784,6 +2785,18 @@ def _handle_shipping_issue(
     _reload_order_for_shipping_issue(driver, shipping_modal, order_id)
     sales_note_result = _add_shipping_issue_sales_note(driver, note, dry_run=dry_run)
     status_result = _apply_order_status(driver, SHIPPING_ISSUE_STATUS, dry_run=dry_run)
+    try:
+        shipping_charge = _read_order_totals_shipping_value(driver)
+    except Exception:
+        shipping_charge = ""
+    # Notify only after the Sales Note and Issue - Shipping status both
+    # completed.  The eligibility helper excludes the $25 international rate.
+    rush_order_slack = send_paid_rush_notification(
+        f"https://crm2.legacy.printfly.com/order/{order_id}",
+        "Shipping Issue",
+        shipping_charge,
+        dry_run=dry_run,
+    )
 
     ready_or_applied = "ready" if dry_run else "applied"
     label = "rush PO Box" if issue_kind == "po_box_rush" else "missing street number"
@@ -2803,6 +2816,7 @@ def _handle_shipping_issue(
     )
     result["sales_note"] = sales_note_result
     result["order_status"] = status_result
+    result["rush_order_slack"] = rush_order_slack
     return result
 
 def _extract_option_text(input_element):
@@ -4439,6 +4453,11 @@ def _order_totals_shipping_class_from_text(text):
 
 
 def _read_order_totals_shipping_class(driver):
+    shipping_value = _read_order_totals_shipping_value(driver)
+    return _order_totals_shipping_class_from_value(shipping_value)
+
+
+def _read_order_totals_shipping_value(driver):
     def scan_current_context():
         selectors = (
             (By.XPATH, "//*[normalize-space(.)='Order Totals']/ancestor::*[contains(@class, 'panel')][1]"),
@@ -4451,24 +4470,24 @@ def _read_order_totals_shipping_class(driver):
                 elements = []
             for element in elements:
                 try:
-                    shipping_class = _order_totals_shipping_class_from_text(element.text)
+                    shipping_value = _order_totals_shipping_value_from_text(element.text)
                 except Exception:
-                    shipping_class = ""
-                if shipping_class:
-                    return shipping_class
+                    shipping_value = ""
+                if shipping_value:
+                    return shipping_value
         try:
-            return _order_totals_shipping_class_from_text(_body_text(driver))
+            return _order_totals_shipping_value_from_text(_body_text(driver))
         except Exception:
             return ""
 
-    shipping_class = scan_current_context()
-    if shipping_class:
-        return shipping_class
+    shipping_value = scan_current_context()
+    if shipping_value:
+        return shipping_value
     try:
         driver.switch_to.default_content()
-        shipping_class = scan_current_context()
-        if shipping_class:
-            return shipping_class
+        shipping_value = scan_current_context()
+        if shipping_value:
+            return shipping_value
     except Exception:
         pass
     try:
@@ -6928,5 +6947,4 @@ if __name__ == "__main__":
             visible=bool(options.visible),
         )
     )
-
 

@@ -52,6 +52,10 @@ SLACK_CHANNEL_URL_TEST = ""
 SLACK_CHANNEL_URL = SLACK_CHANNEL_URL_PROD
 SLACK_FORCE_HEADLESS = False
 
+# Paid rush-order reachout notices (Copyright / Shipping Issue). Leave this
+# default unless the team moves the dedicated notification channel.
+RUSH_ORDER_SLACK_CHANNEL_URL = "https://app.slack.com/client/T03DK2TN7/C04KPACK6VC"
+
 # Day-specific messages (Sunday-Saturday).
 SLACK_MESSAGE_IN_SUNDAY = "signing on"
 SLACK_MESSAGE_IN_SUNDAY_ALTERNATE = ""

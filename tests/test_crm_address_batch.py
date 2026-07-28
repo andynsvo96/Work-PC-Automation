@@ -1560,6 +1560,48 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         mock_payment.assert_not_called()
         mock_cancel_refund.assert_not_called()
 
+    def test_copyright_reachout_notifies_after_crm_and_email_complete_for_paid_rush(self):
+        driver = mock.Mock(current_window_handle="crm-tab")
+        completed_steps = []
+
+        with mock.patch.object(crm_copyright_cancel, "_open_driver", return_value=driver), \
+             mock.patch.object(crm_copyright_cancel, "safe_get_with_partial_load"), \
+             mock.patch.object(crm_copyright_cancel, "_login_to_crm_if_needed"), \
+             mock.patch.object(crm_copyright_cancel, "_switch_to_crm_app_frame"), \
+             mock.patch.object(crm_copyright_cancel, "_wait_for_order_scope"), \
+             mock.patch.object(crm_copyright_cancel, "_wait_for_crm_contact_info", return_value={"email": "buyer@example.com"}), \
+             mock.patch.object(
+                 crm_copyright_cancel,
+                 "_prepare_no_cancel_crm_action",
+                 side_effect=lambda *args, **kwargs: completed_steps.append("crm") or {"status_applied": True},
+             ), \
+             mock.patch.object(
+                 crm_copyright_cancel,
+                 "_prepare_and_maybe_send_salesforce_email",
+                 side_effect=lambda *args, **kwargs: completed_steps.append("email") or {"sent": True},
+             ), \
+             mock.patch.object(crm_copyright_cancel, "_get_order_live_state", return_value={"shipping_charges": "25.01"}), \
+             mock.patch.object(
+                 crm_copyright_cancel,
+                 "send_paid_rush_notification",
+                 side_effect=lambda *args, **kwargs: completed_steps.append("slack") or {"sent": True, "eligible": True},
+             ) as notify:
+            details = crm_copyright_cancel.process_single_order(
+                "1234567",
+                "Copyrighted logo",
+                dry_run=False,
+                process=crm_copyright_cancel.COPYRIGHT_REACHOUT_PROCESS,
+            )
+
+        self.assertEqual(completed_steps, ["crm", "email", "slack"])
+        notify.assert_called_once_with(
+            "https://crm2.legacy.printfly.com/order/1234567",
+            "Copyright",
+            "25.01",
+            dry_run=False,
+        )
+        self.assertTrue(details["rush_order_slack"]["sent"])
+
 
 class CrmUnlockOrdersTests(unittest.TestCase):
     def test_unlocker_reopens_report_when_preview_stays_missing_after_reselection(self):
@@ -5697,6 +5739,50 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertFalse(result["manual_review_required"])
         self.assertEqual(result["outcome"], "missing_street_number_shipping_issue_ready")
+
+    def test_shipping_issue_notifies_only_after_issue_status_is_applied(self):
+        driver = mock.Mock()
+        shipping_modal = object()
+        calls = []
+
+        with mock.patch.object(
+            crm_validate_address,
+            "_reload_order_for_shipping_issue",
+            side_effect=lambda *args, **kwargs: calls.append("reload"),
+        ), mock.patch.object(
+            crm_validate_address,
+            "_add_shipping_issue_sales_note",
+            side_effect=lambda *args, **kwargs: calls.append("note") or {"updated": True},
+        ), mock.patch.object(
+            crm_validate_address,
+            "_apply_order_status",
+            side_effect=lambda *args, **kwargs: calls.append("status") or {"status_applied": True},
+        ), mock.patch.object(
+            crm_validate_address,
+            "_read_order_totals_shipping_value",
+            return_value="$25.01",
+        ), mock.patch.object(
+            crm_validate_address,
+            "send_paid_rush_notification",
+            side_effect=lambda *args, **kwargs: calls.append("slack") or {"sent": True, "eligible": True},
+        ) as notify:
+            result = crm_validate_address._handle_shipping_issue(
+                driver,
+                shipping_modal,
+                "4885010",
+                crm_validate_address.MISSING_STREET_NUMBER_SALES_NOTE,
+                "missing_street_number",
+                dry_run=False,
+            )
+
+        self.assertEqual(calls, ["reload", "note", "status", "slack"])
+        notify.assert_called_once_with(
+            "https://crm2.legacy.printfly.com/order/4885010",
+            "Shipping Issue",
+            "$25.01",
+            dry_run=False,
+        )
+        self.assertTrue(result["rush_order_slack"]["sent"])
 
     def test_address_timeout_reloads_order_once_then_retries(self):
         driver = mock.Mock()

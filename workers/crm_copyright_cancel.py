@@ -98,6 +98,7 @@ from workers.crm_auto_splitter import (
 import crm_product_separator as _product_separator
 from crm_shipping_bypasser import run as _run_shipping_bypasser
 from slack_team import run as _run_slack_team
+from rush_order_notifications import send_paid_rush_notification
 
 configure_console_utf8()
 
@@ -8002,6 +8003,21 @@ def process_single_order(
                 reason=reason,
                 login_wait_seconds=login_wait_seconds,
             )
+            rush_order_slack = {
+                "sent": False,
+                "eligible": False,
+                "reason": f"{process.display_name} does not use the Copyright rush-order notification.",
+            }
+            if process.key == COPYRIGHT_REACHOUT_PROCESS.key:
+                # This is intentionally last: CRM status and the customer email
+                # must both succeed before teammates are notified.
+                order_state = _get_order_live_state(driver)
+                rush_order_slack = send_paid_rush_notification(
+                    order_url,
+                    "Copyright",
+                    order_state.get("shipping_charges"),
+                    dry_run=dry_run,
+                )
             return {
                 "order_id": order_id,
                 "order_url": order_url,
@@ -8011,6 +8027,7 @@ def process_single_order(
                 "contact": contact,
                 "salesforce": salesforce,
                 "crm_action": crm_action,
+                "rush_order_slack": rush_order_slack,
                 "salesforce_refund_case": None,
                 "post_cancel_stock": {
                     "action": "skipped",
