@@ -905,7 +905,7 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
     <h3 style='margin-top:0'>Paycom verification code</h3>
     <p class='muted'>A text message was requested from Paycom. Enter its six-digit code to continue syncing hours.</p>
     <label for='paycomTwoFactorCode'>6-digit code</label>
-    <input id='paycomTwoFactorCode' type='text' inputmode='numeric' autocomplete='one-time-code' pattern='[0-9]{6}' maxlength='6' style='width:100%;box-sizing:border-box;margin-top:6px' />
+    <input id='paycomTwoFactorCode' type='text' inputmode='numeric' autocomplete='one-time-code' pattern='[0-9]{6}' maxlength='6' onkeydown="if (event.key === 'Enter') { event.preventDefault(); submitPaycomTwoFactorCode(); }" style='width:100%;box-sizing:border-box;margin-top:6px' />
     <div class='muted' id='paycomTwoFactorMessage' style='margin-top:10px'></div>
     <div class='row' style='justify-content:flex-end;margin-top:14px'>
       <button id='paycomTwoFactorSubmitBtn' onclick='submitPaycomTwoFactorCode()'>Continue</button>
@@ -7454,7 +7454,8 @@ async function submitPaycomTwoFactorCode() {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({request_id: paycomTwoFactorRequestId, code}),
     });
-    if (message) message.textContent = payload.message || 'Code sent. Waiting for Paycom…';
+    closePaycomTwoFactorDialog();
+    setStatus(payload.message || 'Verification code sent to Paycom.');
   } catch (error) {
     paycomTwoFactorSubmitting = false;
     if (input) input.disabled = false;

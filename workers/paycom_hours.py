@@ -182,6 +182,23 @@ def _visible_two_factor_code_input(driver):
     )
 
 
+def _has_paycom_captcha_challenge(driver):
+    """Identify Paycom's interactive hCaptcha without attempting to solve it."""
+    try:
+        for frame in driver.find_elements(By.CSS_SELECTOR, "iframe"):
+            source = str(frame.get_attribute("src") or "").lower()
+            title = str(frame.get_attribute("title") or "").lower()
+            if "hcaptcha" in source or "hcaptcha" in title:
+                return True
+    except Exception:
+        pass
+    try:
+        text = _normalize_text(driver.find_element(By.TAG_NAME, "body").text).lower()
+        return "partially hidden behind a line" in text or "click the three characters" in text
+    except Exception:
+        return False
+
+
 def _select_text_message_factor(driver):
     """Select Paycom's text-message option without assuming its masked number."""
     text_factor = find_visible(driver, ["input[name='factor_option'][value='0']"], timeout=1)
@@ -270,6 +287,12 @@ def complete_paycom_two_factor(driver, automation_name=AUDIT_AUTOMATION_NAME):
         try:
             WebDriverWait(driver, 20).until(lambda d: _visible_two_factor_code_input(d) is None)
         except TimeoutException:
+            if _has_paycom_captcha_challenge(driver):
+                return (
+                    False,
+                    "Paycom accepted the code page but requires an interactive hCaptcha challenge. "
+                    "The automation will not solve or bypass that challenge.",
+                )
             return False, "Paycom did not accept the verification code. Check the code and try the sync again."
         return True, ""
     finally:
