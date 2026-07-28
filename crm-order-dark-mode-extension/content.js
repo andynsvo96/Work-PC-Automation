@@ -6,6 +6,18 @@ let themeEnabled = false;
 let refreshQueued = false;
 let orderProcessorPollTimer = null;
 
+// Keep the manual menu from staying open after the user returns to the CRM
+// page. Checking the whole control lets the button continue to toggle it.
+document.addEventListener("click", (event) => {
+  const control = document.getElementById("crm-order-manual-process-control");
+  const menu = control?.querySelector("[role='menu']");
+  if (menu && !menu.hidden && !control.contains(event.target)) {
+    menu.hidden = true;
+    const button = manualOrderProcessorButton();
+    if (button) button.setAttribute("aria-expanded", "false");
+  }
+});
+
 const MANUAL_ORDER_AUTOMATIONS = [
   { key: "address_validator", label: "Address Validator" },
   { key: "product_separator", label: "Product Separator" },
@@ -69,7 +81,10 @@ function setOrderProcessorControlsDisabled(disabled) {
   if (manualProcessButton) manualProcessButton.disabled = disabled;
   if (disabled) {
     const menu = document.querySelector("#crm-order-manual-process-control [role='menu']");
-    if (menu) menu.hidden = true;
+    if (menu) {
+      menu.hidden = true;
+      manualProcessButton?.setAttribute("aria-expanded", "false");
+    }
   }
 }
 
@@ -243,6 +258,8 @@ function ensureManualOrderProcessorControl(autoProcessButton) {
   button.id = "crm-order-manual-process-button";
   button.textContent = "Manual Process";
   button.title = "Choose one automation to run for this order only.";
+  button.setAttribute("aria-haspopup", "menu");
+  button.setAttribute("aria-expanded", "false");
   Object.assign(button.style, {
     display: "block", boxSizing: "border-box", height: "32px", padding: "6px 12px", borderRadius: "2px", cursor: "pointer",
     font: "600 12px/18px system-ui, sans-serif", color: "#fff", background: "#475569", border: "1px solid #334155"
@@ -273,6 +290,7 @@ function ensureManualOrderProcessorControl(autoProcessButton) {
       const orderId = currentOrderId();
       if (!orderId) return;
       menu.hidden = true;
+      button.setAttribute("aria-expanded", "false");
       setOrderProcessorControlsDisabled(true);
       button.textContent = `Queuing ${automation.label}…`;
       setOrderProcessorResult(button, `Sending ${automation.label} for order ${orderId} to the CRM automation queue…`, "progress");
@@ -303,6 +321,7 @@ function ensureManualOrderProcessorControl(autoProcessButton) {
 
   button.addEventListener("click", () => {
     menu.hidden = !menu.hidden;
+    button.setAttribute("aria-expanded", String(!menu.hidden));
   });
   control.append(button, menu);
   autoProcessButton.insertAdjacentElement("afterend", control);
