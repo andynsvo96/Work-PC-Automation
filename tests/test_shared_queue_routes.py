@@ -149,7 +149,8 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertEqual(task["queue_mode"], "scheduled")
         self.assertTrue(task["available_at"])
 
-    def test_windows_desktop_target_is_automatic(self):
+    def test_windows_desktop_can_target_online_mac(self):
+        self._set_node_availability(windows=True, mac=True)
         response = self.client.post(
             "/clock/test/in",
             headers={
@@ -159,9 +160,34 @@ class SharedQueueRouteTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 202)
+        self.assertEqual(self.runtime.enqueued[-1]["target_node"], "macbook")
+
+    def test_windows_desktop_defaults_to_its_own_online_node(self):
+        self._set_node_availability(windows=True, mac=True)
+        response = self.client.post(
+            "/clock/test/in",
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+        )
+
+        self.assertEqual(response.status_code, 202)
         self.assertEqual(self.runtime.enqueued[-1]["target_node"], "windows-test")
 
+    def test_offline_selected_target_is_rejected(self):
+        self._set_node_availability(windows=True, mac=False)
+        response = self.client.post(
+            "/clock/test/in",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "X-Automation-Target-Node": "macbook",
+            },
+        )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("selected computer is offline", response.get_json()["message"])
+        self.assertEqual(self.runtime.enqueued, [])
+
     def test_android_can_choose_either_target(self):
+        self._set_node_availability(windows=True, mac=True)
         response = self.client.post(
             "/clock/test/in",
             headers={
@@ -172,6 +198,26 @@ class SharedQueueRouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(self.runtime.enqueued[-1]["target_node"], "macbook")
+
+    def test_android_can_leave_target_unrestricted(self):
+        self._set_node_availability(windows=True, mac=True)
+        response = self.client.post(
+            "/clock/test/in",
+            headers={"User-Agent": "Mozilla/5.0 (Linux; Android 16; Tablet)"},
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertIsNone(self.runtime.enqueued[-1]["target_node"])
+
+    def test_mac_browser_default_target_is_mac(self):
+        self._set_node_availability(windows=True, mac=True)
+        response = self.client.get(
+            "/api/node-runtime",
+            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0)"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["default_control_target_node"], "macbook")
 
     def test_home_assistant_get_bypasses_browser_pin_and_prefers_online_windows(self):
         self._set_node_availability(windows=True, mac=True)
@@ -275,7 +321,7 @@ class SharedQueueRouteTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 500)
-        self.assertIn("No registered Windows node", response.get_json()["message"])
+        self.assertIn("No online Windows node", response.get_json()["message"])
         self.assertEqual(self.runtime.enqueued, [])
 
     def test_clear_finished_shared_queue_history(self):

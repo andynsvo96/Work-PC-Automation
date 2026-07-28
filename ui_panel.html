@@ -2080,10 +2080,11 @@ function controlTargetIsLocked() {
 }
 
 function effectiveControlTargetNode() {
-  if (controlTargetIsLocked()) {
-    return String(nodeRuntimePayload.automatic_target_node || '').trim();
-  }
-  return String(localStorage.getItem('automationControlTargetNode') || '').trim();
+  return String(
+    localStorage.getItem('automationControlTargetNode')
+    || (nodeRuntimePayload && nodeRuntimePayload.default_control_target_node)
+    || ''
+  ).trim();
 }
 
 function renderQueue(payload) {
@@ -2190,37 +2191,23 @@ function renderControlTargetNodes(nodes) {
   if (!select) return;
   const label = document.getElementById('controlTargetLabel');
   nodes = (Array.isArray(nodes) ? nodes : []).map((node) => ({...node, os_icon: platformDisplayName(node.os_name)}));
-  if (controlTargetIsLocked()) {
-    localStorage.removeItem('automationControlTargetNode');
-    let targetKey = String(nodeRuntimePayload.automatic_target_node || '').trim();
-    const clientOS = String(nodeRuntimePayload.client_os || '').toLowerCase();
-    if (!targetKey) {
-      const match = nodes.find((node) => String(node.os_name || '').toLowerCase() === clientOS);
-      targetKey = match ? String(match.node_key || '') : '';
-      nodeRuntimePayload.automatic_target_node = targetKey;
-    }
-    const target = nodes.find((node) => String(node.node_key || '') === targetKey);
-    const targetName = target ? (target.display_name || target.node_key) : (targetKey || platformDisplayName(clientOS));
-    const online = target ? (target.online ? 'online' : 'offline') : 'automatic';
-    select.innerHTML = `<option value='${esc(targetKey)}' selected>${esc(platformDisplayName(clientOS))} — ${esc(targetName)} (${online})</option>`;
-    select.disabled = true;
-    select.title = 'Desktop control target is selected automatically from this device OS.';
-    if (label) label.textContent = 'This computer';
-    return;
-  }
   select.disabled = false;
-  select.title = 'Android can choose which computer will run the task.';
+  select.title = 'Choose an online computer to run new tasks. This device is selected by default.';
   if (label) label.textContent = 'Control target';
   const saved = String(localStorage.getItem('automationControlTargetNode') || '').trim();
+  const defaultTarget = String(nodeRuntimePayload && nodeRuntimePayload.default_control_target_node || '').trim();
+  const savedNode = nodes.find((node) => String(node.node_key || '') === saved);
+  const selectedKey = savedNode && savedNode.online ? saved : defaultTarget;
+  if (saved && (!savedNode || !savedNode.online)) localStorage.removeItem('automationControlTargetNode');
   select.innerHTML = `<option value=''>Any available computer</option>` + nodes.map((node) => {
     const online = node.online ? 'online' : 'offline';
-    const selected = saved === String(node.node_key || '') ? 'selected' : '';
-    return `<option value='${esc(node.node_key || '')}' ${selected}>${esc(node.os_icon || 'Computer')} ${esc(node.display_name || node.node_key || 'Computer')} (${online})</option>`;
+    const selected = selectedKey === String(node.node_key || '') ? 'selected' : '';
+    const disabled = node.online ? '' : 'disabled';
+    return `<option value='${esc(node.node_key || '')}' ${selected} ${disabled}>${esc(node.os_icon || 'Computer')} ${esc(node.display_name || node.node_key || 'Computer')} (${online})</option>`;
   }).join('');
 }
 
 async function changeControlTarget(nodeKey) {
-  if (controlTargetIsLocked()) return;
   const value = String(nodeKey || '').trim();
   if (value) localStorage.setItem('automationControlTargetNode', value);
   else localStorage.removeItem('automationControlTargetNode');

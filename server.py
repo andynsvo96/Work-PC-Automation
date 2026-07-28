@@ -1993,30 +1993,81 @@ def _automation_client_visual(os_name):
     }
 
 
-def _resolve_automatic_control_target(runtime, requested_target=None, client_os=None):
-    """Lock desktop callers to their OS node; Android may choose either node."""
+def _requested_automation_target_node():
+    """Return the target chosen in the control panel, when this is a request."""
+    try:
+        return str(
+            getattr(g, "automation_target_node", None)
+            or request.headers.get("X-Automation-Target-Node")
+            or ""
+        ).strip() or None
+    except RuntimeError:
+        return None
+
+
+def _resolve_automatic_control_target(runtime, requested_target=None, client_os=None, required_capability=None):
+    """Use a selected live node, defaulting new desktop sessions to their OS node."""
     normalized_os = str(client_os or _automation_request_client_os() or "unknown").strip().lower()
     requested = str(requested_target or "").strip() or None
-    if normalized_os not in {"windows", "macos"}:
-        return requested
-
     local_key = str(runtime.client.config.node_key or "").strip()
-    if normalized_os == get_platform_snapshot().os_name and local_key:
-        return local_key
+    snapshot = get_platform_snapshot()
+
+    # A request arriving at this node proves it is available even when the
+    # heartbeat has not reached Supabase yet.
+    if requested and requested == local_key:
+        try:
+            local_state = runtime.state()
+        except Exception:
+            local_state = {}
+        local_capable = not required_capability or bool(snapshot.capabilities.get(required_capability))
+        if bool(local_state.get("connected")) and bool(local_state.get("eligible")) and local_capable:
+            return local_key
 
     try:
-        candidates = [
-            node for node in runtime.client.list_nodes()
-            if str(node.get("os_name") or "").strip().lower() == normalized_os
-            and bool(node.get("enabled", True))
-        ]
-        if candidates:
-            candidates.sort(key=lambda node: str(node.get("last_seen_at") or ""), reverse=True)
-            return str(candidates[0].get("node_key") or "").strip() or requested
+        nodes = list(runtime.client.list_nodes() or [])
     except Exception as exc:
-        logger.warning("Could not resolve automatic %s control target: %s", normalized_os, exc)
+        raise SharedQueueBlocked(f"Could not check the selected computer's availability: {exc}") from exc
+
+    if requested:
+        selected = next(
+            (node for node in nodes if str(node.get("node_key") or "").strip() == requested),
+            None,
+        )
+        if not selected:
+            raise SharedQueueBlocked("The selected computer is no longer registered.")
+        if not _home_automation_node_online(selected):
+            raise SharedQueueBlocked("The selected computer is offline. Choose an online computer and try again.")
+        if required_capability and not bool((selected.get("capabilities") or {}).get(required_capability)):
+            raise SharedQueueBlocked(f"The selected computer cannot run this {required_capability} task.")
+        return requested
+
+    # Tablet callers may deliberately leave the target open for the shared
+    # queue to claim on any eligible computer.
+    if normalized_os not in {"windows", "macos"}:
+        return None
+
+    if normalized_os == snapshot.os_name and local_key:
+        try:
+            local_state = runtime.state()
+        except Exception:
+            local_state = {}
+        local_capable = not required_capability or bool(snapshot.capabilities.get(required_capability))
+        if bool(local_state.get("connected")) and bool(local_state.get("eligible")) and local_capable:
+            return local_key
+
+    candidates = [
+        node for node in nodes
+        if str(node.get("os_name") or "").strip().lower() == normalized_os
+        and _home_automation_node_online(node)
+        and (not required_capability or bool((node.get("capabilities") or {}).get(required_capability)))
+    ]
+    if candidates:
+        candidates.sort(key=lambda node: str(node.get("last_seen_at") or ""), reverse=True)
+        target = str(candidates[0].get("node_key") or "").strip()
+        if target:
+            return target
     display_os = "Windows" if normalized_os == "windows" else "Mac"
-    raise SharedQueueBlocked(f"No registered {display_os} node is available for automatic targeting.")
+    raise SharedQueueBlocked(f"No online {display_os} node is available for the default control target.")
 
 
 def _automation_queue_parse_datetime(value):
@@ -2447,10 +2498,16 @@ def enqueue_automation(
             return False, shared_queue_initialization_error or "Shared queue is not configured.", None
         if not str(task_type or "").strip():
             return False, "This automation has not been registered for safe cross-device execution.", None
+        if not target_node:
+            target_node = _requested_automation_target_node()
         if required_capability == "system_power" and not target_node:
             target_node = runtime.client.config.node_key
         try:
-            target_node = _resolve_automatic_control_target(runtime, target_node)
+            target_node = _resolve_automatic_control_target(
+                runtime,
+                target_node,
+                required_capability=required_capability,
+            )
             task = runtime.enqueue(
                 label=str(label or "Automation Task"),
                 category=str(category or "Automation"),
@@ -12570,13 +12627,14 @@ def api_node_runtime():
         payload = get_node_runtime_payload()
         client_os = _automation_request_client_os()
         payload["client_os"] = client_os
-        payload["control_target_locked"] = client_os in {"windows", "macos"}
+        payload["control_target_locked"] = False
         runtime = shared_queue_runtime or (initialize_shared_queue_runtime() if AUTOMATION_QUEUE_MODE == "shared" else None)
         payload["automatic_target_node"] = None
+        payload["default_control_target_node"] = None
         payload["control_target_error"] = None
-        if runtime is not None and payload["control_target_locked"]:
+        if runtime is not None:
             try:
-                payload["automatic_target_node"] = _resolve_automatic_control_target(runtime, client_os=client_os)
+                payload["default_control_target_node"] = _resolve_automatic_control_target(runtime, client_os=client_os)
             except SharedQueueBlocked as exc:
                 payload["control_target_error"] = str(exc)
         return jsonify(payload)

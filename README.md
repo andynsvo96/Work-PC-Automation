@@ -21,7 +21,7 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - Supports authenticated manual and opt-in automatic text/PNG clipboard transfer between Windows and macOS without persisting clipboard contents.
 - Checks GitHub before every supported startup and fast-forwards a clean checkout before loading the app.
 - Automatically runs Safe Sync & Start when a clean checkout falls behind, waiting for active automation or timers before restarting. The Update button can also save tracked local edits, synchronize `main`, publish them, and restart without discarding work.
-- Locks Windows browsers to the Windows node and Mac browsers to the Mac node; Android retains the cross-device target picker.
+- Defaults the control target to the current Windows or Mac device, while allowing any online eligible device to be selected for a queued task.
 - Routes Home Assistant/Alexa HTTP triggers to an online Windows node first, falls back to an online Mac node, and returns HTTP 503 with `home_assistant_failure: true` when no eligible server is available.
 - Shows vector OS icons and can clear finished shared queue history without touching running or waiting tasks.
 
