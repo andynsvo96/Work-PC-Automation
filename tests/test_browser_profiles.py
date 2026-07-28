@@ -43,6 +43,13 @@ class BrowserProfileRuntimeTests(unittest.TestCase):
 
         self.assertEqual(resolved, os.path.abspath(profile))
 
+    def test_local_config_can_keep_this_machine_on_its_existing_profiles(self):
+        profile = os.path.join(automation_runtime.SCRIPT_DIR, "chrome_profile")
+        with mock.patch.object(automation_runtime, "_legacy_profile_fallback_enabled", return_value=True):
+            resolved = automation_runtime.resolve_automation_profile_path(profile)
+
+        self.assertEqual(resolved, os.path.abspath(profile))
+
     def test_external_and_temporary_profiles_are_not_remapped(self):
         external = automation_runtime.resolve_automation_profile_path(
             "/tmp/chrome_profile",

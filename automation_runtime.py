@@ -516,6 +516,30 @@ def _platform_profile_name(system_name=None):
     return raw or "unknown"
 
 
+def _legacy_profile_fallback_enabled(system_name=None):
+    """Return whether this machine should retain its pre-isolation profiles.
+
+    The environment variable is useful for one-off launches.  The matching
+    config setting makes the rollback survive normal Windows app restarts.
+    Explicit ``system_name`` callers are test/migration helpers, so they only
+    honor the environment override and are not affected by this machine's
+    local config.
+    """
+    value = os.getenv(LEGACY_PROFILE_FALLBACK_ENV, "").strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if system_name is not None:
+        return False
+    try:
+        import config as runtime_config
+    except Exception:
+        return False
+    configured = getattr(runtime_config, LEGACY_PROFILE_FALLBACK_ENV, False)
+    if isinstance(configured, str):
+        return configured.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(configured)
+
+
 def resolve_automation_profile_path(profile_path, *, system_name=None, profiles_root=None):
     """Resolve persistent automation profiles into local OS-specific folders.
 
@@ -527,7 +551,7 @@ def resolve_automation_profile_path(profile_path, *, system_name=None, profiles_
     legacy_path = _normalize_profile_path_for_match(profile_path)
     if not legacy_path:
         return legacy_path
-    if os.getenv(LEGACY_PROFILE_FALLBACK_ENV, "").strip().lower() in {"1", "true", "yes", "on"}:
+    if _legacy_profile_fallback_enabled(system_name=system_name):
         return legacy_path
 
     try:

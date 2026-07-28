@@ -12,6 +12,9 @@ AUTOMATION_QUEUE_MODE = "local"
 # required and must be installed with setup_app_security.py on both computers.
 AUTOMATION_REMOTE_ACCESS_MODE = "local"  # change to "tailscale" after setup
 AUTOMATION_APP_PIN_REQUIRED = AUTOMATION_REMOTE_ACCESS_MODE == "tailscale"
+# Set True on a machine that must keep using its existing local
+# chrome_profile folders while another device uses isolated profiles.
+AUTOMATION_USE_LEGACY_PROFILES = False
 # Successful PIN entry trusts this browser/device for this many days. A new
 # browser/device, cleared site data, signing out, or expiry asks for the PIN.
 # This uses a signed HttpOnly cookie instead of an unreliable hardware ID.
