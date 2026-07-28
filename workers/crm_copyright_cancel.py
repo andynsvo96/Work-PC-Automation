@@ -7944,6 +7944,15 @@ def _hold_retained_browsers_for_inspection():
         time.sleep(5)
 
 
+def _concise_sheet_scanner_error(error):
+    """Keep known Selenium wrapper noise out of Sheets Scanner results."""
+    message = str(error or "").strip()
+    marker = re.search(r"\border scope not found\b", message, flags=re.IGNORECASE)
+    if marker:
+        return message[:marker.end()].strip()
+    return message
+
+
 def process_single_order(
     order_id,
     reason,
@@ -8011,6 +8020,11 @@ def process_single_order(
             if process.key == COPYRIGHT_REACHOUT_PROCESS.key:
                 # This is intentionally last: CRM status and the customer email
                 # must both succeed before teammates are notified.
+                # Sending the email leaves the browser on Salesforce. Return to
+                # the CRM tab before reading the order's shipping charges.
+                driver.switch_to.window(crm_handle)
+                _activate_crm_context(driver)
+                _wait_for_order_scope(driver, order_id=order_id)
                 order_state = _get_order_live_state(driver)
                 rush_order_slack = send_paid_rush_notification(
                     order_url,
@@ -8472,7 +8486,7 @@ def run_process_order(args):
     except Exception as exc:
         _write_result(
             False,
-            f"Sheet scanner order failed: {exc}",
+            f"Sheet scanner order failed: {_concise_sheet_scanner_error(exc)}",
             result_file=args.result_file,
             action="process_order",
             dry_run=bool(args.dry_run),
@@ -8716,7 +8730,7 @@ def run_process_queue(args):
             if should_delete_row:
                 _clear_sheet_queue_row(worksheet, row.row_number)
         except Exception as exc:
-            error_text = str(exc)
+            error_text = _concise_sheet_scanner_error(exc)
             failures.append(
                 {
                     "row_number": row.row_number,

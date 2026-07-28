@@ -953,6 +953,51 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             "Auto-split failed for order 4859108: Message: script timeout",
         )
 
+    def test_order_scope_error_omits_selenium_session_and_stacktrace(self):
+        error = (
+            "Message: javascript error: Order scope not found\n"
+            "  (Session info: chrome=150.0.7871.187)\n"
+            "Stacktrace:\n"
+            "long Selenium stack trace"
+        )
+
+        message = crm_copyright_cancel._concise_sheet_scanner_error(error)
+
+        self.assertEqual(message, "Message: javascript error: Order scope not found")
+
+    def test_process_order_result_truncates_order_scope_stacktrace(self):
+        args = mock.Mock(
+            order_id="1234567",
+            order_url="",
+            reason="Copyrighted logo",
+            dry_run=False,
+            process="copyright_reachout",
+            visible=False,
+            attach_browser=False,
+            debugger_address="127.0.0.1:9222",
+            login_wait_seconds=0,
+            skip_refund_click=False,
+            keep_browser_open=False,
+            keep_browser_open_on_error=False,
+            result_file=None,
+        )
+        error = Exception(
+            "Message: javascript error: Order scope not found\n"
+            "  (Session info: chrome=150.0.7871.187)\n"
+            "Stacktrace:\n"
+            "long Selenium stack trace"
+        )
+
+        with mock.patch.object(crm_copyright_cancel, "process_single_order", side_effect=error), \
+             mock.patch.object(crm_copyright_cancel, "_write_result") as write_result:
+            exit_code = crm_copyright_cancel.run_process_order(args)
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(write_result.call_args.args[:2], (
+            False,
+            "Sheet scanner order failed: Message: javascript error: Order scope not found",
+        ))
+
     def test_process_queue_routes_manual_stock_order_without_email_flow(self):
         headers = [
             crm_copyright_cancel.GOOGLE_SHEET_ORDER_REFERENCE_COLUMN,
@@ -1568,7 +1613,8 @@ class CrmCopyrightCancelTests(unittest.TestCase):
              mock.patch.object(crm_copyright_cancel, "safe_get_with_partial_load"), \
              mock.patch.object(crm_copyright_cancel, "_login_to_crm_if_needed"), \
              mock.patch.object(crm_copyright_cancel, "_switch_to_crm_app_frame"), \
-             mock.patch.object(crm_copyright_cancel, "_wait_for_order_scope"), \
+             mock.patch.object(crm_copyright_cancel, "_wait_for_order_scope") as wait_for_scope, \
+             mock.patch.object(crm_copyright_cancel, "_activate_crm_context") as activate_crm, \
              mock.patch.object(crm_copyright_cancel, "_wait_for_crm_contact_info", return_value={"email": "buyer@example.com"}), \
              mock.patch.object(
                  crm_copyright_cancel,
@@ -1594,6 +1640,10 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             )
 
         self.assertEqual(completed_steps, ["crm", "email", "slack"])
+        driver.switch_to.window.assert_called_once_with("crm-tab")
+        activate_crm.assert_called_once_with(driver)
+        self.assertEqual(wait_for_scope.call_count, 2)
+        wait_for_scope.assert_any_call(driver, order_id="1234567")
         notify.assert_called_once_with(
             "https://crm2.legacy.printfly.com/order/1234567",
             "Copyright",
