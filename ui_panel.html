@@ -7396,6 +7396,7 @@ async function syncPaycomNow(button = null) {
 
 let paycomTwoFactorRequestId = null;
 let paycomTwoFactorSubmitting = false;
+let paycomTwoFactorSubmittedRequestId = null;
 
 function closePaycomTwoFactorDialog() {
   const dialog = document.getElementById('paycomTwoFactorDialog');
@@ -7412,6 +7413,7 @@ function showPaycomTwoFactorDialog(requestId) {
   const isNewRequest = paycomTwoFactorRequestId !== requestId;
   paycomTwoFactorRequestId = requestId;
   if (isNewRequest) {
+    if (paycomTwoFactorSubmittedRequestId !== requestId) paycomTwoFactorSubmittedRequestId = null;
     paycomTwoFactorSubmitting = false;
     input.value = '';
     input.disabled = false;
@@ -7425,9 +7427,14 @@ async function pollPaycomTwoFactor() {
   try {
     const payload = await api('/paycom/2fa/status');
     if (payload.awaiting_code && payload.request_id) {
-      showPaycomTwoFactorDialog(payload.request_id);
+      // The worker needs a moment to consume the submitted code and remove
+      // its request file. Do not reopen the dialog during that short window.
+      if (payload.request_id !== paycomTwoFactorSubmittedRequestId) {
+        showPaycomTwoFactorDialog(payload.request_id);
+      }
     } else {
       closePaycomTwoFactorDialog();
+      paycomTwoFactorSubmittedRequestId = null;
     }
   } catch (_) {
     // The ordinary app polling loop will surface connectivity/auth errors.
@@ -7454,6 +7461,7 @@ async function submitPaycomTwoFactorCode() {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({request_id: paycomTwoFactorRequestId, code}),
     });
+    paycomTwoFactorSubmittedRequestId = paycomTwoFactorRequestId;
     closePaycomTwoFactorDialog();
     setStatus(payload.message || 'Verification code sent to Paycom.');
   } catch (error) {
