@@ -17,7 +17,6 @@ import socket
 import struct
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import urllib.error
@@ -77,8 +76,6 @@ logger = logging.getLogger(__name__)
 CLOCK_SCRIPT = os.path.join(WORKERS_DIR, "paycom_clock.py")
 SLACK_SCRIPT = os.path.join(WORKERS_DIR, "slack_team.py")
 PAYCOM_HOURS_SCRIPT = os.path.join(WORKERS_DIR, "paycom_hours.py")
-PAYCOM_2FA_REQUEST_FILE = state_file("paycom_2fa_request.json")
-PAYCOM_2FA_RESPONSE_FILE = state_file("paycom_2fa_response.json")
 CRM_SCRIPT = os.path.join(WORKERS_DIR, "crm_unlock_orders.py")
 CRM_ADDRESS_VALIDATOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_validate_address.py")
 CRM_PRODUCT_SEPARATOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_product_separator.py")
@@ -3548,9 +3545,7 @@ def sync_week_hours_from_paycom(reason):
         return False, "Paycom sync disabled by config.", None, []
     if not os.path.exists(PAYCOM_HOURS_SCRIPT):
         return False, "paycom_hours.py is missing.", None, []
-    # A Paycom 2FA handoff can wait up to three minutes for the user to enter
-    # the texted code in the control panel, in addition to normal page load time.
-    ok, msg, payload = _run_script(PAYCOM_HOURS_SCRIPT, ["week"], f"PaycomHoursSync-{reason}", timeout=300)
+    ok, msg, payload = _run_script(PAYCOM_HOURS_SCRIPT, ["week"], f"PaycomHoursSync-{reason}", timeout=120)
     if not ok:
         return False, msg, None, []
     raw = payload.get("week_hours")
@@ -3559,69 +3554,6 @@ def sync_week_hours_from_paycom(reason):
         return False, f"Paycom sync returned invalid week_hours: {raw}", None, []
     day_rows = payload.get("day_rows") if isinstance(payload.get("day_rows"), list) else []
     return True, msg, val, day_rows
-
-
-def _read_paycom_two_factor_request():
-    """Read the short-lived local request written by the Paycom worker."""
-    try:
-        with open(PAYCOM_2FA_REQUEST_FILE, "r", encoding="utf-8-sig") as handle:
-            payload = json.load(handle)
-        if not isinstance(payload, dict):
-            return {}
-        request_id = str(payload.get("request_id") or "").strip()
-        if not request_id:
-            return {}
-        return {"request_id": request_id, "created_at": str(payload.get("created_at") or "")}
-    except (OSError, ValueError, json.JSONDecodeError):
-        return {}
-
-
-def _write_paycom_two_factor_response(request_id, code):
-    directory = os.path.dirname(PAYCOM_2FA_RESPONSE_FILE)
-    temp_path = None
-    try:
-        with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8", dir=directory, suffix=".tmp") as handle:
-            temp_path = handle.name
-            json.dump({"request_id": request_id, "code": code}, handle)
-        try:
-            os.chmod(temp_path, 0o600)
-        except OSError:
-            pass
-        os.replace(temp_path, PAYCOM_2FA_RESPONSE_FILE)
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
-
-
-@app.route("/paycom/2fa/status", methods=["GET"])
-def paycom_two_factor_status():
-    request_data = _read_paycom_two_factor_request()
-    return jsonify(
-        {
-            "success": True,
-            "awaiting_code": bool(request_data),
-            "request_id": request_data.get("request_id"),
-        }
-    )
-
-
-@app.route("/paycom/2fa/code", methods=["POST"])
-def submit_paycom_two_factor_code():
-    data = request.get_json(silent=True) or {}
-    code = str(data.get("code") or "").strip()
-    request_id = str(data.get("request_id") or "").strip()
-    active_request = _read_paycom_two_factor_request()
-    if not active_request:
-        return jsonify({"success": False, "message": "No Paycom verification code is currently requested."}), 409
-    if request_id != active_request["request_id"]:
-        return jsonify({"success": False, "message": "This Paycom verification request has expired. Wait for the current prompt."}), 409
-    if not re.fullmatch(r"\d{6}", code):
-        return jsonify({"success": False, "message": "Enter the six-digit code from Paycom."}), 400
-    _write_paycom_two_factor_response(request_id, code)
-    return jsonify({"success": True, "message": "Verification code sent to Paycom."})
 
 
 def _sync_paycom_hours_into_work_state(reason, update_total_hours=True):
@@ -4089,8 +4021,7 @@ def _build_auto_clock_payload(state):
 def _run_clock_action(action, dry_run=False):
     mode_flag = "--dry-run" if dry_run else "--real"
     label = "ClockTest" if dry_run else "Clock"
-    # Leave enough time for the same in-app Paycom 2FA handoff used by hours sync.
-    return _run_automation_script(CLOCK_SCRIPT, action, label, extra_args=[mode_flag], timeout=300)
+    return _run_automation_script(CLOCK_SCRIPT, action, label, extra_args=[mode_flag], timeout=120)
 
 
 def _is_retryable_clock_failure(message):

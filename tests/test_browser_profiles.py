@@ -90,40 +90,5 @@ class BrowserProfileRuntimeTests(unittest.TestCase):
         self.assertEqual(entries, [("100", "/Applications/Google Chrome --user-data-dir=/tmp/one"), ("200", "/bin/zsh")])
 
 
-class PaycomHumanVerificationTests(unittest.TestCase):
-    def test_headless_hcaptcha_reports_a_visible_retry_instead_of_a_bad_code(self):
-        driver = mock.Mock()
-        code_input = mock.Mock()
-        code_input.is_selected.return_value = False
-        verify_button = mock.Mock()
-
-        with mock.patch.object(paycom_hours, "_visible_two_factor_code_input", return_value=code_input), \
-             mock.patch.object(paycom_hours, "_wait_for_two_factor_code", return_value="123456"), \
-             mock.patch.object(paycom_hours, "find_visible", side_effect=[None, verify_button]), \
-             mock.patch.object(paycom_hours, "_has_paycom_captcha_challenge", return_value=True), \
-             mock.patch.object(paycom_hours, "_remove_file_quietly"), \
-             mock.patch.object(paycom_hours, "WebDriverWait") as wait:
-            wait.return_value.until.side_effect = paycom_hours.TimeoutException()
-            ok, message = paycom_hours.complete_paycom_two_factor(driver, allow_interactive_wait=False)
-
-        self.assertFalse(ok)
-        self.assertIn("hCaptcha", message)
-        self.assertIn("visible browser", message)
-
-    def test_visible_hcaptcha_waits_for_operator_completion(self):
-        driver = mock.Mock()
-        with mock.patch.object(paycom_hours, "_has_paycom_captcha_challenge", side_effect=[True, False]), \
-             mock.patch.object(paycom_hours, "_visible_two_factor_code_input", return_value=None), \
-             mock.patch.object(paycom_hours, "write_status_payload") as status, \
-             mock.patch.object(paycom_hours, "WebDriverWait") as wait, \
-             mock.patch.object(paycom_hours.time, "sleep"):
-            wait.return_value.until.return_value = True
-            ok, message = paycom_hours._wait_for_paycom_hcaptcha_completion(driver)
-
-        self.assertTrue(ok)
-        self.assertEqual(message, "")
-        self.assertEqual(status.call_args.kwargs["stage"], "human_verification_required")
-
-
 if __name__ == "__main__":
     unittest.main()

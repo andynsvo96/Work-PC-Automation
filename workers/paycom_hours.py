@@ -18,9 +18,7 @@ Reads current week hours from Paycom and writes last_result.json with:
 
 import sys
 import os
-import json
 import re
-import secrets
 import time
 from datetime import datetime, timedelta
 
@@ -44,7 +42,6 @@ from automation_runtime import (
     safe_get_with_partial_load,
     take_screenshot,
     write_result_payload,
-    write_status_payload,
 )
 from config import (
     PAYCOM_URL,
@@ -54,16 +51,10 @@ from config import (
     WORK_CLOCK_BREAK_MINUTES,
 )
 from credential_store import read_paycom_credential
-from runtime_paths import state_file
 
 configure_console_utf8()
 
 AUDIT_AUTOMATION_NAME = "paycom_hours.week"
-PAYCOM_2FA_REQUEST_FILE = state_file("paycom_2fa_request.json")
-PAYCOM_2FA_RESPONSE_FILE = state_file("paycom_2fa_response.json")
-PAYCOM_2FA_CODE_TIMEOUT_SECONDS = 180
-PAYCOM_HUMAN_VERIFICATION_TIMEOUT_SECONDS = 180
-
 PAYCOM_USERNAME_SELECTORS = [
     "input[name='username']",
     "input[name='userName']",
@@ -137,190 +128,6 @@ def is_paycom_two_factor_page(driver):
     return "two-factor authentication" in text and (
         "verify your account" in text or "verification code" in text
     )
-
-
-def _remove_file_quietly(path):
-    try:
-        os.remove(path)
-    except FileNotFoundError:
-        pass
-    except OSError:
-        pass
-
-
-def _write_json_atomically(path, payload):
-    temp_path = f"{path}.{os.getpid()}.tmp"
-    try:
-        with open(temp_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle)
-        try:
-            os.chmod(temp_path, 0o600)
-        except OSError:
-            pass
-        os.replace(temp_path, path)
-    finally:
-        _remove_file_quietly(temp_path)
-
-
-def _read_json_file(path):
-    try:
-        with open(path, "r", encoding="utf-8-sig") as handle:
-            value = json.load(handle)
-        return value if isinstance(value, dict) else {}
-    except (OSError, ValueError, json.JSONDecodeError):
-        return {}
-
-
-def _visible_two_factor_code_input(driver):
-    return find_visible(
-        driver,
-        [
-            "#pin",
-            "input[name='pin'][maxlength='6']",
-            "input[aria-label*='Authentication Code' i]",
-        ],
-        timeout=1,
-    )
-
-
-def _has_paycom_captcha_challenge(driver):
-    """Identify Paycom's interactive hCaptcha without attempting to solve it."""
-    try:
-        for frame in driver.find_elements(By.CSS_SELECTOR, "iframe"):
-            source = str(frame.get_attribute("src") or "").lower()
-            title = str(frame.get_attribute("title") or "").lower()
-            if "hcaptcha" in source or "hcaptcha" in title:
-                return True
-    except Exception:
-        pass
-    try:
-        text = _normalize_text(driver.find_element(By.TAG_NAME, "body").text).lower()
-        return "partially hidden behind a line" in text or "click the three characters" in text
-    except Exception:
-        return False
-
-
-def _select_text_message_factor(driver):
-    """Select Paycom's text-message option without assuming its masked number."""
-    text_factor = find_visible(driver, ["input[name='factor_option'][value='0']"], timeout=1)
-    if not text_factor:
-        try:
-            for option in driver.find_elements(By.CSS_SELECTOR, "input[name='factor_option']"):
-                label = " ".join(
-                    [
-                        str(option.get_attribute("aria-label") or ""),
-                        str(option.get_attribute("value") or ""),
-                    ]
-                ).lower()
-                if "text" in label:
-                    text_factor = option
-                    break
-        except Exception:
-            pass
-    if not text_factor:
-        return False, "Paycom did not offer a text-message verification option."
-    try:
-        driver.execute_script("arguments[0].click();", text_factor)
-    except Exception:
-        text_factor.click()
-    next_button = find_visible(driver, ["#btn-next", "button[name='next']"], timeout=2)
-    if not next_button:
-        return False, "Paycom's two-factor Next button was not found."
-    next_button.click()
-    try:
-        WebDriverWait(driver, 15).until(lambda d: _visible_two_factor_code_input(d) is not None)
-    except TimeoutException:
-        return False, "Paycom did not show the six-digit verification-code form after requesting a text."
-    return True, ""
-
-
-def _wait_for_two_factor_code(automation_name=AUDIT_AUTOMATION_NAME):
-    """Wait for one six-digit code submitted by the authenticated control panel."""
-    request_id = secrets.token_urlsafe(24)
-    _remove_file_quietly(PAYCOM_2FA_RESPONSE_FILE)
-    _write_json_atomically(
-        PAYCOM_2FA_REQUEST_FILE,
-        {
-            "request_id": request_id,
-            "automation_name": automation_name,
-            "created_at": datetime.now().isoformat(),
-        },
-    )
-    write_status_payload(
-        automation_name,
-        "Paycom text-message verification code required.",
-        stage="two_factor_code_required",
-        extra_fields={"two_factor_required": True, "two_factor_request_id": request_id},
-    )
-    deadline = time.monotonic() + PAYCOM_2FA_CODE_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        response = _read_json_file(PAYCOM_2FA_RESPONSE_FILE)
-        if response.get("request_id") == request_id:
-            code = str(response.get("code") or "").strip()
-            _remove_file_quietly(PAYCOM_2FA_RESPONSE_FILE)
-            if re.fullmatch(r"\d{6}", code):
-                return code
-        time.sleep(0.5)
-    return None
-
-
-def _wait_for_paycom_hcaptcha_completion(driver, automation_name=AUDIT_AUTOMATION_NAME):
-    """Pause a visible run while an operator completes Paycom's hCaptcha."""
-    write_status_payload(
-        automation_name,
-        "Paycom hCaptcha verification required. Complete it in the visible Paycom browser to continue.",
-        stage="human_verification_required",
-        extra_fields={"human_verification_required": True, "challenge": "hcaptcha"},
-    )
-    deadline = time.monotonic() + PAYCOM_HUMAN_VERIFICATION_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        if not _has_paycom_captcha_challenge(driver):
-            try:
-                WebDriverWait(driver, 20).until(lambda d: _visible_two_factor_code_input(d) is None)
-                return True, ""
-            except TimeoutException:
-                return False, "Paycom hCaptcha closed, but the verification code form is still active. Request a new code and try again."
-        time.sleep(0.5)
-    return False, "Timed out waiting for Paycom hCaptcha verification in the visible browser."
-
-
-def complete_paycom_two_factor(driver, automation_name=AUDIT_AUTOMATION_NAME, allow_interactive_wait=False):
-    """Request a Paycom text, collect its code in the app, then verify it."""
-    code_input = _visible_two_factor_code_input(driver)
-    if not code_input:
-        ok, message = _select_text_message_factor(driver)
-        if not ok:
-            return False, message
-        code_input = _visible_two_factor_code_input(driver)
-    code = _wait_for_two_factor_code(automation_name=automation_name)
-    if not code:
-        return False, "Timed out waiting for the Paycom six-digit verification code in the app."
-    try:
-        code_input.clear()
-        code_input.send_keys(code)
-        remember_device = find_visible(driver, ["#remember_device", "input[name='remember_device']"], timeout=1)
-        if remember_device and not remember_device.is_selected():
-            driver.execute_script("arguments[0].click();", remember_device)
-        verify_button = find_visible(driver, ["#btn-verify", "button[name='verify']"], timeout=2)
-        if not verify_button:
-            return False, "Paycom's Verify button was not found after entering the code."
-        verify_button.click()
-        try:
-            WebDriverWait(driver, 20).until(lambda d: _visible_two_factor_code_input(d) is None)
-        except TimeoutException:
-            if _has_paycom_captcha_challenge(driver):
-                if allow_interactive_wait:
-                    return _wait_for_paycom_hcaptcha_completion(driver, automation_name=automation_name)
-                return (
-                    False,
-                    "Paycom requires an interactive hCaptcha challenge after the verification code. "
-                    "Retry in a visible browser and complete the challenge; the automation will not solve or bypass it.",
-                )
-            return False, "Paycom did not accept the verification code. Check the code and try the sync again."
-        return True, ""
-    finally:
-        _remove_file_quietly(PAYCOM_2FA_REQUEST_FILE)
-        _remove_file_quietly(PAYCOM_2FA_RESPONSE_FILE)
 
 
 def _is_missing_punch_marker(text):
@@ -1208,8 +1015,6 @@ def _build_driver(profile_path, headless_mode):
 def _run_once(headless_mode):
     driver = None
     profile_path = os.path.join(SCRIPT_DIR, "chrome_profile")
-    _remove_file_quietly(PAYCOM_2FA_REQUEST_FILE)
-    _remove_file_quietly(PAYCOM_2FA_RESPONSE_FILE)
     try:
         start_time = time.time()
         mode_label = "headless" if headless_mode else "visible"
@@ -1261,16 +1066,15 @@ def _run_once(headless_mode):
         time.sleep(2)
 
         if is_paycom_two_factor_page(driver):
-            ok, two_factor_message = complete_paycom_two_factor(
-                driver,
-                allow_interactive_wait=not headless_mode,
+            take_screenshot(driver, "paycom_hours_two_factor_required")
+            return (
+                False,
+                "Paycom unexpectedly requested two-factor verification. The trusted browser profile should prevent this; "
+                "check the Paycom setup profile if it persists.",
+                None,
+                target_url,
+                [],
             )
-            if not ok:
-                take_screenshot(driver, "paycom_hours_two_factor_required")
-                return False, two_factor_message, None, target_url, []
-            # Paycom accepts the code asynchronously on some layouts. Give the
-            # authenticated destination a moment to render before parsing it.
-            time.sleep(2)
 
         if is_paycom_login_page(driver):
             take_screenshot(driver, "paycom_hours_login_required")
@@ -1348,8 +1152,6 @@ def _run_once(headless_mode):
         error_msg = f"Paycom hours sync failed: {type(e).__name__}: {e}"
         return False, error_msg, None, "", []
     finally:
-        _remove_file_quietly(PAYCOM_2FA_REQUEST_FILE)
-        _remove_file_quietly(PAYCOM_2FA_RESPONSE_FILE)
         if driver:
             safe_driver_quit(driver, profile_path=profile_path)
 
