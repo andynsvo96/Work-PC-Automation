@@ -534,6 +534,13 @@ def safe_driver_quit(driver, profile_path=None, timeout=8):
     if driver is None:
         return
 
+    if os.getenv("AUTOMATION_KEEP_BROWSER_OPEN", "").strip().lower() in ("1", "true", "yes", "on"):
+        # Do not send WebDriver's QUIT command in visible debugging mode.
+        # Chrome's detach option alone is not honored consistently by every
+        # ChromeDriver build, while this leaves the final browser state intact.
+        print("Visible debug mode: leaving the browser open for inspection.")
+        return
+
     done = {"finished": False}
 
     def _quit():
