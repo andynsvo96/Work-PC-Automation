@@ -399,8 +399,10 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
     <span class='app-version' id='appVersionText'>Version: loading</span>
   </div>
   <div class='app-header-actions'>
+    <button class='icon-btn' id='tabBtnConsole' onclick="setActiveTab('console')">Console</button>
     <button class='icon-btn' id='themeToggleBtn' type='button' onclick='toggleColorTheme()' title='Switch color theme' aria-label='Switch color theme'>Dark Mode</button>
     <button class='icon-btn' id='tabBtnQueue' onclick='toggleQueuePanel()'>Queue</button>
+    <button class='icon-btn' id='headlessToggleBtn' type='button' onclick='toggleHeadlessMode()' title='Loading Headless mode' aria-label='Loading Headless mode'>Headless</button>
     <button class='icon-btn' id='settingsGearBtn' onclick="setActiveTab('settings')" title='Open Settings' aria-label='Open Settings'>
       <svg viewBox='0 0 24 24' aria-hidden='true' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>
         <circle cx='12' cy='12' r='3'></circle>
@@ -415,7 +417,6 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
   <button class='tab-btn' id='tabBtnProcessing' onclick="setActiveTab('processing')">Processing</button>
   <button class='tab-btn' id='tabBtnMetrics' onclick="setActiveTab('metrics')">Desktop Metrics Server</button>
   <button class='tab-btn' id='tabBtnPower' onclick="setActiveTab('power')">System Controls</button>
-  <button class='tab-btn console-tab-btn' id='tabBtnConsole' onclick="setActiveTab('console')">Console</button>
   <label class='control-target'><span id='controlTargetLabel'>Control target</span><select id='controlTargetSelect' onchange='changeControlTarget(this.value)'><option value=''>Any available computer</option></select></label>
 </div>
 <div id='platformCapabilityNotice' class='notice platform-capability-notice'>Windows only</div>
@@ -1839,6 +1840,37 @@ function toggleColorTheme() {
   applyColorTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', true);
 }
 
+function renderHeadlessMode(enabled) {
+  const button = document.getElementById('headlessToggleBtn');
+  if (!button) return;
+  const isHeadless = Boolean(enabled);
+  button.textContent = isHeadless ? 'Headless On' : 'Headless Off';
+  button.classList.toggle('active', isHeadless);
+  button.title = isHeadless
+    ? 'Headless mode is on. Click to use visible browser windows.'
+    : 'Headless mode is off. Click to run automations in the background.';
+  button.setAttribute('aria-label', button.title);
+}
+
+async function toggleHeadlessMode() {
+  const button = document.getElementById('headlessToggleBtn');
+  const next = !Boolean(nodeRuntimePayload && nodeRuntimePayload.headless);
+  if (button) button.disabled = true;
+  try {
+    const payload = await api('/api/headless-mode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({headless: next}),
+    });
+    renderNodeRuntime(payload);
+    setStatus(payload.message || `Headless mode ${next ? 'enabled' : 'disabled'}.`);
+  } catch (error) {
+    setStatus('Could not update Headless mode: ' + error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 async function ensureAppCsrfToken() {
   if (appCsrfToken) return appCsrfToken;
   const response = await fetch('/api/auth/status');
@@ -2583,6 +2615,7 @@ function renderNodeRuntime(payload) {
   nodeRuntimePayload = payload || {};
   const platform = nodeRuntimePayload.platform || {};
   const settings = nodeRuntimePayload.worker_settings || {};
+  renderHeadlessMode(nodeRuntimePayload.headless);
   const recommendation = settings.recommendation || {};
   const git = nodeRuntimePayload.git || {};
   const appUpdate = nodeRuntimePayload.app_update || {};

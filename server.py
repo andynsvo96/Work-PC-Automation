@@ -87,6 +87,26 @@ CRM_PUSH_BACK_SCRIPT = os.path.join(WORKERS_DIR, "crm_push_back.py")
 CRM_AUTO_SPLITTER_SCRIPT = os.path.join(WORKERS_DIR, "crm_auto_splitter.py")
 CRM_MASS_EMAILER_SCRIPT = os.path.join(WORKERS_DIR, "crm_copyright_cancel.py")
 SLACK_SCRIPT_TIMEOUT_SECONDS = 150
+BROWSER_WORKER_FILENAMES = frozenset(
+    {
+        os.path.basename(CLOCK_SCRIPT),
+        os.path.basename(SLACK_SCRIPT),
+        os.path.basename(PAYCOM_HOURS_SCRIPT),
+        os.path.basename(CRM_SCRIPT),
+        os.path.basename(CRM_ADDRESS_VALIDATOR_SCRIPT),
+        os.path.basename(CRM_PRODUCT_SEPARATOR_SCRIPT),
+        os.path.basename(CRM_ORDER_GOODS_SCRIPT),
+        os.path.basename(CRM_SHIPPING_BYPASSER_SCRIPT),
+        os.path.basename(CRM_PUSH_BACK_SCRIPT),
+        os.path.basename(CRM_AUTO_SPLITTER_SCRIPT),
+        os.path.basename(CRM_MASS_EMAILER_SCRIPT),
+    }
+)
+CRM_VISIBLE_FLAG_WORKER_FILENAMES = BROWSER_WORKER_FILENAMES - {
+    os.path.basename(CLOCK_SCRIPT),
+    os.path.basename(SLACK_SCRIPT),
+    os.path.basename(PAYCOM_HOURS_SCRIPT),
+}
 
 WORK_CLOCK_CAPPED = True
 WORK_CLOCK_CAP_HOURS = 40.0
@@ -1746,6 +1766,7 @@ def get_node_runtime_payload():
         "success": True,
         "platform": snapshot.to_dict(),
         "worker_settings": workers,
+        "headless": bool(preferences.get("headless", True)),
         "git": git_state,
         "version_eligible": version_eligible,
         "version_block_reason": version_block_reason or None,
@@ -2938,6 +2959,15 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False):
     # can be returned to the UI and inspected directly.
     worker_log_path = None
     worker_output = None
+    worker_args = list(args)
+    headless = bool(load_node_preferences().get("headless", True))
+    worker_filename = os.path.basename(str(script_path or ""))
+    if (
+        not headless
+        and worker_filename in CRM_VISIBLE_FLAG_WORKER_FILENAMES
+        and "--visible" not in worker_args
+    ):
+        worker_args.append("--visible")
     if _automation_stop_is_blocking():
         msg = _force_stop_message(label)
         return False, msg, {"success": False, "message": msg, "stopped": True}
@@ -2959,6 +2989,7 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False):
         )
         env = os.environ.copy()
         env["AUTOMATION_STATUS_FILE"] = AUTOMATION_STATUS_FILE
+        env["AUTOMATION_HEADLESS"] = "1" if headless else "0"
         popen_kwargs = {
             "cwd": SCRIPT_DIR,
             "creationflags": creation_flags,
@@ -2971,7 +3002,7 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False):
             popen_kwargs["stdout"] = worker_output
             popen_kwargs["stderr"] = subprocess.STDOUT
         proc = subprocess.Popen(
-            [_resolve_console_python(), script_path] + list(args),
+            [_resolve_console_python(), script_path] + worker_args,
             **popen_kwargs,
         )
         _register_automation_process(proc, label)
@@ -12889,6 +12920,25 @@ def api_worker_settings():
             f"Worker mode set to Auto ({payload['worker_settings']['effective_workers']} recommended)."
             if preferences.get("worker_mode") == "auto"
             else f"Manual worker override set to {preferences.get('manual_workers')}."
+        )
+        return jsonify(payload)
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 400
+
+
+@app.route("/api/headless-mode", methods=["POST"])
+def api_headless_mode():
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data.get("headless"), bool):
+        return jsonify({"success": False, "message": "Headless must be a boolean value."}), 400
+    try:
+        preferences = update_node_preferences({"headless": data["headless"]})
+        enabled = bool(preferences.get("headless", True))
+        payload = get_node_runtime_payload()
+        payload["message"] = (
+            "Headless mode is on. New automations will run in the background."
+            if enabled
+            else "Headless mode is off. New automations will use visible browser windows."
         )
         return jsonify(payload)
     except Exception as e:

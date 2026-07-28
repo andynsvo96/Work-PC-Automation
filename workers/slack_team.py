@@ -600,7 +600,12 @@ def run(action, force_test_url=False, custom_message=None, channel_url=None):
     channel_url = resolve_slack_channel_url(force_test_url=force_test_url, channel_url=channel_url)
     profile_path = os.path.join(SCRIPT_DIR, "slack_chrome_profile")
 
-    if SLACK_FORCE_HEADLESS:
+    headless_enabled = os.getenv("AUTOMATION_HEADLESS", "1").strip().lower() not in ("0", "false", "no", "off")
+    if not headless_enabled:
+        mode_plan = [False]
+        mode_attempts = {False: 1}
+        print("Headless mode is disabled; running Slack in a visible browser window.")
+    elif SLACK_FORCE_HEADLESS:
         mode_plan = [True]
         mode_attempts = {True: 2}
         print("SLACK_FORCE_HEADLESS is enabled; skipping visible browser mode.")

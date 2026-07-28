@@ -414,8 +414,10 @@ def run(action, dry_run=None):
     else:
         print("Real mode enabled: punch actions will be clicked when found.")
 
-    # Headless is preferred for background runs; visible mode is a fallback for flaky login/startup cases.
-    attempt_modes = [True, False]
+    # Respect the control-panel mode. When visibility is requested, do not
+    # silently fall back to headless on a later attempt.
+    headless_enabled = os.getenv("AUTOMATION_HEADLESS", "1").strip().lower() not in ("0", "false", "no", "off")
+    attempt_modes = [True, False] if headless_enabled else [False]
     for idx, headless_mode in enumerate(attempt_modes, start=1):
         ok, msg, retryable = _run_once(action, effective_dry_run, profile_path, headless_mode=headless_mode)
         if ok:

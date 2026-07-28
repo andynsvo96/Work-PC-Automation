@@ -12,7 +12,12 @@ class NodePreferencesTests(unittest.TestCase):
             payload = node_preferences.load_node_preferences(os.path.join(folder, "missing.json"))
         self.assertEqual(
             payload,
-            {"worker_mode": "manual", "manual_workers": 1, "clipboard_auto_sync": False},
+            {
+                "worker_mode": "manual",
+                "manual_workers": 1,
+                "headless": True,
+                "clipboard_auto_sync": False,
+            },
         )
 
     def test_update_persists_manual_override(self):
@@ -37,6 +42,13 @@ class NodePreferencesTests(unittest.TestCase):
             payload = node_preferences.update_node_preferences({"clipboard_auto_sync": True}, path)
             self.assertTrue(payload["clipboard_auto_sync"])
             self.assertTrue(node_preferences.load_node_preferences(path)["clipboard_auto_sync"])
+
+    def test_headless_mode_is_machine_local_and_defaults_to_enabled(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "node.json")
+            payload = node_preferences.update_node_preferences({"headless": False}, path)
+            self.assertFalse(payload["headless"])
+            self.assertFalse(node_preferences.load_node_preferences(path)["headless"])
 
 
 if __name__ == "__main__":

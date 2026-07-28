@@ -1335,14 +1335,15 @@ def run():
         "Requested action: week",
         source="paycom_hours.py",
     )
-    success, msg, week_hours, source, day_rows = _run_once(headless_mode=True)
+    headless_enabled = os.getenv("AUTOMATION_HEADLESS", "1").strip().lower() not in ("0", "false", "no", "off")
+    success, msg, week_hours, source, day_rows = _run_once(headless_mode=headless_enabled)
     if success:
         write_result(True, msg, week_hours=week_hours, source=source, day_rows=day_rows)
         print(f"RESULT:SUCCESS:{msg}")
         return
 
     # If the headless renderer hangs, retry once in visible mode.
-    if "timed out receiving message from renderer" in msg.lower():
+    if headless_enabled and "timed out receiving message from renderer" in msg.lower():
         print("Headless sync hit renderer timeout. Retrying once in visible mode...")
         success2, msg2, week_hours2, source2, day_rows2 = _run_once(headless_mode=False)
         if success2:
