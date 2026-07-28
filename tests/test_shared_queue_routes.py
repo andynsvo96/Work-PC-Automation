@@ -133,6 +133,7 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertIn("communications.paycom_clock", registered)
         self.assertIn("crm.processing", registered)
         self.assertIn("crm.push_back", registered)
+        self.assertIn("crm.sheet_scanner_order", registered)
         self.assertIn("system.power", registered)
 
     def test_scheduled_power_action_is_durable_and_targeted(self):

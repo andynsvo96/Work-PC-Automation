@@ -276,6 +276,63 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertFalse(response.get_json()["success"])
 
+    def test_sheet_scanner_manual_action_requires_a_reason_before_queueing(self):
+        with mock.patch("server.enqueue_automation") as enqueue:
+            response = self.client.post(
+                "/api/extension/bridge/process-order/manual",
+                json={"order_id": "4917538", "automation": "copyright_cancel", "reason": ""},
+                headers={"Origin": self.ORIGIN},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.get_json()["success"])
+        self.assertIn("requires a reason", response.get_json()["message"])
+        enqueue.assert_not_called()
+
+    def test_sheet_scanner_manual_action_queues_one_order_with_its_reason(self):
+        with mock.patch(
+            "server.enqueue_automation",
+            return_value=(True, "Copyright - Cancel queued.", {"id": "task-2", "status": "queued"}),
+        ) as enqueue:
+            response = self.client.post(
+                "/api/extension/bridge/process-order/manual",
+                json={
+                    "order_id": "4917538",
+                    "automation": "copyright_cancel",
+                    "reason": "Trademarked logo",
+                },
+                headers={"Origin": self.ORIGIN},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.get_json()["success"])
+        self.assertEqual(enqueue.call_args.kwargs["task_type"], "crm.sheet_scanner_order")
+        self.assertEqual(enqueue.call_args.kwargs["task_arguments"], {
+            "order_id": "4917538",
+            "process": "copyright_cancel",
+            "reason": "Trademarked logo",
+        })
+
+    def test_auto_splitter_is_available_as_a_single_order_manual_action(self):
+        with mock.patch(
+            "server.enqueue_automation",
+            return_value=(True, "Auto Splitter queued.", {"id": "task-3", "status": "queued"}),
+        ) as enqueue:
+            response = self.client.post(
+                "/api/extension/bridge/process-order/manual",
+                json={"order_id": "4917538", "automation": "auto_splitter"},
+                headers={"Origin": self.ORIGIN},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.get_json()["success"])
+        self.assertEqual(enqueue.call_args.kwargs["task_type"], "crm.auto_splitter")
+        self.assertEqual(enqueue.call_args.kwargs["task_arguments"]["order_target"], "4917538")
+        self.assertFalse(enqueue.call_args.kwargs["task_arguments"]["dry_run"])
+
 
 if __name__ == "__main__":
     unittest.main()

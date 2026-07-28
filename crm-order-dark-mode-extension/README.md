@@ -7,7 +7,7 @@ Private Manifest V3 extension for the Automation project's CRM order pages. It p
 1. Open the dedicated CRM Chrome profile. From the Automation app, use the CRM Chrome-profile setup action if needed.
 2. Visit `chrome://extensions` in that profile and enable **Developer mode**.
 3. Choose **Load unpacked** and select this `crm-order-dark-mode-extension` folder.
-4. Pin **CRM Order Assistant**, open a CRM order, and use **Enable dark mode** in its toolbar popup.
+4. Pin **CRM Order Assistant**, open a CRM order, and use **Enable dark mode** in its toolbar popup. The order page also provides single-order Auto-Process, Manual Process, Cancel, and Reachout controls.
 
 The preference is stored locally in that Chrome profile. Removing or reloading the extension keeps the preference unless Chrome extension data is cleared.
 

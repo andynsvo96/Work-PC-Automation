@@ -9939,9 +9939,31 @@ def _finish_crm_mass_emailer_runtime(ok, message, payload, release_lock=True):
         crm_lock.release()
 
 
-def _execute_crm_mass_emailer_worker(action="process_queue", dry_run=True, limit=None, retry_errors=False, show_terminal=None):
+def _execute_crm_mass_emailer_worker(
+    action="process_queue",
+    dry_run=True,
+    limit=None,
+    retry_errors=False,
+    show_terminal=None,
+    order_id=None,
+    process=None,
+    reason="",
+):
     normalized_action = _normalize_crm_mass_emailer_action(action)
     args = ["--action", normalized_action]
+    if normalized_action == "process_order":
+        normalized_order_id = _normalize_crm_single_order_id(order_id)
+        if not normalized_order_id:
+            return False, "A valid 7-digit CRM order number is required.", {
+                "success": False,
+                "message": "A valid 7-digit CRM order number is required.",
+                "action": normalized_action,
+            }
+        args.extend(["--order-id", normalized_order_id])
+        if process:
+            args.extend(["--process", str(process).strip()])
+        if str(reason or "").strip():
+            args.extend(["--reason", str(reason).strip()])
     if int(_safe_float(limit, 0)) > 0:
         args.extend(["--limit", str(int(_safe_float(limit, 0)))])
     if retry_errors:
@@ -10063,6 +10085,51 @@ def start_crm_mass_emailer_run(action="process_queue", dry_run=True, limit=None,
         return True, "Sheets Scanner sheet scan started."
     mode = "dry run" if dry_run else "live run"
     return True, f"Sheets Scanner {mode} started."
+
+
+CRM_EXTENSION_SHEET_SCANNER_ORDER_AUTOMATIONS = {
+    "copyright_cancel": {"label": "Copyright - Cancel", "requires_reason": True},
+    "content_violation_cancel": {"label": "Content Violation - Cancel", "requires_reason": False},
+    "existing_designs_cancel": {"label": "CANCEL - Existing Designs", "requires_reason": False},
+    "outside_limit_cancel": {"label": "CANCEL - Outside Limit", "requires_reason": False},
+    "complicated_emb_to_hdd": {"label": "Complicated EMB to HDD", "requires_reason": False},
+    "oversize_emb_to_hdd": {"label": "Oversize EMB to HDD", "requires_reason": False},
+    "copyright_removal": {"label": "Copyright Removal", "requires_reason": True},
+    "copyright_reachout": {"label": "Copyright - Reachout", "requires_reason": True},
+}
+
+
+def run_crm_sheet_scanner_order_queued(order_id, process, reason=""):
+    """Run one confirmed Sheets Scanner process for one CRM order.
+
+    This is separate from the report-wide scanner queue: extension controls
+    may only operate on the currently open order.
+    """
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    process_key = str(process or "").strip().lower()
+    automation = CRM_EXTENSION_SHEET_SCANNER_ORDER_AUTOMATIONS.get(process_key)
+    if not normalized_order_id:
+        return False, "Open a CRM order with a valid 7-digit order number first."
+    if not automation:
+        return False, "Choose a supported Sheets Scanner automation."
+    clean_reason = str(reason or "").strip()
+    if automation["requires_reason"] and not clean_reason:
+        return False, f"{automation['label']} requires a reason before it can be queued."
+    if not crm_lock.acquire(blocking=False):
+        return False, "A CRM automation run is already in progress."
+    try:
+        ok, message, payload = _execute_crm_mass_emailer_worker(
+            action="process_order",
+            dry_run=False,
+            show_terminal=False,
+            order_id=normalized_order_id,
+            process=process_key,
+            reason=clean_reason,
+        )
+        _persist_crm_mass_emailer_run_result(ok, message, payload, dry_run=False)
+        return ok, message
+    finally:
+        crm_lock.release()
 
 
 def get_crm_mass_emailer_status_payload():
@@ -11280,13 +11347,13 @@ CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS = {
         "label": "Address Validator",
         "task_type": "crm.address_validator",
         "status_fn": get_crm_address_status_payload,
-        "task_arguments": lambda order_id: {
+        "task_arguments": lambda order_id, _reason="": {
             "order_id": order_id,
             "dry_run": False,
             "action": "validate_order",
             "parallel_workers": 1,
         },
-        "runner": lambda order_id: run_crm_address_run_queued(
+        "runner": lambda order_id, _reason="": run_crm_address_run_queued(
             order_id=order_id, dry_run=False, action="validate_order", parallel_workers=1
         ),
     },
@@ -11294,13 +11361,13 @@ CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS = {
         "label": "Product Separator",
         "task_type": "crm.product_separator",
         "status_fn": get_crm_product_separator_status_payload,
-        "task_arguments": lambda order_id: {
+        "task_arguments": lambda order_id, _reason="": {
             "order_id": order_id,
             "dry_run": False,
             "list_mode": "all",
             "parallel_workers": 1,
         },
-        "runner": lambda order_id: run_crm_product_separator_run_queued(
+        "runner": lambda order_id, _reason="": run_crm_product_separator_run_queued(
             order_id=order_id, dry_run=False, list_mode="all", parallel_workers=1
         ),
     },
@@ -11308,8 +11375,8 @@ CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS = {
         "label": "Order Goods",
         "task_type": "crm.order_goods",
         "status_fn": get_crm_order_goods_status_payload,
-        "task_arguments": lambda order_id: {"order_id": order_id, "dry_run": False, "parallel_workers": 1},
-        "runner": lambda order_id: run_crm_order_goods_run_queued(
+        "task_arguments": lambda order_id, _reason="": {"order_id": order_id, "dry_run": False, "parallel_workers": 1},
+        "runner": lambda order_id, _reason="": run_crm_order_goods_run_queued(
             order_id=order_id, dry_run=False, parallel_workers=1
         ),
     },
@@ -11317,27 +11384,57 @@ CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS = {
         "label": "Shipping Bypasser",
         "task_type": "crm.shipping_bypasser",
         "status_fn": get_crm_shipping_bypasser_status_payload,
-        "task_arguments": lambda order_id: {"order_id": order_id, "dry_run": False},
-        "runner": lambda order_id: run_crm_shipping_bypasser_run_queued(order_id=order_id, dry_run=False),
+        "task_arguments": lambda order_id, _reason="": {"order_id": order_id, "dry_run": False},
+        "runner": lambda order_id, _reason="": run_crm_shipping_bypasser_run_queued(order_id=order_id, dry_run=False),
     },
     "push_back": {
         "label": "Push Back",
         "task_type": "crm.push_back",
         "status_fn": get_crm_push_back_status_payload,
-        "task_arguments": lambda order_id: {
+        "task_arguments": lambda order_id, _reason="": {
             "order_id": order_id,
             "dry_run": False,
             "processing_filter": "rush",
             "parallel_workers": 1,
         },
-        "runner": lambda order_id: run_crm_push_back_run_queued(
+        "runner": lambda order_id, _reason="": run_crm_push_back_run_queued(
             order_id=order_id, dry_run=False, processing_filter="rush", parallel_workers=1
+        ),
+    },
+    "auto_splitter": {
+        "label": "Auto Splitter",
+        "task_type": "crm.auto_splitter",
+        "status_fn": get_crm_auto_splitter_status_payload,
+        "task_arguments": lambda order_id, _reason="": {
+            "order_target": order_id,
+            "minimum_tabs": 10,
+            "dry_run": False,
+            "parallel_workers": 1,
+        },
+        "runner": lambda order_id, _reason="": run_crm_auto_splitter_run_queued(
+            order_target=order_id, minimum_tabs=10, dry_run=False, parallel_workers=1
         ),
     },
 }
 
+for _process_key, _process_automation in CRM_EXTENSION_SHEET_SCANNER_ORDER_AUTOMATIONS.items():
+    CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS[_process_key] = {
+        "label": _process_automation["label"],
+        "task_type": "crm.sheet_scanner_order",
+        "status_fn": get_crm_mass_emailer_status_payload,
+        "requires_reason": _process_automation["requires_reason"],
+        "task_arguments": lambda order_id, reason="", process_key=_process_key: {
+            "order_id": order_id,
+            "process": process_key,
+            "reason": str(reason or "").strip(),
+        },
+        "runner": lambda order_id, reason="", process_key=_process_key: run_crm_sheet_scanner_order_queued(
+            order_id, process_key, reason
+        ),
+    }
 
-def run_crm_extension_manual_order_run_queued(order_id, automation_key):
+
+def run_crm_extension_manual_order_run_queued(order_id, automation_key, reason=""):
     """Run one extension-triggered manual action while exposing its shared UI state."""
     automation_key = str(automation_key or "").strip().lower()
     automation = CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS[automation_key]
@@ -11361,7 +11458,7 @@ def run_crm_extension_manual_order_run_queued(order_id, automation_key):
                     "steps": [],
                 }
             )
-        ok, message = automation["runner"](order_id)
+        ok, message = automation["runner"](order_id, reason)
         return ok, message
     except Exception as exc:
         logger.exception("Extension manual CRM action failed")
@@ -11382,7 +11479,7 @@ def run_crm_extension_manual_order_run_queued(order_id, automation_key):
             )
 
 
-def queue_crm_extension_manual_order_run(order_id, automation_key):
+def queue_crm_extension_manual_order_run(order_id, automation_key, reason=""):
     normalized_order_id = _normalize_crm_single_order_id(order_id)
     if not normalized_order_id:
         return False, "Open a CRM order with a valid 7-digit order number first.", None
@@ -11392,6 +11489,9 @@ def queue_crm_extension_manual_order_run(order_id, automation_key):
 
     label = automation["label"]
     automation_key = str(automation_key or "").strip().lower()
+    clean_reason = str(reason or "").strip()
+    if automation.get("requires_reason") and not clean_reason:
+        return False, f"{label} requires a reason before it can be queued.", None
     with crm_extension_order_runtime_lock:
         crm_extension_order_runtime.update(
             {
@@ -11410,11 +11510,11 @@ def queue_crm_extension_manual_order_run(order_id, automation_key):
     ok, message, task = enqueue_automation(
         f"{label} Order {normalized_order_id}",
         "Processing",
-        lambda: run_crm_extension_manual_order_run_queued(normalized_order_id, automation_key),
+        lambda: run_crm_extension_manual_order_run_queued(normalized_order_id, automation_key, clean_reason),
         details=f"Single CRM order {normalized_order_id}",
         status_fn=get_crm_extension_order_status_payload,
         task_type=automation["task_type"],
-        task_arguments=automation["task_arguments"](normalized_order_id),
+        task_arguments=automation["task_arguments"](normalized_order_id, clean_reason),
         required_capability="crm",
     )
     if not ok:
@@ -12189,6 +12289,7 @@ def register_shared_queue_task_executors():
         "crm.product_separator": run_crm_product_separator_run_queued,
         "crm.auto_splitter": run_crm_auto_splitter_run_queued,
         "crm.mass_emailer": run_crm_mass_emailer_run_queued,
+        "crm.sheet_scanner_order": run_crm_sheet_scanner_order_queued,
         "crm.processing": run_crm_processing_run_queued,
         "crm.extension_order": run_crm_extension_order_run_queued,
         "system.power": _run_system_power_task,
@@ -12708,6 +12809,7 @@ def api_chrome_extension_bridge_manual_process_order():
     ok, message, task = queue_crm_extension_manual_order_run(
         data.get("order_id"),
         data.get("automation"),
+        data.get("reason"),
     )
     payload = get_crm_extension_order_status_payload()
     payload.update(

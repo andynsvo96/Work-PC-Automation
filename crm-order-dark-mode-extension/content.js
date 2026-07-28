@@ -6,24 +6,36 @@ let themeEnabled = false;
 let refreshQueued = false;
 let orderProcessorPollTimer = null;
 
-// Keep the manual menu from staying open after the user returns to the CRM
-// page. Checking the whole control lets the button continue to toggle it.
+// Keep extension menus from staying open after the user returns to the CRM
+// page. Checking each whole control lets its button continue to toggle it.
 document.addEventListener("click", (event) => {
-  const control = document.getElementById("crm-order-manual-process-control");
-  const menu = control?.querySelector("[role='menu']");
-  if (menu && !menu.hidden && !control.contains(event.target)) {
-    menu.hidden = true;
-    const button = manualOrderProcessorButton();
-    if (button) button.setAttribute("aria-expanded", "false");
-  }
+  document.querySelectorAll("[data-crm-order-menu-control='true']").forEach((control) => {
+    const menu = control.querySelector("[role='menu']");
+    if (menu && !menu.hidden && !control.contains(event.target)) closeOrderProcessMenu(control);
+  });
 });
 
 const MANUAL_ORDER_AUTOMATIONS = [
   { key: "address_validator", label: "Address Validator" },
   { key: "product_separator", label: "Product Separator" },
+  { key: "auto_splitter", label: "Auto Splitter" },
   { key: "order_goods", label: "Order Goods" },
   { key: "shipping_bypasser", label: "Shipping Bypasser" },
   { key: "push_back", label: "Push Back" }
+];
+
+const CANCEL_ORDER_AUTOMATIONS = [
+  { key: "copyright_cancel", label: "Copyright - Cancel", requiresReason: true },
+  { key: "content_violation_cancel", label: "Content Violation - Cancel" },
+  { key: "existing_designs_cancel", label: "CANCEL - Existing Designs" },
+  { key: "outside_limit_cancel", label: "CANCEL - Outside Limit" }
+];
+
+const REACHOUT_ORDER_AUTOMATIONS = [
+  { key: "complicated_emb_to_hdd", label: "Complicated EMB to HDD" },
+  { key: "oversize_emb_to_hdd", label: "Oversize EMB to HDD" },
+  { key: "copyright_removal", label: "Copyright Removal", requiresReason: true },
+  { key: "copyright_reachout", label: "Copyright - Reachout", requiresReason: true }
 ];
 
 function currentOrderId() {
@@ -79,12 +91,11 @@ function setOrderProcessorControlsDisabled(disabled) {
   const manualProcessButton = manualOrderProcessorButton();
   if (autoProcessButton) autoProcessButton.disabled = disabled;
   if (manualProcessButton) manualProcessButton.disabled = disabled;
+  document.querySelectorAll("[data-crm-order-process-trigger='true']").forEach((button) => {
+    button.disabled = disabled;
+  });
   if (disabled) {
-    const menu = document.querySelector("#crm-order-manual-process-control [role='menu']");
-    if (menu) {
-      menu.hidden = true;
-      manualProcessButton?.setAttribute("aria-expanded", "false");
-    }
+    document.querySelectorAll("[data-crm-order-menu-control='true']").forEach(closeOrderProcessMenu);
   }
 }
 
@@ -243,39 +254,148 @@ async function loadOrderProcessorStatus(button) {
   }
 }
 
-function ensureManualOrderProcessorControl(autoProcessButton) {
-  const existing = document.getElementById("crm-order-manual-process-control");
-  if (existing) return existing;
+function closeOrderProcessMenu(control) {
+  if (!control) return;
+  const menu = control.querySelector("[role='menu']");
+  const button = control.querySelector("[aria-haspopup='menu']");
+  if (menu) menu.hidden = true;
+  if (button) button.setAttribute("aria-expanded", "false");
+}
 
-  const control = document.createElement("span");
-  control.id = "crm-order-manual-process-control";
-  Object.assign(control.style, {
-    position: "relative", display: "inline-block", height: "32px", marginLeft: "4px", verticalAlign: "top"
+function closeAllOrderProcessMenus(exceptControl = null) {
+  document.querySelectorAll("[data-crm-order-menu-control='true']").forEach((control) => {
+    if (control !== exceptControl) closeOrderProcessMenu(control);
   });
+}
 
+function queueManualOrderAutomation(automation, triggerButton, autoProcessButton, reason = "") {
+  const orderId = currentOrderId();
+  if (!orderId) return;
+  const control = triggerButton.closest("[data-crm-order-menu-control='true']");
+  closeOrderProcessMenu(control);
+  setOrderProcessorControlsDisabled(true);
+  const isManualButton = triggerButton.id === "crm-order-manual-process-button";
+  if (isManualButton) triggerButton.textContent = `Queuing ${automation.label}…`;
+  setOrderProcessorResult(triggerButton, `Sending ${automation.label} for order ${orderId} to the CRM automation queue…`, "progress");
+  chrome.runtime.sendMessage({
+    type: "crm-order-automation:manual-start",
+    orderId,
+    automation: automation.key,
+    reason
+  }).then((response) => {
+    if (response && response.success) {
+      renderOrderProcessorStatus(autoProcessButton, response);
+      beginOrderProcessorPolling(autoProcessButton);
+      return;
+    }
+    setOrderProcessorControlsDisabled(false);
+    if (isManualButton) triggerButton.textContent = "Manual Process";
+    triggerButton.title = (response && response.message) || "Could not queue the selected automation.";
+    setOrderProcessorResult(triggerButton, triggerButton.title, "error");
+  }).catch(() => {
+    setOrderProcessorControlsDisabled(false);
+    if (isManualButton) triggerButton.textContent = "Manual Process";
+    triggerButton.title = "Could not queue the selected automation. Confirm the local Automation app is running, then try again.";
+    setOrderProcessorResult(triggerButton, triggerButton.title, "error");
+  });
+}
+
+function showOrderAutomationConfirmation(automation, triggerButton, autoProcessButton) {
+  document.getElementById("crm-order-automation-confirmation")?.remove();
+  const requiresReason = automation.requiresReason === true;
+  const overlay = document.createElement("div");
+  overlay.id = "crm-order-automation-confirmation";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", `Confirm ${automation.label}`);
+  Object.assign(overlay.style, {
+    position: "fixed", zIndex: "2147483647", inset: "0", display: "flex", alignItems: "center", justifyContent: "center",
+    padding: "20px", background: "rgba(15,23,42,.56)", font: "14px system-ui, sans-serif"
+  });
+  const dialog = document.createElement("div");
+  Object.assign(dialog.style, {
+    width: "min(430px, 100%)", padding: "20px", borderRadius: "7px", color: "#0f172a", background: "#fff",
+    boxShadow: "0 20px 45px rgba(15,23,42,.34)"
+  });
+  const title = document.createElement("div");
+  title.textContent = `Queue ${automation.label}?`;
+  Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "8px" });
+  const explanation = document.createElement("p");
+  explanation.textContent = `This will queue ${automation.label} for the currently open order.`;
+  Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
+  dialog.append(title, explanation);
+  let reasonInput = null;
+  if (requiresReason) {
+    const label = document.createElement("label");
+    label.textContent = "Reason (required)";
+    label.htmlFor = "crm-order-automation-reason";
+    Object.assign(label.style, { display: "block", marginBottom: "5px", fontWeight: "700" });
+    reasonInput = document.createElement("textarea");
+    reasonInput.id = "crm-order-automation-reason";
+    reasonInput.rows = 4;
+    reasonInput.placeholder = "Enter the reason to continue";
+    Object.assign(reasonInput.style, {
+      width: "100%", boxSizing: "border-box", resize: "vertical", padding: "8px", border: "1px solid #64748b", borderRadius: "3px",
+      font: "14px system-ui, sans-serif"
+    });
+    dialog.append(label, reasonInput);
+  }
+  const actions = document.createElement("div");
+  Object.assign(actions.style, { display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "18px" });
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.textContent = "Back";
+  const continueButton = document.createElement("button");
+  continueButton.type = "button";
+  continueButton.textContent = "Queue task";
+  continueButton.disabled = requiresReason;
+  Object.assign(cancel.style, { padding: "7px 11px", cursor: "pointer" });
+  Object.assign(continueButton.style, {
+    padding: "7px 11px", border: "1px solid #166534", borderRadius: "3px", color: "#fff", background: "#15803d", cursor: "pointer"
+  });
+  cancel.addEventListener("click", () => overlay.remove());
+  continueButton.addEventListener("click", () => {
+    const reason = String(reasonInput?.value || "").trim();
+    if (requiresReason && !reason) return;
+    overlay.remove();
+    queueManualOrderAutomation(automation, triggerButton, autoProcessButton, reason);
+  });
+  reasonInput?.addEventListener("input", () => { continueButton.disabled = !reasonInput.value.trim(); });
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
+  overlay.addEventListener("keydown", (event) => { if (event.key === "Escape") overlay.remove(); });
+  actions.append(cancel, continueButton);
+  dialog.append(actions);
+  overlay.append(dialog);
+  document.body.append(overlay);
+  if (reasonInput) reasonInput.focus(); else continueButton.focus();
+}
+
+function createOrderProcessMenuControl({ controlId, buttonId, label, title, color, border, automations, needsConfirmation }) {
+  const control = document.createElement("span");
+  control.id = controlId;
+  control.dataset.crmOrderMenuControl = "true";
+  Object.assign(control.style, { position: "relative", display: "inline-block", height: "32px", verticalAlign: "top" });
   const button = document.createElement("button");
   button.type = "button";
-  button.id = "crm-order-manual-process-button";
-  button.textContent = "Manual Process";
-  button.title = "Choose one automation to run for this order only.";
+  button.id = buttonId;
+  button.dataset.crmOrderProcessTrigger = "true";
+  button.textContent = label;
+  button.title = title;
   button.setAttribute("aria-haspopup", "menu");
   button.setAttribute("aria-expanded", "false");
   Object.assign(button.style, {
     display: "block", boxSizing: "border-box", height: "32px", padding: "6px 12px", borderRadius: "2px", cursor: "pointer",
-    font: "600 12px/18px system-ui, sans-serif", color: "#fff", background: "#475569", border: "1px solid #334155"
+    font: "600 12px/18px system-ui, sans-serif", color: "#fff", background: color, border: `1px solid ${border}`
   });
-
   const menu = document.createElement("div");
   menu.hidden = true;
   menu.setAttribute("role", "menu");
-  menu.setAttribute("aria-label", "Manual automation choices");
+  menu.setAttribute("aria-label", `${label} automation choices`);
   Object.assign(menu.style, {
-    position: "absolute", zIndex: "2147483647", top: "calc(100% + 4px)", left: "0", minWidth: "190px",
-    padding: "4px", borderRadius: "4px", background: "#fff", border: "1px solid #94a3b8",
-    boxShadow: "0 6px 18px rgba(15,23,42,.22)"
+    position: "absolute", zIndex: "2147483647", top: "calc(100% + 4px)", left: "0", minWidth: "205px",
+    padding: "4px", borderRadius: "4px", background: "#fff", border: "1px solid #94a3b8", boxShadow: "0 6px 18px rgba(15,23,42,.22)"
   });
-
-  for (const automation of MANUAL_ORDER_AUTOMATIONS) {
+  for (const automation of automations) {
     const option = document.createElement("button");
     option.type = "button";
     option.textContent = automation.label;
@@ -286,46 +406,74 @@ function ensureManualOrderProcessorControl(autoProcessButton) {
     });
     option.addEventListener("mouseenter", () => { option.style.background = "#e0f2fe"; });
     option.addEventListener("mouseleave", () => { option.style.background = "transparent"; });
-    option.addEventListener("click", async () => {
-      const orderId = currentOrderId();
-      if (!orderId) return;
-      menu.hidden = true;
-      button.setAttribute("aria-expanded", "false");
-      setOrderProcessorControlsDisabled(true);
-      button.textContent = `Queuing ${automation.label}…`;
-      setOrderProcessorResult(button, `Sending ${automation.label} for order ${orderId} to the CRM automation queue…`, "progress");
-      try {
-        const response = await chrome.runtime.sendMessage({
-          type: "crm-order-automation:manual-start",
-          orderId,
-          automation: automation.key
-        });
-        if (response && response.success) {
-          renderOrderProcessorStatus(autoProcessButton, response);
-          beginOrderProcessorPolling(autoProcessButton);
-        } else {
-          setOrderProcessorControlsDisabled(false);
-          button.textContent = "Manual Process";
-          button.title = (response && response.message) || "Could not queue the selected automation.";
-          setOrderProcessorResult(button, button.title, "error");
-        }
-      } catch (_error) {
-        setOrderProcessorControlsDisabled(false);
-        button.textContent = "Manual Process";
-        button.title = "Could not queue the selected automation. Confirm the local Automation app is running, then try again.";
-        setOrderProcessorResult(button, button.title, "error");
-      }
+    option.addEventListener("click", () => {
+      closeOrderProcessMenu(control);
+      if (needsConfirmation) showOrderAutomationConfirmation(automation, button, document.getElementById("crm-order-automation-button"));
+      else queueManualOrderAutomation(automation, button, document.getElementById("crm-order-automation-button"));
     });
     menu.appendChild(option);
   }
-
   button.addEventListener("click", () => {
-    menu.hidden = !menu.hidden;
-    button.setAttribute("aria-expanded", String(!menu.hidden));
+    const opening = menu.hidden;
+    closeAllOrderProcessMenus(control);
+    menu.hidden = !opening;
+    button.setAttribute("aria-expanded", String(opening));
   });
   control.append(button, menu);
-  autoProcessButton.insertAdjacentElement("afterend", control);
   return control;
+}
+
+function ensureManualOrderProcessorControl(autoProcessButton) {
+  let control = document.getElementById("crm-order-manual-process-control");
+  if (!control) {
+    control = createOrderProcessMenuControl({
+      controlId: "crm-order-manual-process-control", buttonId: "crm-order-manual-process-button", label: "Manual Process",
+      title: "Choose one automation to run for this order only.", color: "#475569", border: "#334155",
+      automations: MANUAL_ORDER_AUTOMATIONS, needsConfirmation: false
+    });
+    control.style.marginLeft = "4px";
+  }
+  if (autoProcessButton.nextElementSibling !== control) autoProcessButton.insertAdjacentElement("afterend", control);
+  return control;
+}
+
+function findNativeEditOrderButton() {
+  return Array.from(document.querySelectorAll("button.edit-btn[ng-click='editModeOn();']"))
+    .find((button) => crmControlLabel(button) === "edit order");
+}
+
+function findAddAccountButton() {
+  const contactPanel = document.getElementById("contact-panel");
+  if (!contactPanel) return null;
+  return Array.from(contactPanel.querySelectorAll("button[ng-click='addAccount()']"))
+    .find((button) => crmControlLabel(button) === "add account");
+}
+
+function ensureConfirmedOrderControl({ controlId, buttonId, label, title, color, border, automations, anchor }) {
+  let control = document.getElementById(controlId);
+  if (!anchor) {
+    control?.remove();
+    return null;
+  }
+  if (!control) {
+    control = createOrderProcessMenuControl({ controlId, buttonId, label, title, color, border, automations, needsConfirmation: true });
+    control.style.marginRight = "4px";
+  }
+  if (anchor.previousElementSibling !== control) anchor.insertAdjacentElement("beforebegin", control);
+  return control;
+}
+
+function ensureSingleOrderSheetScannerControls() {
+  ensureConfirmedOrderControl({
+    controlId: "crm-order-cancel-control", buttonId: "crm-order-cancel-button", label: "Cancel",
+    title: "Choose a cancellation workflow for this order.", color: "#b91c1c", border: "#991b1b",
+    automations: CANCEL_ORDER_AUTOMATIONS, anchor: findNativeEditOrderButton()
+  });
+  ensureConfirmedOrderControl({
+    controlId: "crm-order-reachout-control", buttonId: "crm-order-reachout-button", label: "Reachout",
+    title: "Choose a customer-reachout workflow for this order.", color: "#15803d", border: "#166534",
+    automations: REACHOUT_ORDER_AUTOMATIONS, anchor: findAddAccountButton()
+  });
 }
 
 function ensureOrderProcessorButton() {
@@ -335,6 +483,8 @@ function ensureOrderProcessorButton() {
   if (!sendInvoiceButton) {
     existingButton?.remove();
     document.getElementById("crm-order-manual-process-control")?.remove();
+    document.getElementById("crm-order-cancel-control")?.remove();
+    document.getElementById("crm-order-reachout-control")?.remove();
     stopOrderProcessorPolling();
     return;
   }
@@ -388,6 +538,7 @@ function ensureOrderProcessorButton() {
   button.style.setProperty("color", "#fff", "important");
   if (sendInvoiceButton.nextElementSibling !== button) sendInvoiceButton.insertAdjacentElement("afterend", button);
   ensureManualOrderProcessorControl(button);
+  ensureSingleOrderSheetScannerControls();
   if (!existingButton) void loadOrderProcessorStatus(button);
 }
 
