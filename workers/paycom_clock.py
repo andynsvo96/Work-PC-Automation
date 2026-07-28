@@ -36,6 +36,13 @@ from config import (
 )
 from credential_store import read_paycom_credential
 
+try:
+    from .paycom_hours import complete_paycom_two_factor, is_paycom_two_factor_page
+except ImportError:
+    # Direct worker execution adds workers/ to sys.path rather than treating it
+    # as a package.
+    from paycom_hours import complete_paycom_two_factor, is_paycom_two_factor_page
+
 configure_console_utf8()
 
 AUDIT_AUTOMATION_NAME = "paycom_clock.unknown"
@@ -277,6 +284,14 @@ def _run_once(action, effective_dry_run, profile_path, headless_mode):
             )
         except TimeoutException:
             pass
+
+        if is_paycom_two_factor_page(driver):
+            ok, two_factor_message = complete_paycom_two_factor(driver, automation_name=AUDIT_AUTOMATION_NAME)
+            if not ok:
+                safe_take_screenshot(driver, f"clock_{action}_two_factor_required_{mode_name}")
+                # A bad/expired code should not silently send a second text in
+                # the visible-mode fallback.
+                return False, two_factor_message, False
 
         if is_paycom_login_page(driver):
             page_state = dump_page_state(driver)

@@ -4052,8 +4052,8 @@ def _build_auto_clock_payload(state):
 def _run_clock_action(action, dry_run=False):
     mode_flag = "--dry-run" if dry_run else "--real"
     label = "ClockTest" if dry_run else "Clock"
-    # Paycom clock script can run a second visible-mode fallback when headless is unstable.
-    return _run_automation_script(CLOCK_SCRIPT, action, label, extra_args=[mode_flag], timeout=180)
+    # Leave enough time for the same in-app Paycom 2FA handoff used by hours sync.
+    return _run_automation_script(CLOCK_SCRIPT, action, label, extra_args=[mode_flag], timeout=300)
 
 
 def _is_retryable_clock_failure(message):

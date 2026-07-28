@@ -216,7 +216,7 @@ def _select_text_message_factor(driver):
     return True, ""
 
 
-def _wait_for_two_factor_code():
+def _wait_for_two_factor_code(automation_name=AUDIT_AUTOMATION_NAME):
     """Wait for one six-digit code submitted by the authenticated control panel."""
     request_id = secrets.token_urlsafe(24)
     _remove_file_quietly(PAYCOM_2FA_RESPONSE_FILE)
@@ -224,12 +224,12 @@ def _wait_for_two_factor_code():
         PAYCOM_2FA_REQUEST_FILE,
         {
             "request_id": request_id,
-            "automation_name": AUDIT_AUTOMATION_NAME,
+            "automation_name": automation_name,
             "created_at": datetime.now().isoformat(),
         },
     )
     write_status_payload(
-        AUDIT_AUTOMATION_NAME,
+        automation_name,
         "Paycom text-message verification code required.",
         stage="two_factor_code_required",
         extra_fields={"two_factor_required": True, "two_factor_request_id": request_id},
@@ -246,7 +246,7 @@ def _wait_for_two_factor_code():
     return None
 
 
-def complete_paycom_two_factor(driver):
+def complete_paycom_two_factor(driver, automation_name=AUDIT_AUTOMATION_NAME):
     """Request a Paycom text, collect its code in the app, then verify it."""
     code_input = _visible_two_factor_code_input(driver)
     if not code_input:
@@ -254,7 +254,7 @@ def complete_paycom_two_factor(driver):
         if not ok:
             return False, message
         code_input = _visible_two_factor_code_input(driver)
-    code = _wait_for_two_factor_code()
+    code = _wait_for_two_factor_code(automation_name=automation_name)
     if not code:
         return False, "Timed out waiting for the Paycom six-digit verification code in the app."
     try:
