@@ -1855,14 +1855,22 @@ function renderHeadlessMode(enabled) {
 async function toggleHeadlessMode() {
   const button = document.getElementById('headlessToggleBtn');
   const next = !Boolean(nodeRuntimePayload && nodeRuntimePayload.headless);
+  // Headless mode belongs to the computer hosting this control panel. Keep a
+  // selected remote runner intact while this local preference is updated.
+  const selectedControlTarget = String(localStorage.getItem('automationControlTargetNode') || '').trim();
   if (button) button.disabled = true;
   try {
     const payload = await api('/api/headless-mode', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({headless: next}),
+      localOnly: true,
     });
     renderNodeRuntime(payload);
+    if (selectedControlTarget) {
+      localStorage.setItem('automationControlTargetNode', selectedControlTarget);
+      if (queuePayload) renderControlTargetNodes(Array.isArray(queuePayload.nodes) ? queuePayload.nodes : []);
+    }
     setStatus(payload.message || `Headless mode ${next ? 'enabled' : 'disabled'}.`);
   } catch (error) {
     setStatus('Could not update Headless mode: ' + error.message);
@@ -1885,10 +1893,12 @@ async function ensureAppCsrfToken() {
 
 async function api(path, opts = {}) {
   const requestOptions = {...opts};
+  const localOnly = Boolean(requestOptions.localOnly);
+  delete requestOptions.localOnly;
   const method = String(requestOptions.method || 'GET').toUpperCase();
   const controlTarget = effectiveControlTargetNode();
   requestOptions.headers = {...(requestOptions.headers || {})};
-  if (controlTarget) requestOptions.headers['X-Automation-Target-Node'] = controlTarget;
+  if (controlTarget && !localOnly) requestOptions.headers['X-Automation-Target-Node'] = controlTarget;
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
     const token = await ensureAppCsrfToken();
     if (token) requestOptions.headers['X-CSRF-Token'] = token;
