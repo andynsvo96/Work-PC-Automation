@@ -2928,6 +2928,13 @@ def force_stop_automation():
 
 def _run_script(script_path, args, label, timeout=120, show_terminal=False):
     started_at = time.time()
+    # macOS LaunchAgents write the server's inherited stderr to a broad
+    # launchd log.  When a worker fails during import/startup it cannot write
+    # last_result.json, which previously reduced the control-panel error to
+    # only "exit code 1".  Keep a small, per-worker log on macOS so that error
+    # can be returned to the UI and inspected directly.
+    worker_log_path = None
+    worker_output = None
     if _automation_stop_is_blocking():
         msg = _force_stop_message(label)
         return False, msg, {"success": False, "message": msg, "stopped": True}
@@ -2949,11 +2956,20 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False):
         )
         env = os.environ.copy()
         env["AUTOMATION_STATUS_FILE"] = AUTOMATION_STATUS_FILE
+        popen_kwargs = {
+            "cwd": SCRIPT_DIR,
+            "creationflags": creation_flags,
+            "env": env,
+        }
+        if os.name != "nt" and not show_terminal:
+            safe_label = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(label or "worker")).strip("._") or "worker"
+            worker_log_path = runtime_log_file(f"{safe_label}.worker.log")
+            worker_output = open(worker_log_path, "w", encoding="utf-8", errors="replace")
+            popen_kwargs["stdout"] = worker_output
+            popen_kwargs["stderr"] = subprocess.STDOUT
         proc = subprocess.Popen(
             [_resolve_console_python(), script_path] + list(args),
-            cwd=SCRIPT_DIR,
-            creationflags=creation_flags,
-            env=env,
+            **popen_kwargs,
         )
         _register_automation_process(proc, label)
         try:
@@ -2981,6 +2997,9 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False):
             return False, msg, {"success": False, "message": msg}
         finally:
             _unregister_automation_process(proc)
+            if worker_output is not None:
+                worker_output.close()
+                worker_output = None
 
         if _consume_force_stopped_pid(proc.pid) or _automation_stop_requested_since(started_at):
             msg = _force_stop_message(label)
@@ -2995,9 +3014,19 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False):
             return True, msg, {"success": True, "message": msg}
 
         msg = f"{label} failed (exit code {proc.returncode})."
-        return False, msg, {"success": False, "message": msg}
+        diagnostic_lines = _tail_text_file(worker_log_path, max_lines=20) if worker_log_path else []
+        diagnostic = "\n".join(line.strip() for line in diagnostic_lines if str(line).strip())[-4000:]
+        if diagnostic:
+            msg = f"{msg} Details:\n{diagnostic}"
+        payload = {"success": False, "message": msg}
+        if worker_log_path:
+            payload["worker_log_path"] = worker_log_path
+        return False, msg, payload
     except Exception as e:
         return False, str(e), {"success": False, "message": str(e)}
+    finally:
+        if worker_output is not None:
+            worker_output.close()
 
 
 def _read_result_file_with_retry(retries=8, delay=0.25):

@@ -20,6 +20,12 @@ chmod +x setup_mac.sh setup_tailscale_mac.sh "Sync & Start Mac.command"
 ./setup_mac.sh
 ```
 
+The application folder on the Mac is `~/Automation` (for example,
+`/Users/jane/Automation`). In Finder, use **Go → Go to Folder…** and enter
+`~/Automation` to open it. VS Code is optional: Terminal commands can use
+`cd ~/Automation` and then run the project-local Python as
+`.venv/bin/python`.
+
 Copy the Windows `config.py` values into the Mac's local `config.py`; keep `config.py` uncommitted. Desktop Metrics and the power-action cards remain Windows only; cross-system clipboard controls remain available on macOS.
 
 Import the shared PIN bundle, then delete it:
@@ -73,6 +79,27 @@ The tailnet administrator must authorize `svc:automation-control` for both compu
 ### Startup behavior
 
 `setup_mac.sh` installs `com.workautomation.server` as a per-user LaunchAgent with both `RunAtLoad` and `KeepAlive`, so Safe Sync & Start launches at login and is restarted by macOS if it exits. Logs are written under `runtime/logs/`.
+
+### Diagnosing a Sheets Scanner failure
+
+An `exit code 1` means the scanner worker failed; it is not enough by itself to
+identify the cause. From Terminal, run these read-only commands:
+
+```zsh
+cd ~/Automation
+tail -n 80 runtime/logs/CRMMassEmailer.worker.log
+tail -n 80 runtime/logs/launchd.stderr.log
+```
+
+The first log records the worker's startup error on macOS. Common first-time
+Mac causes are missing Python packages, a missing Google Sheets credential in
+Keychain, or a `config.py` that was not copied/configured locally. The scanner
+normally shows that specific detail in the control panel as well. To locate a
+nonstandard installation, read the LaunchAgent's configured working folder:
+
+```zsh
+/usr/libexec/PlistBuddy -c 'Print :WorkingDirectory' ~/Library/LaunchAgents/com.workautomation.server.plist
+```
 
 The first launch of the Tailscale Mac app installs its macOS login helper. In **System Settings → General → Login Items & Extensions**, confirm Tailscale is allowed to run at login and its Network Extension is enabled. Tailscale must be connected on both computers for clipboard transfer and private control-panel access. If either computer or Tailscale connection is offline, communication pauses until connectivity returns. See Tailscale's official [start-at-login policy documentation](https://tailscale.com/docs/features/tailscale-system-policies#automatically-start-tailscale-when-the-user-logs-in) and [macOS extension instructions](https://tailscale.com/docs/concepts/macos-sysext).
 
