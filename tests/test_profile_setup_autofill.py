@@ -56,7 +56,7 @@ class ProfileSetupAutofillTests(unittest.TestCase):
         self.assertEqual(pin.values, ["0123"])
         build.assert_called_once()
         self.assertTrue(build.call_args.kwargs["detach"])
-        quit_driver.assert_called_once_with(driver, profile_path="/tmp/profile")
+        quit_driver.assert_called_once_with(driver, profile_path="/tmp/profile", keep_browser_open=True)
 
     def test_missing_credential_opens_profile_for_manual_setup(self):
         driver = mock.Mock()

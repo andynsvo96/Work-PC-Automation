@@ -143,4 +143,7 @@ def open_and_prefill_setup_profile(service, profile_path, url, wait_seconds=10):
         return SetupAutofillResult(service, ())
     finally:
         if driver:
-            safe_driver_quit(driver, profile_path=profile_path)
+            # Setup is handed to the operator after credentials are filled.
+            # Do not send WebDriver's QUIT command, which closes the exact
+            # browser window the operator needs for login and two-factor auth.
+            safe_driver_quit(driver, profile_path=profile_path, keep_browser_open=True)
