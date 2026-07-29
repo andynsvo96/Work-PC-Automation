@@ -1,13 +1,17 @@
-"""Portable secret storage backed by Keychain/Credential Manager via keyring.
+"""Portable secret storage backed by Keychain/Credential Manager.
 
 Windows keeps a read fallback for the existing native credential targets so an
-upgrade does not invalidate credentials that are already installed.
+upgrade does not invalidate credentials that are already installed. macOS uses
+Apple's built-in Security framework, so its system Python does not need the
+optional third-party ``keyring`` package.
 """
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
+import sys
 from dataclasses import dataclass
 
 from windows_credentials import (
@@ -33,6 +37,9 @@ except Exception:  # pragma: no cover - depends on optional platform package
 
 
 KEYRING_ACCOUNT = "automation"
+MACOS_SECURITY_FRAMEWORK = "/System/Library/Frameworks/Security.framework/Security"
+CORE_FOUNDATION_FRAMEWORK = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
+ERR_SEC_ITEM_NOT_FOUND = -25300
 
 
 class CredentialStoreError(RuntimeError):
@@ -57,6 +64,193 @@ class PaycomCredential:
     username: str
     password: str
     pin: str
+
+
+def _is_macos():
+    return sys.platform == "darwin"
+
+
+class _MacOSKeychainAPI:
+    """Small ctypes bridge to Apple's native generic-password API."""
+
+    def __init__(self):
+        try:
+            self.security = ctypes.CDLL(MACOS_SECURITY_FRAMEWORK)
+            self.core_foundation = ctypes.CDLL(CORE_FOUNDATION_FRAMEWORK)
+        except OSError as exc:
+            raise CredentialStoreError("Could not load Apple Keychain services.") from exc
+
+        uint32_pointer = ctypes.POINTER(ctypes.c_uint32)
+        void_pointer = ctypes.POINTER(ctypes.c_void_p)
+        self.security.SecKeychainFindGenericPassword.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_char_p,
+            ctypes.c_uint32,
+            ctypes.c_char_p,
+            uint32_pointer,
+            void_pointer,
+            void_pointer,
+        ]
+        self.security.SecKeychainFindGenericPassword.restype = ctypes.c_int32
+        self.security.SecKeychainAddGenericPassword.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_char_p,
+            ctypes.c_uint32,
+            ctypes.c_char_p,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+            void_pointer,
+        ]
+        self.security.SecKeychainAddGenericPassword.restype = ctypes.c_int32
+        self.security.SecKeychainItemModifyAttributesAndData.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+        ]
+        self.security.SecKeychainItemModifyAttributesAndData.restype = ctypes.c_int32
+        self.security.SecKeychainItemFreeContent.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        self.security.SecKeychainItemFreeContent.restype = ctypes.c_int32
+        self.security.SecKeychainItemDelete.argtypes = [ctypes.c_void_p]
+        self.security.SecKeychainItemDelete.restype = ctypes.c_int32
+        self.core_foundation.CFRelease.argtypes = [ctypes.c_void_p]
+        self.core_foundation.CFRelease.restype = None
+
+    @staticmethod
+    def _identifier_bytes(value):
+        return str(value).encode("utf-8")
+
+    def _find(self, target):
+        service = self._identifier_bytes(target)
+        account = self._identifier_bytes(KEYRING_ACCOUNT)
+        password_length = ctypes.c_uint32()
+        password_data = ctypes.c_void_p()
+        item = ctypes.c_void_p()
+        status = self.security.SecKeychainFindGenericPassword(
+            None,
+            len(service),
+            service,
+            len(account),
+            account,
+            ctypes.byref(password_length),
+            ctypes.byref(password_data),
+            ctypes.byref(item),
+        )
+        return status, password_length, password_data, item
+
+    def read(self, target):
+        status, password_length, password_data, item = self._find(target)
+        try:
+            if status == ERR_SEC_ITEM_NOT_FOUND:
+                return None
+            if status != 0:
+                raise CredentialStoreError(
+                    f"Could not read '{target}' from Apple Keychain (status {status})."
+                )
+            try:
+                return ctypes.string_at(password_data, password_length.value).decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise CredentialStoreError(
+                    f"Credential '{target}' contains invalid Keychain data."
+                ) from exc
+        finally:
+            if password_data.value:
+                self.security.SecKeychainItemFreeContent(None, password_data)
+            if item.value:
+                self.core_foundation.CFRelease(item)
+
+    def write(self, target, payload):
+        status, _password_length, password_data, item = self._find(target)
+        if password_data.value:
+            self.security.SecKeychainItemFreeContent(None, password_data)
+
+        payload_bytes = str(payload).encode("utf-8")
+        payload_buffer = ctypes.create_string_buffer(payload_bytes)
+        payload_pointer = ctypes.cast(payload_buffer, ctypes.c_void_p)
+        try:
+            if status == ERR_SEC_ITEM_NOT_FOUND:
+                service = self._identifier_bytes(target)
+                account = self._identifier_bytes(KEYRING_ACCOUNT)
+                status = self.security.SecKeychainAddGenericPassword(
+                    None,
+                    len(service),
+                    service,
+                    len(account),
+                    account,
+                    len(payload_bytes),
+                    payload_pointer,
+                    None,
+                )
+            elif status == 0:
+                status = self.security.SecKeychainItemModifyAttributesAndData(
+                    item,
+                    None,
+                    len(payload_bytes),
+                    payload_pointer,
+                )
+            if status != 0:
+                raise CredentialStoreError(
+                    f"Could not write '{target}' to Apple Keychain (status {status})."
+                )
+        finally:
+            if item.value:
+                self.core_foundation.CFRelease(item)
+
+    def delete(self, target):
+        status, _password_length, password_data, item = self._find(target)
+        if password_data.value:
+            self.security.SecKeychainItemFreeContent(None, password_data)
+        try:
+            if status == ERR_SEC_ITEM_NOT_FOUND:
+                return False
+            if status != 0:
+                raise CredentialStoreError(
+                    f"Could not find '{target}' in Apple Keychain (status {status})."
+                )
+            status = self.security.SecKeychainItemDelete(item)
+            if status != 0:
+                raise CredentialStoreError(
+                    f"Could not delete '{target}' from Apple Keychain (status {status})."
+                )
+            return True
+        finally:
+            if item.value:
+                self.core_foundation.CFRelease(item)
+
+
+_macos_keychain_api_instance = None
+
+
+def _get_macos_keychain_api():
+    global _macos_keychain_api_instance
+    if _macos_keychain_api_instance is None:
+        _macos_keychain_api_instance = _MacOSKeychainAPI()
+    return _macos_keychain_api_instance
+
+
+def _macos_keychain_read(target, *, required=True):
+    payload = _get_macos_keychain_api().read(target)
+    if payload is None:
+        if required:
+            raise CredentialNotFoundError(
+                f"Credential '{target}' was not found in Apple Keychain. "
+                "Run 'python3 manage_credentials.py set <service>' to create it."
+            )
+        return None
+    return _decode_payload(target, payload)
+
+
+def _macos_keychain_write(target, payload):
+    _get_macos_keychain_api().write(target, payload)
+
+
+def _macos_keychain_delete(target, *, missing_ok=True):
+    removed = _get_macos_keychain_api().delete(target)
+    if removed or missing_ok:
+        return removed
+    raise CredentialNotFoundError(f"Credential '{target}' was not found in Apple Keychain.")
 
 
 def _encode_payload(username, secret):
@@ -116,6 +310,9 @@ def read_credential(target, *, required=True):
             )
         return None
 
+    if _is_macos():
+        return _macos_keychain_read(target, required=required)
+
     if keyring is not None:
         try:
             payload = keyring.get_password(target, KEYRING_ACCOUNT)
@@ -144,8 +341,12 @@ def write_credential(target, username, secret):
         return
 
     payload = _encode_payload(username, secret)
+    if _is_macos():
+        _macos_keychain_write(target, payload)
+        return
+
     if keyring is None:
-        raise CredentialStoreError("The 'keyring' package is required for macOS Keychain access.")
+        raise CredentialStoreError("The 'keyring' package is required for OS keychain access.")
     try:
         keyring.set_password(target, KEYRING_ACCOUNT, payload)
     except KeyringError as exc:
@@ -158,6 +359,9 @@ def delete_credential(target, *, missing_ok=True):
         from windows_credentials import delete_windows_credential
 
         return delete_windows_credential(target, missing_ok=missing_ok)
+
+    if _is_macos():
+        return _macos_keychain_delete(target, missing_ok=missing_ok)
 
     removed = False
     if keyring is not None:
