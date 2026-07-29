@@ -7,6 +7,9 @@ login and any two-factor or CAPTCHA challenge in the detached browser.
 from __future__ import annotations
 
 import time
+import os
+import subprocess
+import sys
 from dataclasses import dataclass
 
 from selenium.webdriver.common.by import By
@@ -45,6 +48,40 @@ class SetupAutofillResult:
 
 class ChromeProfileInUseError(RuntimeError):
     """Raised when setup would collide with an operator-owned Chrome window."""
+
+
+def open_native_setup_profile(service, profile_path, url, chrome_executable):
+    """Open a real Chrome profile without any WebDriver/testing identity.
+
+    Paycom's initial macOS trust enrollment must be completed in native Chrome
+    because its invisible hCaptcha can reject WebDriver-controlled sessions.
+    This function does not automate or bypass login, MFA, or CAPTCHA.
+    """
+    service = str(service or "").strip().lower()
+    if is_chrome_profile_in_use(profile_path):
+        raise ChromeProfileInUseError(
+            f"The {service.title()} setup profile is already open. Close that profile window, then try Setup again."
+        )
+    os.makedirs(profile_path, exist_ok=True)
+    chrome_args = [
+        f"--user-data-dir={profile_path}",
+        "--profile-directory=Default",
+        "--new-window",
+        url,
+    ]
+    if sys.platform == "darwin":
+        # A direct executable launch can be forwarded into the existing
+        # default Chrome instance, dropping the requested user-data-dir.
+        # Launch Services -n forces a separate native app instance.
+        command = ["open", "-na", "Google Chrome", "--args", *chrome_args]
+    else:
+        command = [chrome_executable, *chrome_args]
+    subprocess.Popen(
+        command,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return SetupAutofillResult(service, (), credential_available=False)
 
 
 _USERNAME_SELECTORS = (

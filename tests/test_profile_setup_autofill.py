@@ -78,6 +78,25 @@ class ProfileSetupAutofillTests(unittest.TestCase):
                 setup.open_and_prefill_setup_profile("paycom", "/tmp/profile", "https://example.test")
         build.assert_not_called()
 
+    def test_native_setup_uses_plain_chrome_without_webdriver_flags(self):
+        with mock.patch.object(setup, "is_chrome_profile_in_use", return_value=False), mock.patch.object(
+            setup.subprocess, "Popen"
+        ) as popen, mock.patch.object(setup.os, "makedirs"), mock.patch.object(setup.sys, "platform", "darwin"):
+            result = setup.open_native_setup_profile(
+                "paycom",
+                "/tmp/paycom-profile",
+                "https://example.test/login",
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            )
+
+        args = popen.call_args.args[0]
+        self.assertEqual(args[:4], ["open", "-na", "Google Chrome", "--args"])
+        self.assertIn("--user-data-dir=/tmp/paycom-profile", args)
+        self.assertFalse(any("webdriver" in arg.lower() for arg in args))
+        self.assertFalse(any("remote-debugging" in arg.lower() for arg in args))
+        self.assertFalse(any("mock-keychain" in arg.lower() for arg in args))
+        self.assertFalse(result.credential_available)
+
 
 if __name__ == "__main__":
     unittest.main()
