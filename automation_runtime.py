@@ -601,6 +601,26 @@ def _chrome_cmdline_uses_profile(cmdline, profile_path):
     return bool(expected and actual and actual == expected)
 
 
+def is_chrome_profile_in_use(profile_path):
+    """Return whether a running Chrome process owns this exact profile path.
+
+    Unlike ``kill_stale_chrome``, this is read-only and is intended for setup
+    flows that must never interrupt an operator's visible login session.
+    """
+    profile_path = resolve_automation_profile_path(profile_path)
+    try:
+        entries = _collect_chrome_process_entries_with_psutil()
+        if entries is None:
+            entries = _collect_chrome_process_entries_with_posix_ps()
+        if entries is None:
+            entries = _collect_chrome_process_entries_with_wmic()
+        if entries is None:
+            entries = _collect_chrome_process_entries_with_powershell()
+    except Exception:
+        return False
+    return any(cmdline and _chrome_cmdline_uses_profile(cmdline, profile_path) for _pid, cmdline in (entries or []))
+
+
 def kill_stale_chrome(profile_path, profile_label="automation"):
     """Kill Chrome processes tied to the given Selenium profile path only."""
     profile_path = resolve_automation_profile_path(profile_path)

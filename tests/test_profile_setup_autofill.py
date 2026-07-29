@@ -45,6 +45,8 @@ class ProfileSetupAutofillTests(unittest.TestCase):
             setup, "safe_driver_quit"
         ) as quit_driver, mock.patch.object(
             setup, "_first_visible", side_effect=[username, password, pin]
+        ), mock.patch.object(
+            setup, "is_chrome_profile_in_use", return_value=False
         ):
             result = setup.open_and_prefill_setup_profile("paycom", "/tmp/profile", "https://example.test", wait_seconds=1)
 
@@ -60,11 +62,21 @@ class ProfileSetupAutofillTests(unittest.TestCase):
         driver = mock.Mock()
         with mock.patch.object(setup, "_credential_values", side_effect=CredentialNotFoundError("missing")), mock.patch.object(
             setup, "build_chrome_driver", return_value=driver
-        ), mock.patch.object(setup, "safe_get_with_partial_load"), mock.patch.object(setup, "safe_driver_quit"):
+        ), mock.patch.object(setup, "safe_get_with_partial_load"), mock.patch.object(
+            setup, "safe_driver_quit"
+        ), mock.patch.object(setup, "is_chrome_profile_in_use", return_value=False):
             result = setup.open_and_prefill_setup_profile("slack", "/tmp/profile", "https://example.test")
 
         self.assertFalse(result.credential_available)
         self.assertIn("no stored login", result.message)
+
+    def test_open_profile_is_reported_without_starting_another_chrome(self):
+        with mock.patch.object(setup, "is_chrome_profile_in_use", return_value=True), mock.patch.object(
+            setup, "build_chrome_driver"
+        ) as build:
+            with self.assertRaises(setup.ChromeProfileInUseError):
+                setup.open_and_prefill_setup_profile("paycom", "/tmp/profile", "https://example.test")
+        build.assert_not_called()
 
 
 if __name__ == "__main__":

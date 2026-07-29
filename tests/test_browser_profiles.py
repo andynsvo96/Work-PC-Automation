@@ -14,6 +14,18 @@ import paycom_hours
 
 
 class BrowserProfileRuntimeTests(unittest.TestCase):
+    def test_profile_in_use_matches_only_the_exact_chrome_profile(self):
+        profile = "/tmp/profile-in-use"
+        with mock.patch.object(
+            automation_runtime,
+            "_collect_chrome_process_entries_with_psutil",
+            return_value=[
+                ("101", "Google Chrome --user-data-dir=/tmp/profile-in-use"),
+                ("102", "Google Chrome --user-data-dir=/tmp/another-profile"),
+            ],
+        ):
+            self.assertTrue(automation_runtime.is_chrome_profile_in_use(profile))
+
     def test_persistent_profile_is_isolated_by_operating_system(self):
         profile = os.path.join(automation_runtime.SCRIPT_DIR, "slack_chrome_profile")
 

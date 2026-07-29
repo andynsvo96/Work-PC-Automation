@@ -46,7 +46,7 @@ import config as config_module
 from credential_store import SHARED_QUEUE_CREDENTIAL_TARGET, credential_exists
 from node_preferences import load_node_preferences, update_node_preferences
 from platform_runtime import get_platform_snapshot, normalize_os_name, resolve_worker_count
-from profile_setup_autofill import open_and_prefill_setup_profile
+from profile_setup_autofill import ChromeProfileInUseError, open_and_prefill_setup_profile
 from runtime_paths import STATE_DIR, log_file as runtime_log_file
 from runtime_paths import resolve_runtime_file, result_file, state_file
 from routes.connectivity_routes import register_connectivity_routes
@@ -13137,9 +13137,11 @@ def open_sanmar_cart_browser():
         result = open_and_prefill_setup_profile("sanmar", profile_path, cart_url)
         logger.info("%s Profile path: %s", result.message, profile_path)
         return True, result.message, {"profile_path": profile_path, "url": cart_url, "fields_filled": result.fields_filled}
-    except Exception as e:
-        logger.warning("Could not open SanMar cart: %s", e)
-        return False, f"Could not open SanMar cart: {e}", {}
+    except ChromeProfileInUseError as e:
+        return False, str(e), {}
+    except Exception:
+        logger.exception("Could not prepare SanMar cart setup profile")
+        return False, "Could not prepare SanMar setup profile. Check the local server log.", {}
 
 
 @app.route("/automation/chrome-profile-setup", methods=["POST"])
@@ -13155,8 +13157,11 @@ def automation_chrome_profile_setup():
     os.makedirs(profile_path, exist_ok=True)
     try:
         result = open_and_prefill_setup_profile(profile_key, profile_path, target["url"])
-    except Exception as e:
-        return jsonify({"success": False, "message": f"Could not prepare {target['label']} setup profile: {e}"}), 500
+    except ChromeProfileInUseError as e:
+        return jsonify({"success": False, "message": str(e)}), 409
+    except Exception:
+        logger.exception("Could not prepare %s setup profile", target["label"])
+        return jsonify({"success": False, "message": f"Could not prepare {target['label']} setup profile. Check the local server log."}), 500
 
     msg = result.message
     logger.info("%s Profile path: %s", msg, profile_path)

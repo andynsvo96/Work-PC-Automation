@@ -11,7 +11,12 @@ from dataclasses import dataclass
 
 from selenium.webdriver.common.by import By
 
-from automation_runtime import build_chrome_driver, safe_driver_quit, safe_get_with_partial_load
+from automation_runtime import (
+    build_chrome_driver,
+    is_chrome_profile_in_use,
+    safe_driver_quit,
+    safe_get_with_partial_load,
+)
 from credential_store import (
     CRM_CREDENTIAL_TARGET,
     SANMAR_CREDENTIAL_TARGET,
@@ -36,6 +41,10 @@ class SetupAutofillResult:
         if self.fields_filled:
             return f"Opened {self.service.title()} setup profile and filled: {', '.join(self.fields_filled)}."
         return f"Opened {self.service.title()} setup profile; no login fields were detected (it may already be signed in)."
+
+
+class ChromeProfileInUseError(RuntimeError):
+    """Raised when setup would collide with an operator-owned Chrome window."""
 
 
 _USERNAME_SELECTORS = (
@@ -95,6 +104,10 @@ def _credential_values(service):
 def open_and_prefill_setup_profile(service, profile_path, url, wait_seconds=10):
     """Launch a visible detached profile and populate fields from OS storage."""
     service = str(service or "").strip().lower()
+    if is_chrome_profile_in_use(profile_path):
+        raise ChromeProfileInUseError(
+            f"The {service.title()} setup profile is already open. Close that profile window, then try Setup again."
+        )
     try:
         username, password, pin = _credential_values(service)
         credential_available = True
