@@ -41,6 +41,7 @@ try:
         _is_macos_interactive_verification_enabled,
         is_paycom_interactive_verification_page,
         paycom_headless_mode_enabled,
+        should_defer_paycom_login_to_visible,
         wait_for_paycom_interactive_verification,
     )
 except ImportError:
@@ -50,6 +51,7 @@ except ImportError:
         _is_macos_interactive_verification_enabled,
         is_paycom_interactive_verification_page,
         paycom_headless_mode_enabled,
+        should_defer_paycom_login_to_visible,
         wait_for_paycom_interactive_verification,
     )
 
@@ -253,6 +255,11 @@ def _run_once(action, effective_dry_run, profile_path, headless_mode):
         username_field = find_visible(driver, PAYCOM_USERNAME_SELECTORS, timeout=3)
         password_field = find_visible(driver, PAYCOM_PASSWORD_SELECTORS, timeout=1)
         pin_field = find_visible(driver, PAYCOM_PIN_SELECTORS, timeout=1)
+        if should_defer_paycom_login_to_visible(
+            headless_mode,
+            username_field or password_field or pin_field,
+        ):
+            return False, "Paycom requires visible login.", True
         if username_field or password_field or pin_field:
             credentials = read_paycom_credential()
             if username_field:

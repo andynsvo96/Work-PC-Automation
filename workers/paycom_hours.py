@@ -140,17 +140,40 @@ def _is_macos_interactive_verification_enabled():
 
 
 def paycom_headless_mode_enabled():
-    """Use one visible auth transaction for Paycom on macOS.
+    """Return the user's requested browser mode.
 
-    Paycom binds its one-time code and invisible hCaptcha token to the current
-    login transaction. A headless attempt followed by a new visible attempt
-    creates two transactions and can invalidate an otherwise correct code.
-    Windows retains the existing preference-controlled headless workflow.
+    On macOS, a headless run may reuse an already-trusted session. If login is
+    required, the worker defers credential submission to one visible attempt
+    so MFA and hCaptcha remain bound to a single authentication transaction.
     """
-    requested = os.getenv("AUTOMATION_HEADLESS", "1").strip().lower() not in ("0", "false", "no", "off")
-    if _is_macos_interactive_verification_enabled():
+    return os.getenv("AUTOMATION_HEADLESS", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def should_defer_paycom_login_to_visible(headless_mode, has_login_fields):
+    return bool(
+        headless_mode
+        and has_login_fields
+        and _is_macos_interactive_verification_enabled()
+    )
+
+
+def resolve_paycom_hours_target_url(configured_url=None):
+    """Normalize WEB02 to its canonical client-side timecard view."""
+    target = str(configured_url or PAYCOM_HOURS_URL or PAYCOM_URL or "").strip()
+    if "/timecard/WEB02" in target and "#" not in target:
+        return target.rstrip("/") + "#!timecard-view"
+    return target
+
+
+def wait_for_paycom_timecard_view(driver, timeout=15):
+    """Wait for Paycom's client-side timecard route and weekly total table."""
+    try:
+        WebDriverWait(driver, timeout).until(
+            lambda d: bool(d.find_elements(By.ID, "weekly-total-text"))
+        )
+        return True
+    except TimeoutException:
         return False
-    return requested
 
 
 def _interactive_verification_timeout_seconds():
@@ -1079,7 +1102,7 @@ def _run_once(headless_mode):
 
         driver = _build_driver(profile_path, headless_mode)
 
-        target_url = PAYCOM_HOURS_URL or PAYCOM_URL
+        target_url = resolve_paycom_hours_target_url()
         print(f"Navigating to hours source page: {target_url}")
         safe_get_with_partial_load(driver, target_url, "hours source page")
 
@@ -1087,6 +1110,11 @@ def _run_once(headless_mode):
         username_field = find_visible(driver, PAYCOM_USERNAME_SELECTORS, timeout=3)
         password_field = find_visible(driver, PAYCOM_PASSWORD_SELECTORS, timeout=1)
         pin_field = find_visible(driver, PAYCOM_PIN_SELECTORS, timeout=1)
+        if should_defer_paycom_login_to_visible(
+            headless_mode,
+            username_field or password_field or pin_field,
+        ):
+            return False, "Paycom requires visible login.", None, target_url, []
         if username_field or password_field or pin_field:
             credentials = read_paycom_credential()
             if username_field:
@@ -1130,6 +1158,7 @@ def _run_once(headless_mode):
                     return False, verification_message, None, target_url, []
                 # The post-verification redirect is not consistently the timecard.
                 safe_get_with_partial_load(driver, target_url, "hours source page after verification")
+                wait_for_paycom_timecard_view(driver)
             else:
                 return (
                     False,
@@ -1151,6 +1180,7 @@ def _run_once(headless_mode):
                 [],
             )
 
+        wait_for_paycom_timecard_view(driver)
         week_hours, match_text, body_text, parsed_from_url = find_week_hours_with_fallback_navigation(driver)
         day_rows = extract_day_rows_from_timesheet(driver)
         if week_hours is None:
@@ -1240,6 +1270,7 @@ def run():
         "timed out receiving message from renderer" in msg.lower()
         or "hcaptcha" in msg.lower()
         or (_is_macos_interactive_verification_enabled() and "requires interactive verification" in msg.lower())
+        or (_is_macos_interactive_verification_enabled() and "requires visible login" in msg.lower())
     )
     if headless_enabled and retry_visible:
         print("Headless sync needs a visible browser. Retrying once in visible mode...")
