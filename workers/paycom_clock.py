@@ -37,11 +37,19 @@ from config import (
 from credential_store import read_paycom_credential
 
 try:
-    from .paycom_hours import is_paycom_two_factor_page
+    from .paycom_hours import (
+        _is_macos_interactive_verification_enabled,
+        is_paycom_interactive_verification_page,
+        wait_for_paycom_interactive_verification,
+    )
 except ImportError:
     # Direct worker execution adds workers/ to sys.path rather than treating it
     # as a package.
-    from paycom_hours import is_paycom_two_factor_page
+    from paycom_hours import (
+        _is_macos_interactive_verification_enabled,
+        is_paycom_interactive_verification_page,
+        wait_for_paycom_interactive_verification,
+    )
 
 configure_console_utf8()
 
@@ -285,14 +293,22 @@ def _run_once(action, effective_dry_run, profile_path, headless_mode):
         except TimeoutException:
             pass
 
-        if is_paycom_two_factor_page(driver):
-            safe_take_screenshot(driver, f"clock_{action}_two_factor_required_{mode_name}")
-            return (
-                False,
-                "Paycom unexpectedly requested two-factor verification. The trusted browser profile should prevent this; "
-                "check the Paycom setup profile if it persists.",
-                False,
-            )
+        if is_paycom_interactive_verification_page(driver):
+            safe_take_screenshot(driver, f"clock_{action}_interactive_verification_required_{mode_name}")
+            if headless_mode and _is_macos_interactive_verification_enabled():
+                return False, "Paycom requires interactive verification.", True
+            if not headless_mode and _is_macos_interactive_verification_enabled():
+                verified, verification_message = wait_for_paycom_interactive_verification(driver)
+                if not verified:
+                    return False, verification_message, False
+                safe_get_with_partial_load(driver, PAYCOM_URL, "Paycom web time clock after verification")
+            else:
+                return (
+                    False,
+                    "Paycom unexpectedly requested two-factor verification. The trusted browser profile should prevent this; "
+                    "check the Paycom setup profile if it persists.",
+                    False,
+                )
 
         if is_paycom_login_page(driver):
             page_state = dump_page_state(driver)

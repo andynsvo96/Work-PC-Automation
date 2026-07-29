@@ -51,6 +51,7 @@ from config import (
     WORK_CLOCK_BREAK_MINUTES,
 )
 from credential_store import read_paycom_credential
+from platform_runtime import normalize_os_name
 
 configure_console_utf8()
 
@@ -128,6 +129,46 @@ def is_paycom_two_factor_page(driver):
     return "two-factor authentication" in text and (
         "verify your account" in text or "verification code" in text
     )
+
+
+def _is_macos_interactive_verification_enabled():
+    """Keep the human-verification handoff isolated to the macOS workflow."""
+    if normalize_os_name() != "macos":
+        return False
+    value = os.getenv("PAYCOM_MAC_INTERACTIVE_VERIFICATION", "1").strip().lower()
+    return value not in ("0", "false", "no", "off")
+
+
+def _interactive_verification_timeout_seconds():
+    try:
+        return max(60, min(600, int(os.getenv("PAYCOM_MAC_INTERACTIVE_VERIFICATION_TIMEOUT", "300"))))
+    except (TypeError, ValueError):
+        return 300
+
+
+def is_paycom_interactive_verification_page(driver):
+    """Detect verification screens that require a person, without bypassing them."""
+    if is_paycom_two_factor_page(driver):
+        return True
+    try:
+        text = _normalize_text(driver.find_element(By.TAG_NAME, "body").text).lower()
+    except Exception:
+        return False
+    return "hcaptcha" in text or "captcha" in text or "drag the vial" in text
+
+
+def wait_for_paycom_interactive_verification(driver, timeout_seconds=None):
+    """Wait in a visible macOS window while the operator completes verification."""
+    timeout_seconds = timeout_seconds or _interactive_verification_timeout_seconds()
+    deadline = time.monotonic() + max(1, int(timeout_seconds))
+    print("Paycom needs verification. Complete it in the visible Chrome window; the sync will resume automatically.")
+    while time.monotonic() < deadline:
+        if not is_paycom_interactive_verification_page(driver):
+            print("Paycom verification completed; resuming automation.")
+            return True, ""
+        time.sleep(1)
+    minutes = max(1, round(timeout_seconds / 60))
+    return False, f"Paycom verification was not completed within {minutes} minutes."
 
 
 def _is_missing_punch_marker(text):
@@ -1065,16 +1106,25 @@ def _run_once(headless_mode):
         # Give the page a moment to hydrate numbers.
         time.sleep(2)
 
-        if is_paycom_two_factor_page(driver):
-            take_screenshot(driver, "paycom_hours_two_factor_required")
-            return (
-                False,
-                "Paycom unexpectedly requested two-factor verification. The trusted browser profile should prevent this; "
-                "check the Paycom setup profile if it persists.",
-                None,
-                target_url,
-                [],
-            )
+        if is_paycom_interactive_verification_page(driver):
+            take_screenshot(driver, "paycom_hours_interactive_verification_required")
+            if headless_mode and _is_macos_interactive_verification_enabled():
+                return False, "Paycom requires interactive verification.", None, target_url, []
+            if not headless_mode and _is_macos_interactive_verification_enabled():
+                verified, verification_message = wait_for_paycom_interactive_verification(driver)
+                if not verified:
+                    return False, verification_message, None, target_url, []
+                # The post-verification redirect is not consistently the timecard.
+                safe_get_with_partial_load(driver, target_url, "hours source page after verification")
+            else:
+                return (
+                    False,
+                    "Paycom unexpectedly requested two-factor verification. The trusted browser profile should prevent this; "
+                    "check the Paycom setup profile if it persists.",
+                    None,
+                    target_url,
+                    [],
+                )
 
         if is_paycom_login_page(driver):
             take_screenshot(driver, "paycom_hours_login_required")
@@ -1170,8 +1220,13 @@ def run():
         print(f"RESULT:SUCCESS:{msg}")
         return
 
-    # A CAPTCHA needs a visible browser, just like a renderer crash does.
-    retry_visible = "timed out receiving message from renderer" in msg.lower() or "hcaptcha" in msg.lower()
+    # macOS can hand a human-verification screen to the operator in a visible
+    # browser. Windows intentionally retains its existing stop-on-2FA flow.
+    retry_visible = (
+        "timed out receiving message from renderer" in msg.lower()
+        or "hcaptcha" in msg.lower()
+        or (_is_macos_interactive_verification_enabled() and "requires interactive verification" in msg.lower())
+    )
     if headless_enabled and retry_visible:
         print("Headless sync needs a visible browser. Retrying once in visible mode...")
         success2, msg2, week_hours2, source2, day_rows2 = _run_once(headless_mode=False)

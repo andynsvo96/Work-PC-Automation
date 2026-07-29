@@ -45,7 +45,7 @@ from clipboard_runtime import (
 import config as config_module
 from credential_store import SHARED_QUEUE_CREDENTIAL_TARGET, credential_exists
 from node_preferences import load_node_preferences, update_node_preferences
-from platform_runtime import get_platform_snapshot, resolve_worker_count
+from platform_runtime import get_platform_snapshot, normalize_os_name, resolve_worker_count
 from profile_setup_autofill import open_and_prefill_setup_profile
 from runtime_paths import STATE_DIR, log_file as runtime_log_file
 from runtime_paths import resolve_runtime_file, result_file, state_file
@@ -3546,7 +3546,8 @@ def sync_week_hours_from_paycom(reason):
         return False, "Paycom sync disabled by config.", None, []
     if not os.path.exists(PAYCOM_HOURS_SCRIPT):
         return False, "paycom_hours.py is missing.", None, []
-    ok, msg, payload = _run_script(PAYCOM_HOURS_SCRIPT, ["week"], f"PaycomHoursSync-{reason}", timeout=120)
+    timeout = 360 if normalize_os_name() == "macos" else 120
+    ok, msg, payload = _run_script(PAYCOM_HOURS_SCRIPT, ["week"], f"PaycomHoursSync-{reason}", timeout=timeout)
     if not ok:
         return False, msg, None, []
     raw = payload.get("week_hours")
@@ -4022,7 +4023,8 @@ def _build_auto_clock_payload(state):
 def _run_clock_action(action, dry_run=False):
     mode_flag = "--dry-run" if dry_run else "--real"
     label = "ClockTest" if dry_run else "Clock"
-    return _run_automation_script(CLOCK_SCRIPT, action, label, extra_args=[mode_flag], timeout=120)
+    timeout = 360 if normalize_os_name() == "macos" else 120
+    return _run_automation_script(CLOCK_SCRIPT, action, label, extra_args=[mode_flag], timeout=timeout)
 
 
 def _is_retryable_clock_failure(message):
