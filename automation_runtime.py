@@ -36,6 +36,7 @@ RESULT_FILE = result_file("last_result.json")
 STATUS_FILE = state_file("automation_status.json")
 PLATFORM_PROFILE_ROOT = os.path.join(SCRIPT_DIR, "runtime", "browser_profiles")
 LEGACY_PROFILE_FALLBACK_ENV = "AUTOMATION_USE_LEGACY_PROFILES"
+MACOS_PAYCOM_KEYCHAIN_PROFILE = "chrome_profile_keychain_v2"
 MAILTO_CLICK_GUARD_SCRIPT = r"""
 (function () {
   if (window.__automationMailtoClickGuardInstalled) return;
@@ -565,8 +566,22 @@ def resolve_automation_profile_path(profile_path, *, system_name=None, profiles_
     if profile_name != "slack_chrome_profile" and not profile_name.startswith("chrome_profile"):
         return legacy_path
 
+    platform_name = _platform_profile_name(system_name)
+    storage_name = profile_name
+    if platform_name == "macos" and profile_name == "chrome_profile":
+        # ChromeDriver normally injects --use-mock-keychain on macOS. Profiles
+        # authenticated in native Chrome then cannot reliably reuse the same
+        # encrypted Paycom device/session state. Keep the previous Mac profile
+        # untouched and initialize a real-Keychain generation for Paycom only.
+        storage_name = MACOS_PAYCOM_KEYCHAIN_PROFILE
     root = os.path.abspath(profiles_root or os.getenv("AUTOMATION_PROFILE_ROOT") or PLATFORM_PROFILE_ROOT)
-    return os.path.join(root, _platform_profile_name(system_name), profile_name)
+    return os.path.join(root, platform_name, storage_name)
+
+
+def _uses_macos_paycom_keychain(profile_path):
+    return _platform_profile_name() == "macos" and os.path.basename(
+        _normalize_profile_path_for_match(profile_path)
+    ) == MACOS_PAYCOM_KEYCHAIN_PROFILE
 
 
 def resolve_existing_automation_profile_path(profile_path, *, system_name=None, profiles_root=None):
@@ -960,7 +975,13 @@ def build_chrome_driver(
     if page_load_strategy:
         options.page_load_strategy = page_load_strategy
 
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    excluded_switches = ["enable-automation"]
+    if _uses_macos_paycom_keychain(profile_path):
+        # Let Chrome use Apple's real Keychain for Paycom cookies and device
+        # trust, matching a normal native Chrome launch. This does not disable
+        # Paycom MFA or hCaptcha and does not affect Windows.
+        excluded_switches.extend(["use-mock-keychain", "password-store"])
+    options.add_experimental_option("excludeSwitches", excluded_switches)
     options.add_experimental_option("useAutomationExtension", False)
     options.add_experimental_option(
         "prefs",

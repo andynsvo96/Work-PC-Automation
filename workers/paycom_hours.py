@@ -139,6 +139,20 @@ def _is_macos_interactive_verification_enabled():
     return value not in ("0", "false", "no", "off")
 
 
+def paycom_headless_mode_enabled():
+    """Use one visible auth transaction for Paycom on macOS.
+
+    Paycom binds its one-time code and invisible hCaptcha token to the current
+    login transaction. A headless attempt followed by a new visible attempt
+    creates two transactions and can invalidate an otherwise correct code.
+    Windows retains the existing preference-controlled headless workflow.
+    """
+    requested = os.getenv("AUTOMATION_HEADLESS", "1").strip().lower() not in ("0", "false", "no", "off")
+    if _is_macos_interactive_verification_enabled():
+        return False
+    return requested
+
+
 def _interactive_verification_timeout_seconds():
     try:
         return max(60, min(600, int(os.getenv("PAYCOM_MAC_INTERACTIVE_VERIFICATION_TIMEOUT", "300"))))
@@ -1213,7 +1227,7 @@ def run():
         "Requested action: week",
         source="paycom_hours.py",
     )
-    headless_enabled = os.getenv("AUTOMATION_HEADLESS", "1").strip().lower() not in ("0", "false", "no", "off")
+    headless_enabled = paycom_headless_mode_enabled()
     success, msg, week_hours, source, day_rows = _run_once(headless_mode=headless_enabled)
     if success:
         write_result(True, msg, week_hours=week_hours, source=source, day_rows=day_rows)

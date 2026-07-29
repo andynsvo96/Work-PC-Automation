@@ -32,6 +32,22 @@ class PaycomInteractiveVerificationTests(unittest.TestCase):
         with mock.patch.object(paycom_hours, "normalize_os_name", return_value="windows"):
             self.assertFalse(paycom_hours._is_macos_interactive_verification_enabled())
 
+    def test_macos_paycom_uses_one_visible_transaction(self):
+        with mock.patch.object(paycom_hours, "normalize_os_name", return_value="macos"), mock.patch.dict(
+            paycom_hours.os.environ,
+            {"AUTOMATION_HEADLESS": "1", "PAYCOM_MAC_INTERACTIVE_VERIFICATION": "1"},
+            clear=False,
+        ):
+            self.assertFalse(paycom_hours.paycom_headless_mode_enabled())
+
+    def test_windows_paycom_keeps_headless_preference(self):
+        with mock.patch.object(paycom_hours, "normalize_os_name", return_value="windows"), mock.patch.dict(
+            paycom_hours.os.environ,
+            {"AUTOMATION_HEADLESS": "1"},
+            clear=False,
+        ):
+            self.assertTrue(paycom_hours.paycom_headless_mode_enabled())
+
     def test_captcha_page_is_treated_as_interactive_verification(self):
         driver = _Driver("hCaptcha: Drag the vial to the empty slot it fits into")
         self.assertTrue(paycom_hours.is_paycom_interactive_verification_page(driver))

@@ -40,6 +40,7 @@ try:
     from .paycom_hours import (
         _is_macos_interactive_verification_enabled,
         is_paycom_interactive_verification_page,
+        paycom_headless_mode_enabled,
         wait_for_paycom_interactive_verification,
     )
 except ImportError:
@@ -48,6 +49,7 @@ except ImportError:
     from paycom_hours import (
         _is_macos_interactive_verification_enabled,
         is_paycom_interactive_verification_page,
+        paycom_headless_mode_enabled,
         wait_for_paycom_interactive_verification,
     )
 
@@ -433,7 +435,7 @@ def run(action, dry_run=None):
 
     # Respect the control-panel mode. When visibility is requested, do not
     # silently fall back to headless on a later attempt.
-    headless_enabled = os.getenv("AUTOMATION_HEADLESS", "1").strip().lower() not in ("0", "false", "no", "off")
+    headless_enabled = paycom_headless_mode_enabled()
     attempt_modes = [True, False] if headless_enabled else [False]
     for idx, headless_mode in enumerate(attempt_modes, start=1):
         ok, msg, retryable = _run_once(action, effective_dry_run, profile_path, headless_mode=headless_mode)

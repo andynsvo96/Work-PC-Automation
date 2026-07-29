@@ -44,6 +44,65 @@ class BrowserProfileRuntimeTests(unittest.TestCase):
         self.assertEqual(windows_profile, "/tmp/automation-profiles/windows/slack_chrome_profile")
         self.assertNotEqual(mac_profile, windows_profile)
 
+    def test_paycom_uses_a_new_real_keychain_profile_only_on_macos(self):
+        profile = os.path.join(automation_runtime.SCRIPT_DIR, "chrome_profile")
+        mac_profile = automation_runtime.resolve_automation_profile_path(
+            profile,
+            system_name="Darwin",
+            profiles_root="/tmp/automation-profiles",
+        )
+        windows_profile = automation_runtime.resolve_automation_profile_path(
+            profile,
+            system_name="Windows",
+            profiles_root="/tmp/automation-profiles",
+        )
+
+        self.assertEqual(
+            mac_profile,
+            f"/tmp/automation-profiles/macos/{automation_runtime.MACOS_PAYCOM_KEYCHAIN_PROFILE}",
+        )
+        self.assertEqual(windows_profile, "/tmp/automation-profiles/windows/chrome_profile")
+        self.assertNotEqual(mac_profile, windows_profile)
+
+    @mock.patch.object(automation_runtime, "Service", return_value=mock.Mock())
+    @mock.patch.object(automation_runtime.ChromeDriverManager, "install", return_value="/tmp/chromedriver")
+    @mock.patch.object(automation_runtime.webdriver, "Chrome")
+    def test_macos_paycom_driver_uses_real_keychain_switches(self, mock_chrome, _mock_install, _mock_service):
+        driver = mock.Mock()
+        mock_chrome.return_value = driver
+        profile = os.path.join(
+            automation_runtime.PLATFORM_PROFILE_ROOT,
+            "macos",
+            automation_runtime.MACOS_PAYCOM_KEYCHAIN_PROFILE,
+        )
+
+        with mock.patch.object(automation_runtime.sys, "platform", "darwin"):
+            automation_runtime.build_chrome_driver(profile)
+
+        options = mock_chrome.call_args.kwargs["options"]
+        excluded = options.experimental_options["excludeSwitches"]
+        self.assertIn("use-mock-keychain", excluded)
+        self.assertIn("password-store", excluded)
+
+    @mock.patch.object(automation_runtime, "Service", return_value=mock.Mock())
+    @mock.patch.object(automation_runtime.ChromeDriverManager, "install", return_value="/tmp/chromedriver")
+    @mock.patch.object(automation_runtime.webdriver, "Chrome")
+    def test_windows_paycom_driver_keeps_existing_switch_behavior(self, mock_chrome, _mock_install, _mock_service):
+        mock_chrome.return_value = mock.Mock()
+        profile = os.path.join(
+            automation_runtime.PLATFORM_PROFILE_ROOT,
+            "windows",
+            "chrome_profile",
+        )
+
+        with mock.patch.object(automation_runtime.sys, "platform", "win32"):
+            automation_runtime.build_chrome_driver(profile)
+
+        options = mock_chrome.call_args.kwargs["options"]
+        excluded = options.experimental_options["excludeSwitches"]
+        self.assertNotIn("use-mock-keychain", excluded)
+        self.assertNotIn("password-store", excluded)
+
     def test_legacy_profile_switch_is_an_immediate_rollback(self):
         profile = os.path.join(automation_runtime.SCRIPT_DIR, "chrome_profile")
         with mock.patch.dict(os.environ, {automation_runtime.LEGACY_PROFILE_FALLBACK_ENV: "1"}):
