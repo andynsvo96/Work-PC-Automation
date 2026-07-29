@@ -903,6 +903,7 @@ def build_chrome_driver(
     page_load_timeout=None,
     script_timeout=None,
     extra_args=None,
+    detach=False,
 ):
     legacy_profile_path = _normalize_profile_path_for_match(profile_path)
     profile_path = resolve_automation_profile_path(profile_path)
@@ -918,7 +919,7 @@ def build_chrome_driver(
     if headless_mode:
         options.add_argument("--headless=new")
         options.add_argument("--window-position=-32000,-32000")
-    elif os.getenv("AUTOMATION_KEEP_BROWSER_OPEN", "").strip().lower() in ("1", "true", "yes", "on"):
+    elif detach or os.getenv("AUTOMATION_KEEP_BROWSER_OPEN", "").strip().lower() in ("1", "true", "yes", "on"):
         # ChromeDriver honors this option when quit() is called, allowing a
         # visible debugging session to remain open after an automation ends.
         options.add_experimental_option("detach", True)
