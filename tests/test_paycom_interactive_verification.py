@@ -49,9 +49,9 @@ class PaycomInteractiveVerificationTests(unittest.TestCase):
         ):
             self.assertTrue(paycom_hours.paycom_headless_mode_enabled())
 
-    def test_macos_headless_login_is_deferred_before_credentials_are_submitted(self):
+    def test_macos_headless_login_is_attempted_before_visible_challenge_fallback(self):
         with mock.patch.object(paycom_hours, "normalize_os_name", return_value="macos"):
-            self.assertTrue(paycom_hours.should_defer_paycom_login_to_visible(True, True))
+            self.assertFalse(paycom_hours.should_defer_paycom_login_to_visible(True, True))
             self.assertFalse(paycom_hours.should_defer_paycom_login_to_visible(True, False))
             self.assertFalse(paycom_hours.should_defer_paycom_login_to_visible(False, True))
 
@@ -62,6 +62,33 @@ class PaycomInteractiveVerificationTests(unittest.TestCase):
                 "https://www.paycomonline.net/v4/ee/web.php/timecard/WEB02"
             ),
             "https://www.paycomonline.net/v4/ee/web.php/timecard/WEB02#!timecard-view",
+        )
+
+    def test_login_redirect_is_forced_back_to_required_timecard_view(self):
+        driver = mock.Mock()
+        driver.current_url = "https://www.paycomonline.net/v4/ee/web.php/timeclock/WEB04"
+        target = "https://www.paycomonline.net/v4/ee/web.php/timecard/WEB02#!timecard-view"
+        with mock.patch.object(paycom_hours, "safe_get_with_partial_load") as navigate, mock.patch.object(
+            paycom_hours, "wait_for_paycom_timecard_view", return_value=True
+        ):
+            ready = paycom_hours.ensure_paycom_timecard_view(
+                driver,
+                target,
+                force_navigation=True,
+            )
+        self.assertTrue(ready)
+        navigate.assert_called_once_with(driver, target, "required Web Time Sheet page")
+
+    def test_time_clock_url_is_not_accepted_as_timecard_view(self):
+        self.assertFalse(
+            paycom_hours.is_paycom_timecard_view_url(
+                "https://www.paycomonline.net/v4/ee/web.php/timeclock/WEB04"
+            )
+        )
+        self.assertTrue(
+            paycom_hours.is_paycom_timecard_view_url(
+                "https://www.paycomonline.net/v4/ee/web.php/timecard/WEB02#!timecard-view"
+            )
         )
 
     def test_captcha_page_is_treated_as_interactive_verification(self):

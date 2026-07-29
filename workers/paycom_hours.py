@@ -150,11 +150,12 @@ def paycom_headless_mode_enabled():
 
 
 def should_defer_paycom_login_to_visible(headless_mode, has_login_fields):
-    return bool(
-        headless_mode
-        and has_login_fields
-        and _is_macos_interactive_verification_enabled()
-    )
+    """Allow normal credential login in the requested browser mode.
+
+    A visible retry is reserved for a real interactive challenge after login,
+    rather than being forced merely because the login form is present.
+    """
+    return False
 
 
 def resolve_paycom_hours_target_url(configured_url=None):
@@ -174,6 +175,37 @@ def wait_for_paycom_timecard_view(driver, timeout=15):
         return True
     except TimeoutException:
         return False
+
+
+def is_paycom_timecard_view_url(url):
+    text = str(url or "")
+    return "/timecard/WEB02" in text and "#!timecard-view" in text
+
+
+def ensure_paycom_timecard_view(driver, target_url, *, force_navigation=False):
+    """Open and verify the required Web Time Sheet route.
+
+    Paycom commonly redirects a successful login to WEB04 even when login
+    started from WEB02. Re-open WEB02 after authentication and refuse to treat
+    the Time Clock page as a successful hours source.
+    """
+    try:
+        current_url = driver.current_url
+    except Exception:
+        current_url = ""
+
+    if force_navigation or not is_paycom_timecard_view_url(current_url):
+        print(f"Opening required Web Time Sheet page: {target_url}")
+        safe_get_with_partial_load(driver, target_url, "required Web Time Sheet page")
+
+    if wait_for_paycom_timecard_view(driver):
+        return True
+
+    # A same-route SPA can occasionally stop before rendering its weekly table.
+    # One explicit reload is safe and keeps the source constrained to WEB02.
+    print(f"Web Time Sheet marker not found. Reloading required page once: {target_url}")
+    safe_get_with_partial_load(driver, target_url, "required Web Time Sheet page retry")
+    return wait_for_paycom_timecard_view(driver)
 
 
 def _interactive_verification_timeout_seconds():
@@ -1110,12 +1142,13 @@ def _run_once(headless_mode):
         username_field = find_visible(driver, PAYCOM_USERNAME_SELECTORS, timeout=3)
         password_field = find_visible(driver, PAYCOM_PASSWORD_SELECTORS, timeout=1)
         pin_field = find_visible(driver, PAYCOM_PIN_SELECTORS, timeout=1)
+        has_login_fields = bool(username_field or password_field or pin_field)
         if should_defer_paycom_login_to_visible(
             headless_mode,
-            username_field or password_field or pin_field,
+            has_login_fields,
         ):
             return False, "Paycom requires visible login.", None, target_url, []
-        if username_field or password_field or pin_field:
+        if has_login_fields:
             credentials = read_paycom_credential()
             if username_field:
                 username_field.clear()
@@ -1129,17 +1162,21 @@ def _run_once(headless_mode):
                 pin_field.clear()
                 pin_field.send_keys(pin)
 
-        login_btn = find_visible(
-            driver,
-            [
-                "button[type='submit']",
-                "input[type='submit']",
-            ],
-            timeout=2,
-        )
-        if login_btn:
+        login_submitted = False
+        if has_login_fields:
+            login_btn = find_visible(
+                driver,
+                [
+                    "button[type='submit']",
+                    "input[type='submit']",
+                ],
+                timeout=2,
+            )
+            if not login_btn:
+                return False, "Paycom login form did not expose a Log In button.", None, target_url, []
             login_btn.click()
-            print("Clicked Log In for hours sync.")
+            login_submitted = True
+            print(f"Clicked Log In for hours sync in {mode_label} mode.")
             try:
                 WebDriverWait(driver, 8).until(EC.staleness_of(login_btn))
             except TimeoutException:
@@ -1156,9 +1193,7 @@ def _run_once(headless_mode):
                 verified, verification_message = wait_for_paycom_interactive_verification(driver)
                 if not verified:
                     return False, verification_message, None, target_url, []
-                # The post-verification redirect is not consistently the timecard.
-                safe_get_with_partial_load(driver, target_url, "hours source page after verification")
-                wait_for_paycom_timecard_view(driver)
+                login_submitted = True
             else:
                 return (
                     False,
@@ -1180,26 +1215,32 @@ def _run_once(headless_mode):
                 [],
             )
 
-        wait_for_paycom_timecard_view(driver)
-        week_hours, match_text, body_text, parsed_from_url = find_week_hours_with_fallback_navigation(driver)
+        if not ensure_paycom_timecard_view(
+            driver,
+            target_url,
+            force_navigation=login_submitted,
+        ):
+            take_screenshot(driver, "paycom_hours_timecard_required")
+            try:
+                current_url = driver.current_url
+            except Exception:
+                current_url = ""
+            return (
+                False,
+                "Paycom did not load the required Web Time Sheet page "
+                f"({target_url}). Current page: {current_url or 'unknown'}.",
+                None,
+                target_url,
+                [],
+            )
+
+        week_hours, match_text, body_text, parsed_from_url = _try_extract_from_current_page(driver)
         day_rows = extract_day_rows_from_timesheet(driver)
-        if week_hours is None:
-            recent_week_hours, recent_day_rows = extract_week_hours_from_recent_punches(driver)
-            if recent_week_hours is not None:
-                week_hours = recent_week_hours
-                match_text = "computed from current-week recent punches"
-                if recent_day_rows:
-                    day_rows = recent_day_rows
-                try:
-                    parsed_from_url = driver.current_url
-                except Exception:
-                    pass
         if week_hours is None:
             take_screenshot(driver, "paycom_hours_not_found")
             snippet = _normalize_text(body_text)[:300]
             msg = (
-                "Could not parse weekly hours from Paycom page text. "
-                "Try setting PAYCOM_HOURS_URL to your direct Web Time Sheet Read-Only link."
+                "Could not parse weekly hours from the required Paycom Web Time Sheet page."
             )
             if snippet:
                 msg += f" Text snippet: {snippet}"
@@ -1211,7 +1252,7 @@ def _run_once(headless_mode):
 
         elapsed = time.time() - start_time
         msg = (
-            f"Paycom weekly hours parsed: {week_hours:.2f} "
+            f"Paycom Web Time Sheet parsed in {mode_label} mode: {week_hours:.2f} "
             f"(match: '{match_text}') ({elapsed:.1f}s)"
         )
         if flex_days_found > 0:
