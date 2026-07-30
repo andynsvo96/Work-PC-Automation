@@ -10843,15 +10843,24 @@ def _crm_extension_order_split_not_needed(message, payload):
 
 def _crm_extension_order_shipping_cost_detected(order_goods_results):
     for item in order_goods_results if isinstance(order_goods_results, list) else []:
-        payload = item.get("payload") if isinstance(item, dict) else {}
+        if not isinstance(item, dict):
+            continue
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
         try:
-            text = json.dumps(payload or {}, default=str).lower()
+            text = " ".join(
+                (
+                    str(item.get("message") or ""),
+                    json.dumps(payload, default=str),
+                )
+            ).lower()
         except Exception:
-            text = str(payload or "").lower()
+            text = f"{item.get('message') or ''} {payload}".lower()
+        text = " ".join(text.split())
         if (
             "auto_order_shipment_cost_exceeded" in text
             or "shipping is too expensive" in text
             or "shipment cost exceeded" in text
+            or "exceeded maximum shipment cost" in text
         ):
             return True
     return False

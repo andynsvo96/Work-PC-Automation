@@ -44,7 +44,11 @@ function currentOrderId() {
 }
 
 function pageShowsShippingTooExpensive() {
-  return /shipping\s+is\s+too\s+expensive/i.test(document.body && document.body.innerText || "");
+  const pageText = document.body && (document.body.innerText || document.body.textContent) || "";
+  return (
+    /shipping\s+is\s+too\s+expensive/i.test(pageText)
+    || /purchase\s+plan\s+exceeded\s+maximum\s+shipment\s+cost\s+as\s+percentage\s+of\s+product\s+cost/i.test(pageText)
+  );
 }
 
 function crmControlLabel(element) {

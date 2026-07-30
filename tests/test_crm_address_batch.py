@@ -2114,6 +2114,81 @@ class CrmPushBackTests(unittest.TestCase):
             "ordered",
         )
 
+    def test_extension_routes_top_level_shipment_cost_message_to_shipping_bypasser(self):
+        order_goods_results = [{
+            "order_id": "4943329",
+            "success": False,
+            "message": (
+                "Failed to auto order stock: Purchase plan exceeded maximum "
+                "shipment cost as percentage of product cost"
+            ),
+            "payload": None,
+        }]
+
+        self.assertTrue(server._crm_extension_order_shipping_cost_detected(order_goods_results))
+
+    def test_extension_routes_nested_shipment_cost_message_without_outcome_code(self):
+        order_goods_results = [{
+            "order_id": "4943329",
+            "success": False,
+            "message": "Order Goods needs attention.",
+            "payload": {
+                "report": [{
+                    "success": False,
+                    "message": (
+                        "Failed to auto order stock: Purchase plan exceeded maximum "
+                        "shipment cost as percentage of product cost"
+                    ),
+                }],
+            },
+        }]
+
+        self.assertTrue(server._crm_extension_order_shipping_cost_detected(order_goods_results))
+
+    def test_extension_runs_shipping_bypasser_for_exact_shipment_cost_failure(self):
+        shipment_cost_message = (
+            "Failed to auto order stock: Purchase plan exceeded maximum "
+            "shipment cost as percentage of product cost"
+        )
+        with mock.patch.object(
+            server,
+            "_run_crm_address_with_retry",
+            return_value=(True, "Address is valid.", {}),
+        ), mock.patch.object(
+            server,
+            "_execute_crm_product_separator_worker",
+            return_value=(True, "Product separator skipped order.", {"resolution": "skipped_not_needed"}),
+        ), mock.patch.object(
+            server,
+            "_execute_crm_auto_splitter_worker",
+            return_value=(True, "Auto Splitter only splits orders with more than 10 tabs.", {}),
+        ), mock.patch.object(
+            server,
+            "_execute_crm_order_goods_worker",
+            return_value=(False, shipment_cost_message, None),
+        ), mock.patch.object(
+            server,
+            "_execute_crm_shipping_bypasser_worker",
+            return_value=(True, "Shipping bypass completed.", {"success": True}),
+        ) as shipping_bypasser, mock.patch.object(
+            server,
+            "_record_crm_processing_report_result",
+        ), mock.patch.object(
+            server,
+            "_audit_result",
+        ):
+            server._crm_extension_order_thread("4943329")
+
+        shipping_bypasser.assert_called_once_with(
+            dry_run=False,
+            order_id="4943329",
+            visible=False,
+            show_terminal=False,
+        )
+        runtime = server._crm_extension_order_runtime_snapshot()
+        self.assertTrue(runtime["lastSuccess"])
+        self.assertTrue(any(step["key"] == "shipping_bypasser" and step["success"] for step in runtime["steps"]))
+
     def test_automated_notes_classifier_matches_saved_crm_messages(self):
         self.assertEqual(
             crm_order_goods._classify_automated_notes_text(
