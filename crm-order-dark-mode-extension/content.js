@@ -333,6 +333,8 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
     reasonInput = document.createElement("textarea");
     reasonInput.id = "crm-order-automation-reason";
     reasonInput.rows = 4;
+    reasonInput.required = true;
+    reasonInput.setAttribute("aria-required", "true");
     reasonInput.placeholder = "Enter the reason to continue";
     Object.assign(reasonInput.style, {
       width: "100%", boxSizing: "border-box", resize: "vertical", padding: "8px", border: "1px solid #64748b", borderRadius: "3px",
@@ -348,11 +350,19 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
   const continueButton = document.createElement("button");
   continueButton.type = "button";
   continueButton.textContent = "Queue task";
-  continueButton.disabled = requiresReason;
   Object.assign(cancel.style, { padding: "7px 11px", cursor: "pointer" });
   Object.assign(continueButton.style, {
-    padding: "7px 11px", border: "1px solid #166534", borderRadius: "3px", color: "#fff", background: "#15803d", cursor: "pointer"
+    padding: "7px 11px", borderRadius: "3px", color: "#fff"
   });
+  const refreshContinueButtonState = () => {
+    const enabled = !requiresReason || Boolean(String(reasonInput?.value || "").trim());
+    continueButton.disabled = !enabled;
+    continueButton.setAttribute("aria-disabled", String(!enabled));
+    continueButton.style.setProperty("background", enabled ? "#15803d" : "#9ca3af", "important");
+    continueButton.style.setProperty("border", `1px solid ${enabled ? "#166534" : "#6b7280"}`, "important");
+    continueButton.style.setProperty("cursor", enabled ? "pointer" : "not-allowed", "important");
+  };
+  refreshContinueButtonState();
   cancel.addEventListener("click", () => overlay.remove());
   continueButton.addEventListener("click", () => {
     const reason = String(reasonInput?.value || "").trim();
@@ -360,7 +370,7 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
     overlay.remove();
     queueManualOrderAutomation(automation, triggerButton, autoProcessButton, reason);
   });
-  reasonInput?.addEventListener("input", () => { continueButton.disabled = !reasonInput.value.trim(); });
+  reasonInput?.addEventListener("input", refreshContinueButtonState);
   overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
   overlay.addEventListener("keydown", (event) => { if (event.key === "Escape") overlay.remove(); });
   actions.append(cancel, continueButton);
