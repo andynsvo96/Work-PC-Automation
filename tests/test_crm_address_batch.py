@@ -2794,6 +2794,46 @@ class ShippingBypasserTests(unittest.TestCase):
             )
         )
 
+    def test_sanmar_dm136l_crm_colors_match_sanmar_labels(self):
+        product = {
+            "product_id": "DM136L",
+            "product_name": "District Women's Perfect Tri 3/4-Sleeve Raglan",
+        }
+        cases = [
+            ("Black Frost/ Grey Frost", "Black Fr/Gy Fr"),
+            ("Black/ Black Frost", "Black/Black Frost"),
+            ("Black/ White", "Black/White"),
+            ("Fuchsia Frost/ Grey Frost", "Fuchsia Fr/GyFr"),
+            ("Grey Frost/ White", "Grey Frost/ White"),
+            ("Heather Dusty Peach/ White", "He Dsty Pch/Wh"),
+            ("Navy Frost/ Grey Frost", "Navy Frost/ Grey Frost"),
+            ("Purple Frost/ Grey Frost", "Purple Frost/ Grey Frost"),
+            ("Red Frost/ Grey Frost", "Red Frost Grey Frost"),
+            ("Royal Frost/ Grey Frost", "Royal Fr/Gy Fr"),
+        ]
+
+        for sanmar_color, crm_color in cases:
+            with self.subTest(crm_color=crm_color):
+                aliases = crm_shipping_bypasser._sanmar_color_alias_labels(crm_color, product=product)
+
+                self.assertIn(sanmar_color, aliases)
+                self.assertTrue(
+                    crm_shipping_bypasser._cart_color_matches(
+                        sanmar_color,
+                        crm_color,
+                        product=product,
+                    )
+                )
+
+    def test_sanmar_dm136l_special_color_aliases_are_product_scoped(self):
+        self.assertNotIn(
+            "Black Frost/ Grey Frost",
+            crm_shipping_bypasser._sanmar_color_alias_labels(
+                "Black Fr/Gy Fr",
+                product={"product_id": "DM136"},
+            ),
+        )
+
     def test_sanmar_j325_btl_grey_matches_battleship_grey(self):
         product = {
             "product_id": "J325",
