@@ -190,6 +190,7 @@ function renderOrderProcessorStatus(button, response) {
     manualButton.textContent = runtime.lastSuccess === false ? "Manual Process: Review" : "Manual Process";
     manualButton.title = message || "Choose one automation to run for this order only.";
     setOrderProcessorResult(manualButton, message, runtime.lastSuccess === false ? "error" : "success");
+    refreshOrderAfterProcessorCompletion(runtime);
     return false;
   }
   if (runtime.lastSuccess === true) {
@@ -284,6 +285,7 @@ function queueManualOrderAutomation(automation, triggerButton, autoProcessButton
     reason
   }).then((response) => {
     if (response && response.success) {
+      sessionStorage.setItem(`crm-auto-process-active:${orderId}`, "1");
       renderOrderProcessorStatus(autoProcessButton, response);
       beginOrderProcessorPolling(autoProcessButton);
       return;
