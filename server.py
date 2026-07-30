@@ -6324,10 +6324,25 @@ def _build_crm_processing_summary(step_results):
     if not failed:
         labels = ", ".join(item["label"] for item in results)
         return True, f"Automate Processing completed successfully: {labels}."
+    failure_labels = []
+    for item in failed:
+        label = item["label"]
+        errors = item.get("errors") if isinstance(item.get("errors"), list) else []
+        anonymous_error = next(
+            (
+                str(error.get("message") or "").strip()
+                for error in errors
+                if isinstance(error, dict)
+                and not _normalize_crm_single_order_id(error.get("order_id"))
+                and str(error.get("message") or "").strip()
+            ),
+            "",
+        )
+        failure_labels.append(f"{label} ({anonymous_error})" if anonymous_error else label)
     if len(failed) == len(results):
-        labels = ", ".join(item["label"] for item in failed)
+        labels = ", ".join(failure_labels)
         return False, f"Automate Processing finished with failures: {labels}."
-    failed_labels = ", ".join(item["label"] for item in failed)
+    failed_labels = ", ".join(failure_labels)
     return False, f"Automate Processing completed with partial success. Needs attention: {failed_labels}."
 
 
@@ -10219,12 +10234,34 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
         list_url = _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
         if not list_url:
-            message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
+            config_key = _crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)
+            message = (
+                f"Auto Splitter could not start because {config_key} is empty. "
+                "Add the matching Auto Splitter list URL in Settings > Links."
+            )
+            payload = {
+                "success": False,
+                "message": message,
+                "action": "auto_splitter_batch",
+                "dry_run": False,
+                "outcome": "missing_list_url",
+                "config_key": config_key,
+                "list_url": "",
+                "order_count": 0,
+                "order_ids": [],
+                "order_results": [],
+                "duration_seconds": 0.0,
+            }
+            state = _persist_crm_auto_splitter_run_result(False, message, payload, dry_run=False)
+            payload["state"] = state
             return {
                 "key": step_key,
                 "label": _crm_processing_step_label(step_key),
                 "success": False,
+                **_crm_processing_step_metrics(step_key, payload, False, message),
+                "stage_timings": [],
                 "message": message,
+                "errors": _crm_processing_step_error_details(step_key, payload, False, message),
             }
         parallel_workers = _saved_crm_automation_parallel_workers(default=1)
         _start_crm_auto_splitter_batch_runtime(list_url, minimum_tabs=10, parallel_workers=parallel_workers)

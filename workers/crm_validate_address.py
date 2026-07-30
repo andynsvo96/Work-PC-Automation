@@ -3337,8 +3337,27 @@ def _try_resolve_with_existing_address(driver, shipping_modal, order_id, dry_run
             warnings.append("CRM did not restore the green valid-address text after reselecting the existing address, but the saved address fields still matched safely.")
             existing_ready = True
 
+    if not existing_ready:
+        return None
+
+    # Validate and repair the visible shipping fields before the modal service
+    # persists the selected saved address. CRM can clear the editor controls as
+    # soon as that service call succeeds, so checking Address (cont) afterward
+    # can falsely report that a value was lost even though the selected saved
+    # address contained it.
+    failure_result, final_address, preserved_address_cont = _prepare_shipping_form_for_save(
+        order_id,
+        shipping_modal,
+        original_address,
+        preserved_address_cont,
+        warnings,
+        allow_rewrite=allow_rewrite,
+    )
+    if failure_result:
+        return failure_result
+
     fallback_persisted = False
-    if existing_ready and not dry_run:
+    if not dry_run:
         persisted = _persist_validated_address_via_modal_scope(
             driver,
             shipping_modal,
@@ -3362,20 +3381,6 @@ def _try_resolve_with_existing_address(driver, shipping_modal, order_id, dry_run
                 warnings.append("Persisted the existing address through the CRM modal service because the validator controls did not surface a normal valid-address state.")
             if persisted.get("scheduledShipDateAdjusted"):
                 warnings.append("Updated the stale scheduled ship date to CRM's current ship-block date so the existing shipping method could be preserved.")
-
-    if not existing_ready:
-        return None
-
-    failure_result, final_address, preserved_address_cont = _prepare_shipping_form_for_save(
-        order_id,
-        shipping_modal,
-        original_address,
-        preserved_address_cont,
-        warnings,
-        allow_rewrite=allow_rewrite,
-    )
-    if failure_result:
-        return failure_result
 
     resolution = _resolution_from_assessment(
         "existing_address",

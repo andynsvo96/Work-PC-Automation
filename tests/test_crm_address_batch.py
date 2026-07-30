@@ -5628,6 +5628,24 @@ class CrmProductSeparatorTests(unittest.TestCase):
         self.assertEqual(error_report[0]["status"], "Preflight failed")
         self.assertIn("does not require a split", error_report[0]["message"])
 
+    @mock.patch.object(server, "_persist_crm_auto_splitter_run_result", return_value={"run_history": []})
+    @mock.patch.object(server, "_crm_processing_mode_list_url_for_step", return_value=None)
+    def test_processing_auto_splitter_missing_url_is_persisted_with_actionable_error(
+        self,
+        _mock_list_url,
+        mock_persist,
+    ):
+        result = server._run_crm_processing_step("auto_splitter", "rush")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_count"], 1)
+        self.assertIn("CRM_AUTO_SPLITTER_LIST_URL_RUSH is empty", result["message"])
+        self.assertIn("Settings > Links", result["message"])
+        self.assertEqual(result["errors"][0]["message"], result["message"])
+        persisted_payload = mock_persist.call_args.args[2]
+        self.assertEqual(persisted_payload["outcome"], "missing_list_url")
+        self.assertEqual(persisted_payload["config_key"], "CRM_AUTO_SPLITTER_LIST_URL_RUSH")
+
     def test_stock_history_migrates_auto_splitter_entries_in(self):
         saved_state = {
             "run_history": [
@@ -6810,6 +6828,73 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         self.assertEqual(mock_persist.call_count, 1)
         mock_save.assert_called_once()
         self.assertTrue(any("still matched safely" in item for item in warnings))
+
+    def test_existing_address_checks_single_character_cont_before_modal_persist_clears_fields(self):
+        address = {
+            "recipient": "KIRK CURLS",
+            "address": "687 E Clarion Dr",
+            "address_cont": "C",
+            "city": "Pueblo West",
+            "state": "Colorado",
+            "zip": "81007",
+        }
+        best_existing = {
+            "option": {
+                "text": "KIRK CURLS - 687 E CLARION DR C PUEBLO WEST CO 81007",
+                "preferred_all_caps": True,
+            },
+            "assessment": {
+                "city_only_mismatch": False,
+                "secondary_required": True,
+                "secondary_match": True,
+                "secondary_preserved": False,
+            },
+        }
+        call_order = []
+
+        def prepare_before_persist(*_args, **_kwargs):
+            call_order.append("prepare")
+            return None, dict(address), "C"
+
+        def persist_and_clear_modal(*_args, **_kwargs):
+            call_order.append("persist")
+            return {"ok": True}
+
+        with mock.patch.object(crm_validate_address, "_select_existing_address_option_by_text", return_value=True):
+            with mock.patch.object(crm_validate_address, "_ensure_recipient_present", return_value=(True, dict(address))):
+                with mock.patch.object(crm_validate_address, "_wait_for_address_valid", return_value=False):
+                    with mock.patch.object(crm_validate_address, "_final_save_ready", return_value=False):
+                        with mock.patch.object(crm_validate_address, "_extract_current_address", return_value=dict(address)):
+                            with mock.patch.object(crm_validate_address, "_address_is_valid", return_value=False):
+                                with mock.patch.object(
+                                    crm_validate_address,
+                                    "_prepare_shipping_form_for_save",
+                                    side_effect=prepare_before_persist,
+                                ):
+                                    with mock.patch.object(
+                                        crm_validate_address,
+                                        "_persist_validated_address_via_modal_scope",
+                                        side_effect=persist_and_clear_modal,
+                                    ):
+                                        with mock.patch.object(crm_validate_address, "_save_shipping_transaction"):
+                                            result = crm_validate_address._try_resolve_with_existing_address(
+                                                object(),
+                                                object(),
+                                                "4942201",
+                                                False,
+                                                dict(address),
+                                                dict(address),
+                                                "C",
+                                                [],
+                                                existing_options=[best_existing["option"]],
+                                                best_existing=best_existing,
+                                                accept_save_button_ready=False,
+                                                allow_assessed_current_address=True,
+                                            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["final_address"]["address_cont"], "C")
+        self.assertEqual(call_order, ["prepare", "persist"])
 
     def test_existing_address_resolution_skips_saved_address_that_drops_address_cont(self):
         address = {
@@ -8082,6 +8167,52 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "already_stock_ordered")
         mock_button.assert_not_called()
 
+    @mock.patch.object(crm_order_goods, "_activate_stock_tab")
+    @mock.patch.object(crm_order_goods, "_wait_for_order_goods_page_ready", return_value=True)
+    @mock.patch.object(crm_order_goods, "_find_sanmar_order_goods_button", side_effect=[None, None])
+    @mock.patch.object(crm_order_goods, "_page_indicates_non_vendor_stock_tab", return_value=False)
+    def test_missing_order_goods_button_refreshes_and_rechecks_once(
+        self,
+        _mock_non_vendor,
+        mock_find_button,
+        mock_wait_ready,
+        mock_activate_tab,
+    ):
+        driver = mock.Mock()
+
+        result = crm_order_goods._recover_missing_order_goods_button_once(
+            driver,
+            "4942164",
+            stock_tab_index=1,
+        )
+
+        self.assertIsNone(result)
+        driver.switch_to.default_content.assert_called_once_with()
+        driver.refresh.assert_called_once_with()
+        mock_wait_ready.assert_called_once()
+        mock_activate_tab.assert_called_once_with(driver, 1)
+        self.assertEqual(
+            [call.kwargs.get("timeout") for call in mock_find_button.call_args_list],
+            [3, 10],
+        )
+
+    @mock.patch.object(crm_order_goods, "_page_indicates_stock_locked_for_auto_ordering", return_value=False)
+    @mock.patch.object(crm_order_goods, "_recover_missing_order_goods_button_once", return_value=None)
+    @mock.patch.object(crm_order_goods, "_find_sanmar_order_goods_button", return_value=None)
+    @mock.patch.object(crm_order_goods, "_page_indicates_stock_already_ordered", side_effect=[False, True])
+    def test_missing_order_goods_button_accepts_already_ordered_state_after_refresh(
+        self,
+        _mock_ordered,
+        _mock_find_button,
+        _mock_recover,
+        _mock_locked,
+    ):
+        result = crm_order_goods._order_goods_for_open_order(mock.Mock(), "4942164", dry_run=False)
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["outcome"], "already_stock_ordered")
+        self.assertIn("automatic CRM refresh", result["message"])
+
     def test_order_goods_does_not_treat_stock_ordered_false_label_as_ordered(self):
         self.assertFalse(crm_order_goods._text_indicates_stock_already_ordered("Stock Ordered: false"))
         self.assertFalse(crm_order_goods._text_indicates_stock_already_ordered("Stock Ordered"))
@@ -9028,6 +9159,35 @@ class CrmAddressServerTests(unittest.TestCase):
 
         self.assertFalse(success)
         self.assertIn("Shipping Bypasser", message)
+
+    def test_processing_summary_surfaces_anonymous_configuration_error(self):
+        success, message = server._build_crm_processing_summary(
+            [
+                {
+                    "key": "auto_splitter",
+                    "success": False,
+                    "error_count": 1,
+                    "errors": [
+                        {
+                            "order_id": None,
+                            "status": "Needs attention",
+                            "message": "Auto Splitter list URL is empty.",
+                        }
+                    ],
+                    "message": "Auto Splitter list URL is empty.",
+                },
+                {
+                    "key": "stock_unlocker",
+                    "success": True,
+                    "error_count": 0,
+                    "errors": [],
+                    "message": "Unlocked orders.",
+                },
+            ]
+        )
+
+        self.assertFalse(success)
+        self.assertIn("Auto Splitter (Auto Splitter list URL is empty.)", message)
 
     def test_processing_report_filters_daily_weekly_monthly_and_all_time(self):
         state = server._default_crm_processing_state()

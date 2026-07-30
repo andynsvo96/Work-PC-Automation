@@ -1528,6 +1528,11 @@ def _recover_missing_order_goods_button_once(driver, order_id, stock_tab_index=N
     if _page_indicates_non_vendor_stock_tab(driver):
         return None
 
+    _publish_status(
+        f"Order Goods button is missing for order {order_id}; refreshing CRM once before reporting an error.",
+        stage="refreshing_missing_order_goods",
+        order_id=order_id,
+    )
     print(
         f"Sanmar / S&S Activewear order goods button did not appear for {order_id}; "
         "waiting briefly before one CRM refresh..."
@@ -1536,6 +1541,10 @@ def _recover_missing_order_goods_button_once(driver, order_id, stock_tab_index=N
     if button is not None:
         return button
 
+    try:
+        driver.switch_to.default_content()
+    except Exception:
+        pass
     try:
         driver.refresh()
         time.sleep(1.0)
@@ -1912,6 +1921,11 @@ def _order_goods_for_open_order(
     if button is None:
         button = _recover_missing_order_goods_button_once(driver, order_id, stock_tab_index=stock_tab_index)
     if button is None:
+        if not ignore_already_ordered and _page_indicates_stock_already_ordered(driver):
+            return _stock_already_ordered_result(
+                order_id,
+                "Skipped because stock showed as already ordered after the automatic CRM refresh.",
+            )
         if allow_unlock_retry and _page_indicates_stock_locked_for_auto_ordering(driver):
             unlock_result = _unlock_current_order_for_auto_ordering(driver, order_id, dry_run=dry_run, force=True)
             if dry_run or not unlock_result or not unlock_result.get("success"):
@@ -1946,7 +1960,8 @@ def _order_goods_for_open_order(
             )
             return _mark_result_stock_unlocked(result, unlock_result)
         raise TimeoutException(
-            "The Sanmar / S&S Activewear order goods button was not found on this stock tab."
+            "The Sanmar / S&S Activewear order goods button was not found on this stock tab "
+            "after one automatic CRM refresh and re-check."
         )
     try:
         enabled = bool(button.is_enabled())
