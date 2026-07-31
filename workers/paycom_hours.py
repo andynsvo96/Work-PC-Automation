@@ -50,40 +50,16 @@ from config import (
     WORK_CLOCK_BREAK_APPLIES_AFTER_HOURS,
     WORK_CLOCK_BREAK_MINUTES,
 )
-from credential_store import read_paycom_credential
+from paycom_login import (
+    find_paycom_login_fields,
+    is_paycom_login_page,
+    submit_paycom_login,
+)
 from platform_runtime import normalize_os_name
 
 configure_console_utf8()
 
 AUDIT_AUTOMATION_NAME = "paycom_hours.week"
-PAYCOM_USERNAME_SELECTORS = [
-    "input[name='username']",
-    "input[name='userName']",
-    "input[id*='username']",
-    "input[autocomplete='username']",
-    "input[type='email']",
-    "input[name*='user' i]",
-    "input[id*='user' i]",
-]
-PAYCOM_PASSWORD_SELECTORS = [
-    "input[name='password']",
-    "input[id*='password']",
-    "input[autocomplete='current-password']",
-    "input[type='password']:not([maxlength='4'])",
-    "input[name*='pass' i]",
-    "input[id*='pass' i]",
-]
-PAYCOM_PIN_SELECTORS = [
-    "input[name='pin']",
-    "input[id*='pin']",
-    "input[placeholder*='PIN']",
-    "input[type='password'][maxlength='4']",
-    "input[name*='pin' i]",
-    "input[id*='pin' i]",
-    "input[name*='ssn' i]",
-    "input[id*='ssn' i]",
-    "input[placeholder*='last 4' i]",
-]
 
 
 def write_result(success, message, week_hours=None, source="", day_rows=None):
@@ -106,18 +82,6 @@ def write_result(success, message, week_hours=None, source="", day_rows=None):
 
 def _normalize_text(text):
     return " ".join((text or "").replace("\xa0", " ").split())
-
-
-def is_paycom_login_page(driver):
-    """Return whether the current page is still Paycom's credential form."""
-    try:
-        text = _normalize_text(driver.find_element(By.TAG_NAME, "body").text).lower()
-    except Exception:
-        return False
-    has_login_labels = "username" in text and "password" in text
-    has_pin_label = "last 4 digits" in text or "pin" in text
-    has_submit_label = "log in" in text or "login" in text
-    return has_login_labels and has_pin_label and has_submit_label
 
 
 def is_paycom_two_factor_page(driver):
@@ -1138,49 +1102,19 @@ def _run_once(headless_mode):
         print(f"Navigating to hours source page: {target_url}")
         safe_get_with_partial_load(driver, target_url, "hours source page")
 
-        # Fill every available Paycom login field from Credential Manager.
-        username_field = find_visible(driver, PAYCOM_USERNAME_SELECTORS, timeout=3)
-        password_field = find_visible(driver, PAYCOM_PASSWORD_SELECTORS, timeout=1)
-        pin_field = find_visible(driver, PAYCOM_PIN_SELECTORS, timeout=1)
+        # Reuse the same session/autofill-first login path as Paycom punches.
+        username_field, password_field, pin_field = find_paycom_login_fields(driver)
         has_login_fields = bool(username_field or password_field or pin_field)
         if should_defer_paycom_login_to_visible(
             headless_mode,
             has_login_fields,
         ):
             return False, "Paycom requires visible login.", None, target_url, []
-        if has_login_fields:
-            credentials = read_paycom_credential()
-            if username_field:
-                username_field.clear()
-                username_field.send_keys(credentials.username)
-            if password_field:
-                password_field.clear()
-                password_field.send_keys(credentials.password)
-            if pin_field:
-                print("Entering Paycom PIN for hours sync...")
-                pin = credentials.pin
-                pin_field.clear()
-                pin_field.send_keys(pin)
-
-        login_submitted = False
-        if has_login_fields:
-            login_btn = find_visible(
-                driver,
-                [
-                    "button[type='submit']",
-                    "input[type='submit']",
-                ],
-                timeout=2,
-            )
-            if not login_btn:
-                return False, "Paycom login form did not expose a Log In button.", None, target_url, []
-            login_btn.click()
-            login_submitted = True
-            print(f"Clicked Log In for hours sync in {mode_label} mode.")
-            try:
-                WebDriverWait(driver, 8).until(EC.staleness_of(login_btn))
-            except TimeoutException:
-                pass
+        login_submitted = submit_paycom_login(
+            driver,
+            (username_field, password_field, pin_field),
+            context=f"hours sync in {mode_label} mode",
+        )
 
         # Give the page a moment to hydrate numbers.
         time.sleep(2)

@@ -34,13 +34,18 @@ from config import (
     PAYCOM_URL,
     PAYCOM_DRY_RUN as CONFIG_PAYCOM_DRY_RUN,
 )
-from credential_store import read_paycom_credential
+from paycom_login import (
+    find_paycom_login_fields,
+    is_paycom_login_page,
+    submit_paycom_login,
+)
 
 try:
     from .paycom_hours import (
         _is_macos_interactive_verification_enabled,
         is_paycom_interactive_verification_page,
         paycom_headless_mode_enabled,
+        resolve_paycom_hours_target_url,
         should_defer_paycom_login_to_visible,
         wait_for_paycom_interactive_verification,
     )
@@ -51,6 +56,7 @@ except ImportError:
         _is_macos_interactive_verification_enabled,
         is_paycom_interactive_verification_page,
         paycom_headless_mode_enabled,
+        resolve_paycom_hours_target_url,
         should_defer_paycom_login_to_visible,
         wait_for_paycom_interactive_verification,
     )
@@ -58,26 +64,6 @@ except ImportError:
 configure_console_utf8()
 
 AUDIT_AUTOMATION_NAME = "paycom_clock.unknown"
-
-PAYCOM_USERNAME_SELECTORS = [
-    "input[name='username']",
-    "input[name='userName']",
-    "input[id*='username']",
-    "input[autocomplete='username']",
-    "input[type='email']",
-]
-PAYCOM_PASSWORD_SELECTORS = [
-    "input[name='password']",
-    "input[id*='password']",
-    "input[autocomplete='current-password']",
-    "input[type='password']:not([maxlength='4'])",
-]
-PAYCOM_PIN_SELECTORS = [
-    "input[name='pin']",
-    "input[id*='pin']",
-    "input[placeholder*='PIN']",
-    "input[type='password'][maxlength='4']",
-]
 
 
 def write_result(success, message):
@@ -197,26 +183,6 @@ def dump_page_state(driver):
     return "\n".join(info)
 
 
-def is_paycom_login_page(driver):
-    """Best-effort check for Paycom login gate after redirect."""
-    try:
-        if "/app/login" in (driver.current_url or "").lower():
-            return True
-    except Exception:
-        pass
-
-    try:
-        pin_inputs = driver.find_elements(By.CSS_SELECTOR,
-            "input[name='pin'], input[id*='pin'], input[placeholder*='PIN'], input[type='password'][maxlength='4']"
-        )
-        if pin_inputs:
-            return True
-    except Exception:
-        pass
-
-    return False
-
-
 def _is_retryable_exception(err):
     text = f"{type(err).__name__}: {err}".lower()
     signals = (
@@ -247,52 +213,46 @@ def _run_once(action, effective_dry_run, profile_path, headless_mode):
             script_timeout=30,
         )
 
-        # Step 1: Navigate to Paycom
-        print("Navigating to Paycom...")
-        safe_get_with_partial_load(driver, PAYCOM_URL, "Paycom clock page")
+        # Step 1: Establish the shared Paycom session through the same route
+        # that the reliable hours sync uses, then continue to Web Time Clock.
+        session_url = resolve_paycom_hours_target_url()
+        print(f"Establishing Paycom session through hours route: {session_url}")
+        safe_get_with_partial_load(driver, session_url, "Paycom session bootstrap")
 
-        # Step 2: Fill every available Paycom login field from Credential Manager.
-        username_field = find_visible(driver, PAYCOM_USERNAME_SELECTORS, timeout=3)
-        password_field = find_visible(driver, PAYCOM_PASSWORD_SELECTORS, timeout=1)
-        pin_field = find_visible(driver, PAYCOM_PIN_SELECTORS, timeout=1)
+        # Step 2: Reuse the same session/autofill-first login path as hours sync.
+        username_field, password_field, pin_field = find_paycom_login_fields(driver)
         if should_defer_paycom_login_to_visible(
             headless_mode,
             username_field or password_field or pin_field,
         ):
             return False, "Paycom requires visible login.", True
-        if username_field or password_field or pin_field:
-            credentials = read_paycom_credential()
-            if username_field:
-                username_field.clear()
-                username_field.send_keys(credentials.username)
-            if password_field:
-                password_field.clear()
-                password_field.send_keys(credentials.password)
-            if pin_field:
-                print("Entering Paycom PIN...")
-                pin = credentials.pin
-                pin_field.clear()
-                pin_field.send_keys(pin)
+        submit_paycom_login(
+            driver,
+            (username_field, password_field, pin_field),
+            context=f"clock-{action} in {mode_name} mode",
+        )
 
-        # Click Log In
-        login_btn = find_visible(driver, [
-            "button[type='submit']",
-            "input[type='submit']",
-        ], timeout=2)
-        if login_btn:
-            login_btn.click()
-            print("Clicked Log In.")
-            try:
-                WebDriverWait(driver, 8).until(EC.staleness_of(login_btn))
-            except TimeoutException:
-                pass
-        else:
-            print("No login button found - may already be logged in.")
-
-        # Step 3: Navigate to the time clock page (only if not already there)
+        # Step 3: Navigate to the time clock page (only if not already there).
         if "timeclock" not in (driver.current_url or "").lower():
             print("Navigating to Web Time Clock...")
             safe_get_with_partial_load(driver, PAYCOM_URL, "Paycom web time clock")
+
+        # Paycom can occasionally accept the timecard session but gate the
+        # time-clock route separately. Use the identical helper a second time
+        # if that route exposes a credential form.
+        username_field, password_field, pin_field = find_paycom_login_fields(driver)
+        if should_defer_paycom_login_to_visible(
+            headless_mode,
+            username_field or password_field or pin_field,
+        ):
+            return False, "Paycom requires visible login.", True
+        route_login_submitted = submit_paycom_login(
+            driver,
+            (username_field, password_field, pin_field),
+            context=f"clock-{action} time-clock route in {mode_name} mode",
+        )
+        if route_login_submitted and "timeclock" not in (driver.current_url or "").lower():
+            safe_get_with_partial_load(driver, PAYCOM_URL, "Paycom web time clock after login")
 
         # Fail fast if we are still gated behind login after attempting navigation.
         try:
