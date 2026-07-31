@@ -91,6 +91,39 @@ class SafeSyncTests(unittest.TestCase):
         self.assertEqual(mock_run.call_count, 1)
 
     @mock.patch("safe_sync.get_git_version_state")
+    def test_publish_update_stages_safe_new_source_files(self, mock_state):
+        dirty = {"available": True, "dirty": True, "relation": "current", "branch": "main"}
+        ahead = {"available": True, "dirty": False, "relation": "ahead", "branch": "main"}
+        current = {"available": True, "dirty": False, "relation": "current", "branch": "main"}
+        mock_state.side_effect = [dirty, dirty, ahead, ahead, current]
+        with mock.patch(
+            "safe_sync._run",
+            side_effect=[
+                (0, "?? workers/new_worker.py\0?? tests/test_new_worker.py\0"),
+                (0, "staged new files"),
+                (0, "fetched"),
+                (0, "staged tracked files"),
+                (0, "committed"),
+                (0, "pushed"),
+            ],
+        ) as mock_run:
+            result = safe_sync.publish_repository_update(".")
+
+        self.assertTrue(result["success"])
+        calls = [call.args[1:] for call in mock_run.call_args_list]
+        self.assertIn(
+            ("add", "--", "workers/new_worker.py", "tests/test_new_worker.py"),
+            calls,
+        )
+
+    def test_safe_untracked_source_path_rejects_sensitive_and_runtime_files(self):
+        self.assertTrue(safe_sync._safe_untracked_source_path("workers/new_worker.py"))
+        self.assertTrue(safe_sync._safe_untracked_source_path("tests/test_new_worker.py"))
+        self.assertFalse(safe_sync._safe_untracked_source_path("new_worker.py"))
+        self.assertFalse(safe_sync._safe_untracked_source_path("workers/session-token.json"))
+        self.assertFalse(safe_sync._safe_untracked_source_path("runtime/state.json"))
+
+    @mock.patch("safe_sync.get_git_version_state")
     def test_publish_update_refuses_non_main_branch(self, mock_state):
         mock_state.return_value = {"available": True, "dirty": True, "relation": "current", "branch": "feature"}
         with mock.patch("safe_sync._run") as mock_run:

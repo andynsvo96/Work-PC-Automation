@@ -14,6 +14,44 @@ _GIT_CREATION_FLAGS = (
     getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 )
 
+_SAFE_UNTRACKED_SOURCE_ROOTS = (
+    "workers/",
+    "tests/",
+    "routes/",
+    "static/",
+    "docs/",
+    "supabase/",
+    "crm-order-dark-mode-extension/",
+)
+_SAFE_UNTRACKED_SOURCE_EXTENSIONS = {
+    ".bat",
+    ".cmd",
+    ".css",
+    ".html",
+    ".js",
+    ".json",
+    ".md",
+    ".ps1",
+    ".py",
+    ".sh",
+    ".sql",
+    ".toml",
+    ".ts",
+    ".txt",
+    ".vbs",
+    ".yaml",
+    ".yml",
+}
+_SENSITIVE_UNTRACKED_NAME_MARKERS = (
+    ".env",
+    "credential",
+    "password",
+    "private",
+    "secret",
+    "session",
+    "token",
+)
+
 
 def _git_process_options():
     if not _GIT_CREATION_FLAGS:
@@ -42,6 +80,28 @@ def _run(repo_dir, *args, timeout=120):
     )
     detail = (result.stdout or result.stderr or "").strip()
     return result.returncode, detail
+
+
+def _status_rows(status_detail):
+    """Parse both newline and NUL-delimited porcelain-v1 output."""
+    rows = []
+    for chunk in str(status_detail or "").split("\0"):
+        rows.extend(row for row in chunk.splitlines() if row.strip())
+    return rows
+
+
+def _safe_untracked_source_path(path):
+    """Allow new source files in known app folders, never local secrets/state."""
+    normalized = str(path or "").strip().replace("\\", "/").lstrip("./")
+    lowered = normalized.lower()
+    if not normalized or normalized.startswith("/") or ":" in normalized:
+        return False
+    if not any(lowered.startswith(root) for root in _SAFE_UNTRACKED_SOURCE_ROOTS):
+        return False
+    basename = lowered.rsplit("/", 1)[-1]
+    if any(marker in basename for marker in _SENSITIVE_UNTRACKED_NAME_MARKERS):
+        return False
+    return os.path.splitext(basename)[1] in _SAFE_UNTRACKED_SOURCE_EXTENSIONS
 
 
 def sync_repository(repo_dir, *, fetch=True):
@@ -109,7 +169,13 @@ def publish_repository_update(repo_dir, *, commit_message="Update automation app
             "state": before,
         }
 
-    code, status_detail = _run(repo_dir, "status", "--porcelain=v1", "--untracked-files=all")
+    code, status_detail = _run(
+        repo_dir,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "-z",
+    )
     if code != 0:
         return {
             "success": False,
@@ -118,15 +184,33 @@ def publish_repository_update(repo_dir, *, commit_message="Update automation app
             "message": f"Could not inspect local changes: {status_detail}",
             "state": before,
         }
-    status_rows = [row for row in status_detail.splitlines() if row.strip()]
-    if any(row.startswith("??") for row in status_rows):
+    status_rows = _status_rows(status_detail)
+    untracked_paths = [row[3:] for row in status_rows if row.startswith("?? ")]
+    unsafe_untracked = [path for path in untracked_paths if not _safe_untracked_source_path(path)]
+    if unsafe_untracked:
+        preview = ", ".join(unsafe_untracked[:3])
+        if len(unsafe_untracked) > 3:
+            preview += f", and {len(unsafe_untracked) - 3} more"
         return {
             "success": False,
             "updated": False,
             "blocked": True,
-            "message": "Automatic Update found untracked files. Add, ignore, or remove them before updating.",
+            "message": (
+                "Automatic Update found untracked files that require review: "
+                f"{preview}. Add, ignore, or remove them before updating."
+            ),
             "state": before,
         }
+    if untracked_paths:
+        code, detail = _run(repo_dir, "add", "--", *untracked_paths)
+        if code != 0:
+            return {
+                "success": False,
+                "updated": False,
+                "blocked": True,
+                "message": f"Could not stage new application files: {detail}",
+                "state": get_git_version_state(repo_dir),
+            }
     conflict_codes = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
     if any(row[:2] in conflict_codes for row in status_rows):
         return {
