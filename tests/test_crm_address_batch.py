@@ -2265,6 +2265,54 @@ Auto Ordering  Jul 27, 2026 @ 12:36 PMUnable to order stock for JessicaKapla457 
 
         self.assertEqual(feedback["kind"], "no_purchase_plan")
 
+    @mock.patch.object(crm_order_goods.time, "sleep")
+    @mock.patch.object(crm_order_goods.time, "time", side_effect=[0, 0, 2, 2, 2])
+    @mock.patch.object(crm_order_goods, "_page_indicates_stock_already_ordered", return_value=True)
+    @mock.patch.object(crm_order_goods, "_read_visible_auto_order_feedback", return_value=None)
+    def test_auto_order_feedback_timeout_refreshes_once_and_verifies_ordered_stock(
+        self,
+        _mock_feedback,
+        _mock_stock_ordered,
+        _mock_time,
+        _mock_sleep,
+    ):
+        driver = mock.Mock()
+
+        feedback = crm_order_goods._wait_for_auto_order_feedback(
+            driver,
+            timeout=1,
+            refresh_recheck_seconds=1,
+        )
+
+        self.assertEqual(feedback["kind"], "ordered")
+        self.assertTrue(feedback["refresh_attempted"])
+        self.assertTrue(feedback["refresh_succeeded"])
+        driver.refresh.assert_called_once_with()
+
+    @mock.patch.object(crm_order_goods.time, "sleep")
+    @mock.patch.object(crm_order_goods.time, "time", side_effect=[0, 0, 2, 2, 2, 4])
+    @mock.patch.object(crm_order_goods, "_page_indicates_stock_already_ordered", return_value=False)
+    @mock.patch.object(crm_order_goods, "_read_visible_auto_order_feedback", return_value=None)
+    def test_auto_order_feedback_timeout_refreshes_and_rechecks_once(
+        self,
+        _mock_feedback,
+        _mock_stock_ordered,
+        _mock_time,
+        _mock_sleep,
+    ):
+        driver = mock.Mock()
+
+        feedback = crm_order_goods._wait_for_auto_order_feedback(
+            driver,
+            timeout=1,
+            refresh_recheck_seconds=1,
+        )
+
+        self.assertEqual(feedback["kind"], "timeout")
+        self.assertIn("after one automatic CRM refresh", feedback["text"])
+        self.assertEqual(feedback["recheck_seconds"], 1)
+        driver.refresh.assert_called_once_with()
+
     def test_push_back_stock_summary_preserves_exact_crm_feedback(self):
         result = [{
             "success": False,

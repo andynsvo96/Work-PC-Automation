@@ -70,6 +70,7 @@ CRM_STATE_PATH = state_file("crm_state.json")
 STOCK_UNLOCK_STATUS = "Stock Auto Ordering Unlocked"
 ORDER_OPEN_REFRESH_ATTEMPTS = 2
 ORDER_OPEN_REFRESH_DELAY_SECONDS = 2.0
+AUTO_ORDER_FEEDBACK_REFRESH_RECHECK_SECONDS = 8
 
 
 def _publish_status(message, *, stage=None, current=None, total=None, order_id=None):
@@ -1854,7 +1855,13 @@ return false;
         return False
 
 
-def _wait_for_auto_order_feedback(driver, timeout=None):
+def _wait_for_auto_order_feedback(
+    driver,
+    timeout=None,
+    refresh_once_on_timeout=True,
+    refresh_recheck_seconds=None,
+):
+    """Wait for CRM's Auto Ordering response, with one post-timeout re-check."""
     timeout = max(1, int(timeout or max(CRM_ACTION_TIMEOUT, 30)))
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -1864,6 +1871,59 @@ def _wait_for_auto_order_feedback(driver, timeout=None):
                 feedback["modal_closed"] = _dismiss_auto_order_failure_modal(driver)
             return feedback
         time.sleep(0.25)
+
+    if refresh_once_on_timeout:
+        recheck_seconds = max(
+            1,
+            int(
+                refresh_recheck_seconds
+                or AUTO_ORDER_FEEDBACK_REFRESH_RECHECK_SECONDS
+            ),
+        )
+        try:
+            driver.refresh()
+            time.sleep(1.0)
+        except Exception as exc:
+            return {
+                "kind": "timeout",
+                "text": (
+                    f"CRM did not show a recognized Auto Ordering result within {timeout} seconds, "
+                    f"and its one automatic refresh failed: {exc}"
+                ),
+                "refresh_attempted": True,
+                "refresh_succeeded": False,
+            }
+
+        # A completed order often loses its transient growl/modal during a
+        # refresh. The persistent stock status is therefore also definitive.
+        if _page_indicates_stock_already_ordered(driver):
+            return {
+                "kind": "ordered",
+                "text": "Verified stock ordered after one automatic CRM refresh.",
+                "refresh_attempted": True,
+                "refresh_succeeded": True,
+            }
+
+        feedback = _wait_for_auto_order_feedback(
+            driver,
+            timeout=recheck_seconds,
+            refresh_once_on_timeout=False,
+        )
+        feedback["refresh_attempted"] = True
+        feedback["refresh_succeeded"] = True
+        if feedback.get("kind") != "timeout":
+            return feedback
+        return {
+            "kind": "timeout",
+            "text": (
+                f"CRM did not show a recognized Auto Ordering result within {timeout} seconds "
+                f"or during the {recheck_seconds}-second re-check after one automatic CRM refresh."
+            ),
+            "refresh_attempted": True,
+            "refresh_succeeded": True,
+            "recheck_seconds": recheck_seconds,
+        }
+
     return {
         "kind": "timeout",
         "text": f"CRM did not show a recognized Auto Ordering result within {timeout} seconds.",
