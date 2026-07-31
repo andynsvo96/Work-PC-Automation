@@ -1551,10 +1551,51 @@ def _salesforce_login_fields(driver):
     return username_input, password_input
 
 
+def _click_salesforce_saved_username(driver):
+    """Select the matching account from Salesforce's saved-username chooser."""
+    credential = read_windows_credential(SALESFORCE_CREDENTIAL_TARGET, required=False)
+    configured_username = credential.username.strip() if credential else ""
+    if not configured_username:
+        return False
+    try:
+        return bool(
+            driver.execute_script(
+                r"""
+                const expected = String(arguments[0] || '').trim().toLowerCase();
+                function visible(node) {
+                  if (!node) return false;
+                  const rect = node.getBoundingClientRect();
+                  const style = window.getComputedStyle(node);
+                  return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none' && style.visibility !== 'hidden';
+                }
+                const matches = Array.from(document.querySelectorAll('button,a,[role="button"],li,div'))
+                  .filter(visible)
+                  .filter((node) => String(node.innerText || node.textContent || '')
+                    .replace(/\s+/g, ' ').trim().toLowerCase().includes(expected));
+                matches.sort((left, right) => {
+                  const a = left.getBoundingClientRect();
+                  const b = right.getBoundingClientRect();
+                  return (a.width * a.height) - (b.width * b.height);
+                });
+                const target = matches[0];
+                if (!target) return false;
+                target.scrollIntoView({block: 'center', inline: 'center'});
+                target.click();
+                return true;
+                """,
+                configured_username,
+            )
+        )
+    except Exception:
+        return False
+
+
 def _fill_salesforce_login_with_autofill(driver):
     username_input, password_input = _salesforce_login_fields(driver)
-    if username_input is None:
+    if username_input is None and password_input is None:
         return False
+
     def has_login_values():
         try:
             username_value = (username_input.get_attribute("value") or "").strip()
@@ -1565,18 +1606,20 @@ def _fill_salesforce_login_with_autofill(driver):
         except Exception:
             password_value = ""
         if password_input is not None:
-            return bool(username_value and password_value)
+            return bool(password_value and (username_value or username_input is None))
         return bool(username_value)
 
     try:
-        username_input.click()
-        time.sleep(0.3)
+        if username_input is not None:
+            username_input.click()
+            time.sleep(0.3)
         credential = read_windows_credential(SALESFORCE_CREDENTIAL_TARGET, required=False)
         configured_username = credential.username.strip() if credential else ""
         configured_password = credential.secret if credential else ""
         if configured_username:
-            username_input.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
-            username_input.send_keys(configured_username)
+            if username_input is not None:
+                username_input.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
+                username_input.send_keys(configured_username)
             if configured_password and password_input is not None:
                 password_input.click()
                 password_input.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
@@ -1584,6 +1627,8 @@ def _fill_salesforce_login_with_autofill(driver):
             return has_login_values()
 
         # Trigger Chrome's credential/autofill dropdown and choose the first saved login.
+        if username_input is None:
+            return has_login_values()
         username_input.send_keys(Keys.ARROW_DOWN)
         time.sleep(0.2)
         username_input.send_keys(Keys.ENTER)
@@ -1640,6 +1685,17 @@ def _attempt_salesforce_login(driver, timeout=45):
     if _is_salesforce_login_approval_page(driver):
         _wait_for_salesforce_login_approval(driver, timeout=max(timeout, 90))
         return True
+    if _click_salesforce_saved_username(driver):
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            time.sleep(0.5)
+            if _is_salesforce_login_approval_page(driver):
+                _wait_for_salesforce_login_approval(driver, timeout=max(timeout, 90))
+                return True
+            if not _is_salesforce_login_page(driver):
+                return True
+            if any(_salesforce_login_fields(driver)):
+                break
     if not _fill_salesforce_login_with_autofill(driver):
         if _wait_for_salesforce_login_transition(driver, timeout=15):
             return True

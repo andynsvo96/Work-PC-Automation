@@ -25,6 +25,7 @@ import uuid
 import webbrowser
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -53,6 +54,7 @@ from profile_setup_autofill import (
 )
 from runtime_paths import STATE_DIR, log_file as runtime_log_file
 from runtime_paths import resolve_runtime_file, result_file, state_file
+from runtime_maintenance import run_startup_maintenance
 from routes.connectivity_routes import register_connectivity_routes
 from routes.system_routes import register_system_routes
 from routes.work_routes import register_work_routes
@@ -71,12 +73,31 @@ UI_TEMPLATE_FILE = os.path.join(SCRIPT_DIR, "ui_panel.html")
 WORKERS_DIR = os.path.join(SCRIPT_DIR, "workers")
 
 log_file = runtime_log_file("server.log")
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
-)
 logger = logging.getLogger(__name__)
+
+
+def configure_server_logging():
+    """Configure bounded file logging only in the real server process.
+
+    Importing ``server`` is intentionally side-effect free for tests and helper
+    commands. On Windows, a second process cannot rotate a log file held by the
+    running dashboard, so configuration occurs after the previous server has
+    been stopped during startup.
+    """
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            RotatingFileHandler(
+                log_file,
+                maxBytes=10 * 1024 * 1024,
+                backupCount=5,
+                encoding="utf-8",
+            ),
+            logging.StreamHandler(),
+        ],
+        force=True,
+    )
 
 CLOCK_SCRIPT = os.path.join(WORKERS_DIR, "paycom_clock.py")
 SLACK_SCRIPT = os.path.join(WORKERS_DIR, "slack_team.py")
@@ -13638,6 +13659,30 @@ def _stop_orphan_mac_server_processes():
         return 0
 
 
+def _process_runs_this_server(process):
+    """Return whether ``process`` launched this workspace's server.py.
+
+    The Windows venv launcher commonly records only the relative argument
+    ``server.py``. Resolve it against the process working directory instead of
+    requiring the absolute workspace path to appear in the command line.
+    """
+    try:
+        command = [str(arg or "") for arg in process.cmdline()]
+        process_cwd = process.cwd()
+    except Exception:
+        return False
+
+    expected = os.path.normcase(os.path.realpath(os.path.abspath(__file__)))
+    for argument in command[1:]:
+        clean = argument.strip().strip('"').strip("'")
+        if os.path.basename(clean).lower() != "server.py":
+            continue
+        candidate = clean if os.path.isabs(clean) else os.path.join(process_cwd, clean)
+        if os.path.normcase(os.path.realpath(os.path.abspath(candidate))) == expected:
+            return True
+    return False
+
+
 def kill_existing_server(port=SERVER_PORT):
     try:
         import psutil
@@ -13654,17 +13699,48 @@ def kill_existing_server(port=SERVER_PORT):
             if pid == os.getpid():
                 continue
             process = psutil.Process(pid)
-            command = " ".join(process.cmdline())
-            if "server.py" not in command or SCRIPT_DIR.lower() not in command.lower():
+            if not _process_runs_this_server(process):
                 logger.error("Port %s is occupied by an unrelated process %s; it was not stopped.", port, pid)
                 continue
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except psutil.TimeoutExpired:
-                process.kill()
+            if os.name == "nt":
+                result = subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                if result.returncode != 0 and psutil.pid_exists(pid):
+                    detail = (result.stderr or result.stdout or "taskkill failed").strip()
+                    raise RuntimeError(f"Could not stop previous server process {pid}: {detail}")
+            else:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except psutil.TimeoutExpired:
+                    process.kill()
+
+        listeners = set(candidate_pids)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            listeners = {
+                connection.pid
+                for connection in psutil.net_connections(kind="tcp")
+                if connection.pid
+                and connection.status == psutil.CONN_LISTEN
+                and connection.laddr
+                and connection.laddr.port == int(port)
+                and connection.pid != os.getpid()
+            }
+            if not listeners:
+                return True
+            time.sleep(0.1)
+        raise RuntimeError(
+            f"Previous dashboard listener(s) on port {port} did not exit: {sorted(listeners)}"
+        )
     except Exception as e:
         logger.warning("Could not check for existing server: %s", e)
+        return False
 
 def _safe_sync_before_direct_start():
     """Make a direct server.py launch as safe as the OS startup launchers."""
@@ -13692,8 +13768,17 @@ if __name__ == "__main__":
         logger.info("Another macOS dashboard server already owns the singleton lock; exiting duplicate process.")
         raise SystemExit(0)
     _stop_orphan_mac_server_processes()
-    kill_existing_server()
+    if not kill_existing_server():
+        raise SystemExit("Could not stop the previous dashboard server safely.")
+    configure_server_logging()
     reload_runtime_config()
+    maintenance = run_startup_maintenance(config_module)
+    if maintenance.get("removed_files"):
+        logger.info(
+            "Pruned %s old/excess screenshot artifact(s), reclaiming %.2f MB.",
+            maintenance["removed_files"],
+            maintenance["removed_bytes"] / (1024 * 1024),
+        )
     register_shared_queue_task_executors()
     start_version_monitor()
     initialize_shared_queue_runtime()

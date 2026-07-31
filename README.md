@@ -33,8 +33,11 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - `routes/` - grouped Flask route modules.
 - `automation_runtime.py` - shared Selenium/runtime helpers.
 - `runtime_paths.py` - centralized paths for ignored local runtime artifacts.
+- `runtime_maintenance.py` - bounded retention for disposable runtime evidence.
+- `config_defaults.py` - tracked non-secret setting contract inherited by each machine's `config.py`.
 - `automation_audit.py` - audit log helpers.
 - `credential_store.py` / `manage_credentials.py` - Windows Credential Manager and macOS Keychain integration.
+- `service_health.py` - read-only live authentication checks that never print secret values.
 - `shared_queue.py` / `shared_queue_runtime.py` - encrypted Supabase queue and node lease coordination.
 - `safe_sync.py` - non-destructive Git fetch/fast-forward/version gate startup.
 - `slack_message_rotation.py` - alternating Slack message state logic.
@@ -52,7 +55,8 @@ This repo intentionally does not commit real credentials, browser sessions, logs
    python -m pip install -r requirements.txt
    ```
 
-2. Create your local config:
+2. Create your local config. It imports the tracked defaults, so new safe
+   settings added by future updates are available automatically:
 
    ```powershell
    Copy-Item config.example.py config.py

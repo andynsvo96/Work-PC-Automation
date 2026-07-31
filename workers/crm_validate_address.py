@@ -135,6 +135,12 @@ WORKER_PROFILE_CACHE_DIR_NAMES = (
     "GPUCache",
     "ShaderCache",
     "GrShaderCache",
+    "GraphiteDawnCache",
+    "DawnGraphiteCache",
+    "optimization_guide_model_store",
+    "optimization_guide_prediction_model_downloads",
+    "component_crx_cache",
+    "extensions_crx_cache",
 )
 
 SHIPPING_ISSUE_STATUS = "Issue - Shipping"

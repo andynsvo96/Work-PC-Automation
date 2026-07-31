@@ -132,6 +132,39 @@ class CrmRecoverableErrorTests(unittest.TestCase):
 
 
 class CrmCopyrightCancelTests(unittest.TestCase):
+    def test_salesforce_saved_username_chooser_uses_stored_account(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = True
+        credential = mock.Mock(username="saved@example.test")
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "read_windows_credential",
+            return_value=credential,
+        ):
+            clicked = crm_copyright_cancel._click_salesforce_saved_username(driver)
+
+        self.assertTrue(clicked)
+        self.assertEqual(driver.execute_script.call_args.args[-1], "saved@example.test")
+
+    def test_salesforce_password_only_stage_uses_stored_password(self):
+        password = mock.Mock()
+        password.get_attribute.return_value = "filled-password"
+        credential = mock.Mock(username="saved@example.test", secret="secret")
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_salesforce_login_fields",
+            return_value=(None, password),
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "read_windows_credential",
+            return_value=credential,
+        ):
+            filled = crm_copyright_cancel._fill_salesforce_login_with_autofill(mock.Mock())
+
+        self.assertTrue(filled)
+        password.click.assert_called_once_with()
+        self.assertEqual(password.send_keys.call_args_list[-1].args, ("secret",))
+
     def test_salesforce_contact_is_accepted_as_account_link_alias(self):
         contact_driver = mock.Mock()
         contact_driver.execute_script.return_value = {
@@ -10340,7 +10373,8 @@ class AutomationRuntimeTests(unittest.TestCase):
         driver = mock.Mock()
         mock_chrome.return_value = driver
 
-        result = automation_runtime.build_chrome_driver("/tmp/profile")
+        with tempfile.TemporaryDirectory() as folder:
+            result = automation_runtime.build_chrome_driver(str(Path(folder) / "profile"))
 
         self.assertIs(result, driver)
         options = mock_chrome.call_args.kwargs["options"]
