@@ -92,6 +92,7 @@ from workers.crm_auto_splitter import (
     _read_order_totals,
     _save_order_and_wait,
     _switch_to_crm_app_frame,
+    _validate_refund_amounts_match,
     _wait_for_order_scope,
     run_split_order as _run_auto_split_order,
 )
@@ -6629,8 +6630,7 @@ def _read_payment_summary(driver):
                 live_payment_type = tag
                 transaction_amount = _money_text(amount_value)
                 break
-        paid_amount = _money_text(_parse_money(state.get("amount_paid"))) if state.get("amount_paid") not in (None, "") else ""
-        live_amount = paid_amount if paid_amount and _parse_money(paid_amount) > 0 else transaction_amount
+        live_amount = transaction_amount
         live_panel_text = _clean_text(
             " ".join(
                 [
@@ -7372,7 +7372,17 @@ def _close_refund_modal(driver):
     _click_exact_visible_text(driver, "cancel") or _click_exact_visible_text(driver, "Cancel")
 
 
-def _save_refund_modal(driver, dry_run):
+def _validate_live_refund_amounts(driver, payment_amount):
+    totals = _read_order_totals(driver)
+    return _validate_refund_amounts_match(
+        totals.get("paid"),
+        totals.get("balance_due"),
+        payment_amount,
+        error_type=CopyrightCancelError,
+    )
+
+
+def _save_refund_modal(driver, dry_run, payment_amount=None):
     state = _read_refund_modal_state(driver)
     if state["max_refund"] != state["input_amount"]:
         raise CopyrightCancelError(
@@ -7381,6 +7391,12 @@ def _save_refund_modal(driver, dry_run):
     if dry_run:
         _close_refund_modal(driver)
         return {"refunded": False, "dry_run": True, **state}
+    amount_check = _validate_live_refund_amounts(driver, payment_amount)
+    if _parse_money(state["input_amount"]) != _parse_money(payment_amount).copy_abs():
+        raise CopyrightCancelError(
+            "Refund blocked: modal amount does not match Payment Amount. "
+            f"Modal has ${state['input_amount']} but Payment Amount is ${_money_text(_parse_money(payment_amount).copy_abs())}."
+        )
     clicked = bool(
         driver.execute_script(
             """
@@ -7406,10 +7422,10 @@ def _save_refund_modal(driver, dry_run):
     if not clicked:
         raise CopyrightCancelError("Refund modal save button was not found.")
     time.sleep(3)
-    return {"refunded": True, "dry_run": False, **state}
+    return {"refunded": True, "dry_run": False, "amount_check": amount_check, **state}
 
 
-def _refund_via_stripe_payment_modal(driver, dry_run, click_refund_button=True):
+def _refund_via_stripe_payment_modal(driver, dry_run, click_refund_button=True, payment_amount=None):
     _open_stripe_refund_modal(driver)
     state = _read_refund_modal_state(driver)
     if dry_run:
@@ -7417,7 +7433,7 @@ def _refund_via_stripe_payment_modal(driver, dry_run, click_refund_button=True):
         return {"refunded": False, "dry_run": True, "prepared": True, "refund_button_clicked": False, **state}
     if not click_refund_button:
         return {"refunded": False, "dry_run": False, "prepared": True, "refund_button_clicked": False, **state}
-    return _save_refund_modal(driver, dry_run=False)
+    return _save_refund_modal(driver, dry_run=False, payment_amount=payment_amount)
 
 
 def _close_crm_modal(driver):
@@ -7571,12 +7587,14 @@ def _refund_via_transaction_modal(driver, amount, note, dry_run, click_refund_bu
             "transaction_state": state,
             "message": "Prepared transaction refund modal and left it open, but skipped the final Refund button by request.",
         }
+    amount_check = _validate_live_refund_amounts(driver, refund_amount)
     _click_transaction_refund_button(driver)
     time.sleep(4)
     return {
         "refunded": True,
         "dry_run": False,
         "amount": _money_text(refund_amount),
+        "amount_check": amount_check,
         "transaction_state": state,
     }
 
@@ -7725,6 +7743,7 @@ def _cancel_and_refund_crm_order(driver, crm_handle, order_id, dry_run, click_re
                 driver,
                 dry_run=dry_run,
                 click_refund_button=click_refund_button,
+                payment_amount=validated_payment["amount"],
             )
     return {
         "payment": payment,
@@ -7868,6 +7887,7 @@ def refund_single_order(
                             driver,
                             dry_run=True,
                             click_refund_button=click_refund_button,
+                            payment_amount=validated_payment["amount"],
                         )
         else:
             refund_fee = _add_refund_fee_to_original(driver, refund_fee_amount)
@@ -7935,6 +7955,7 @@ def refund_single_order(
                             driver,
                             dry_run=False,
                             click_refund_button=click_refund_button,
+                            payment_amount=validated_payment["amount"],
                         )
         return {
             "order_id": order_id,

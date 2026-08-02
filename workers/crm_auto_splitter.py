@@ -199,6 +199,46 @@ def _money_text(amount):
     return f"{Decimal(amount).quantize(Decimal('0.01')):.2f}"
 
 
+def _validate_refund_amounts_match(paid, balance_due, payment_amount, error_type=SplitterError):
+    """Fail closed unless the three CRM refund amounts match exactly to the cent."""
+    raw_amounts = {
+        "Paid": paid,
+        "Balance Due": balance_due,
+        "Payment Amount": payment_amount,
+    }
+    missing = [label for label, value in raw_amounts.items() if value in (None, "")]
+    if missing:
+        raise error_type(
+            "Refund blocked: could not read "
+            f"{', '.join(missing)}. Paid, absolute Balance Due, and Payment Amount "
+            "must all be present and match exactly before a refund can be issued."
+        )
+
+    paid_value = _parse_money(paid).quantize(Decimal("0.01"))
+    balance_value = _parse_money(balance_due).quantize(Decimal("0.01"))
+    payment_value = _parse_money(payment_amount).copy_abs().quantize(Decimal("0.01"))
+    matches = (
+        paid_value > Decimal("0.00")
+        and balance_value < Decimal("0.00")
+        and payment_value > Decimal("0.00")
+        and paid_value == balance_value.copy_abs() == payment_value
+    )
+    if not matches:
+        raise error_type(
+            "Refund blocked: amount mismatch. "
+            f"Paid ${_money_text(paid_value)}, "
+            f"Balance Due {_signed_money_text(balance_value)}, and "
+            f"Payment Amount ${_money_text(payment_value)} must match exactly; "
+            "Balance Due must be the matching negative amount."
+        )
+    return {
+        "paid": _money_text(paid_value),
+        "balance_due": _money_text(balance_value),
+        "payment_amount": _money_text(payment_value),
+        "matched": True,
+    }
+
+
 def _signed_money_text(amount):
     value = Decimal(amount).quantize(Decimal("0.01"))
     prefix = "-" if value < 0 else ""
@@ -1419,6 +1459,13 @@ def _save_transaction_modal(driver, tag, transaction_id):
 
 
 def _save_transaction_modal_with_amount(driver, tag, transaction_id, amount=None):
+    if "refund" in _clean_text(tag).lower():
+        totals = _read_order_totals(driver)
+        _validate_refund_amounts_match(
+            totals.get("paid"),
+            totals.get("balance_due"),
+            amount,
+        )
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:

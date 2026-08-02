@@ -1426,6 +1426,40 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertEqual(result["cancel"]["reason"], "already_refunded")
         self.assertEqual(result["refund_fee"]["reason"], "already_refunded")
 
+    def test_live_refund_amount_check_blocks_two_cent_balance_mismatch(self):
+        driver = mock.Mock()
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_read_order_totals",
+            return_value={"paid": "763.49", "balance_due": "-763.47"},
+        ):
+            with self.assertRaisesRegex(
+                crm_copyright_cancel.CopyrightCancelError,
+                r"Paid \$763\.49, Balance Due -\$763\.47, and Payment Amount \$763\.49",
+            ):
+                crm_copyright_cancel._validate_live_refund_amounts(driver, "763.49")
+
+    def test_refund_modal_checks_live_order_amounts_before_save_click(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = True
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_read_refund_modal_state",
+            return_value={"max_refund": "763.49", "input_amount": "763.49"},
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_validate_live_refund_amounts",
+            side_effect=crm_copyright_cancel.CopyrightCancelError("Refund blocked: amount mismatch."),
+        ), mock.patch.object(crm_copyright_cancel.time, "sleep"):
+            with self.assertRaisesRegex(crm_copyright_cancel.CopyrightCancelError, "amount mismatch"):
+                crm_copyright_cancel._save_refund_modal(
+                    driver,
+                    dry_run=False,
+                    payment_amount="763.49",
+                )
+
+        driver.execute_script.assert_not_called()
+
     def test_cancel_and_refund_skips_refund_work_for_zero_charge_order(self):
         driver = mock.Mock()
         state = {
@@ -3841,6 +3875,39 @@ class CrmAutoSplitterTests(unittest.TestCase):
                 {"amount_paid": None, "transactions": [{"amount": "-125.00", "tag": "Refund"}]}
             )
         )
+
+    def test_refund_amount_check_requires_paid_negative_balance_and_payment_to_match(self):
+        self.assertEqual(
+            crm_auto_splitter._validate_refund_amounts_match("763.49", "-763.49", "763.49"),
+            {
+                "paid": "763.49",
+                "balance_due": "-763.49",
+                "payment_amount": "763.49",
+                "matched": True,
+            },
+        )
+        with self.assertRaisesRegex(
+            crm_auto_splitter.SplitterError,
+            r"Paid \$763\.49, Balance Due -\$763\.47, and Payment Amount \$763\.49",
+        ):
+            crm_auto_splitter._validate_refund_amounts_match("763.49", "-763.47", "763.49")
+
+    def test_manual_refund_transaction_is_blocked_before_save_on_amount_mismatch(self):
+        driver = mock.Mock()
+        with mock.patch.object(
+            crm_auto_splitter,
+            "_read_order_totals",
+            return_value={"paid": "763.49", "balance_due": "-763.47"},
+        ):
+            with self.assertRaisesRegex(crm_auto_splitter.SplitterError, "Refund blocked: amount mismatch"):
+                crm_auto_splitter._save_transaction_modal_with_amount(
+                    driver,
+                    "Refund",
+                    "transferred to 4882000",
+                    amount=crm_auto_splitter.Decimal("-763.49"),
+                )
+
+        driver.execute_script.assert_not_called()
 
     def test_split_quote_finalization_routes_by_transaction_presence(self):
         driver = mock.Mock()
