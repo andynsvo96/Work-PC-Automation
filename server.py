@@ -13703,8 +13703,14 @@ def kill_existing_server(port=SERVER_PORT):
                 logger.error("Port %s is occupied by an unrelated process %s; it was not stopped.", port, pid)
                 continue
             if os.name == "nt":
+                # Do not use taskkill /T here. During an in-app restart, the
+                # replacement server is launched as a descendant of the old
+                # server. Killing the old process tree therefore kills the
+                # replacement too and leaves the dashboard offline. Update
+                # safety already prevents restarts while workers are active,
+                # so only the listening server PID needs to be terminated.
                 result = subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    ["taskkill", "/F", "/PID", str(pid)],
                     capture_output=True,
                     text=True,
                     timeout=10,

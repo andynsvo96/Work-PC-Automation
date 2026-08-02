@@ -7,7 +7,7 @@ import server
 
 
 class ServerLifecycleTests(unittest.TestCase):
-    def test_windows_existing_server_uses_process_tree_termination(self):
+    def test_windows_existing_server_termination_preserves_replacement_descendants(self):
         connection = types.SimpleNamespace(
             pid=123,
             status="LISTEN",
@@ -34,7 +34,7 @@ class ServerLifecycleTests(unittest.TestCase):
 
         self.assertTrue(stopped)
         run.assert_called_once_with(
-            ["taskkill", "/F", "/T", "/PID", "123"],
+            ["taskkill", "/F", "/PID", "123"],
             capture_output=True,
             text=True,
             timeout=10,
