@@ -6439,6 +6439,22 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         self.assertEqual(profile["street_line"], "105 MAIN STREET")
         self.assertEqual(profile["po_box_line"], "BOX 233")
 
+    def test_classify_po_box_address_accepts_po_number_without_box_word(self):
+        profile = crm_validate_address._classify_po_box_address(
+            {
+                "address": "PO 1108",
+                "address_cont": "",
+                "city": "Hanalei",
+                "state": "Hawaii",
+                "zip": "96714",
+            }
+        )
+
+        self.assertTrue(crm_validate_address._is_po_box("PO 1108"))
+        self.assertFalse(crm_validate_address._is_missing_street_number("PO 1108"))
+        self.assertTrue(profile["po_box_only"])
+        self.assertEqual(profile["po_box_line"], "PO 1108")
+
     def test_order_totals_shipping_class_distinguishes_free_from_priced_shipping(self):
         self.assertEqual(
             crm_validate_address._order_totals_shipping_class_from_text(
@@ -7500,6 +7516,8 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual(result["outcome"], "po_box_free_override_saved")
         self.assertEqual(result["resolution"], "override")
+        self.assertIn("Non-rush order", result["message"])
+        self.assertTrue(any("Non-rush PO Box" in warning for warning in result["warnings"]))
         mock_ensure.assert_called_once_with(driver, shipping_modal, mock.ANY, dry_run=False)
         mock_save.assert_called_once_with(driver, shipping_modal, "4605090", False, use_scope_send=True)
 

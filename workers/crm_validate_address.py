@@ -1930,6 +1930,8 @@ def _is_po_box(address_line):
         return False
     if "PO BOX" in canonical or "P O BOX" in canonical or canonical.startswith("BOX "):
         return True
+    if re.fullmatch(r"P\s*O\s+#?[A-Z0-9][A-Z0-9-]*(?:\s+[A-Z0-9-]+)*", canonical):
+        return True
     return bool(re.search(r"\bPOST OFFICE BOX\b", canonical))
 
 
@@ -5163,7 +5165,7 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
         if existing_result is not None:
             warnings.append("Used a matching existing saved address instead of overriding the PO Box-only order.")
             return existing_result
-        print("Detected a free-ship PO Box with no separate street address. Using override flow...")
+        print("Detected a non-rush PO Box with no separate street address. Using override flow...")
         _apply_override(driver, shipping_modal)
         override_ready, use_scope_send = _ensure_override_ready(
             driver,
@@ -5176,7 +5178,7 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
             return _result_for(
                 order_id,
                 "po_box_free_override_manual_review",
-                "Skipped because the free-ship PO Box override did not produce a valid address state automatically.",
+                "Skipped because the non-rush PO Box override did not produce a valid address state automatically.",
                 success=False,
                 resolution="manual_review",
                 manual_review=True,
@@ -5192,7 +5194,7 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
                 warnings.append("Override did not render the green valid-address text, but it was persisted through the CRM modal service.")
             else:
                 warnings.append("Override did not render the green valid-address text, but the final Save button became available.")
-        warnings.append("Free-ship PO Box was overridden because no separate street address was provided.")
+        warnings.append("Non-rush PO Box was overridden because no separate street address was provided.")
         _save_shipping_transaction(
             driver,
             shipping_modal,
@@ -5203,7 +5205,7 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
         return _result_for(
             order_id,
             "po_box_free_override_saved" if not dry_run else "po_box_free_override_ready",
-            "Free-ship order only had a PO Box, so the address was overridden and saved.",
+            "Non-rush order only had a PO Box, so the address was overridden and saved.",
             success=True,
             resolution="override",
             manual_review=False,
