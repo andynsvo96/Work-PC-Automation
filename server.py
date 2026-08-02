@@ -12911,6 +12911,15 @@ def _schedule_app_update_restart(delay_seconds=0.75):
             logger.error("App update restart failed: %s", message)
             with app_update_restart_lock:
                 app_update_restart_scheduled = False
+            return
+
+        # The replacement launcher performs Safe Sync before starting the new
+        # server. Release port 5123 now instead of requiring that descendant to
+        # terminate its elevated parent. This also makes the handoff deterministic:
+        # a successful launcher starts the replacement; a failed launcher leaves
+        # this server running and clears the scheduled flag above.
+        logger.info("App update replacement launched; exiting the old server process.")
+        os._exit(0)
 
     threading.Thread(target=_launch, name="app-update-restart", daemon=True).start()
     return True

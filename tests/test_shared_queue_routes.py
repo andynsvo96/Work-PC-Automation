@@ -572,6 +572,32 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertTrue(scheduled)
         schedule.assert_called_once_with(delay_seconds=2.0)
 
+    def test_update_restart_scheduler_exits_old_server_after_replacement_launch(self):
+        class InlineThread:
+            def __init__(self, target, **_kwargs):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        server.app_update_restart_scheduled = False
+        with (
+            mock.patch.object(server.threading, "Thread", InlineThread),
+            mock.patch.object(server.time, "sleep"),
+            mock.patch.object(
+                server,
+                "_restart_server_process",
+                return_value=(True, "Server restart requested."),
+            ) as restart,
+            mock.patch.object(server.os, "_exit") as exit_process,
+        ):
+            scheduled = server._schedule_app_update_restart(delay_seconds=0)
+
+        self.assertTrue(scheduled)
+        restart.assert_called_once_with()
+        exit_process.assert_called_once_with(0)
+        server.app_update_restart_scheduled = False
+
     def test_automatic_update_scheduler_waits_while_automation_is_active(self):
         with (
             mock.patch("server._automatic_app_updates_enabled", return_value=True),
