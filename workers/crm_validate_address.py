@@ -149,6 +149,10 @@ RUSH_PO_BOX_SALES_NOTE = (
     "Need physical address"
 )
 MISSING_STREET_NUMBER_SALES_NOTE = "Incomplete shipping address"
+SHIPPING_ISSUE_LABELS = {
+    "missing_street_number": "Missing Street Number",
+    "po_box_rush": "Rush PO Box",
+}
 
 
 def _activate_crm_context(driver):
@@ -2808,12 +2812,16 @@ def _handle_shipping_issue(
     )
 
     ready_or_applied = "ready" if dry_run else "applied"
-    label = "rush PO Box" if issue_kind == "po_box_rush" else "missing street number"
+    issue_label = SHIPPING_ISSUE_LABELS.get(
+        issue_kind,
+        str(issue_kind or "Shipping Issue").replace("_", " ").title(),
+    )
+    message_label = "rush PO Box" if issue_kind == "po_box_rush" else issue_label.lower()
     result = _result_for(
         order_id,
         f"{issue_kind}_shipping_issue_{ready_or_applied}",
         (
-            f"Detected the {label}; "
+            f"Detected the {message_label}; "
             f"{'verified the Sales Note and Issue - Shipping actions are ready' if dry_run else 'saved the Sales Note and applied Issue - Shipping'}."
         ),
         success=True,
@@ -2823,6 +2831,7 @@ def _handle_shipping_issue(
         original_address=original_address,
         final_address=final_address,
     )
+    result["issue_label"] = issue_label
     result["sales_note"] = sales_note_result
     result["order_status"] = status_result
     result["rush_order_slack"] = rush_order_slack

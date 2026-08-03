@@ -6184,6 +6184,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertFalse(result["manual_review_required"])
         self.assertEqual(result["outcome"], "po_box_rush_shipping_issue_applied")
+        self.assertEqual(result["issue_label"], "Rush PO Box")
 
     def test_missing_street_number_shipping_issue_dry_run_previews_note_and_issue(self):
         driver = mock.Mock()
@@ -6223,6 +6224,7 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertFalse(result["manual_review_required"])
         self.assertEqual(result["outcome"], "missing_street_number_shipping_issue_ready")
+        self.assertEqual(result["issue_label"], "Missing Street Number")
 
     def test_shipping_issue_notifies_only_after_issue_status_is_applied(self):
         driver = mock.Mock()

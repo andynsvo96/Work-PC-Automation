@@ -7054,6 +7054,15 @@ function formatCrmAddressWithContHtml(addressFields, fallbackText = '') {
   return parts.map((part) => part.strong ? `<strong>${esc(part.value)}</strong>` : esc(part.value)).join(', ');
 }
 
+function formatCrmAddressIssueLabel(item) {
+  const explicitLabel = String(item && item.issue_label || '').trim();
+  if (explicitLabel) return explicitLabel;
+  const outcome = String(item && item.outcome || '').trim().toLowerCase();
+  if (outcome.startsWith('missing_street_number_shipping_issue_')) return 'Missing Street Number';
+  if (outcome.startsWith('po_box_rush_shipping_issue_')) return 'Rush PO Box';
+  return '';
+}
+
 function buildCrmAddressHistoryDiffHtml(row, fallbackOrderId = '') {
   const report = normalizeCrmAddressReport(row && row.report, fallbackOrderId);
   if (report.length === 0) return esc(row && row.message ? row.message : '-');
@@ -7066,8 +7075,11 @@ function buildCrmAddressHistoryDiffHtml(row, fallbackOrderId = '') {
       ? `<div class='crm-address-failure-message'><strong>Message:</strong> ${esc(item.message)}</div>`
       : '';
     const oldAddress = formatCrmAddressWithContHtml(item.original_address, item.original_address_text);
-    const newAddress = formatCrmAddressWithContHtml(item.final_address, item.final_address_text);
-    return `${prefix}<div><strong>Old:</strong> ${oldAddress}</div><div><strong>New:</strong> ${newAddress}</div>${failedMessage}`;
+    const issueLabel = formatCrmAddressIssueLabel(item);
+    const resultLine = issueLabel
+      ? `<div><strong>Issue:</strong> ${esc(issueLabel)}</div>`
+      : `<div><strong>New:</strong> ${formatCrmAddressWithContHtml(item.final_address, item.final_address_text)}</div>`;
+    return `${prefix}<div><strong>Old:</strong> ${oldAddress}</div>${resultLine}${failedMessage}`;
   }).join("<div style='height:8px'></div>");
 }
 
