@@ -5191,6 +5191,48 @@ def _normalize_crm_single_order_id(raw):
     return matches[-1]
 
 
+def _crm_order_url_for_id(raw_order_id):
+    order_id = _normalize_crm_single_order_id(raw_order_id)
+    if not order_id:
+        return None
+    template = str(
+        getattr(
+            config_module,
+            "PROCESSOR_ORDER_URL_TEMPLATE",
+            "https://crm2.legacy.printfly.com/order/{order_id}",
+        )
+        or ""
+    ).strip()
+    try:
+        order_url = template.format(order_id=order_id)
+    except (KeyError, IndexError, ValueError):
+        order_url = ""
+    parsed = urlparse(order_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        order_url = f"https://crm2.legacy.printfly.com/order/{order_id}"
+    return order_url
+
+
+def _normalize_crm_auto_split_orders(payload):
+    payload = payload if isinstance(payload, dict) else {}
+    raw_orders = payload.get("split_orders") if isinstance(payload.get("split_orders"), list) else []
+    raw_order_ids = payload.get("new_order_ids") if isinstance(payload.get("new_order_ids"), list) else []
+    cleaned = []
+    seen = set()
+    for raw in list(raw_orders) + list(raw_order_ids):
+        order_id = _normalize_crm_single_order_id(raw.get("order_id") if isinstance(raw, dict) else raw)
+        if not order_id or order_id in seen:
+            continue
+        seen.add(order_id)
+        cleaned.append(
+            {
+                "order_id": order_id,
+                "order_url": _crm_order_url_for_id(order_id),
+            }
+        )
+    return cleaned[:100]
+
+
 CRM_PROCESSING_FILTERS = ("rush", "free", "all", "813", "high_value")
 # "all" is a Processing mode.  "all_reports" deliberately has a different key so
 # report filtering can never confuse the two meanings of All.
@@ -5829,6 +5871,7 @@ def _normalize_crm_processing_step_results(items):
                 "stage_timings": _normalize_stage_timings(item.get("stage_timings")),
                 "message": str(item.get("message") or ""),
                 "errors": _normalize_crm_processing_error_details(item.get("errors")),
+                "split_orders": _normalize_crm_auto_split_orders(item) if step_key == "auto_splitter" else [],
             }
         )
         if (not cleaned[-1]["success"] or cleaned[-1]["error_count"] > 0) and not cleaned[-1]["errors"]:
@@ -10286,6 +10329,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
                 "stage_timings": [],
                 "message": message,
                 "errors": _crm_processing_step_error_details(step_key, payload, False, message),
+                "split_orders": [],
             }
         parallel_workers = _saved_crm_automation_parallel_workers(default=1)
         _start_crm_auto_splitter_batch_runtime(list_url, minimum_tabs=10, parallel_workers=parallel_workers)
@@ -10315,6 +10359,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
             "stage_timings": _normalize_stage_timings(payload.get("stage_timings") if isinstance(payload, dict) else []),
             "message": str(message),
             "errors": _crm_processing_step_error_details(step_key, payload, ok, message),
+            "split_orders": _normalize_crm_auto_split_orders(payload),
         }
 
     if step_key == "order_goods":

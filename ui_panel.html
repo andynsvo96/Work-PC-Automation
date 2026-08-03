@@ -119,6 +119,12 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .version-gate-notice{display:none;border-color:#f59e0b;background:#fffbeb;color:#92400e;font-weight:700}
 .app-update-modal{max-width:560px}
 .app-update-details{margin-top:10px;white-space:pre-wrap}
+.auto-split-review-modal{max-width:560px}
+.auto-split-review-modal p{margin:8px 0;line-height:1.45}
+.auto-split-review-list{display:grid;gap:8px;margin:12px 0;padding:0;list-style:none}
+.auto-split-review-list a{display:block;border:1px solid #93c5fd;border-radius:7px;background:#eff6ff;padding:9px 11px;font-weight:700;text-decoration:none}
+.auto-split-review-list a:hover{text-decoration:underline;background:#dbeafe}
+.auto-split-review-run{font-size:12px;color:#64748b}
 .rule-check-cell{text-align:center;min-width:72px}
 .rule-check-cell input[type=checkbox]{width:16px;height:16px;accent-color:#2563eb}
 .rules-note{min-width:260px}
@@ -322,6 +328,9 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 :root[data-theme='dark'] .section-note[open] summary{background:#04395e}
 :root[data-theme='dark'] .section-note-body{background:#252526;border-color:#555;color:#d4d4d4;box-shadow:0 12px 30px rgba(0,0,0,.42)}
 :root[data-theme='dark'] .modal-backdrop{background:rgba(0,0,0,.68)}
+:root[data-theme='dark'] .auto-split-review-list a{background:#04395e;border-color:#007acc;color:#d9efff}
+:root[data-theme='dark'] .auto-split-review-list a:hover{background:#084d78}
+:root[data-theme='dark'] .auto-split-review-run{color:#9d9d9d}
 :root[data-theme='dark'] .crm-link-category-title,
 :root[data-theme='dark'] .control-target,
 :root[data-theme='dark'] .work-timer-label,
@@ -431,6 +440,21 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
     <div class='modal-actions'>
       <button class='secondary' id='appUpdateDismissBtn' type='button' onclick='dismissAppUpdateModal()'>Later</button>
       <button id='appUpdateNowBtn' type='button' onclick='updateAppNow(this)'>Update</button>
+    </div>
+  </div>
+</div>
+
+<div id='crmAutoSplitReviewModal' class='modal-backdrop' role='presentation' aria-hidden='true'>
+  <div class='modal auto-split-review-modal' role='alertdialog' aria-modal='true' aria-labelledby='crmAutoSplitReviewTitle' aria-describedby='crmAutoSplitReviewMessage'>
+    <div class='modal-title-row'>
+      <h2 id='crmAutoSplitReviewTitle'>Automatically Split Orders — Review Required</h2>
+    </div>
+    <p id='crmAutoSplitReviewMessage'>Auto Splitter created the following CRM orders. Open and check every order, then acknowledge this message.</p>
+    <div class='auto-split-review-run' id='crmAutoSplitReviewRun'></div>
+    <ul class='auto-split-review-list' id='crmAutoSplitReviewList'></ul>
+    <div class='modal-actions'>
+      <span class='muted'>This message stays pending until acknowledged.</span>
+      <button id='crmAutoSplitReviewAcknowledgeBtn' type='button' onclick='acknowledgeCrmAutoSplitReview()'>Acknowledge</button>
     </div>
   </div>
 </div>
@@ -1264,6 +1288,8 @@ let crmProcessingPollTimer = null;
 let crmProcessingPollIntervalMs = 0;
 let crmProcessingReportPeriod = 'daily';
 let crmProcessingReportFilter = 'all_reports';
+const crmAutoSplitReviewAcknowledged = new Set();
+const CRM_AUTO_SPLIT_REVIEW_STORAGE_PREFIX = 'automation.crmAutoSplitReview.ack.';
 let crmStatusPayload = null;
 let crmPollTimer = null;
 const CRM_HISTORY_PAGE_SIZE = 6;
@@ -5013,6 +5039,114 @@ function renderCrmProcessingSelectionButtons(state = {}) {
   }
 }
 
+function crmAutoSplitReviewSignature(timestamp, orders) {
+  const orderIds = orders.map((order) => String(order.order_id || '')).filter(Boolean).sort();
+  return `${String(timestamp || '')}|${orderIds.join(',')}`;
+}
+
+function crmAutoSplitReviewWasAcknowledged(signature) {
+  if (!signature) return true;
+  if (crmAutoSplitReviewAcknowledged.has(signature)) return true;
+  try {
+    if (localStorage.getItem(CRM_AUTO_SPLIT_REVIEW_STORAGE_PREFIX + signature) === '1') {
+      crmAutoSplitReviewAcknowledged.add(signature);
+      return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
+function crmAutoSplitReviewRuns(payload) {
+  const state = payload && payload.state && typeof payload.state === 'object' ? payload.state : {};
+  const entries = Array.isArray(state.run_history) ? [...state.run_history] : [];
+  const lastTimestamp = String(state.last_run_timestamp || '').trim();
+  if (lastTimestamp && !entries.some((entry) => String(entry && entry.timestamp || '').trim() === lastTimestamp)) {
+    entries.push({
+      timestamp: lastTimestamp,
+      selected_steps: state.last_selected_steps,
+      step_results: state.last_step_results,
+    });
+  }
+
+  const runs = [];
+  const seen = new Set();
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') continue;
+    const timestamp = String(entry.timestamp || '').trim();
+    const stepResults = Array.isArray(entry.step_results) ? entry.step_results : [];
+    const splitterResult = stepResults.find((result) => result && result.key === 'auto_splitter');
+    if (!timestamp || !splitterResult) continue;
+    const rawOrders = Array.isArray(splitterResult.split_orders) ? splitterResult.split_orders : [];
+    const orders = [];
+    const seenOrderIds = new Set();
+    for (const rawOrder of rawOrders) {
+      const orderId = String(rawOrder && rawOrder.order_id || '').trim();
+      if (!/^\d{7}$/.test(orderId) || seenOrderIds.has(orderId)) continue;
+      seenOrderIds.add(orderId);
+      let orderUrl = String(rawOrder && rawOrder.order_url || '').trim();
+      try {
+        const parsed = new URL(orderUrl);
+        if (!['http:', 'https:'].includes(parsed.protocol)) orderUrl = '';
+      } catch (_) {
+        orderUrl = '';
+      }
+      if (!orderUrl) orderUrl = `https://crm2.legacy.printfly.com/order/${orderId}`;
+      orders.push({ order_id: orderId, order_url: orderUrl });
+    }
+    if (orders.length === 0) continue;
+    const signature = crmAutoSplitReviewSignature(timestamp, orders);
+    if (!signature || seen.has(signature)) continue;
+    seen.add(signature);
+    runs.push({ timestamp, orders, signature });
+  }
+  return runs.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+}
+
+function maybeShowCrmAutoSplitReview(payload) {
+  const modal = document.getElementById('crmAutoSplitReviewModal');
+  const list = document.getElementById('crmAutoSplitReviewList');
+  const runText = document.getElementById('crmAutoSplitReviewRun');
+  const acknowledgeBtn = document.getElementById('crmAutoSplitReviewAcknowledgeBtn');
+  if (!modal || !list || !runText || !acknowledgeBtn || modal.classList.contains('active')) return;
+
+  const pendingRun = crmAutoSplitReviewRuns(payload).find((run) => !crmAutoSplitReviewWasAcknowledged(run.signature));
+  if (!pendingRun) return;
+
+  list.innerHTML = '';
+  for (const order of pendingRun.orders) {
+    const item = document.createElement('li');
+    const link = document.createElement('a');
+    link.href = order.order_url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = `CRM Order ${order.order_id}`;
+    link.title = `Open CRM order ${order.order_id}`;
+    item.appendChild(link);
+    list.appendChild(item);
+  }
+  runText.textContent = `Automate Processing run: ${fmtDateTime(pendingRun.timestamp)} | ${pendingRun.orders.length} split order${pendingRun.orders.length === 1 ? '' : 's'}`;
+  modal.dataset.signature = pendingRun.signature;
+  modal.classList.add('active');
+  modal.setAttribute('aria-hidden', 'false');
+  acknowledgeBtn.focus();
+}
+
+function acknowledgeCrmAutoSplitReview() {
+  const modal = document.getElementById('crmAutoSplitReviewModal');
+  if (!modal) return;
+  const signature = String(modal.dataset.signature || '');
+  if (signature) {
+    crmAutoSplitReviewAcknowledged.add(signature);
+    try {
+      localStorage.setItem(CRM_AUTO_SPLIT_REVIEW_STORAGE_PREFIX + signature, '1');
+    } catch (_) {}
+  }
+  modal.dataset.signature = '';
+  modal.classList.remove('active');
+  modal.setAttribute('aria-hidden', 'true');
+  setTimeout(() => maybeShowCrmAutoSplitReview(crmProcessingStatusPayload), 0);
+}
+
 function renderCrmProcessingStatus(payload) {
   crmProcessingStatusPayload = payload;
   const state = payload && payload.state ? payload.state : {};
@@ -5067,6 +5201,7 @@ function renderCrmProcessingStatus(payload) {
   }
   if (queueVisible && queuePayload) renderQueue(queuePayload);
   syncCrmProcessingPolling();
+  maybeShowCrmAutoSplitReview(payload);
 }
 
 async function persistCrmProcessingSelection(payload, statusFallback) {

@@ -9598,6 +9598,32 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertEqual(metrics["successful_order_count"], 2)
         self.assertEqual(metrics["error_count"], 1)
 
+    def test_processing_step_results_preserve_auto_split_order_review_links(self):
+        result = {
+            "key": "auto_splitter",
+            "success": True,
+            "order_count": 1,
+            "successful_order_count": 1,
+            "error_count": 0,
+            "message": "Auto Splitter completed 1/1 order(s).",
+            "new_order_ids": ["4800001", "4800002", "4800001"],
+        }
+
+        with mock.patch.object(
+            server.config_module,
+            "PROCESSOR_ORDER_URL_TEMPLATE",
+            "https://crm.example/order/{order_id}",
+        ):
+            normalized = server._normalize_crm_processing_step_results([result])
+            normalized_again = server._normalize_crm_processing_step_results(normalized)
+
+        expected_orders = [
+            {"order_id": "4800001", "order_url": "https://crm.example/order/4800001"},
+            {"order_id": "4800002", "order_url": "https://crm.example/order/4800002"},
+        ]
+        self.assertEqual(normalized[0]["split_orders"], expected_orders)
+        self.assertEqual(normalized_again[0]["split_orders"], expected_orders)
+
     def test_processing_step_error_details_keep_each_failed_order(self):
         payload = {
             "success": False,
