@@ -57,7 +57,10 @@ from crm_validate_address import (
     _record_stage_timing,
     _worker_profile_lock,
 )
-from crm_unlock_orders import wait_for_order_preview_panel as _wait_for_stock_unlock_preview_panel
+from crm_unlock_orders import (
+    unlock_single_order_with_driver as _unlock_single_order_through_locked_report,
+    wait_for_order_preview_panel as _wait_for_stock_unlock_preview_panel,
+)
 from runtime_paths import state_file
 
 configure_console_utf8()
@@ -1468,20 +1471,25 @@ def _stock_unlock_not_confirmed_result(order_id, state, stock_tab_index=None):
 
 
 def _retry_stock_unlock_via_preview_panel(driver, order_id, stock_tab_index=None):
-    """Retry a still-locked order through CRM's order-preview status editor once."""
+    """Retry through the same locked-report Order Preview flow as Unlocker."""
     _publish_status(
-        f"Stock remained locked after the first status update for order {order_id}; retrying through Order Preview.",
+        f"Stock remained locked after the first status update for order {order_id}; retrying through the locked-orders Order Preview.",
         stage="retrying_stock_unlock",
         order_id=order_id,
     )
-    retry_result = _unlock_current_order_for_auto_ordering(driver, order_id, dry_run=False, force=True)
+    try:
+        retry_result = _unlock_single_order_through_locked_report(driver, order_id)
+    except Exception as exc:
+        retry_result = {
+            "order_id": order_id,
+            "success": False,
+            "outcome": "stock_unlock_report_failed",
+            "message": f"The targeted locked-orders Order Preview retry failed: {exc}",
+            "manual_review_required": True,
+            "stock_unlock_required": True,
+        }
     if not retry_result or not retry_result.get("success"):
         return retry_result, "locked"
-    try:
-        driver.refresh()
-        time.sleep(1.0)
-    except Exception:
-        pass
     _open_target_order_with_refresh(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
     _require_order_goods_page_ready(driver, order_id)
     return retry_result, _wait_after_stock_unlock(driver, order_id, stock_tab_index=stock_tab_index)

@@ -10,6 +10,7 @@ import os
 import re
 import sys
 import time
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from _bootstrap import ensure_project_root_on_path
 
@@ -716,10 +717,102 @@ def select_all_orders(driver, rows=None):
 
     _wait_for_selection_count(driver, 1)
 
+    # A single targeted order is already selected by the anchor click.  A
+    # Shift+Click on that same row can toggle the selection back off in CRM.
+    if len(rows) == 1:
+        return 1
+
     _shift_click_row(driver, first_row)
 
     _wait_for_selection_count(driver, len(rows))
     return len(rows)
+
+
+def _single_order_locked_report_url(order_id, list_url=None):
+    """Restrict the configured locked-orders report to one exact order ID."""
+    normalized_order_id = str(order_id or "").strip()
+    if not ORDER_ID_PATTERN.fullmatch(normalized_order_id):
+        raise ValueError("Order ID must be a 7-digit value.")
+
+    resolved_url = _resolve_report_url(list_url)
+    parts = urlsplit(resolved_url)
+    replacements = {
+        "id[low]": normalized_order_id,
+        "id[high]": normalized_order_id,
+        "_orderIds": normalized_order_id,
+    }
+    query_items = []
+    replaced = set()
+    for key, value in parse_qsl(parts.query, keep_blank_values=True):
+        if key in replacements:
+            query_items.append((key, replacements[key]))
+            replaced.add(key)
+        else:
+            query_items.append((key, value))
+    for key, value in replacements.items():
+        if key not in replaced:
+            query_items.append((key, value))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items), parts.fragment))
+
+
+def unlock_single_order_with_driver(driver, order_id, list_url=None):
+    """Apply the proven locked-report Order Preview flow to one order."""
+    normalized_order_id = str(order_id or "").strip()
+    report_url = _single_order_locked_report_url(normalized_order_id, list_url=list_url)
+    rows = _open_locked_report_rows(driver, list_url=report_url)
+    if not rows:
+        return {
+            "order_id": normalized_order_id,
+            "success": False,
+            "outcome": "stock_unlock_report_order_not_found",
+            "message": "The order was not present in the targeted locked-orders report.",
+            "manual_review_required": True,
+            "stock_unlock_required": True,
+        }
+
+    visible_order_ids = _collect_order_ids(rows)
+    if visible_order_ids and normalized_order_id not in visible_order_ids:
+        return {
+            "order_id": normalized_order_id,
+            "success": False,
+            "outcome": "stock_unlock_report_order_mismatch",
+            "message": "The targeted locked-orders report returned a different order.",
+            "manual_review_required": True,
+            "stock_unlock_required": True,
+        }
+
+    selected_count, preview_panel = select_all_orders_with_preview(
+        driver,
+        rows=rows,
+        list_url=report_url,
+    )
+    if selected_count != 1:
+        return {
+            "order_id": normalized_order_id,
+            "success": False,
+            "outcome": "stock_unlock_report_selection_mismatch",
+            "message": f"Expected one targeted locked order, but CRM selected {selected_count}.",
+            "manual_review_required": True,
+            "stock_unlock_required": True,
+        }
+
+    choose_unlock_status(driver, preview_panel)
+    click_apply(driver, preview_panel)
+    confirmation_reached = maybe_wait_for_confirmation_modal(driver, timeout=2)
+    if confirmation_reached:
+        click_ok_on_modal(driver)
+    completion = verify_update_complete(driver, previous_order_count=selected_count)
+    return {
+        "order_id": normalized_order_id,
+        "success": True,
+        "outcome": "stock_unlocked",
+        "message": "Applied Stock Auto Ordering Unlocked through the locked-orders Order Preview before attempting Order Goods.",
+        "manual_review_required": False,
+        "stock_unlock_required": True,
+        "stock_unlocked_before_order_goods": True,
+        "confirmation_reached": confirmation_reached,
+        "success_message_seen": bool(completion.get("success_message_seen")),
+    }
 
 
 def wait_for_order_preview_panel(driver, timeout=None):

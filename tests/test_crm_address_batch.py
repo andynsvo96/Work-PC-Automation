@@ -1721,6 +1721,70 @@ class CrmCopyrightCancelTests(unittest.TestCase):
 
 
 class CrmUnlockOrdersTests(unittest.TestCase):
+    def test_single_order_locked_report_url_sets_exact_order_filters(self):
+        result = crm_unlock_orders._single_order_locked_report_url(
+            "4965222",
+            list_url="https://crm.example/report/967?stockOrderingLocked=true&id%5Blow%5D=&id%5Bhigh%5D=&_orderIds=",
+        )
+
+        self.assertIn("id%5Blow%5D=4965222", result)
+        self.assertIn("id%5Bhigh%5D=4965222", result)
+        self.assertIn("_orderIds=4965222", result)
+
+    def test_select_all_orders_does_not_shift_click_single_targeted_row(self):
+        driver = mock.Mock()
+        row = object()
+
+        with mock.patch.object(crm_unlock_orders.ActionChains, "click") as click, mock.patch.object(
+            crm_unlock_orders,
+            "_wait_for_selection_count",
+        ) as wait_for_selection, mock.patch.object(crm_unlock_orders, "_shift_click_row") as shift_click:
+            click.return_value.perform.return_value = None
+            selected_count = crm_unlock_orders.select_all_orders(driver, rows=[row])
+
+        self.assertEqual(selected_count, 1)
+        wait_for_selection.assert_called_once_with(driver, 1)
+        shift_click.assert_not_called()
+
+    def test_unlock_single_order_uses_targeted_report_preview_flow(self):
+        driver = mock.Mock()
+        row = mock.Mock(text="Order 4965222")
+        preview_panel = object()
+        with mock.patch.object(
+            crm_unlock_orders,
+            "_open_locked_report_rows",
+            return_value=[row],
+        ) as open_report, mock.patch.object(
+            crm_unlock_orders,
+            "_collect_order_ids",
+            return_value=["4965222"],
+        ), mock.patch.object(
+            crm_unlock_orders,
+            "select_all_orders_with_preview",
+            return_value=(1, preview_panel),
+        ) as select_preview, mock.patch.object(crm_unlock_orders, "choose_unlock_status") as choose_status, mock.patch.object(
+            crm_unlock_orders,
+            "click_apply",
+        ) as click_apply, mock.patch.object(
+            crm_unlock_orders,
+            "maybe_wait_for_confirmation_modal",
+            return_value=True,
+        ), mock.patch.object(crm_unlock_orders, "click_ok_on_modal") as click_ok, mock.patch.object(
+            crm_unlock_orders,
+            "verify_update_complete",
+            return_value={"success_message_seen": True},
+        ):
+            result = crm_unlock_orders.unlock_single_order_with_driver(driver, "4965222")
+
+        self.assertTrue(result["success"])
+        self.assertIn("locked-orders Order Preview", result["message"])
+        targeted_url = open_report.call_args.kwargs["list_url"]
+        self.assertIn("_orderIds=4965222", targeted_url)
+        select_preview.assert_called_once_with(driver, rows=[row], list_url=targeted_url)
+        choose_status.assert_called_once_with(driver, preview_panel)
+        click_apply.assert_called_once_with(driver, preview_panel)
+        click_ok.assert_called_once_with(driver)
+
     def test_unlocker_reopens_report_when_preview_stays_missing_after_reselection(self):
         driver = mock.Mock()
         initial_rows = [object(), object()]
@@ -8857,26 +8921,28 @@ class CrmAddressServerTests(unittest.TestCase):
 
     @mock.patch.object(crm_order_goods, "_order_goods_for_all_stock_tabs")
     @mock.patch.object(crm_order_goods, "_wait_after_stock_unlock", side_effect=["locked", "orderable"])
+    @mock.patch.object(crm_order_goods, "_unlock_single_order_through_locked_report")
     @mock.patch.object(crm_order_goods, "_unlock_current_order_for_auto_ordering")
     @mock.patch.object(crm_order_goods, "_wait_for_order_goods_page_ready", return_value=True)
     @mock.patch.object(crm_order_goods, "_open_target_order")
-    def test_order_goods_retries_locked_status_through_order_preview(self, mock_open, _mock_ready, mock_unlock, _mock_wait_after_unlock, mock_order_tabs):
+    def test_order_goods_retries_locked_status_through_order_preview(self, mock_open, _mock_ready, mock_unlock, mock_report_unlock, _mock_wait_after_unlock, mock_order_tabs):
         driver = mock.Mock()
-        mock_unlock.side_effect = [
-            {"order_id": "4418860", "success": True, "outcome": "stock_unlocked", "message": "First unlock attempt."},
-            {"order_id": "4418860", "success": True, "outcome": "stock_unlocked", "message": "Order Preview unlock."},
-        ]
+        mock_unlock.return_value = {
+            "order_id": "4418860", "success": True, "outcome": "stock_unlocked", "message": "First unlock attempt."
+        }
+        mock_report_unlock.return_value = {
+            "order_id": "4418860", "success": True, "outcome": "stock_unlocked", "message": "Order Preview unlock."
+        }
         mock_order_tabs.return_value = [
             {"order_id": "4418860", "success": True, "outcome": "order_goods_clicked", "message": "clicked"}
         ]
 
         results = crm_order_goods._run_order_with_driver(driver, "4418860", dry_run=False)
 
-        self.assertEqual(mock_unlock.call_args_list[0].args[1], "4418860")
-        self.assertNotIn("force", mock_unlock.call_args_list[0].kwargs)
-        self.assertEqual(mock_unlock.call_args_list[1].kwargs.get("force"), True)
+        mock_unlock.assert_called_once_with(mock.ANY, "4418860", dry_run=False)
+        mock_report_unlock.assert_called_once_with(mock.ANY, "4418860")
         self.assertEqual(mock_open.call_count, 3)
-        self.assertEqual(driver.refresh.call_count, 2)
+        self.assertEqual(driver.refresh.call_count, 1)
         self.assertTrue(results[0]["stock_unlocked_before_order_goods"])
         self.assertIn("Order Preview unlock.", results[0]["warnings"])
 
