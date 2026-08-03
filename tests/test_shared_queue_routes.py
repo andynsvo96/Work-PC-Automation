@@ -95,6 +95,19 @@ class SharedQueueRouteTests(unittest.TestCase):
         server.version_monitor_state.clear()
         server.version_monitor_state.update(self.previous_version_monitor_state)
 
+    @mock.patch.object(server, "_automation_stop_is_blocking", return_value=False)
+    @mock.patch.object(server, "_automation_stop_requested_since", return_value=True)
+    def test_status_waiter_releases_queue_after_force_stop(self, _stop_requested, _stop_blocking):
+        status_payload = mock.Mock(return_value={"running": True})
+
+        with mock.patch.object(server.time, "sleep") as sleep:
+            success, message = server._wait_for_status_completion(status_payload)
+
+        self.assertFalse(success)
+        self.assertEqual(message, "Queued task canceled by user.")
+        status_payload.assert_not_called()
+        sleep.assert_not_called()
+
     def test_communications_route_has_portable_descriptor(self):
         response = self.client.post("/clock/test/in")
         self.assertEqual(response.status_code, 202)

@@ -3925,6 +3925,159 @@ class CrmAutoSplitterTests(unittest.TestCase):
         paid.assert_called_once_with(driver, "Stripe Manual CC Entry", "pi_test")
         unpaid.assert_called_once_with(driver)
 
+    def test_paid_quote_conversion_uses_unpaid_fallback_after_crm_conversion_error(self):
+        driver = mock.Mock()
+        conversion_error = crm_auto_splitter.QuotePaymentConversionError(
+            "CRM rejected payment-driven quote conversion"
+        )
+        with mock.patch.object(crm_auto_splitter, "_quote_visible_total", return_value="366.46"), \
+             mock.patch.object(crm_auto_splitter, "_open_record_transaction") as open_transaction, \
+             mock.patch.object(crm_auto_splitter, "_save_transaction_modal_with_amount") as save_transaction, \
+             mock.patch.object(
+                 crm_auto_splitter,
+                 "_wait_for_new_split_order",
+                 side_effect=conversion_error,
+             ) as wait_order, \
+             mock.patch.object(
+                 crm_auto_splitter,
+                 "_fallback_from_failed_quote_payment",
+                 return_value="4962604",
+             ) as fallback:
+            result = crm_auto_splitter._record_split_payment_and_wait_for_order(
+                driver,
+                "PayPal",
+                "98R74752F47335803",
+            )
+
+        self.assertEqual(result, "4962604")
+        open_transaction.assert_called_once_with(driver, quote=True)
+        save_transaction.assert_called_once_with(
+            driver,
+            "PayPal",
+            "98R74752F47335803",
+            amount="366.46",
+        )
+        self.assertTrue(wait_order.call_args.kwargs["detect_quote_conversion_error"])
+        fallback.assert_called_once_with(
+            driver,
+            "PayPal",
+            "98R74752F47335803",
+            "366.46",
+            conversion_error,
+        )
+
+    def test_unpaid_fallback_requires_quote_to_be_fully_unpaid_and_unlinked(self):
+        safe_state = {
+            "order_id": None,
+            "grand_total": "366.46",
+            "paid": "0.00",
+            "balance_due": "366.46",
+            "transactions": [],
+        }
+        self.assertEqual(
+            crm_auto_splitter._quote_is_safe_for_unpaid_fallback(
+                safe_state,
+                "366.46",
+                "98R74752F47335803",
+            ),
+            (True, ""),
+        )
+
+        for unsafe_state in (
+            {**safe_state, "order_id": "4962604"},
+            {**safe_state, "paid": "366.46", "balance_due": "0.00"},
+            {
+                **safe_state,
+                "transactions": [{"amount": "366.46", "tag": "PayPal", "note": "98R74752F47335803"}],
+            },
+        ):
+            allowed, reason = crm_auto_splitter._quote_is_safe_for_unpaid_fallback(
+                unsafe_state,
+                "366.46",
+                "98R74752F47335803",
+            )
+            self.assertFalse(allowed)
+            self.assertTrue(reason)
+
+    def test_failed_quote_payment_fallback_reloads_quote_then_pays_created_order(self):
+        driver = mock.Mock()
+        driver.current_url = "https://crm2.legacy.printfly.com/quote/6097705"
+        state = {
+            "order_id": None,
+            "grand_total": "366.46",
+            "paid": "0.00",
+            "balance_due": "366.46",
+            "transactions": [],
+        }
+        with mock.patch.object(crm_auto_splitter, "_activate_crm_context"), \
+             mock.patch.object(
+                 crm_auto_splitter,
+                 "_find_modal_text",
+                 return_value="Could not convert this quote to an order",
+             ), \
+             mock.patch.object(crm_auto_splitter, "_click_modal_choice", return_value=True) as close_modal, \
+             mock.patch.object(crm_auto_splitter.time, "sleep"), \
+             mock.patch.object(crm_auto_splitter, "safe_get_with_partial_load") as reload_quote, \
+             mock.patch.object(crm_auto_splitter, "_wait_for_quote_scope"), \
+             mock.patch.object(crm_auto_splitter, "_quote_payment_state", return_value=state), \
+             mock.patch.object(
+                 crm_auto_splitter,
+                 "_convert_unpaid_split_quote_and_wait_for_order",
+                 return_value="4962604",
+             ) as produce_without_payment, \
+             mock.patch.object(crm_auto_splitter, "_record_split_payment_on_order") as pay_order:
+            result = crm_auto_splitter._fallback_from_failed_quote_payment(
+                driver,
+                "PayPal",
+                "98R74752F47335803",
+                "366.46",
+                crm_auto_splitter.QuotePaymentConversionError("conversion failed"),
+            )
+
+        self.assertEqual(result, "4962604")
+        close_modal.assert_called_once_with(driver, "close")
+        reload_quote.assert_called_once_with(
+            driver,
+            "https://crm2.legacy.printfly.com/quote/6097705",
+            "failed split quote verification reload",
+        )
+        produce_without_payment.assert_called_once_with(driver)
+        pay_order.assert_called_once_with(
+            driver,
+            "4962604",
+            "PayPal",
+            "98R74752F47335803",
+            "366.46",
+        )
+
+    def test_wait_for_new_split_order_stops_immediately_on_crm_conversion_modal(self):
+        driver = mock.Mock()
+        driver.current_url = "https://crm2.legacy.printfly.com/quote/6097705"
+        with mock.patch.object(crm_auto_splitter.time, "monotonic", side_effect=[0, 1]), \
+             mock.patch.object(crm_auto_splitter.time, "sleep"), \
+             mock.patch.object(crm_auto_splitter, "_activate_crm_context"), \
+             mock.patch.object(
+                 crm_auto_splitter,
+                 "_find_modal_text",
+                 return_value="There were some errors: Could not convert this quote to an order",
+             ):
+            with self.assertRaisesRegex(
+                crm_auto_splitter.QuotePaymentConversionError,
+                "Could not convert this quote to an order",
+            ):
+                crm_auto_splitter._wait_for_new_split_order(
+                    driver,
+                    "Split payment was submitted",
+                    timeout=30,
+                    detect_quote_conversion_error=True,
+                )
+
+    def test_paid_split_order_verification_rejects_unpaid_fallback_order(self):
+        with self.assertRaisesRegex(crm_auto_splitter.SplitterError, "payment verification failed"):
+            crm_auto_splitter._verify_paid_split_order_totals(
+                {"grand_total": "366.46", "paid": "0.00", "balance_due": "366.46"}
+            )
+
     def test_unpaid_quote_conversion_never_records_a_transaction(self):
         driver = mock.Mock()
         conversion = {"started": True, "action": "produceWithoutPayment", "source": "quote_scope"}

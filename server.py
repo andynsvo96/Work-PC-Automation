@@ -2827,7 +2827,10 @@ def resume_shared_queue_after_review(review_note):
 
 
 def _wait_for_status_completion(status_payload_fn, fallback_message="Queued task started."):
+    wait_started_at = time.time()
     while True:
+        if _automation_stop_is_blocking() or _automation_stop_requested_since(wait_started_at):
+            return False, "Queued task canceled by user."
         payload = status_payload_fn()
         runtime = payload.get("runtime") if isinstance(payload, dict) else {}
         state = payload.get("state") if isinstance(payload, dict) else {}

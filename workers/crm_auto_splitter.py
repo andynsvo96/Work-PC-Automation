@@ -70,6 +70,14 @@ class SplitterError(Exception):
     """Raised when the splitter must stop before taking action."""
 
 
+class QuotePaymentConversionError(SplitterError):
+    """Raised when CRM explicitly rejects payment-driven quote conversion."""
+
+
+class QuoteOrderConversionTimeout(SplitterError):
+    """Raised when a quote never exposes the order created from it."""
+
+
 def _profile_path():
     if os.path.isabs(PROCESSOR_PROFILE_DIR):
         return resolve_existing_automation_profile_path(PROCESSOR_PROFILE_DIR)
@@ -1517,14 +1525,168 @@ def _quote_visible_total(driver):
     return "0.00"
 
 
+def _optional_money(value):
+    if value is None or not str(value).strip():
+        return None
+    return _parse_money(value)
+
+
+def _quote_payment_state(driver):
+    state = _quote_scope(
+        driver,
+        """
+        const transactions = q.transactions || op.transactions || [];
+        const read = (methodName, fallback) => {
+          try {
+            if (typeof q[methodName] === 'function') return q[methodName]();
+          } catch (err) {}
+          return fallback;
+        };
+        return {
+          quote_id: q.id || null,
+          order_id: q.orderId || null,
+          grand_total: read('getGrandTotal', q.grandTotal),
+          paid: read('getAmountPaid', q.amountPaid),
+          balance_due: read('getAmountDue', q.amountDue),
+          transactions: transactions.map((tx) => ({
+            amount: tx.amount || '',
+            tag: tx.tag || tx.type || '',
+            note: tx.note || tx.info || tx.transactionId || ''
+          }))
+        };
+        """,
+    )
+    body_text = driver.execute_script("return document.body ? document.body.innerText : '';")
+    visible_values = {}
+    for key, label in (("paid", "Paid"), ("balance_due", "Balance Due")):
+        match = re.search(rf"{label}:\s*\$?\s*(-?[0-9,]+(?:\.\d{{2}})?)", body_text, re.IGNORECASE)
+        if match:
+            visible_values[key] = match.group(1)
+    state = dict(state or {})
+    for key, value in visible_values.items():
+        if state.get(key) is None or not str(state.get(key)).strip():
+            state[key] = value
+    if state.get("grand_total") is None or not str(state.get("grand_total")).strip():
+        state["grand_total"] = _quote_visible_total(driver)
+    state["transactions"] = state.get("transactions") if isinstance(state.get("transactions"), list) else []
+    return state
+
+
+def _quote_is_safe_for_unpaid_fallback(state, expected_amount, transaction_id):
+    state = state if isinstance(state, dict) else {}
+    if str(state.get("order_id") or "").strip():
+        return False, "the quote is already linked to an order"
+
+    paid = _optional_money(state.get("paid"))
+    balance_due = _optional_money(state.get("balance_due"))
+    grand_total = _optional_money(state.get("grand_total"))
+    expected = _parse_money(expected_amount)
+    if paid is None or balance_due is None or grand_total is None:
+        return False, "the quote payment state could not be verified"
+    if paid.copy_abs() > SPLIT_TOTAL_TOLERANCE:
+        return False, f"the quote still shows {_money_text(paid)} paid"
+    if (grand_total - expected).copy_abs() > SPLIT_TOTAL_TOLERANCE:
+        return False, "the quote total changed after the payment attempt"
+    if (balance_due - grand_total).copy_abs() > SPLIT_TOTAL_TOLERANCE:
+        return False, "the quote does not show its full total as unpaid"
+
+    expected_transaction_id = _clean_text(transaction_id).lower()
+    for transaction in state.get("transactions", []):
+        note = _clean_text(transaction.get("note")).lower()
+        if expected_transaction_id and expected_transaction_id in note:
+            return False, "the split transaction is still present on the quote"
+    return True, ""
+
+
+def _verify_paid_split_order_totals(totals):
+    totals = totals if isinstance(totals, dict) else {}
+    grand_total = _parse_money(totals.get("grand_total"))
+    paid = _parse_money(totals.get("paid"))
+    balance_due = _parse_money(totals.get("balance_due"))
+    if (paid - grand_total).copy_abs() > SPLIT_TOTAL_TOLERANCE or balance_due.copy_abs() > SPLIT_TOTAL_TOLERANCE:
+        raise SplitterError(
+            "Split order payment verification failed: "
+            f"Grand Total ${_money_text(grand_total)}, Paid ${_money_text(paid)}, "
+            f"Balance Due ${_money_text(balance_due)}."
+        )
+    return {
+        "passed": True,
+        "grand_total": _money_text(grand_total),
+        "paid": _money_text(paid),
+        "balance_due": _money_text(balance_due),
+    }
+
+
+def _record_split_payment_on_order(driver, order_id, tag, transaction_id, amount):
+    order_url = _order_url(order_id=order_id)
+    _open_order_scope_with_reload(driver, order_url, order_id=order_id, label=f"fallback split order {order_id}")
+    before = _read_order_totals(driver)
+    expected = _parse_money(amount)
+    if (_parse_money(before.get("grand_total")) - expected).copy_abs() > SPLIT_TOTAL_TOLERANCE:
+        raise SplitterError(
+            "Produce Without Payment fallback created an order with a different total. "
+            f"Expected ${_money_text(expected)}, found ${before.get('grand_total') or '0.00'}."
+        )
+    if _parse_money(before.get("paid")).copy_abs() > SPLIT_TOTAL_TOLERANCE:
+        return _verify_paid_split_order_totals(before)
+
+    _open_record_transaction(driver, quote=False)
+    _save_transaction_modal_with_amount(driver, tag, transaction_id, amount=expected)
+    time.sleep(2)
+    _open_order_scope_with_reload(driver, order_url, order_id=order_id, label=f"paid fallback split order {order_id}")
+    return _verify_paid_split_order_totals(_read_order_totals(driver))
+
+
+def _fallback_from_failed_quote_payment(driver, tag, transaction_id, amount, failure):
+    try:
+        _activate_crm_context(driver)
+        if "could not convert this quote to an order" in _find_modal_text(driver).lower():
+            _click_modal_choice(driver, "close")
+            time.sleep(1)
+    except Exception:
+        pass
+
+    try:
+        driver.switch_to.default_content()
+        quote_url = str(driver.current_url)
+        if "/quote/" not in quote_url and "/quotes/" not in quote_url:
+            raise SplitterError(f"the browser is no longer on the failed quote ({quote_url})")
+        safe_get_with_partial_load(driver, quote_url, "failed split quote verification reload")
+        _wait_for_quote_scope(driver, timeout=45)
+        state = _quote_payment_state(driver)
+    except Exception as err:
+        raise SplitterError(
+            f"{failure} Produce Without Payment fallback was blocked because the quote payment state "
+            f"could not be inspected: {err}"
+        ) from err
+    safe, reason = _quote_is_safe_for_unpaid_fallback(state, amount, transaction_id)
+    if not safe:
+        raise SplitterError(f"{failure} Produce Without Payment fallback was blocked because {reason}.")
+
+    print(
+        "CRM rejected or did not finish payment-driven quote conversion. "
+        "The quote is confirmed fully unpaid; using Produce Without Payment fallback."
+    )
+    order_id = _convert_unpaid_split_quote_and_wait_for_order(driver)
+    _record_split_payment_on_order(driver, order_id, tag, transaction_id, amount)
+    return order_id
+
+
 def _record_split_payment_and_wait_for_order(driver, tag, transaction_id):
     amount = _quote_visible_total(driver)
     _open_record_transaction(driver, quote=True)
     _save_transaction_modal_with_amount(driver, tag, transaction_id, amount=amount)
-    return _wait_for_new_split_order(driver, "Split payment was saved")
+    try:
+        return _wait_for_new_split_order(
+            driver,
+            "Split payment was submitted",
+            detect_quote_conversion_error=True,
+        )
+    except (QuotePaymentConversionError, QuoteOrderConversionTimeout) as err:
+        return _fallback_from_failed_quote_payment(driver, tag, transaction_id, amount, err)
 
 
-def _wait_for_new_split_order(driver, action_description, timeout=300):
+def _wait_for_new_split_order(driver, action_description, timeout=300, detect_quote_conversion_error=False):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         time.sleep(1)
@@ -1538,13 +1700,32 @@ def _wait_for_new_split_order(driver, action_description, timeout=300):
             return order_id
         try:
             _activate_crm_context(driver)
+            modal_text = _find_modal_text(driver)
+            if detect_quote_conversion_error and "could not convert this quote to an order" in modal_text.lower():
+                raise QuotePaymentConversionError(
+                    f"CRM rejected payment-driven quote conversion: {_clean_text(modal_text)}"
+                )
+            if "/quote/" in url or "/quotes/" in url:
+                quote_state = _quote_scope(driver, "return {order_id: q.orderId || null};")
+                linked_order_id = str((quote_state or {}).get("order_id") or "").strip()
+                if linked_order_id:
+                    order_url = _order_url(order_id=linked_order_id)
+                    _wait_for_crm_context_with_reload(
+                        driver,
+                        order_url,
+                        f"new split order {linked_order_id}",
+                        timeout=45,
+                    )
+                    return linked_order_id
             text = driver.execute_script("return document.body ? document.body.innerText : '';")
             match = re.search(r"\|\s*(\d{6,})\b", text)
             if match and "/order/" in url:
                 return match.group(1)
+        except (QuotePaymentConversionError, QuoteOrderConversionTimeout):
+            raise
         except Exception:
             pass
-    raise SplitterError(f"{action_description}, but the quote did not convert to a visible order.")
+    raise QuoteOrderConversionTimeout(f"{action_description}, but the quote did not convert to a visible order.")
 
 
 def _convert_unpaid_split_quote_and_wait_for_order(driver):
@@ -1625,6 +1806,11 @@ def _create_split_order_in_worker(
             label=f"new split order {new_order_id}",
         )
         totals = _read_order_totals(driver)
+        payment_verification = (
+            _verify_paid_split_order_totals(totals)
+            if transaction_id
+            else {"passed": True, "skipped": True, "reason": "original_order_unpaid"}
+        )
         return {
             "split_index": split["split_index"],
             "order_id": new_order_id,
@@ -1640,6 +1826,7 @@ def _create_split_order_in_worker(
             "quote_save": saved_quote,
             "configure_result": configured,
             "totals": totals,
+            "payment_verification": payment_verification,
         }
     finally:
         safe_driver_quit(driver, profile_path=profile_path)
@@ -3140,6 +3327,11 @@ def run_split_order(
                         label=f"new split order {new_order_id}",
                     )
                     totals = _read_order_totals(driver)
+                    payment_verification = (
+                        _verify_paid_split_order_totals(totals)
+                        if transaction_id
+                        else {"passed": True, "skipped": True, "reason": "original_order_unpaid"}
+                    )
                     split_total += Decimal(totals["grand_total"])
                     split_orders.append(
                         {
@@ -3157,6 +3349,7 @@ def run_split_order(
                             "quote_save": saved_quote,
                             "configure_result": configured,
                             "totals": totals,
+                            "payment_verification": payment_verification,
                         }
                     )
                     report["completed_split_count"] = len(split_orders)
