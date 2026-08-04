@@ -3,13 +3,19 @@ from unittest import mock
 
 import profile_setup_autofill as setup
 from credential_store import CredentialNotFoundError, PaycomCredential, StoredCredential
-from windows_credentials import SLACK_CREDENTIAL_TARGET
+from windows_credentials import (
+    CRM_CREDENTIAL_TARGET,
+    SALESFORCE_CREDENTIAL_TARGET,
+    SANMAR_CREDENTIAL_TARGET,
+    SLACK_CREDENTIAL_TARGET,
+)
 
 
 class _Element:
-    def __init__(self):
+    def __init__(self, element_id=None):
         self.values = []
         self.cleared = 0
+        self.id = element_id
 
     def is_displayed(self):
         return True
@@ -23,6 +29,11 @@ class _Element:
     def send_keys(self, value):
         self.values.append(value)
 
+    def get_attribute(self, name):
+        if name == "value" and self.values:
+            return self.values[-1]
+        return ""
+
 
 class ProfileSetupAutofillTests(unittest.TestCase):
     def test_paycom_values_read_from_platform_credential_store(self):
@@ -35,6 +46,23 @@ class ProfileSetupAutofillTests(unittest.TestCase):
         with mock.patch.object(setup, "read_credential", return_value=credential) as read:
             self.assertEqual(setup._credential_values("slack"), ("slack@example.test", "secret", ""))
         read.assert_called_once_with(SLACK_CREDENTIAL_TARGET)
+
+    def test_each_standard_setup_uses_its_own_platform_credential(self):
+        for service, target in (
+            ("crm", CRM_CREDENTIAL_TARGET),
+            ("sanmar", SANMAR_CREDENTIAL_TARGET),
+            ("salesforce", SALESFORCE_CREDENTIAL_TARGET),
+        ):
+            with self.subTest(service=service), mock.patch.object(
+                setup,
+                "read_credential",
+                return_value=StoredCredential(target, f"{service}-user", "secret"),
+            ) as read:
+                self.assertEqual(
+                    setup._credential_values(service),
+                    (f"{service}-user", "secret", ""),
+                )
+                read.assert_called_once_with(target)
 
     def test_prefill_does_not_submit_login(self):
         username, password, pin = _Element(), _Element(), _Element()
@@ -57,6 +85,34 @@ class ProfileSetupAutofillTests(unittest.TestCase):
         build.assert_called_once()
         self.assertTrue(build.call_args.kwargs["detach"])
         quit_driver.assert_called_once_with(driver, profile_path="/tmp/profile", keep_browser_open=True)
+
+    def test_prefill_waits_for_password_that_renders_after_username(self):
+        username = _Element("username")
+        password = _Element("password")
+        driver = mock.Mock()
+        detected = [username, None, username, password]
+        with mock.patch.object(setup, "_credential_values", return_value=("user", "pass", "")), mock.patch.object(
+            setup, "build_chrome_driver", return_value=driver
+        ), mock.patch.object(setup, "safe_get_with_partial_load"), mock.patch.object(
+            setup, "safe_driver_quit"
+        ), mock.patch.object(
+            setup, "_first_visible", side_effect=detected
+        ), mock.patch.object(
+            setup, "is_chrome_profile_in_use", return_value=False
+        ), mock.patch.object(setup.time, "sleep"):
+            result = setup.open_and_prefill_setup_profile("slack", "/tmp/profile", "https://example.test", wait_seconds=1)
+
+        self.assertEqual(result.fields_filled, ("username", "password"))
+        self.assertEqual(username.values, ["user"])
+        self.assertEqual(password.values, ["pass"])
+
+    def test_fill_replaces_a_different_browser_saved_value(self):
+        field = _Element("username")
+        field.values.append("old-user")
+
+        self.assertTrue(setup._fill(field, "windows-user"))
+        self.assertEqual(field.cleared, 1)
+        self.assertEqual(field.values[-1], "windows-user")
 
     def test_missing_credential_opens_profile_for_manual_setup(self):
         driver = mock.Mock()

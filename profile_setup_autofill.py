@@ -85,12 +85,14 @@ def open_native_setup_profile(service, profile_path, url, chrome_executable):
 
 
 _USERNAME_SELECTORS = (
-    "input[name='username']", "input[name='userName']", "input[name='email']", "input[name='login']",
-    "input[id*='username' i]", "input[id*='email' i]", "input[type='email']", "input[autocomplete='username']",
+    "input[name='username']", "input[name='userName']", "input[name='j_username']",
+    "input[name='email']", "input[name='login']", "input[name='loginfmt']",
+    "input[id*='username' i]", "input[id*='email' i]", "input[type='email']",
+    "input[autocomplete='username']", "input[autocomplete='email']",
 )
 _PASSWORD_SELECTORS = (
-    "input[name='password']", "input[id*='password' i]", "input[type='password']:not([maxlength='4'])",
-    "input[autocomplete='current-password']",
+    "input[name='password']", "input[name='j_password']", "input[id*='password' i]",
+    "input[type='password']:not([maxlength='4'])", "input[autocomplete='current-password']",
 )
 _PIN_SELECTORS = (
     "input[name='pin']", "input[id*='pin' i]", "input[placeholder*='PIN' i]", "input[type='password'][maxlength='4']",
@@ -115,9 +117,36 @@ def _first_visible(driver, selectors):
 def _fill(element, value):
     if not element or not str(value or ""):
         return False
-    element.clear()
-    element.send_keys(str(value))
-    return True
+    value = str(value)
+    try:
+        current_value = str(element.get_attribute("value") or "")
+    except Exception:
+        current_value = ""
+    if current_value != value:
+        element.clear()
+        element.send_keys(value)
+    try:
+        return str(element.get_attribute("value") or "") == value
+    except Exception:
+        # Some test doubles and unusual browser elements do not expose a
+        # readable value even though send_keys succeeded.
+        return True
+
+
+def _element_token(label, element):
+    """Return a stable key so a visible field is not cleared every poll."""
+    try:
+        remote_id = str(element.id or "")
+    except Exception:
+        remote_id = ""
+    return label, remote_id or id(element)
+
+
+def _expected_fields(service):
+    fields = {"username", "password"}
+    if service == "paycom":
+        fields.add("PIN")
+    return fields
 
 
 def _credential_values(service):
@@ -163,21 +192,29 @@ def open_and_prefill_setup_profile(service, profile_path, url, wait_seconds=10):
         if not credential_available:
             return SetupAutofillResult(service, (), credential_available=False)
         deadline = time.monotonic() + max(1, int(wait_seconds))
+        expected = _expected_fields(service)
+        filled = []
+        filled_elements = set()
         while time.monotonic() < deadline:
             username_field = _first_visible(driver, _USERNAME_SELECTORS)
             password_field = _first_visible(driver, _PASSWORD_SELECTORS)
             pin_field = _first_visible(driver, _PIN_SELECTORS) if service == "paycom" else None
-            if username_field or password_field or pin_field:
-                filled = []
-                if _fill(username_field, username):
-                    filled.append("username")
-                if _fill(password_field, password):
-                    filled.append("password")
-                if _fill(pin_field, pin):
-                    filled.append("PIN")
+            for label, element, value in (
+                ("username", username_field, username),
+                ("password", password_field, password),
+                ("PIN", pin_field, pin),
+            ):
+                if element is None:
+                    continue
+                token = _element_token(label, element)
+                if token not in filled_elements and _fill(element, value):
+                    filled_elements.add(token)
+                    if label not in filled:
+                        filled.append(label)
+            if expected.issubset(filled):
                 return SetupAutofillResult(service, tuple(filled))
             time.sleep(0.25)
-        return SetupAutofillResult(service, ())
+        return SetupAutofillResult(service, tuple(filled))
     finally:
         if driver:
             # Setup is handed to the operator after credentials are filled.

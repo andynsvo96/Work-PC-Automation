@@ -13223,6 +13223,12 @@ def _resolve_profile_path(profile_dir):
 
 def _chrome_profile_setup_targets():
     importlib.reload(config_module)
+    sanmar_base_url = str(
+        getattr(config_module, "SANMAR_URL", "") or "https://www.sanmar.com/"
+    ).rstrip("/")
+    sanmar_login_url = (
+        sanmar_base_url if sanmar_base_url.lower().endswith("/login") else sanmar_base_url + "/login"
+    )
     return {
         "paycom": {
             "label": "Paycom",
@@ -13246,7 +13252,7 @@ def _chrome_profile_setup_targets():
         "sanmar": {
             "label": "SanMar",
             "profile_path": _resolve_profile_path(getattr(config_module, "SANMAR_PROFILE_DIR", "chrome_profile_sanmar")),
-            "url": str(getattr(config_module, "SANMAR_CART_URL", "") or "https://www.sanmar.com/cart"),
+            "url": sanmar_login_url,
         },
         "salesforce": {
             "label": "Salesforce",
