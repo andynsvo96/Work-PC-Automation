@@ -10110,7 +10110,7 @@ def start_crm_mass_emailer_run(action="process_queue", dry_run=True, limit=None,
 
 CRM_EXTENSION_SHEET_SCANNER_ORDER_AUTOMATIONS = {
     "copyright_cancel": {"label": "Copyright - Cancel", "requires_reason": True},
-    "content_violation_cancel": {"label": "Content Violation - Cancel", "requires_reason": False},
+    "content_violation_cancel": {"label": "Content Violation - Cancel", "requires_reason": True},
     "existing_designs_cancel": {"label": "CANCEL - Existing Designs", "requires_reason": False},
     "outside_limit_cancel": {"label": "CANCEL - Outside Limit", "requires_reason": False},
     "complicated_emb_to_hdd": {"label": "Complicated EMB to HDD", "requires_reason": False},
