@@ -2071,8 +2071,8 @@ def _scroll_salesforce_email_composer_to_top(driver):
 
 
 def _maximize_salesforce_email_composer(driver):
-    clicked = bool(
-        driver.execute_script(
+    for _attempt in range(12):
+        target = driver.execute_script(
             """
             function visible(el) {
               const rect = el.getBoundingClientRect();
@@ -2082,6 +2082,19 @@ def _maximize_salesforce_email_composer(driver):
                 && rect.bottom > 0 && rect.top < window.innerHeight
                 && rect.right > 0 && rect.left < window.innerWidth;
             }
+            const exact = Array.from(document.querySelectorAll(
+              '[role=dialog].slds-docked-composer button.maxButton, '
+              + '[role=dialog].slds-docked-composer [title="Maximize"], '
+              + '.slds-docked-composer button.maxButton, '
+              + '.slds-docked-composer [title="Maximize"]'
+            ))
+              .filter(visible)
+              .sort((a, b) => {
+                const ar = a.getBoundingClientRect();
+                const br = b.getBoundingClientRect();
+                return (br.bottom - ar.bottom) || (br.right - ar.right);
+              });
+            if (exact.length) return exact[0];
             function clean(value) {
               return (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
             }
@@ -2096,7 +2109,7 @@ def _maximize_salesforce_email_composer(driver):
               })
               .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
             const composer = composers[0];
-            if (!composer) return false;
+            if (!composer) return null;
             const cr = composer.getBoundingClientRect();
             const explicit = Array.from(composer.querySelectorAll('button,a,[role=button],span,div'))
               .filter((el) => {
@@ -2114,26 +2127,15 @@ def _maximize_salesforce_email_composer(driver):
               const y = cr.top + 22;
               target = document.elementFromPoint(x, y);
             }
-            if (!target || target === document.body) return false;
-            const rect = target.getBoundingClientRect();
-            const x = rect.left + rect.width / 2;
-            const y = rect.top + rect.height / 2;
-            for (const type of ['mouseover', 'mousedown', 'mouseup', 'click']) {
-              target.dispatchEvent(new MouseEvent(type, {
-                bubbles: true,
-                cancelable: true,
-                view: window,
-                clientX: x,
-                clientY: y
-              }));
-            }
-            return true;
+            if (!target || target === document.body) return null;
+            return target.closest('button,a,[role=button]') || target;
             """
         )
-    )
-    if clicked:
-        time.sleep(1)
-    return clicked
+        if target is not None and _click_element_center(driver, target):
+            time.sleep(1)
+            return True
+        time.sleep(0.25)
+    return False
 
 
 def _set_salesforce_from_orders(driver):
@@ -2274,6 +2276,16 @@ def _set_salesforce_from_orders(driver):
                 });
             }
             const composer = composerCandidates()[0] || document;
+            const exactControls = Array.from(composer.querySelectorAll(
+              'a.select[role=button][aria-controls], a.select[role=button][aria-owns]'
+            ))
+              .filter((el) => {
+                if (!rendered(el)) return false;
+                const text = clean(`${el.innerText || ''} ${el.textContent || ''}`).toLowerCase();
+                return targetDomain && text.includes('@' + targetDomain);
+              })
+              .sort((a, b) => a.getBoundingClientRect().y - b.getBoundingClientRect().y);
+            if (exactControls.length) return exactControls[0];
             const nodes = Array.from(composer.querySelectorAll('label,span,div,td,th'));
             const labels = nodes.filter((el) => {
               if (!rendered(el)) return false;
@@ -2420,14 +2432,22 @@ def _set_salesforce_from_orders(driver):
                     && rect.bottom > 0 && rect.top < window.innerHeight
                     && rect.right > 0 && rect.left < window.innerWidth;
                 }
-                return Array.from(document.querySelectorAll('[role=listbox], [role=menu], ul, div'))
+                const expandedControls = Array.from(document.querySelectorAll('[aria-expanded="true"]'));
+                for (const control of expandedControls) {
+                  const controlledId = control.getAttribute('aria-controls') || control.getAttribute('aria-owns');
+                  if (!controlledId) continue;
+                  const controlled = document.getElementById(controlledId);
+                  if (!controlled || !visible(controlled)) continue;
+                  const text = clean(controlled.innerText || controlled.textContent || '');
+                  if (targetDomain && text.includes('@' + targetDomain)) return true;
+                }
+                return Array.from(document.querySelectorAll('[role=listbox], [role=menu], ul'))
                   .some((el) => {
                     if (!visible(el)) return false;
                     const text = clean(el.innerText || el.textContent || '');
                     const rect = el.getBoundingClientRect();
                     return rect.width > 220 && rect.height > 60
-                      && targetDomain && text.includes('@' + targetDomain)
-                      && (text.includes('--none--') || text.includes('a.vo') || text.includes('affiliate relations'));
+                      && targetDomain && text.includes('@' + targetDomain);
                   });
                 """
                 ,
@@ -2853,15 +2873,31 @@ def _set_salesforce_from_orders(driver):
                     && rect.bottom > 0 && rect.top < window.innerHeight
                     && rect.right > 0 && rect.left < window.innerWidth;
                 }
-                const roots = Array.from(document.querySelectorAll('*'))
+                const controlledRoots = Array.from(document.querySelectorAll('[aria-expanded="true"]'))
+                  .map((control) => {
+                    const controlledId = control.getAttribute('aria-controls') || control.getAttribute('aria-owns');
+                    return controlledId ? document.getElementById(controlledId) : null;
+                  })
+                  .filter((el) => el && visible(el));
+                const roots = Array.from(new Set([
+                  ...controlledRoots,
+                  ...Array.from(document.querySelectorAll('[role=listbox], [role=menu], ul')),
+                  ...Array.from(document.querySelectorAll('*'))
+                ]))
                   .filter((el) => {
                     if (!visible(el)) return false;
                     if (el.scrollHeight <= el.clientHeight + 8) return false;
                     const rect = el.getBoundingClientRect();
                     const text = clean(el.innerText || el.textContent || '');
-                    const looksLikeFromMenu = text.includes('--none--')
-                      && targetDomain && text.includes('@' + targetDomain)
-                      && (text.includes('a.vo') || text.includes('customer care'));
+                    const role = (el.getAttribute('role') || '').toLowerCase();
+                    const isMenu = role === 'listbox' || role === 'menu'
+                      || el.tagName.toLowerCase() === 'ul'
+                      || controlledRoots.includes(el);
+                    const looksLikeFromMenu = targetDomain
+                      && text.includes('@' + targetDomain)
+                      && !text.includes('subject')
+                      && !text.includes('related to')
+                      && (isMenu || el.querySelector('[role=option], [role=menuitem], .slds-listbox__option'));
                     return looksLikeFromMenu
                       && rect.width > 250
                       && rect.height > 90
@@ -2870,6 +2906,9 @@ def _set_salesforce_from_orders(driver):
                   .sort((a, b) => {
                     const ar = a.getBoundingClientRect();
                     const br = b.getBoundingClientRect();
+                    const aControlled = controlledRoots.includes(a) ? 0 : 1;
+                    const bControlled = controlledRoots.includes(b) ? 0 : 1;
+                    if (aControlled !== bControlled) return aControlled - bControlled;
                     const aRole = /listbox|menu/i.test(a.getAttribute('role') || '') ? 0 : 1;
                     const bRole = /listbox|menu/i.test(b.getAttribute('role') || '') ? 0 : 1;
                     if (aRole !== bRole) return aRole - bRole;

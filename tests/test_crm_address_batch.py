@@ -132,6 +132,20 @@ class CrmRecoverableErrorTests(unittest.TestCase):
 
 
 class CrmCopyrightCancelTests(unittest.TestCase):
+    def test_salesforce_composer_maximize_retries_with_trusted_click(self):
+        driver = mock.Mock()
+        maximize_control = mock.Mock()
+        driver.execute_script.side_effect = [None, maximize_control]
+
+        with mock.patch.object(crm_copyright_cancel, "_click_element_center", return_value=True) as click, \
+             mock.patch.object(crm_copyright_cancel.time, "sleep"):
+            maximized = crm_copyright_cancel._maximize_salesforce_email_composer(driver)
+
+        self.assertTrue(maximized)
+        self.assertEqual(driver.execute_script.call_count, 2)
+        click.assert_called_once_with(driver, maximize_control)
+        self.assertNotIn("dispatchEvent(new MouseEvent", driver.execute_script.call_args.args[0])
+
     def test_salesforce_saved_username_chooser_uses_stored_account(self):
         driver = mock.Mock()
         driver.execute_script.return_value = True
