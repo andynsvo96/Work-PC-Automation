@@ -172,6 +172,18 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertIn("cannot be retried safely", response.get_json()["message"])
         self.assertEqual(self.runtime.enqueued, [])
 
+    def test_failed_sheet_session_retry_includes_spreadsheet_error_rows(self):
+        response = self.client.post("/crm/mass-emailer", json={"retry_errors": True})
+
+        self.assertEqual(response.status_code, 202)
+        task = self.runtime.enqueued[-1]
+        self.assertEqual(task["label"], "Sheets Scanner")
+        self.assertEqual(task["task_type"], "crm.mass_emailer")
+        self.assertEqual(
+            task["arguments"],
+            {"action": "process_queue", "dry_run": False, "limit": None, "retry_errors": True},
+        )
+
     def test_registered_executors_cover_route_task_types(self):
         registered = set(server.register_shared_queue_task_executors())
         self.assertIn("communications.paycom_clock", registered)

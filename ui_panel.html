@@ -2207,6 +2207,8 @@ function renderQueue(payload) {
     const status = String(task.status || '').toLowerCase();
     const canCancel = status === 'queued' || status === 'running' || status === 'idle';
     const canDelete = !sharedMode && (status === 'completed' || status === 'failed');
+    const canRetryFailedSheetsScanner = status === 'failed'
+      && String(task.label || '').trim().toLowerCase() === 'sheets scanner';
     const draggable = !sharedMode && status === 'queued';
     const dragGlyph = draggable ? '&#8942;&#8942;' : '';
     const pos = status === 'queued' && task.position ? `#${task.position} ` : '';
@@ -2242,6 +2244,13 @@ function renderQueue(payload) {
     const targetControl = targetOptions
       ? `<select class='queue-target-select' title='Safely reassign without changing FIFO position' onchange="reassignQueueTask('${esc(task.id || '')}', this.value)">${targetOptions}</select>`
       : '';
+    const retryFailedSheetsScannerControl = canRetryFailedSheetsScanner
+      ? `<button class='secondary tiny' title='Retry spreadsheet ERROR rows; completed cancellations and refunds are detected and skipped' onclick='retryFailedSheetsScannerSession(this)'>Retry Failed Orders</button>`
+      : '';
+    const deleteControl = canDelete
+      ? `<button class='secondary tiny' title='Delete queue entry' onclick="deleteQueueTask('${esc(task.id || '')}')">Delete</button>`
+      : '';
+    const finishedControl = `${retryFailedSheetsScannerControl}${deleteControl}` || '<span></span>';
     return `
       <div class='queue-item ${esc(status)}' data-task-id='${esc(task.id || '')}' draggable='${draggable ? 'true' : 'false'}'
         ondragstart='handleQueueDragStart(event)' ondragover='handleQueueDragOver(event)' ondrop='handleQueueDrop(event)' ondragend='handleQueueDragEnd(event)'>
@@ -2251,7 +2260,7 @@ function renderQueue(payload) {
           <div class='queue-meta'>${esc(task.category || 'Automation')}${esc(details)}${esc(advanced)}${sourceVisual}${runnerVisual} | ${esc(queueTimeText(task))}${esc(progressText)}${esc(msg)}</div>
         </div>
         <div class='queue-status ${esc(status)}'>${esc(queueStatusLabel(status))}</div>
-        <div class='queue-actions'>${targetControl}${canCancel ? `<button class='danger queue-cancel-btn' title='Cancel task' aria-label='Cancel task' onclick="cancelQueueTask('${esc(task.id || '')}')">X</button>` : (canDelete ? `<button class='secondary tiny' title='Delete queue entry' onclick="deleteQueueTask('${esc(task.id || '')}')">Delete</button>` : "<span></span>")}</div>
+        <div class='queue-actions'>${targetControl}${canCancel ? `<button class='danger queue-cancel-btn' title='Cancel task' aria-label='Cancel task' onclick="cancelQueueTask('${esc(task.id || '')}')">X</button>` : finishedControl}</div>
         ${expanded ? `<div class='queue-runs'>${queueRunHistoryHtml(task)}</div>` : ''}
       </div>`;
   }).join('');
@@ -2340,6 +2349,37 @@ async function cancelQueueTask(taskId) {
     await refreshAutomationStatusesAfterQueueChange();
   } catch (e) {
     setStatus('Queue cancel failed: ' + e.message);
+  }
+}
+
+async function retryFailedSheetsScannerSession(button) {
+  const confirmed = window.confirm(
+    'Retry all failed Sheets Scanner rows? Rows with an ERROR message will be included automatically. '
+    + 'The automation checks CRM first and skips cancellations, refunds, refund fees, and sales notes that are already recorded.'
+  );
+  if (!confirmed) return;
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Queuing Retry...';
+  }
+  setStatus('Queuing failed Sheets Scanner rows for retry.');
+  try {
+    const d = await api('/crm/mass-emailer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({retry_errors: true}),
+    });
+    const retryInput = document.getElementById('crmMassEmailerRetryErrorsInput');
+    if (retryInput) retryInput.checked = true;
+    setStatus(d.message || 'Failed Sheets Scanner rows queued for retry.');
+    await loadQueue(false);
+    await loadCrmMassEmailerStatus(false);
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Retry Failed Orders';
+    }
+    setStatus('Sheets Scanner retry failed: ' + error.message);
   }
 }
 
