@@ -47,6 +47,12 @@ class SettingsUiStructureTests(unittest.TestCase):
             with self.subTest(function_name=function_name):
                 self.assertIn(f"function {function_name}(", self.html)
 
+    def test_connection_cards_use_container_responsive_columns(self):
+        self.assertRegex(
+            self.html,
+            r"\.settings-connection-grid\{[^}]*grid-template-columns:repeat\(auto-fit,minmax\(140px,1fr\)\)",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
