@@ -13836,8 +13836,11 @@ if __name__ == "__main__":
     if not _acquire_server_singleton():
         logger.info("Another macOS dashboard server already owns the singleton lock; exiting duplicate process.")
         raise SystemExit(0)
-    _stop_orphan_mac_server_processes()
-    if not kill_existing_server():
+    # The singleton lock makes a second dashboard instance impossible on macOS.
+    # Do not enumerate and terminate listeners there: macOS can deny inspection
+    # of another process, which previously made a healthy restart fail closed.
+    # Windows still needs explicit listener cleanup because it has no singleton.
+    if sys.platform != "darwin" and not kill_existing_server():
         raise SystemExit("Could not stop the previous dashboard server safely.")
     configure_server_logging()
     reload_runtime_config()
