@@ -66,6 +66,26 @@ class SharedQueueTests(unittest.TestCase):
             {"order_id": "123"},
         )
 
+    def test_enqueue_sends_preferred_node_for_failover_tasks(self):
+        captured = {}
+
+        def opener(request, timeout):
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _Response({"id": "task-1", "sequence": 1, "status": "queued"})
+
+        client = SupabaseQueueClient(make_test_config(node_key="windows-pc"), opener=opener)
+        client.enqueue(
+            label="Automatic Work Clock Out",
+            category="Communications",
+            task_type="communications.automatic_work_out",
+            arguments={"origin_node": "windows-pc"},
+            preferred_node="windows-pc",
+            commit="abc123",
+        )
+
+        self.assertIsNone(captured["body"]["p_target_node"])
+        self.assertEqual(captured["body"]["p_preferred_node"], "windows-pc")
+
     def test_clear_finished_uses_scoped_rpc(self):
         captured = {}
 

@@ -12,7 +12,9 @@ application update introduces a new setting.
 
 # Queue mode. Keep "local" until Supabase setup is complete on every computer,
 # then change this to "shared" on both Windows and macOS. Shared mode never
-# falls back to local execution when Supabase is unavailable.
+# falls back to local execution when Supabase is unavailable. Shared mode also
+# lets a scheduled auto clock-out prefer its originating computer and fail over
+# to the other healthy desktop if the origin is offline at the due time.
 AUTOMATION_QUEUE_MODE = "local"
 
 # Remote control board access. With "tailscale", Flask listens only on

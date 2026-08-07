@@ -2653,6 +2653,8 @@ def enqueue_automation(
     task_type=None,
     task_arguments=None,
     target_node=None,
+    preferred_node=None,
+    allow_any_node=False,
     required_capability=None,
 ):
     startup_block = _automation_version_block_reason()
@@ -2675,22 +2677,24 @@ def enqueue_automation(
             return False, shared_queue_initialization_error or "Shared queue is not configured.", None
         if not str(task_type or "").strip():
             return False, "This automation has not been registered for safe cross-device execution.", None
-        if not target_node:
+        if not target_node and not allow_any_node:
             target_node = _requested_automation_target_node()
-        if required_capability == "system_power" and not target_node:
+        if required_capability == "system_power" and not target_node and not allow_any_node:
             target_node = runtime.client.config.node_key
         try:
-            target_node = _resolve_automatic_control_target(
-                runtime,
-                target_node,
-                required_capability=required_capability,
-            )
+            if not allow_any_node:
+                target_node = _resolve_automatic_control_target(
+                    runtime,
+                    target_node,
+                    required_capability=required_capability,
+                )
             task = runtime.enqueue(
                 label=str(label or "Automation Task"),
                 category=str(category or "Automation"),
                 task_type=str(task_type),
                 arguments=task_arguments if isinstance(task_arguments, dict) else {},
                 target_node=target_node,
+                preferred_node=preferred_node,
                 required_capability=required_capability,
                 details=str(details or "").strip() or None,
                 queue_mode=mode,
@@ -3817,6 +3821,12 @@ def _auto_clock_out_timer_callback():
     with state_lock:
         auto_clock_timer = None
 
+    # Shared mode has already persisted a scheduled queue task.  Do not create
+    # a second, device-pinned task if a leftover local timer fires during a
+    # configuration change or app upgrade.
+    if AUTOMATION_QUEUE_MODE == "shared":
+        return
+
     enqueue_automation(
         "Automatic Work Clock Out",
         "Communications",
@@ -3826,12 +3836,26 @@ def _auto_clock_out_timer_callback():
     )
 
 
-def _run_automatic_work_clock_out_queued():
+def _run_automatic_work_clock_out_queued(origin_node=None, scheduled_at=None):
     if WORK_CLOCK_SYNC_FROM_PAYCOM:
         _sync_paycom_hours_into_work_state("auto-clock-out-precheck", update_total_hours=True)
     with state_lock:
         state = load_work_state()
         active = state.get("active_shift") or {}
+        local_node = ""
+        if shared_queue_runtime is not None:
+            local_node = str(
+                getattr(getattr(getattr(shared_queue_runtime, "client", None), "config", None), "node_key", "") or ""
+            )
+        is_remote_failover = bool(origin_node and local_node and str(origin_node) != local_node)
+        if is_remote_failover and not active:
+            # The fallback computer has its own local work-state file.  Import
+            # the still-open Paycom punch before applying the normal automatic
+            # clock-out safeguards.
+            inferred, _note = _infer_active_shift_from_paycom_rows(state)
+            if inferred:
+                save_work_state(state)
+                active = state.get("active_shift") or {}
         allowed, reason = _auto_clock_out_allowed_for_active_shift(active, state=state)
         if not allowed:
             if not _clear_closed_active_shift_locked(state):
@@ -3847,8 +3871,78 @@ def _run_automatic_work_clock_out_queued():
     return ok, msg
 
 
+def _ensure_shared_auto_clock_out_task(auto_dt):
+    """Persist a due-time task that prefers its scheduling computer.
+
+    The target is intentionally open so a healthy peer can claim it when the
+    preferred computer has stopped heartbeating.  The shared queue's claim
+    policy prevents a peer from taking it while the preferred computer is
+    online.
+    """
+    runtime = shared_queue_runtime or initialize_shared_queue_runtime()
+    if runtime is None:
+        return False, shared_queue_initialization_error or "Shared queue is not configured."
+    origin_node = str(
+        getattr(getattr(getattr(runtime, "client", None), "config", None), "node_key", "") or ""
+    ).strip()
+    if not origin_node:
+        return False, "Shared queue has no local node identity."
+    auto_iso = auto_dt.isoformat()
+    old_task_id = None
+    with state_lock:
+        state = load_work_state()
+        active = state.get("active_shift") or {}
+        if active.get("auto_clock_out_at") != auto_iso:
+            return False, "Auto clock-out schedule changed before it could be queued."
+        if (
+            active.get("auto_clock_out_queue_task_id")
+            and active.get("auto_clock_out_queue_at") == auto_iso
+            and active.get("auto_clock_out_queue_origin") == origin_node
+        ):
+            return True, "Shared auto clock-out task is already scheduled."
+        old_task_id = str(active.get("auto_clock_out_queue_task_id") or "").strip() or None
+
+    if old_task_id:
+        try:
+            runtime.client.cancel(old_task_id)
+        except Exception as exc:
+            logger.warning("Could not cancel replaced shared auto clock-out task %s: %s", old_task_id, exc)
+
+    ok, msg, task = enqueue_automation(
+        "Automatic Work Clock Out",
+        "Communications",
+        _run_automatic_work_clock_out_queued,
+        queue_mode="scheduled",
+        scheduled_for=auto_dt,
+        task_type="communications.automatic_work_out",
+        task_arguments={"origin_node": origin_node, "scheduled_at": auto_iso},
+        preferred_node=origin_node,
+        allow_any_node=True,
+    )
+    if not ok:
+        return False, msg
+    task_id = str((task or {}).get("id") or "").strip()
+    if not task_id:
+        return False, "Shared auto clock-out task was queued without an ID."
+    with state_lock:
+        state = load_work_state()
+        active = state.get("active_shift") or {}
+        if active.get("auto_clock_out_at") == auto_iso:
+            active["auto_clock_out_queue_task_id"] = task_id
+            active["auto_clock_out_queue_at"] = auto_iso
+            active["auto_clock_out_queue_origin"] = origin_node
+            state["active_shift"] = active
+            save_work_state(state)
+    return True, msg
+
+
 def schedule_auto_clock_out(auto_dt):
     global auto_clock_timer
+    if AUTOMATION_QUEUE_MODE == "shared":
+        ok, msg = _ensure_shared_auto_clock_out_task(auto_dt)
+        if not ok:
+            logger.error("Could not schedule shared auto clock-out: %s", msg)
+        return ok, msg
     delay = max(1.0, (auto_dt - datetime.now()).total_seconds())
     with state_lock:
         _cancel_auto_clock_timer_locked()
@@ -4038,6 +4132,9 @@ def _clear_active_auto_clock_out_locked(state):
         active["automatic_mode"] = False
         active["manual_auto_clock_out"] = False
         active["auto_clock_out_source"] = None
+        active.pop("auto_clock_out_queue_task_id", None)
+        active.pop("auto_clock_out_queue_at", None)
+        active.pop("auto_clock_out_queue_origin", None)
         state["active_shift"] = active
         changed = True
 
@@ -4067,11 +4164,21 @@ def _clear_closed_active_shift_locked(state, now=None):
 
 def clear_auto_clock_out_schedule():
     cancel_auto_clock_out_timer()
+    queue_task_id = None
     with state_lock:
         state = load_work_state()
+        active = state.get("active_shift") or {}
+        queue_task_id = str(active.get("auto_clock_out_queue_task_id") or "").strip() or None
         if _clear_active_auto_clock_out_locked(state):
             save_work_state(state)
         refresh_tray_status_from_state(state)
+    if queue_task_id and AUTOMATION_QUEUE_MODE == "shared":
+        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
+        if runtime is not None:
+            try:
+                runtime.client.cancel(queue_task_id)
+            except Exception as exc:
+                logger.warning("Could not cancel shared auto clock-out task %s: %s", queue_task_id, exc)
     msg = "Auto clock-out timer was canceled."
     _audit_result("work.clear_auto_clock_out_schedule", True, msg)
     return True, msg
@@ -13654,7 +13761,10 @@ def _build_local_work_status_payload():
     with state_lock:
         state = load_work_state()
     active = state.get("active_shift") or {}
-    is_scheduled = bool(active.get("auto_clock_out_at")) and auto_clock_timer is not None
+    shared_auto_task_active = bool(
+        AUTOMATION_QUEUE_MODE == "shared" and active.get("auto_clock_out_queue_task_id")
+    )
+    is_scheduled = bool(active.get("auto_clock_out_at")) and (auto_clock_timer is not None or shared_auto_task_active)
     auto_clock = _build_auto_clock_payload(state)
     return {
         "success": True,
@@ -13666,7 +13776,7 @@ def _build_local_work_status_payload():
         "paycom_sync_enabled": WORK_CLOCK_SYNC_FROM_PAYCOM,
         "paycom_sync_before_clock_in": WORK_CLOCK_SYNC_BEFORE_CLOCK_IN,
         "paycom_sync_after_clock_out": WORK_CLOCK_SYNC_AFTER_CLOCK_OUT,
-        "auto_timer_active": bool(auto_clock_timer),
+        "auto_timer_active": bool(auto_clock_timer) or shared_auto_task_active,
         "auto_scheduled": is_scheduled,
         "auto_clock": auto_clock,
         "state": state,
