@@ -32,6 +32,78 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .card{background:#fff;border:1px solid #d9e2ec;border-radius:10px;padding:14px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
 .settings-header-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:flex-end;margin-bottom:0}
+.settings-page-header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:4px 0 16px}
+.settings-page-header h2{margin:0 0 5px;font-size:27px;letter-spacing:-.02em}
+.settings-page-header p{margin:0;color:#64748b;font-size:14px}
+.settings-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex-wrap:wrap}
+.settings-save-state{display:inline-flex;align-items:center;gap:7px;min-height:34px;padding:0 12px;margin:0;border:1px solid #bbf7d0;border-radius:999px;background:#ecfdf5;color:#15803d;font-size:12px;font-weight:700;white-space:nowrap}
+.settings-save-state::before{content:'✓';display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#22c55e;color:#fff;font-size:10px;font-weight:900}
+.settings-save-state.saving{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}
+.settings-save-state.saving::before{content:'↻';background:#3b82f6}
+.settings-save-state.error{border-color:#fecaca;background:#fef2f2;color:#b91c1c}
+.settings-save-state.error::before{content:'!';background:#ef4444}
+.settings-shell{display:grid;grid-template-columns:270px minmax(0,1fr);min-height:690px;background:#fff;border:1px solid #d9e2ec;border-radius:16px;overflow:hidden;box-shadow:0 14px 36px rgba(15,23,42,.07)}
+.settings-sidebar{display:flex;flex-direction:column;gap:18px;padding:22px;background:#f8fafc;border-right:1px solid #e2e8f0}
+.settings-search{position:relative}
+.settings-search::before{content:'';position:absolute;left:13px;top:50%;width:11px;height:11px;border:1.7px solid #94a3b8;border-radius:50%;transform:translateY(-60%);pointer-events:none}
+.settings-search::after{content:'';position:absolute;left:24px;top:24px;width:6px;height:1.7px;background:#94a3b8;transform:rotate(45deg);transform-origin:left center;pointer-events:none}
+.settings-search input{box-sizing:border-box;width:100%;height:40px;padding:8px 12px 8px 38px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#0f172a}
+.settings-nav-label{margin:4px 4px -6px;color:#94a3b8;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+.settings-nav{display:flex;flex-direction:column;gap:4px}
+.settings-nav-btn{display:flex;align-items:center;gap:10px;width:100%;min-height:42px;padding:8px 11px;border:0;border-radius:9px;background:transparent;color:#64748b;text-align:left;font-size:13px;font-weight:650;transition:background .15s ease,color .15s ease}
+.settings-nav-btn:hover{background:#eef2f7;color:#334155}
+.settings-nav-btn.active{position:relative;background:#eef2ff;color:#1d4ed8}
+.settings-nav-btn.active::before{content:'';position:absolute;left:-8px;top:0;bottom:0;width:4px;border-radius:4px;background:#2563eb}
+.settings-nav-icon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:currentColor;font-size:16px;font-weight:500}
+.settings-nav-badge{margin-left:auto;padding:2px 7px;border-radius:999px;background:#dcfce7;color:#15803d;font-size:10px;font-weight:800}
+.settings-health{margin-top:auto;padding:12px;border:1px solid #e2e8f0;border-radius:10px;background:#fff}
+.settings-health-title{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:750;color:#0f172a}
+.settings-health-dot{width:9px;height:9px;border-radius:50%;background:#22c55e}
+.settings-health-dot.error{background:#ef4444}
+.settings-health-text{margin-top:6px;color:#64748b;font-size:11px;line-height:1.4}
+.settings-main{min-width:0;padding:28px 30px 34px;background:#fff}
+.settings-section{display:none}
+.settings-section.active{display:block}
+.settings-section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:20px}
+.settings-section-heading h2{margin:0 0 5px;font-size:25px;letter-spacing:-.02em}
+.settings-section-heading p{margin:0;color:#64748b;font-size:13px;line-height:1.5}
+.settings-panel-card{padding:20px;border:1px solid #dbe3ef;border-radius:13px;background:#fff;margin-bottom:14px}
+.settings-panel-card:last-child{margin-bottom:0}
+.settings-panel-card h2,.settings-panel-card h3{margin-top:0}
+.settings-panel-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}
+.settings-panel-title h3{margin:0 0 4px;font-size:17px}
+.settings-panel-title p{margin:0;color:#64748b;font-size:12px;line-height:1.45}
+.settings-overview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.settings-overview-card{padding:18px;border:1px solid #dbe3ef;border-radius:13px;background:#fff}
+.settings-overview-card.wide{grid-column:1 / -1}
+.settings-overview-card h3{margin:0 0 4px;font-size:17px}
+.settings-overview-card>p{margin:0 0 15px;color:#64748b;font-size:12px}
+.settings-summary-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 13px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc}
+.settings-summary-k{color:#64748b;font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+.settings-summary-v{margin-top:4px;font-size:18px;font-weight:750;color:#0f172a}
+.settings-summary-state{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;background:#dcfce7;color:#15803d;font-size:11px;font-weight:750}
+.settings-summary-state::before{content:'';width:8px;height:8px;border-radius:50%;background:#22c55e}
+.settings-summary-state.off{background:#e2e8f0;color:#64748b}
+.settings-summary-state.off::before{background:#94a3b8}
+.settings-overview-link{display:inline-flex;align-items:center;gap:5px;margin-top:14px;padding:0;border:0;background:transparent;color:#2563eb;font-size:12px;font-weight:750}
+.settings-overview-link:hover{background:transparent;color:#1d4ed8;text-decoration:underline}
+.settings-connection-grid{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:10px}
+.settings-connection-card{display:flex;flex-direction:column;align-items:flex-start;min-height:92px;padding:13px;border:1px solid #dbe3ef;border-radius:10px;background:#f8fafc;color:#0f172a;text-align:left}
+.settings-connection-card:hover{background:#eff6ff;border-color:#93c5fd}
+.settings-connection-name{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:750}
+.settings-connection-mark{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:6px;background:#dbeafe;color:#2563eb;font-size:11px;font-weight:900}
+.settings-connection-action{margin-top:auto;color:#2563eb;font-size:11px;font-weight:750}
+.settings-task-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.settings-task-card{display:flex;align-items:center;gap:12px;min-height:72px;padding:12px;border:1px solid #dbe3ef;border-radius:10px;background:#f8fafc;color:#0f172a;text-align:left}
+.settings-task-card:hover{background:#eff6ff;border-color:#93c5fd}
+.settings-task-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:38px;height:38px;border-radius:9px;background:#eef2ff;color:#4f46e5;font-size:18px}
+.settings-task-copy{min-width:0}
+.settings-task-title{display:block;font-size:13px;font-weight:750}
+.settings-task-note{display:block;margin-top:3px;color:#64748b;font-size:11px}
+.settings-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.settings-form-grid>.settings-panel-card{margin:0}
+.settings-connections-note{margin:0 0 16px;color:#64748b;font-size:12px;line-height:1.5}
+.settings-empty-search{display:none;margin:10px 0;padding:14px;border:1px dashed #cbd5e1;border-radius:10px;color:#64748b;font-size:12px;text-align:center}
 .field{border-top:1px solid #eef2f7;padding-top:8px;margin-top:8px}
 .field label{font-weight:600;font-size:13px;display:block;margin-bottom:4px}
 .field input[type=text],.field input[type=number],.field input[type=time],.field textarea,.field select,select.select{width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;background:#fff}
@@ -394,10 +466,49 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 :root[data-theme='dark'] .os-icon.android{color:var(--vscode-green)}
 :root[data-theme='dark'] input[type='checkbox']{accent-color:#007acc}
 :root[data-theme='dark'] a{color:var(--vscode-blue-text)}
+:root[data-theme='dark'] .settings-page-header p,
+:root[data-theme='dark'] .settings-section-heading p,
+:root[data-theme='dark'] .settings-panel-title p,
+:root[data-theme='dark'] .settings-overview-card>p,
+:root[data-theme='dark'] .settings-health-text,
+:root[data-theme='dark'] .settings-task-note,
+:root[data-theme='dark'] .settings-connections-note{color:#9d9d9d}
+:root[data-theme='dark'] .settings-save-state{background:#20382b;border-color:#2f6b46;color:#89d185}
+:root[data-theme='dark'] .settings-save-state.saving{background:#04395e;border-color:#007acc;color:#4fc1ff}
+:root[data-theme='dark'] .settings-save-state.error{background:#3b2527;border-color:#8f3a3e;color:#f48771}
+:root[data-theme='dark'] .settings-shell,
+:root[data-theme='dark'] .settings-main,
+:root[data-theme='dark'] .settings-panel-card,
+:root[data-theme='dark'] .settings-overview-card{background:#252526;border-color:#3c3c3c}
+:root[data-theme='dark'] .settings-sidebar{background:#1f1f20;border-color:#3c3c3c}
+:root[data-theme='dark'] .settings-search input{background:#2d2d30!important;border-color:#555!important;color:#f0f0f0!important}
+:root[data-theme='dark'] .settings-nav-btn{color:#b8b8b8;background:transparent}
+:root[data-theme='dark'] .settings-nav-btn:hover{background:#2d2d30;color:#f0f0f0}
+:root[data-theme='dark'] .settings-nav-btn.active{background:#04395e;color:#4fc1ff}
+:root[data-theme='dark'] .settings-health{background:#252526;border-color:#3c3c3c}
+:root[data-theme='dark'] .settings-health-title,
+:root[data-theme='dark'] .settings-summary-v,
+:root[data-theme='dark'] .settings-task-card,
+:root[data-theme='dark'] .settings-connection-card{color:#f0f0f0}
+:root[data-theme='dark'] .settings-summary-row,
+:root[data-theme='dark'] .settings-task-card,
+:root[data-theme='dark'] .settings-connection-card{background:#2d2d30;border-color:#3c3c3c}
+:root[data-theme='dark'] .settings-task-card:hover,
+:root[data-theme='dark'] .settings-connection-card:hover{background:#04395e;border-color:#007acc}
+:root[data-theme='dark'] .settings-summary-k{color:#9d9d9d}
+:root[data-theme='dark'] .settings-summary-state{background:#20382b;color:#89d185}
+:root[data-theme='dark'] .settings-summary-state.off{background:#3c3c3c;color:#b8b8b8}
+:root[data-theme='dark'] .settings-overview-link{background:transparent;border-color:transparent;color:#4fc1ff}
+:root[data-theme='dark'] .settings-task-icon{background:#37304c;color:#b5a8ff}
+:root[data-theme='dark'] .settings-connection-mark{background:#04395e;color:#4fc1ff}
+:root[data-theme='dark'] .settings-nav-badge{background:#20382b;color:#89d185}
 @media (max-width:980px){.grid,.subgrid,.slack-day-message-panel{grid-template-columns:1fr}}
 @media (max-width:980px){.work-plan-days{grid-template-columns:repeat(4,minmax(110px,1fr))}}
+@media (max-width:980px){.settings-shell{grid-template-columns:1fr}.settings-sidebar{border-right:0;border-bottom:1px solid #e2e8f0}.settings-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.settings-health{margin-top:0}.settings-main{padding:24px}.settings-connection-grid{grid-template-columns:repeat(3,minmax(130px,1fr))}}
 @media (max-width:760px){.metrics,.desktop-metrics-grid,.processing-report-metrics,.work-timer-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}.work-plan-days{grid-template-columns:repeat(2,minmax(120px,1fr))}}
+@media (max-width:760px){.settings-page-header{align-items:flex-start;flex-direction:column}.settings-page-actions{width:100%;justify-content:flex-start}.settings-overview-grid,.settings-form-grid{grid-template-columns:1fr}.settings-overview-card.wide{grid-column:auto}.settings-task-grid{grid-template-columns:1fr}.settings-connection-grid{grid-template-columns:repeat(2,minmax(130px,1fr))}.settings-nav{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:520px){.work-hours-title-actions{width:100%;justify-content:flex-end}.work-cap-quick-setting{justify-content:flex-end}.work-timer-grid{grid-template-columns:1fr}.work-plan-days{grid-template-columns:1fr 1fr}.work-timer-value{font-size:30px}}
+@media (max-width:520px){.settings-sidebar,.settings-main{padding:16px}.settings-page-actions button{flex:1}.settings-save-state{width:100%;box-sizing:border-box;justify-content:center}}
 </style>
 </head>
 <body>
@@ -1144,105 +1255,159 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 </div>
 
 <div id='tabSettings' class='tab-panel'>
-  <div class='status' id='settingsStatusBox'>Settings load automatically and save when a field changes.</div>
-
-  <div class='card'>
-    <div class='row' style='justify-content:space-between;align-items:center'>
-      <h2 style='margin:0'>Settings</h2>
-      <div class='settings-header-actions'>
-        <details class='section-note'>
-          <summary>Read More</summary>
-          <div class='section-note-body'>
-            <p>The gear button keeps the main tabs cleaner. Config settings save to config.py, and CRM batch preferences save to their CRM state files.</p>
-            <p>Address Validator batch size uses 0 for continuous processing until no eligible orders remain.</p>
-            <p>Each SETUP button opens its visible login profile and fills the login details stored in Windows Credential Manager. It does not submit the form, so you can review the filled username, password, and Paycom PIN before continuing.</p>
-          </div>
-        </details>
-        <button class='secondary' onclick="openChromeProfileSetup('paycom', this)">SETUP Paycom</button>
-        <button class='secondary' onclick="openChromeProfileSetup('crm', this)">SETUP CRM</button>
-        <button class='secondary' onclick="openChromeProfileSetup('slack', this)">SETUP Slack</button>
-        <button class='secondary' onclick="openChromeProfileSetup('sanmar', this)">SETUP SanMar</button>
-        <button class='secondary' onclick="openChromeProfileSetup('salesforce', this)">SETUP Salesforce</button>
-        <button onclick='saveConfig()'>Save All Settings</button>
-        <button class='secondary' onclick='reloadAll()'>Reload</button>
-      </div>
+  <div class='settings-page-header'>
+    <div>
+      <h2>Settings</h2>
+      <p>Configure how your automations connect, behave, and run.</p>
+    </div>
+    <div class='settings-page-actions'>
+      <button class='secondary' type='button' onclick='reloadSettingsPage(this)'>Reload values</button>
+      <div class='settings-save-state' id='settingsStatusBox' role='status' aria-live='polite'>All changes saved</div>
     </div>
   </div>
 
-  <div class='card' style='margin-top:14px'>
-    <div class='card-title-row'>
-      <h2>Hardware &amp; Automation Workers</h2>
-      <button class='secondary tiny' type='button' onclick='loadNodeRuntime(true)'>Auto-detect Again</button>
-    </div>
-    <div id='nodeHardwareSummary' class='hardware-summary'></div>
-    <div class='subgrid'>
-      <div class='field'>
-        <label for='workerModeSelect'>Worker Mode</label>
-        <select id='workerModeSelect' onchange='syncWorkerModeControls()'>
-          <option value='auto'>Auto-detect</option>
-          <option value='manual'>Manual override</option>
-        </select>
+  <div class='settings-shell'>
+    <aside class='settings-sidebar' aria-label='Settings categories'>
+      <div class='settings-search'>
+        <label class='sr-only' for='settingsSearchInput'>Search settings</label>
+        <input id='settingsSearchInput' type='search' placeholder='Search settings' autocomplete='off' oninput='filterSettingsNavigation(this.value)'>
       </div>
-      <div class='field'>
-        <label for='manualWorkerCountInput'>Manual Workers</label>
-        <input id='manualWorkerCountInput' type='number' min='1' max='8' step='1' value='1'>
+      <div class='settings-nav-label'>Settings</div>
+      <nav class='settings-nav' id='settingsNav'>
+        <button class='settings-nav-btn active' type='button' data-settings-target='overview' data-search='overview summary common tasks setup status' onclick="showSettingsSection('overview')"><span class='settings-nav-icon'>＋</span><span>Overview</span></button>
+        <button class='settings-nav-btn' type='button' data-settings-target='connections' data-search='connections profiles setup login paycom crm slack sanmar salesforce' onclick="showSettingsSection('connections')"><span class='settings-nav-icon'>◎</span><span>Connections</span><span class='settings-nav-badge'>5</span></button>
+        <button class='settings-nav-btn' type='button' data-settings-target='crm' data-search='crm automation links reports lists batch workers browser retry credentials dry run' onclick="showSettingsSection('crm')"><span class='settings-nav-icon'>▤</span><span>CRM automation</span></button>
+        <button class='settings-nav-btn' type='button' data-settings-target='work' data-search='work paycom weekly hours cap clock in out sync break schedule pin' onclick="showSettingsSection('work')"><span class='settings-nav-icon'>◷</span><span>Work &amp; Paycom</span></button>
+        <button class='settings-nav-btn' type='button' data-settings-target='slack' data-search='slack messages channel clock in out lunch return day' onclick="showSettingsSection('slack')"><span class='settings-nav-icon'>▢</span><span>Slack messages</span></button>
+        <button class='settings-nav-btn' type='button' data-settings-target='system' data-search='system hardware computer cpu memory ram workers auto detect manual' onclick="showSettingsSection('system')"><span class='settings-nav-icon'>⚙</span><span>System &amp; workers</span></button>
+        <button class='settings-nav-btn' id='settingsAdvancedNavBtn' type='button' data-settings-target='advanced' data-search='advanced other queue remote clipboard screenshots system application' onclick="showSettingsSection('advanced')"><span class='settings-nav-icon'>⌁</span><span>Advanced</span></button>
+      </nav>
+      <div class='settings-empty-search' id='settingsEmptySearch'>No matching settings category.</div>
+      <div class='settings-health'>
+        <div class='settings-health-title'><span class='settings-health-dot' id='settingsHealthDot'></span><span id='settingsHealthTitle'>Configuration ready</span></div>
+        <div class='settings-health-text' id='settingsHealthText'>Settings load automatically and save after each change.</div>
       </div>
-    </div>
-    <div class='notice' id='workerRecommendationText'>Detecting this computer...</div>
-    <div class='row'>
-      <button type='button' onclick='saveWorkerSettings(this)'>Save Worker Mode</button>
-    </div>
-  </div>
+    </aside>
 
-  <div class='card' style='margin-top:14px'>
-    <div class='card-title-row'>
-      <h2>CRM Settings</h2>
-      <details class='section-note'>
-        <summary>Read More</summary>
-        <div class='section-note-body'>
-          <p>CRM LINKS groups report URLs by list mode. High Value has separate links and uses the same automation set as Rush.</p>
+    <main class='settings-main'>
+      <section class='settings-section active' data-settings-section='overview'>
+        <div class='settings-section-heading'>
+          <div><h2>Overview</h2><p>The important settings and setup shortcuts at a glance.</p></div>
         </div>
-      </details>
-    </div>
-    <div id='crmPreferenceFields'></div>
-    <div id='crmFields'></div>
-  </div>
-
-  <div class='grid' style='margin-top:14px'>
-    <div class='card'>
-      <div class='card-title-row'>
-        <h2>Work Settings</h2>
-        <details class='section-note'>
-          <summary>Read More</summary>
-          <div class='section-note-body'>
-            <p>Grouped by cap, hours, and sync behavior.</p>
+        <div class='settings-overview-grid'>
+          <div class='settings-overview-card wide'>
+            <div class='settings-panel-title'>
+              <div><h3>Connections</h3><p>Open a visible login profile to review stored sign-in details.</p></div>
+              <button class='secondary tiny' type='button' onclick="showSettingsSection('connections')">Manage all</button>
+            </div>
+            <div class='settings-connection-grid'>
+              <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('paycom', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>P</span>Paycom</span><span class='settings-connection-action'>Review setup →</span></button>
+              <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('crm', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>C</span>CRM</span><span class='settings-connection-action'>Review setup →</span></button>
+              <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('slack', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>Slack</span><span class='settings-connection-action'>Review setup →</span></button>
+              <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('sanmar', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>SanMar</span><span class='settings-connection-action'>Review setup →</span></button>
+              <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('salesforce', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>Salesforce</span><span class='settings-connection-action'>Review setup →</span></button>
+            </div>
           </div>
-        </details>
-      </div>
-      <div id='workFields'></div>
-    </div>
-    <div class='card'>
-      <h2>Paycom Settings</h2>
-      <div id='paycomFields'></div>
-    </div>
-  </div>
 
-  <div class='card' style='margin-top:14px'>
-    <div class='card-title-row'>
-      <h2>Slack Settings</h2>
-      <details class='section-note'>
-        <summary>Read More</summary>
-        <div class='section-note-body'>
-          <p>Pick a day to edit the Slack clock-in and clock-out messages.</p>
+          <div class='settings-overview-card'>
+            <h3>Work schedule</h3>
+            <p>Weekly cap and automatic clock-out behavior.</p>
+            <div class='settings-summary-row'>
+              <div><div class='settings-summary-k'>Weekly hours cap</div><div class='settings-summary-v' id='settingsOverviewCapHours'>—</div></div>
+              <span class='settings-summary-state' id='settingsOverviewCapState'>Loading</span>
+            </div>
+            <button class='settings-overview-link' type='button' onclick="showSettingsSection('work')">Edit Work &amp; Paycom settings →</button>
+          </div>
+
+          <div class='settings-overview-card'>
+            <h3>Automation workers</h3>
+            <p>Performance is tuned to this computer.</p>
+            <div class='settings-summary-row'>
+              <div><div class='settings-summary-k' id='settingsOverviewWorkerMode'>Worker mode</div><div class='settings-summary-v' id='settingsOverviewWorkers'>Detecting…</div></div>
+              <span class='settings-summary-state' id='settingsOverviewPlatform'>System</span>
+            </div>
+            <button class='settings-overview-link' type='button' onclick="showSettingsSection('system')">View system details →</button>
+          </div>
+
+          <div class='settings-overview-card wide'>
+            <h3>Common tasks</h3>
+            <p>Jump directly to the settings you change most often.</p>
+            <div class='settings-task-grid'>
+              <button class='settings-task-card' type='button' onclick="showSettingsSection('crm')"><span class='settings-task-icon'>≡</span><span class='settings-task-copy'><span class='settings-task-title'>CRM links &amp; defaults</span><span class='settings-task-note'>Reports, list modes, retries</span></span></button>
+              <button class='settings-task-card' type='button' onclick="showSettingsSection('slack')"><span class='settings-task-icon'>□</span><span class='settings-task-copy'><span class='settings-task-title'>Slack day messages</span><span class='settings-task-note'>Clock in, out, lunch, return</span></span></button>
+              <button class='settings-task-card' type='button' onclick="showSettingsSection('advanced')"><span class='settings-task-icon'>⚑</span><span class='settings-task-copy'><span class='settings-task-title'>Advanced controls</span><span class='settings-task-note'>Application and safety settings</span></span></button>
+            </div>
+          </div>
         </div>
-      </details>
-    </div>
-    <div id='slackFields'></div>
-  </div>
+      </section>
 
-  <div class='card' id='otherCard' style='margin-top:14px;display:none'>
-    <h2>Other Settings</h2>
-    <div id='otherFields'></div>
+      <section class='settings-section' data-settings-section='connections'>
+        <div class='settings-section-heading'>
+          <div><h2>Connections</h2><p>Review the browser profiles used by each connected service.</p></div>
+          <details class='section-note'><summary>How setup works</summary><div class='section-note-body'><p>Setup opens the visible login profile and fills credentials stored in the system credential manager. It does not submit the form.</p></div></details>
+        </div>
+        <div class='settings-panel-card'>
+          <p class='settings-connections-note'>Choose a service to open its setup window. You can review the filled username, password, and Paycom PIN before continuing.</p>
+          <div class='settings-connection-grid'>
+            <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('paycom', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>P</span>Paycom</span><span class='settings-connection-action'>Open profile setup →</span></button>
+            <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('crm', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>C</span>CRM</span><span class='settings-connection-action'>Open profile setup →</span></button>
+            <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('slack', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>Slack</span><span class='settings-connection-action'>Open profile setup →</span></button>
+            <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('sanmar', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>SanMar</span><span class='settings-connection-action'>Open profile setup →</span></button>
+            <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('salesforce', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>Salesforce</span><span class='settings-connection-action'>Open profile setup →</span></button>
+          </div>
+        </div>
+      </section>
+
+      <section class='settings-section' data-settings-section='crm'>
+        <div class='settings-section-heading'>
+          <div><h2>CRM automation</h2><p>Manage batch behavior, report links, defaults, and browser reliability.</p></div>
+          <details class='section-note'><summary>CRM help</summary><div class='section-note-body'><p>Report links are grouped by list mode. Address Validator batch size uses 0 for continuous processing until no eligible orders remain.</p></div></details>
+        </div>
+        <div class='settings-panel-card'><div id='crmPreferenceFields'></div></div>
+        <div class='settings-panel-card'><div id='crmFields'></div></div>
+      </section>
+
+      <section class='settings-section' data-settings-section='work'>
+        <div class='settings-section-heading'>
+          <div><h2>Work &amp; Paycom</h2><p>Set weekly hour rules, sync behavior, and Paycom automation options.</p></div>
+        </div>
+        <div class='settings-form-grid'>
+          <div class='settings-panel-card'><div class='settings-panel-title'><div><h3>Work schedule</h3><p>Cap, hours, break, and synchronization behavior.</p></div></div><div id='workFields'></div></div>
+          <div class='settings-panel-card'><div class='settings-panel-title'><div><h3>Paycom</h3><p>Time clock locations and automation safety.</p></div></div><div id='paycomFields'></div></div>
+        </div>
+      </section>
+
+      <section class='settings-section' data-settings-section='slack'>
+        <div class='settings-section-heading'>
+          <div><h2>Slack messages</h2><p>Manage channels and the messages used throughout the work week.</p></div>
+          <details class='section-note'><summary>Message help</summary><div class='section-note-body'><p>Pick a day, then edit its clock-in, clock-out, lunch-start, and lunch-return messages.</p></div></details>
+        </div>
+        <div class='settings-panel-card'><div id='slackFields'></div></div>
+      </section>
+
+      <section class='settings-section' data-settings-section='system'>
+        <div class='settings-section-heading'>
+          <div><h2>System &amp; workers</h2><p>Review this computer and tune how many automations can run in parallel.</p></div>
+          <button class='secondary tiny' type='button' onclick='loadNodeRuntime(true)'>Auto-detect again</button>
+        </div>
+        <div class='settings-panel-card'>
+          <div id='nodeHardwareSummary' class='hardware-summary'></div>
+          <div class='subgrid'>
+            <div class='field'><label for='workerModeSelect'>Worker mode</label><select id='workerModeSelect' onchange='syncWorkerModeControls()'><option value='auto'>Auto-detect</option><option value='manual'>Manual override</option></select></div>
+            <div class='field'><label for='manualWorkerCountInput'>Manual workers</label><input id='manualWorkerCountInput' type='number' min='1' max='8' step='1' value='1'></div>
+          </div>
+          <div class='notice' id='workerRecommendationText'>Detecting this computer...</div>
+          <div class='row'><button type='button' onclick='saveWorkerSettings(this)'>Save worker mode</button></div>
+        </div>
+      </section>
+
+      <section class='settings-section' data-settings-section='advanced'>
+        <div class='settings-section-heading'>
+          <div><h2>Advanced</h2><p>Less frequently used application and safety settings.</p></div>
+        </div>
+        <div class='settings-panel-card' id='otherCard' style='display:none'><div id='otherFields'></div></div>
+      </section>
+    </main>
   </div>
 </div>
 </div>
@@ -1267,6 +1432,8 @@ let appUpdateInProgress = false;
 let queueDragTaskId = null;
 let settingsSaveTimer = null;
 let settingsSavePromise = Promise.resolve();
+const SETTINGS_SECTION_STORAGE_KEY = 'automation.settings.section';
+let activeSettingsSection = 'overview';
 let desktopMetricsAutoRefresh = true;
 let desktopMetricsTimer = null;
 let desktopMetricsLastPayload = null;
@@ -1946,6 +2113,107 @@ async function api(path, opts = {}) {
   return d;
 }
 
+function setSettingsHealth(title, detail, isError = false) {
+  const titleEl = document.getElementById('settingsHealthTitle');
+  const detailEl = document.getElementById('settingsHealthText');
+  const dotEl = document.getElementById('settingsHealthDot');
+  if (titleEl) titleEl.textContent = title;
+  if (detailEl) detailEl.textContent = detail;
+  if (dotEl) dotEl.classList.toggle('error', Boolean(isError));
+}
+
+function setSettingsSaveState(message, state = '') {
+  const el = document.getElementById('settingsStatusBox');
+  if (!el) return;
+  const text = String(message || 'All changes saved');
+  const normalized = String(state || '').toLowerCase();
+  const isError = normalized === 'error' || /fail|error|could not/i.test(text);
+  const isSaving = normalized === 'saving' || /saving|opening|loading|detecting/i.test(text);
+  el.classList.toggle('error', isError);
+  el.classList.toggle('saving', !isError && isSaving);
+  el.textContent = text;
+}
+
+function showSettingsSection(sectionName, options = {}) {
+  const requested = String(sectionName || 'overview');
+  const section = document.querySelector(`[data-settings-section='${requested}']`);
+  const targetName = section ? requested : 'overview';
+  activeSettingsSection = targetName;
+  for (const panel of document.querySelectorAll('[data-settings-section]')) {
+    panel.classList.toggle('active', panel.dataset.settingsSection === targetName);
+  }
+  for (const button of document.querySelectorAll('[data-settings-target]')) {
+    const active = button.dataset.settingsTarget === targetName;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-current', active ? 'page' : 'false');
+  }
+  try { localStorage.setItem(SETTINGS_SECTION_STORAGE_KEY, targetName); } catch (_) {}
+  if (options.focusHeading) {
+    const heading = document.querySelector(`[data-settings-section='${targetName}'] h2`);
+    if (heading) heading.focus({preventScroll: true});
+  }
+  if (options.scroll !== false && window.innerWidth < 981) {
+    const shell = document.querySelector('.settings-shell');
+    if (shell) shell.scrollIntoView({behavior: 'smooth', block: 'start'});
+  }
+}
+
+function restoreSettingsSection() {
+  let saved = 'overview';
+  try { saved = localStorage.getItem(SETTINGS_SECTION_STORAGE_KEY) || 'overview'; } catch (_) {}
+  showSettingsSection(saved, {scroll: false});
+}
+
+function filterSettingsNavigation(rawQuery) {
+  const query = String(rawQuery || '').trim().toLowerCase();
+  const buttons = Array.from(document.querySelectorAll('[data-settings-target]'));
+  let visibleCount = 0;
+  for (const button of buttons) {
+    const target = button.dataset.settingsTarget || '';
+    const section = document.querySelector(`[data-settings-section='${target}']`);
+    const haystack = `${button.dataset.search || ''} ${button.textContent || ''} ${section ? section.textContent : ''}`.toLowerCase();
+    const matches = !query || haystack.includes(query);
+    button.hidden = !matches;
+    if (matches) visibleCount += 1;
+  }
+  const empty = document.getElementById('settingsEmptySearch');
+  if (empty) empty.style.display = visibleCount === 0 ? 'block' : 'none';
+  const activeButton = buttons.find((button) => button.dataset.settingsTarget === activeSettingsSection);
+  if (query && activeButton && activeButton.hidden) {
+    const firstMatch = buttons.find((button) => !button.hidden);
+    if (firstMatch) showSettingsSection(firstMatch.dataset.settingsTarget, {scroll: false});
+  }
+}
+
+function updateSettingsOverview() {
+  const capHoursEl = document.getElementById('settingsOverviewCapHours');
+  const capStateEl = document.getElementById('settingsOverviewCapState');
+  const capInput = fieldMap.WORK_CLOCK_CAP_HOURS;
+  const cappedInput = fieldMap.WORK_CLOCK_CAPPED;
+  if (capHoursEl) {
+    const value = capInput ? Number(capInput.value) : NaN;
+    capHoursEl.textContent = Number.isFinite(value) ? `${value} hours` : 'Not configured';
+  }
+  if (capStateEl) {
+    const enabled = cappedInput ? Boolean(cappedInput.checked) : false;
+    capStateEl.textContent = enabled ? 'Enabled' : 'Disabled';
+    capStateEl.classList.toggle('off', !enabled);
+  }
+
+  const workerModeEl = document.getElementById('settingsOverviewWorkerMode');
+  const workersEl = document.getElementById('settingsOverviewWorkers');
+  const platformEl = document.getElementById('settingsOverviewPlatform');
+  const runtime = nodeRuntimePayload || {};
+  const workerSettings = runtime.worker_settings || {};
+  const platform = runtime.platform || {};
+  if (workerModeEl) workerModeEl.textContent = workerSettings.mode === 'manual' ? 'Manual worker mode' : 'Auto-detected workers';
+  if (workersEl) {
+    const workers = Number(workerSettings.effective_workers || 0);
+    workersEl.textContent = workers > 0 ? `${workers} worker${workers === 1 ? '' : 's'}` : 'Detecting…';
+  }
+  if (platformEl) platformEl.textContent = platform.os_display_name || 'System';
+}
+
 function setStatus(msg, targetTab = null) {
   const tab = targetTab || activeTab || 'automation';
   const idsByTab = {
@@ -1958,7 +2226,8 @@ function setStatus(msg, targetTab = null) {
   };
   const id = idsByTab[tab] || 'statusBox';
   const el = document.getElementById(id);
-  if (el) el.textContent = msg;
+  if (tab === 'settings') setSettingsSaveState(msg);
+  else if (el) el.textContent = msg;
 }
 function setProcessingStatus(msg) { setStatus(msg, 'processing'); }
 
@@ -2789,6 +3058,7 @@ function renderNodeRuntime(payload) {
   if (queuePayload) renderControlTargetNodes(Array.isArray(queuePayload.nodes) ? queuePayload.nodes : []);
   applyPlatformCapabilities();
   syncWorkerModeControls();
+  updateSettingsOverview();
 }
 
 function appUpdateIdentity(update) {
@@ -3206,6 +3476,7 @@ function setActiveTab(tabName) {
     loadConsoleLog(false);
   }
   if (isSettings) {
+    restoreSettingsSection();
     loadConfig();
   }
   if (isMetrics) {
@@ -4885,6 +5156,7 @@ document.addEventListener('keydown', (event) => {
 
 function scheduleSettingsAutoSave() {
   if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
+  setSettingsSaveState('Saving changes…', 'saving');
   settingsSaveTimer = setTimeout(() => {
     settingsSaveTimer = null;
     saveSettings({ manual: false });
@@ -4956,14 +5228,15 @@ async function saveSettings(options = {}) {
       }
 
       const defaultMsg = manual ? 'Settings saved.' : 'Settings auto-saved.';
-      setStatus(messages[0] || defaultMsg);
+      setStatus(messages[0] || defaultMsg, 'settings');
+      updateSettingsOverview();
       return true;
     });
 
   try {
     await settingsSavePromise;
   } catch (e) {
-    setStatus(e.message || 'Settings save failed.');
+    setStatus(e.message || 'Settings save failed.', 'settings');
     if (manual) throw e;
   }
 }
@@ -4978,9 +5251,14 @@ function renderOtherSettings(fields) {
   });
   if (visibleFields.length === 0) {
     card.style.display = 'none';
+    const nav = document.getElementById('settingsAdvancedNavBtn');
+    if (nav) nav.style.display = 'none';
+    if (activeSettingsSection === 'advanced') showSettingsSection('overview', {scroll: false});
     return;
   }
   card.style.display = 'block';
+  const nav = document.getElementById('settingsAdvancedNavBtn');
+  if (nav) nav.style.display = '';
   for (const f of visibleFields) root.appendChild(createFieldNode(f));
 }
 
@@ -7657,6 +7935,7 @@ async function loadStatus(setStatusText = true) {
 }
 
 async function loadConfig() {
+  setSettingsHealth('Loading configuration', 'Reading settings from this computer.');
   try {
     clearFieldMap();
     const d = await api('/api/config');
@@ -7677,9 +7956,26 @@ async function loadConfig() {
       crmOrderGoodsStatusPayload && crmOrderGoodsStatusPayload.state ? crmOrderGoodsStatusPayload.state : {},
     );
     bindSettingsAutoSaveHandlers();
+    updateSettingsOverview();
+    filterSettingsNavigation(document.getElementById('settingsSearchInput') ? document.getElementById('settingsSearchInput').value : '');
+    setSettingsHealth('Configuration ready', `${Object.keys(fieldMap).length} settings loaded. Changes save automatically.`);
+    return true;
   } catch (e) {
-    setStatus('Config load failed: ' + e.message);
+    setStatus('Config load failed: ' + e.message, 'settings');
+    setSettingsHealth('Configuration issue', e.message || 'Settings could not be loaded.', true);
+    return false;
   }
+}
+
+async function reloadSettingsPage(button = null) {
+  return withButtonBusy(button, 'Reloading...', async () => {
+    setSettingsSaveState('Reloading settings…', 'saving');
+    await loadNodeRuntime(false);
+    await loadCrmOrderGoodsStatus(false);
+    await loadCrmAddressStatus(false);
+    const loaded = await loadConfig();
+    if (loaded) setSettingsSaveState('All changes saved');
+  });
 }
 
 async function callEndpoint(path, button = null, busyLabel = 'Automation underway...') {
@@ -7764,6 +8060,7 @@ async function reloadAll() {
 }
 
 applyColorTheme(document.documentElement.dataset.theme);
+restoreSettingsSection();
 
 if (!UI_OPENED_FROM_FILE) {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/service-worker.js').catch(() => {});
