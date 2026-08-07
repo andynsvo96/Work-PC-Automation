@@ -30,6 +30,8 @@ class _FakeSharedRuntime:
             },
         ]
         self.client.clear_finished = lambda: 3
+        self.retry_calls = []
+        self.client.retry_failed = self._retry_failed
         self.version_gate = {"required_commit": "old-commit", "required_protocol_version": 1}
         self.client.get_version_gate = lambda: dict(self.version_gate)
         self.client.set_version_gate = self._set_version_gate
@@ -37,6 +39,10 @@ class _FakeSharedRuntime:
     def _set_version_gate(self, commit):
         self.version_gate["required_commit"] = str(commit)
         return {"ok": True, "required_commit": str(commit)}
+
+    def _retry_failed(self, task_id, **payload):
+        self.retry_calls.append((task_id, payload))
+        return {"id": task_id, "status": "queued", "message": "Retry waiting in queue."}
 
     def enqueue(self, **task):
         self.enqueued.append(task)
@@ -183,6 +189,51 @@ class SharedQueueRouteTests(unittest.TestCase):
             task["arguments"],
             {"action": "process_queue", "dry_run": False, "limit": None, "retry_errors": True},
         )
+
+    def test_failed_sheet_session_retry_reuses_original_shared_queue_entry(self):
+        report = {
+            "success": False,
+            "message": "Processed 2 sheet scanner row(s); 1 failed.",
+            "order_details": [
+                {"row_number": 2, "order_id": "4700001", "success": True, "status": "Success"},
+                {
+                    "row_number": 3,
+                    "order_id": "4700002",
+                    "success": False,
+                    "status": "Needs attention",
+                    "message": "Salesforce login required.",
+                },
+            ],
+        }
+        failed_task = {
+            "id": "failed-sheet-task",
+            "label": "Sheets Scanner",
+            "task_type": "crm.mass_emailer",
+            "status": "failed",
+            "result_context": {"report": report},
+        }
+        self.runtime.snapshot = lambda: {
+            "success": True,
+            "mode": "shared",
+            "tasks": [failed_task],
+            "history": [failed_task],
+            "queued": [],
+            "idle": [],
+            "running": None,
+            "queued_count": 0,
+            "running_count": 0,
+            "idle_count": 0,
+        }
+
+        response = self.client.post("/api/queue/failed-sheet-task/retry")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.runtime.retry_calls), 1)
+        task_id, retry = self.runtime.retry_calls[0]
+        self.assertEqual(task_id, "failed-sheet-task")
+        self.assertTrue(retry["arguments"]["retry_errors"])
+        self.assertEqual(retry["retry_context"]["original_report"], report)
+        self.assertEqual(self.runtime.enqueued, [])
 
     def test_registered_executors_cover_route_task_types(self):
         registered = set(server.register_shared_queue_task_executors())

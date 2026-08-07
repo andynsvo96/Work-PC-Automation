@@ -364,16 +364,50 @@ class SupabaseQueueClient:
             },
         )
 
-    def finish(self, task_id: str, lease_token: str, *, success: bool, message: str):
+    def finish(
+        self,
+        task_id: str,
+        lease_token: str,
+        *,
+        success: bool,
+        message: str,
+        result_context: Optional[Mapping[str, Any]] = None,
+    ):
+        body = {
+            "p_workspace_id": self.config.workspace_id,
+            "p_task_id": str(task_id),
+            "p_node_key": self.config.node_key,
+            "p_lease_token": str(lease_token),
+            "p_success": bool(success),
+            "p_message": str(message or "Task finished."),
+        }
+        if result_context is None:
+            return self._rpc("automation_finish_task", body)
+        try:
+            return self._rpc(
+                "automation_finish_task",
+                {**body, "p_result_context": dict(result_context or {})},
+            )
+        except SharedQueueError as exc:
+            detail = str(exc).lower()
+            missing_new_signature = (
+                "automation_finish_task" in detail
+                and ("p_result_context" in detail or "schema cache" in detail or "could not find" in detail)
+            )
+            if not missing_new_signature:
+                raise
+            # Keep ordinary queue execution compatible while migration 004 is
+            # being applied. In-place retry remains unavailable until then.
+            return self._rpc("automation_finish_task", body)
+
+    def retry_failed(self, task_id: str, *, arguments: Mapping[str, Any], retry_context: Mapping[str, Any]):
         return self._rpc(
-            "automation_finish_task",
+            "automation_retry_failed_task",
             {
                 "p_workspace_id": self.config.workspace_id,
                 "p_task_id": str(task_id),
-                "p_node_key": self.config.node_key,
-                "p_lease_token": str(lease_token),
-                "p_success": bool(success),
-                "p_message": str(message or "Task finished."),
+                "p_encrypted_payload": self.cipher.encrypt(arguments),
+                "p_retry_context": dict(retry_context or {}),
             },
         )
 

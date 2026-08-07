@@ -1745,6 +1745,7 @@ def initialize_shared_queue_runtime():
             auto_sync_version_gate=AUTO_SYNC_VERSION_GATE,
             version_gate_sync_guard=_can_auto_sync_version_gate,
             cancel_running_task=force_stop_automation,
+            result_context_provider=_automation_queue_result_context,
         )
         runtime.start()
         shared_queue_runtime = runtime
@@ -2217,6 +2218,130 @@ def _automation_queue_live_status(task):
     return live
 
 
+def _sheet_scanner_queue_report_from_history_entry(entry):
+    if not isinstance(entry, dict):
+        return {}
+    details = entry.get("order_details") if isinstance(entry.get("order_details"), list) else []
+    return {
+        "timestamp": entry.get("timestamp"),
+        "success": bool(entry.get("success")),
+        "message": str(entry.get("message") or ""),
+        "order_count": max(0, int(_safe_float(entry.get("order_count"), 0))),
+        "failure_count": max(0, int(_safe_float(entry.get("failure_count"), 0))),
+        "order_details": [dict(row) for row in details if isinstance(row, dict)],
+    }
+
+
+def _sheet_scanner_queue_report_for_task(task):
+    if str((task or {}).get("task_type") or "") != "crm.mass_emailer":
+        return {}
+    try:
+        history = load_crm_mass_emailer_state().get("run_history") or []
+    except Exception:
+        return {}
+    message = str((task or {}).get("message") or "").strip()
+    exact = [row for row in history if str(row.get("message") or "").strip() == message]
+    candidates = exact or history
+    if not candidates:
+        return {}
+    completed_at = _automation_queue_parse_datetime((task or {}).get("completed_at"))
+    if completed_at:
+        def _distance(row):
+            stamp = _automation_queue_parse_datetime(row.get("timestamp"))
+            return abs((stamp - completed_at).total_seconds()) if stamp else float("inf")
+        candidates = sorted(candidates, key=_distance)
+    return _sheet_scanner_queue_report_from_history_entry(candidates[0])
+
+
+def _sheet_scanner_report_row_key(row):
+    row_number = max(0, int(_safe_float((row or {}).get("row_number"), 0)))
+    if row_number:
+        return ("row", row_number)
+    return (
+        "order",
+        str((row or {}).get("order_id") or ""),
+        str((row or {}).get("process") or (row or {}).get("outcome") or ""),
+    )
+
+
+def _merge_sheet_scanner_retry_report(original_report, retry_report):
+    original = original_report if isinstance(original_report, dict) else {}
+    retry = retry_report if isinstance(retry_report, dict) else {}
+    retry_rows = {
+        _sheet_scanner_report_row_key(row): row
+        for row in (retry.get("order_details") or [])
+        if isinstance(row, dict)
+    }
+    combined = []
+    for source in original.get("order_details") or []:
+        if not isinstance(source, dict):
+            continue
+        row = dict(source)
+        if bool(row.get("success")):
+            row["retry_status"] = str(row.get("retry_status") or "Initially successful")
+            combined.append(row)
+            continue
+        retry_row = retry_rows.get(_sheet_scanner_report_row_key(row))
+        row["original_error"] = str(row.get("message") or "")
+        if retry_row and bool(retry_row.get("success")):
+            row.update(dict(retry_row))
+            row["success"] = True
+            row["status"] = "Retried successfully"
+            row["retry_status"] = "Retried successfully"
+        elif retry_row:
+            row.update(dict(retry_row))
+            row["success"] = False
+            row["status"] = "Retry failed"
+            row["retry_status"] = "Retry failed"
+        else:
+            row["success"] = False
+            row["status"] = "Retry failed"
+            row["retry_status"] = "Retry failed"
+            row["message"] = "The retry did not return a result for this failed row."
+        combined.append(row)
+    return {
+        "timestamp": retry.get("timestamp"),
+        "success": bool(retry.get("success")),
+        "message": str(retry.get("message") or ""),
+        "order_count": sum(1 for row in combined if row.get("success")),
+        "failure_count": sum(1 for row in combined if not row.get("success")),
+        "order_details": combined,
+        "is_retry_report": True,
+    }
+
+
+def _automation_queue_result_context(task, ok, message):
+    existing = dict((task or {}).get("result_context") or {})
+    if str((task or {}).get("task_type") or "") != "crm.mass_emailer":
+        return None
+    latest_report = _sheet_scanner_queue_report_for_task({**dict(task or {}), "message": message})
+    original_report = existing.get("original_report")
+    if isinstance(original_report, dict):
+        report = _merge_sheet_scanner_retry_report(original_report, latest_report)
+        return {
+            **existing,
+            "retrying": False,
+            "retry_completed": True,
+            "report": report,
+        }
+    return {**existing, "report": latest_report}
+
+
+def _enrich_automation_queue_reports(payload):
+    if not isinstance(payload, dict):
+        return payload
+    for task in payload.get("tasks") or []:
+        if not isinstance(task, dict) or str(task.get("task_type") or "") != "crm.mass_emailer":
+            continue
+        context = dict(task.get("result_context") or {})
+        if not isinstance(context.get("report"), dict) or not context.get("report", {}).get("order_details"):
+            report = _sheet_scanner_queue_report_for_task(task)
+            if report:
+                context["report"] = report
+        task["result_context"] = context
+    return payload
+
+
 def _automation_queue_task_payload(task):
     next_run_at = task.get("next_run_at")
     run_history = task.get("run_history") if isinstance(task.get("run_history"), list) else []
@@ -2248,6 +2373,8 @@ def _automation_queue_task_payload(task):
         "success": task.get("success"),
         "cancel_requested": bool(task.get("cancel_requested")),
         "position": task.get("position"),
+        "task_type": task.get("task_type"),
+        "result_context": dict(task.get("result_context") or {}),
     }
     if live_status:
         payload["live_status"] = live_status
@@ -2320,7 +2447,7 @@ def get_automation_queue_payload():
                 "running_count": 0,
             }
         try:
-            return runtime.snapshot()
+            return _enrich_automation_queue_reports(runtime.snapshot())
         except Exception as exc:
             return {
                 "success": False,
@@ -2337,7 +2464,7 @@ def get_automation_queue_payload():
                 "running_count": 0,
             }
     with automation_queue_lock:
-        return _automation_queue_snapshot_locked()
+        return _enrich_automation_queue_reports(_automation_queue_snapshot_locked())
 
 
 def _automation_queue_trim_history_locked(max_history=40):
@@ -2474,6 +2601,7 @@ def _automation_queue_worker_loop():
                 task["duration_seconds"] = _automation_queue_duration_seconds(task)
                 task["success"] = bool(ok)
                 task["message"] = str(message)
+                task["result_context"] = _automation_queue_result_context(task, ok, message)
                 _automation_queue_append_run_history(task, ok, message, started_at, completed_at, task.get("duration_seconds"))
                 if canceled:
                     automation_queue_tasks.remove(task)
@@ -2609,6 +2737,9 @@ def enqueue_automation(
         "success": None,
         "cancel_requested": False,
         "requested_client_os": _automation_request_client_os(),
+        "task_type": str(task_type or "").strip() or None,
+        "task_arguments": dict(task_arguments or {}) if isinstance(task_arguments, dict) else {},
+        "result_context": {},
         "fn": fn,
         "status_fn": status_fn if callable(status_fn) else None,
     }
@@ -2688,6 +2819,82 @@ def cancel_automation_queue_task(task_id):
         ok, msg = force_stop_automation()
         return ok, f"Cancel requested for running task. {msg}"
     return False, "Queue task could not be canceled."
+
+
+def retry_failed_automation_queue_task(task_id):
+    task_id = str(task_id or "").strip()
+    if not task_id:
+        return False, "Missing queue task ID."
+    retry_arguments = {
+        "action": "process_queue",
+        "dry_run": False,
+        "limit": None,
+        "retry_errors": True,
+    }
+    if AUTOMATION_QUEUE_MODE == "shared":
+        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
+        if runtime is None:
+            return False, shared_queue_initialization_error or "Shared queue is not configured."
+        try:
+            snapshot = _enrich_automation_queue_reports(runtime.snapshot())
+            task = next((row for row in snapshot.get("tasks") or [] if str(row.get("id") or "") == task_id), None)
+            if not task:
+                return False, "Queue task was not found."
+            if task.get("status") != "failed" or task.get("task_type") != "crm.mass_emailer" or task.get("label") != "Sheets Scanner":
+                return False, "Only a failed live Sheets Scanner task can be retried in place."
+            existing_context = dict(task.get("result_context") or {})
+            original_report = existing_context.get("report") or _sheet_scanner_queue_report_for_task(task)
+            if not isinstance(original_report, dict) or not original_report.get("order_details"):
+                return False, "The failed Sheets Scanner report is unavailable; retry was not started."
+            retry_count = max(0, int(_safe_float(existing_context.get("retry_count"), 0))) + 1
+            retry_context = {
+                "retry_count": retry_count,
+                "retrying": True,
+                "retry_completed": False,
+                "original_report": original_report,
+                "report": original_report,
+                "retry_requested_at": _automation_queue_now_iso(),
+            }
+            runtime.client.retry_failed(task_id, arguments=retry_arguments, retry_context=retry_context)
+            runtime.wake()
+            return True, f"Retry {retry_count} queued in the original Sheets Scanner entry."
+        except Exception as exc:
+            detail = str(exc)
+            if "automation_retry_failed_task" in detail or "schema cache" in detail.lower():
+                detail = "Shared queue retry needs Supabase migration 004_retry_failed_tasks.sql."
+            return False, detail
+
+    with automation_queue_condition:
+        task = next((row for row in automation_queue_tasks if str(row.get("id") or "") == task_id), None)
+        if not task:
+            return False, "Queue task was not found."
+        if task.get("status") != "failed" or task.get("task_type") != "crm.mass_emailer" or task.get("label") != "Sheets Scanner":
+            return False, "Only a failed live Sheets Scanner task can be retried in place."
+        existing_context = dict(task.get("result_context") or {})
+        original_report = existing_context.get("report") or _sheet_scanner_queue_report_for_task(task)
+        if not isinstance(original_report, dict) or not original_report.get("order_details"):
+            return False, "The failed Sheets Scanner report is unavailable; retry was not started."
+        retry_count = max(0, int(_safe_float(existing_context.get("retry_count"), 0))) + 1
+        task["task_arguments"] = dict(retry_arguments)
+        task["fn"] = lambda: run_crm_mass_emailer_run_queued(**retry_arguments)
+        task["status"] = "queued"
+        task["success"] = None
+        task["cancel_requested"] = False
+        task["started_at"] = None
+        task["completed_at"] = None
+        task["duration_seconds"] = None
+        task["message"] = "Retry waiting in queue."
+        task["activated_at"] = _automation_queue_now_iso()
+        task["result_context"] = {
+            "retry_count": retry_count,
+            "retrying": True,
+            "retry_completed": False,
+            "original_report": original_report,
+            "report": original_report,
+            "retry_requested_at": _automation_queue_now_iso(),
+        }
+        automation_queue_condition.notify_all()
+    return True, f"Retry {retry_count} queued in the original Sheets Scanner entry."
 
 
 def cancel_all_automation_queue_tasks():
@@ -13219,6 +13426,14 @@ def api_queue_cancel_task(task_id):
     payload = get_automation_queue_payload()
     payload.update({"success": ok, "message": msg})
     return jsonify(payload), (200 if ok else 404)
+
+
+@app.route("/api/queue/<task_id>/retry", methods=["POST"])
+def api_queue_retry_task(task_id):
+    ok, msg = retry_failed_automation_queue_task(task_id)
+    payload = get_automation_queue_payload()
+    payload.update({"success": ok, "message": msg})
+    return jsonify(payload), (200 if ok else 400)
 
 
 @app.route("/api/queue/<task_id>/delete", methods=["POST"])

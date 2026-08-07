@@ -473,6 +473,22 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
   <div id='queueList' class='queue-list'><div class='queue-empty'>Loading queue...</div></div>
 </div>
 
+<dialog id='queueTaskReportDialog' style='max-width:860px;width:min(860px, calc(100vw - 32px));border:none;border-radius:14px;padding:0;'>
+  <div class='card' style='margin:0'>
+    <div class='row' style='justify-content:space-between;align-items:center'>
+      <h3 id='queueTaskReportDialogTitle' style='margin:0'>Automation Errors</h3>
+      <button class='secondary' onclick='closeQueueTaskReportDialog()'>Close</button>
+    </div>
+    <div class='muted' id='queueTaskReportDialogSummary'>No report loaded.</div>
+    <div class='tbl-wrap' style='margin-top:12px;max-height:480px;overflow:auto'>
+      <table class='tbl'>
+        <thead><tr><th>Order</th><th>Automation</th><th>Status</th><th>Message</th></tr></thead>
+        <tbody id='queueTaskReportDialogBody'></tbody>
+      </table>
+    </div>
+  </div>
+</dialog>
+
 <div id='tabAutomation' class='tab-panel active'>
   <div class='status' id='statusBox'>Loading status...</div>
 
@@ -2209,6 +2225,13 @@ function renderQueue(payload) {
     const canDelete = !sharedMode && (status === 'completed' || status === 'failed');
     const canRetryFailedSheetsScanner = status === 'failed'
       && String(task.label || '').trim().toLowerCase() === 'sheets scanner';
+    const resultContext = task.result_context && typeof task.result_context === 'object' ? task.result_context : {};
+    const taskReport = resultContext.report && typeof resultContext.report === 'object' ? resultContext.report : {};
+    const taskReportRows = Array.isArray(taskReport.order_details) ? taskReport.order_details : [];
+    const viewReportLabel = status === 'failed' ? 'View Errors' : 'View Retry Report';
+    const viewReportControl = status === 'failed' || (taskReportRows.length > 0 && resultContext.retry_completed)
+      ? `<button class='secondary tiny' style='margin-left:8px' onclick="event.stopPropagation();openQueueTaskReport('${esc(task.id || '')}')">${esc(viewReportLabel)}</button>`
+      : '';
     const draggable = !sharedMode && status === 'queued';
     const dragGlyph = draggable ? '&#8942;&#8942;' : '';
     const pos = status === 'queued' && task.position ? `#${task.position} ` : '';
@@ -2245,7 +2268,7 @@ function renderQueue(payload) {
       ? `<select class='queue-target-select' title='Safely reassign without changing FIFO position' onchange="reassignQueueTask('${esc(task.id || '')}', this.value)">${targetOptions}</select>`
       : '';
     const retryFailedSheetsScannerControl = canRetryFailedSheetsScanner
-      ? `<button class='secondary tiny' title='Retry spreadsheet ERROR rows; completed cancellations and refunds are detected and skipped' onclick='retryFailedSheetsScannerSession(this)'>Retry Failed Orders</button>`
+      ? `<button class='secondary tiny' title='Retry spreadsheet ERROR rows in this same queue entry' onclick="retryFailedSheetsScannerSession('${esc(task.id || '')}', this)">Retry</button>`
       : '';
     const deleteControl = canDelete
       ? `<button class='secondary tiny' title='Delete queue entry' onclick="deleteQueueTask('${esc(task.id || '')}')">Delete</button>`
@@ -2256,7 +2279,7 @@ function renderQueue(payload) {
         ondragstart='handleQueueDragStart(event)' ondragover='handleQueueDragOver(event)' ondrop='handleQueueDrop(event)' ondragend='handleQueueDragEnd(event)'>
         <div class='queue-drag'>${dragGlyph}</div>
         <div ${canExpand ? `onclick="toggleQueueRunHistory('${esc(task.id || '')}')" style='cursor:pointer' title='Open repeat run history'` : ''}>
-          <div class='queue-title'>${esc(pos)}${esc(task.label || 'Automation Task')}</div>
+          <div class='queue-title' style='display:flex;align-items:center'>${esc(pos)}${esc(task.label || 'Automation Task')}${viewReportControl}</div>
           <div class='queue-meta'>${esc(task.category || 'Automation')}${esc(details)}${esc(advanced)}${sourceVisual}${runnerVisual} | ${esc(queueTimeText(task))}${esc(progressText)}${esc(msg)}</div>
         </div>
         <div class='queue-status ${esc(status)}'>${esc(queueStatusLabel(status))}</div>
@@ -2352,7 +2375,7 @@ async function cancelQueueTask(taskId) {
   }
 }
 
-async function retryFailedSheetsScannerSession(button) {
+async function retryFailedSheetsScannerSession(taskId, button) {
   const confirmed = window.confirm(
     'Retry all failed Sheets Scanner rows? Rows with an ERROR message will be included automatically. '
     + 'The automation checks CRM first and skips cancellations, refunds, refund fees, and sales notes that are already recorded.'
@@ -2364,10 +2387,8 @@ async function retryFailedSheetsScannerSession(button) {
   }
   setStatus('Queuing failed Sheets Scanner rows for retry.');
   try {
-    const d = await api('/crm/mass-emailer', {
+    const d = await api(`/api/queue/${encodeURIComponent(taskId)}/retry`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({retry_errors: true}),
     });
     const retryInput = document.getElementById('crmMassEmailerRetryErrorsInput');
     if (retryInput) retryInput.checked = true;
@@ -2377,10 +2398,55 @@ async function retryFailedSheetsScannerSession(button) {
   } catch (error) {
     if (button) {
       button.disabled = false;
-      button.textContent = 'Retry Failed Orders';
+      button.textContent = 'Retry';
     }
     setStatus('Sheets Scanner retry failed: ' + error.message);
   }
+}
+
+function openQueueTaskReport(taskId) {
+  const tasks = Array.isArray(queuePayload && queuePayload.tasks) ? queuePayload.tasks : [];
+  const task = tasks.find((row) => String(row && row.id || '') === String(taskId || ''));
+  const context = task && task.result_context && typeof task.result_context === 'object' ? task.result_context : {};
+  const report = context.report && typeof context.report === 'object' ? context.report : {};
+  let allRows = Array.isArray(report.order_details) ? report.order_details : [];
+  const isRetryReport = Boolean(context.retry_completed || report.is_retry_report);
+  if (!allRows.length && String(task && task.status || '').toLowerCase() === 'failed') {
+    allRows = [{
+      order_id: '',
+      function_label: String(task && task.label || 'Automation'),
+      success: false,
+      status: 'Failed',
+      message: String(task && task.message || 'No error message recorded.'),
+    }];
+  }
+  const rows = isRetryReport ? allRows : allRows.filter((row) => !Boolean(row && row.success));
+  const dialog = document.getElementById('queueTaskReportDialog');
+  const title = document.getElementById('queueTaskReportDialogTitle');
+  const summary = document.getElementById('queueTaskReportDialogSummary');
+  const body = document.getElementById('queueTaskReportDialogBody');
+  if (!dialog || !title || !summary || !body) return;
+  title.textContent = isRetryReport ? `${task.label || 'Automation'} Retry Report` : `${task.label || 'Automation'} Errors`;
+  const failureCount = allRows.filter((row) => !Boolean(row && row.success)).length;
+  summary.textContent = isRetryReport
+    ? `${allRows.length} original order result${allRows.length === 1 ? '' : 's'} retained; ${failureCount} currently failed.`
+    : `${failureCount} failed order${failureCount === 1 ? '' : 's'} in this session.`;
+  body.innerHTML = rows.length
+    ? rows.map((row) => {
+        const orderId = String(row && row.order_id || '').trim();
+        const automation = String(row && (row.function_label || row.process || row.outcome) || '-');
+        const status = String(row && (row.retry_status || row.status) || (row && row.success ? 'Success' : 'Failed'));
+        const message = String(row && row.message || row && row.original_error || 'No error message recorded.');
+        const statusClass = row && row.success ? 'ok' : 'bad';
+        return `<tr><td>${crmOrderLinkHtml(orderId)}</td><td>${esc(automation)}</td><td class='${statusClass}'>${esc(status)}</td><td>${esc(message)}</td></tr>`;
+      }).join('')
+    : "<tr><td colspan='4' class='muted'>No failed orders were recorded for this task.</td></tr>";
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+}
+
+function closeQueueTaskReportDialog() {
+  const dialog = document.getElementById('queueTaskReportDialog');
+  if (dialog && dialog.open && typeof dialog.close === 'function') dialog.close();
 }
 
 async function cancelAllQueueTasks() {

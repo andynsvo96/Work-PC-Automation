@@ -136,6 +136,33 @@ class SharedQueueRuntimeTests(unittest.TestCase):
         self.assertEqual(client.finished[0][0:2], ("task-1", "lease-1"))
         self.assertEqual(client.finished[0][2], {"success": True, "message": "ok"})
 
+    def test_claimed_task_persists_result_context_when_provider_is_configured(self):
+        task = {
+            "id": "task-report",
+            "lease_token": "lease-report",
+            "task_type": "test.report",
+            "arguments": {},
+        }
+        client = _FakeClient(task)
+        registry = TaskRegistry()
+        registry.register("test.report", lambda: (False, "one failed"))
+        provider = mock.Mock(return_value={"report": {"failure_count": 1}})
+        runtime = SharedQueueRuntime(
+            client,
+            registry,
+            commit_provider=lambda: "abc",
+            capabilities_provider=lambda: {"crm": True},
+            result_context_provider=provider,
+        )
+
+        runtime._execute_claim(task)
+
+        provider.assert_called_once_with(task, False, "one failed")
+        self.assertEqual(
+            client.finished[0][2]["result_context"],
+            {"report": {"failure_count": 1}},
+        )
+
     def test_remote_cancel_invokes_runner_force_stop_once(self):
         task = {
             "id": "task-cancel",

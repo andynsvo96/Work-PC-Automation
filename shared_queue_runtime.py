@@ -28,6 +28,7 @@ class SharedQueueRuntime:
         auto_sync_version_gate: bool = False,
         version_gate_sync_guard: Optional[Callable[[str], bool]] = None,
         cancel_running_task: Optional[Callable[[], Any]] = None,
+        result_context_provider: Optional[Callable[[Mapping[str, Any], bool, str], Mapping[str, Any]]] = None,
         heartbeat_interval_seconds: float = 10.0,
         poll_interval_seconds: float = 2.0,
         lease_renew_interval_seconds: float = 15.0,
@@ -40,6 +41,7 @@ class SharedQueueRuntime:
         self.auto_sync_version_gate = bool(auto_sync_version_gate)
         self.version_gate_sync_guard = version_gate_sync_guard or (lambda _commit: True)
         self.cancel_running_task = cancel_running_task
+        self.result_context_provider = result_context_provider
         self.heartbeat_interval_seconds = max(1.0, float(heartbeat_interval_seconds))
         self.poll_interval_seconds = max(0.25, float(poll_interval_seconds))
         self.lease_renew_interval_seconds = max(1.0, float(lease_renew_interval_seconds))
@@ -275,7 +277,15 @@ class SharedQueueRuntime:
             lease_stop.set()
             renewer.join(timeout=2.0)
         try:
-            self.client.finish(task_id, lease_token, success=ok, message=message)
+            finish_kwargs = {"success": ok, "message": message}
+            if self.result_context_provider is not None:
+                try:
+                    provided_context = self.result_context_provider(task, ok, message)
+                    if provided_context is not None:
+                        finish_kwargs["result_context"] = dict(provided_context or {})
+                except Exception:
+                    logger.exception("Could not build result context for shared queue task %s", task_id)
+            self.client.finish(task_id, lease_token, **finish_kwargs)
         except SharedQueueError as exc:
             logger.error("Could not finish shared queue task %s: %s", task_id, exc)
             self._update_state(connected=False, eligible=False, block_reason=str(exc), last_error=str(exc))

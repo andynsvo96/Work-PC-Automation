@@ -8652,6 +8652,44 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertIn("--sheet-row-number", worker_args)
         self.assertIn("13", worker_args)
 
+    def test_queue_retry_report_keeps_initial_successes_and_labels_retry_results(self):
+        original = {
+            "success": False,
+            "order_details": [
+                {"row_number": 2, "order_id": "4700001", "success": True, "status": "Success"},
+                {
+                    "row_number": 3,
+                    "order_id": "4700002",
+                    "success": False,
+                    "status": "Needs attention",
+                    "message": "Salesforce login required.",
+                },
+                {
+                    "row_number": 4,
+                    "order_id": "4700003",
+                    "success": False,
+                    "status": "Needs attention",
+                    "message": "Template missing.",
+                },
+            ],
+        }
+        retry = {
+            "success": False,
+            "message": "Processed 1 sheet scanner row(s); 1 failed.",
+            "order_details": [
+                {"row_number": 3, "order_id": "4700002", "success": True, "status": "Success"},
+                {"row_number": 4, "order_id": "4700003", "success": False, "message": "Template still missing."},
+            ],
+        }
+
+        merged = server._merge_sheet_scanner_retry_report(original, retry)
+
+        self.assertEqual(len(merged["order_details"]), 3)
+        self.assertEqual(merged["order_details"][0]["retry_status"], "Initially successful")
+        self.assertEqual(merged["order_details"][1]["retry_status"], "Retried successfully")
+        self.assertEqual(merged["order_details"][2]["retry_status"], "Retry failed")
+        self.assertEqual(merged["failure_count"], 1)
+
     @mock.patch.object(server, "_run_script")
     def test_order_goods_worker_defaults_to_continuous_rush_dry_run(self, mock_run_script):
         mock_run_script.return_value = (

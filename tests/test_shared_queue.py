@@ -4,6 +4,7 @@ from unittest import mock
 
 from shared_queue import (
     SharedQueueBlocked,
+    SharedQueueUnavailable,
     SupabaseQueueClient,
     TaskPayloadCipher,
     make_test_config,
@@ -79,6 +80,48 @@ class SharedQueueTests(unittest.TestCase):
         self.assertEqual(result, 4)
         self.assertTrue(captured["url"].endswith("/rest/v1/rpc/automation_clear_finished_tasks"))
         self.assertEqual(captured["body"], {"p_workspace_id": config.workspace_id})
+
+    def test_retry_failed_reuses_task_with_encrypted_resume_arguments(self):
+        captured = {}
+
+        def opener(request, timeout):
+            captured["url"] = request.full_url
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _Response({"id": "task-1", "status": "queued"})
+
+        config = make_test_config(node_key="macbook")
+        client = SupabaseQueueClient(config, opener=opener)
+        client.retry_failed(
+            "task-1",
+            arguments={"action": "process_queue", "dry_run": False, "retry_errors": True},
+            retry_context={"retry_count": 1, "original_report": {"order_details": []}},
+        )
+
+        self.assertTrue(captured["url"].endswith("/rest/v1/rpc/automation_retry_failed_task"))
+        self.assertNotIn("retry_errors", captured["body"]["p_encrypted_payload"])
+        self.assertEqual(
+            client.cipher.decrypt(captured["body"]["p_encrypted_payload"]),
+            {"action": "process_queue", "dry_run": False, "retry_errors": True},
+        )
+        self.assertEqual(captured["body"]["p_retry_context"]["retry_count"], 1)
+
+    def test_finish_falls_back_safely_before_retry_migration_is_applied(self):
+        client = SupabaseQueueClient(make_test_config(node_key="macbook"))
+        missing_signature = SharedQueueUnavailable(
+            "Could not find automation_finish_task with p_result_context in the schema cache"
+        )
+        with mock.patch.object(client, "_rpc", side_effect=[missing_signature, {"ok": True}]) as rpc:
+            result = client.finish(
+                "task-1",
+                "lease-1",
+                success=False,
+                message="failed",
+                result_context={"report": {"failure_count": 1}},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertIn("p_result_context", rpc.call_args_list[0].args[1])
+        self.assertNotIn("p_result_context", rpc.call_args_list[1].args[1])
 
     def test_get_version_gate_reads_workspace_control(self):
         captured = {}
