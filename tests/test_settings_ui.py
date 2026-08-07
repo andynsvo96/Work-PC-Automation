@@ -72,9 +72,12 @@ class SettingsUiStructureTests(unittest.TestCase):
             "crmProcessingLatestState",
             "crmProcessingLatestWhen",
             "crmProcessingLatestMode",
+            "crmProcessingLatestOrders",
+            "crmProcessingLatestErrors",
             "crmProcessingLatestDuration",
             "crmProcessingLatestSteps",
             "crmProcessingMainHistoryRows",
+            "crmProcessingToolHealthRows",
         ):
             self.assertEqual(len(re.findall(rf"\bid=['\"]{element_id}['\"]", self.html)), 1)
 
@@ -96,6 +99,29 @@ class SettingsUiStructureTests(unittest.TestCase):
         self.assertEqual(targets, expected)
         self.assertIn("function showSystemSection(", self.html)
         self.assertIn("function showProcessingSection(", self.html)
+        self.assertIn("function refreshSystemOverview(", self.html)
+        self.assertIn("function scheduleOverviewPowerAction(", self.html)
+
+    def test_approved_dashboard_sections_are_wired_to_live_state(self):
+        for function_name in (
+            "updateCommunicationDashboard",
+            "renderCrmProcessingMainRunViews",
+            "renderDesktopMetrics",
+            "updateSystemActivityOverview",
+        ):
+            with self.subTest(function_name=function_name):
+                self.assertIn(f"function {function_name}(", self.html)
+
+    def test_compact_layout_has_narrow_resolution_rules(self):
+        self.assertRegex(self.html, r"@media \(max-width:560px\)\{")
+        self.assertRegex(
+            self.html,
+            r"@media \(max-width:560px\)\{.*?\.tab-bar\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)",
+        )
+        self.assertRegex(
+            self.html,
+            r"@media \(max-width:560px\)\{.*?\.rough-system-metrics\{grid-template-columns:1fr\}",
+        )
 
     def test_existing_backend_control_roots_remain_unique(self):
         for element_id in (

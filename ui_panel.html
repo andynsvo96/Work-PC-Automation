@@ -585,13 +585,84 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 @media (max-width:520px){.work-hours-title-actions{width:100%;justify-content:flex-end}.work-cap-quick-setting{justify-content:flex-end}.work-timer-grid{grid-template-columns:1fr}.work-plan-days{grid-template-columns:1fr 1fr}.work-timer-value{font-size:30px}}
 @media (max-width:520px){.settings-sidebar,.settings-main{padding:16px}.settings-page-actions button{flex:1}.settings-save-state{width:100%;box-sizing:border-box;justify-content:center}}
 @media (max-width:520px){.wrap{padding:12px}.app-header{align-items:flex-start;flex-direction:column}.app-header-actions{justify-content:flex-start}.tab-bar{flex-wrap:wrap;overflow:visible}.control-target{width:100%;margin-left:0}.control-target select{flex:1;min-width:0;max-width:none}.processing-run-actions{grid-template-columns:1fr}.latest-run-meta{grid-template-columns:1fr}.compact-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.compact-tools button{width:100%}.metrics,.desktop-metrics-grid,.processing-report-metrics{grid-template-columns:1fr}.card{padding:12px}}
+
+/* Approved automation-tabs visual system */
+:root{--rough-page:#f4f6f8;--rough-shell:#fff;--rough-nav:#f8fafc;--rough-card:#fff;--rough-card-alt:#f8fafc;--rough-border:#d9e2ec;--rough-divider:#e2e8f0;--rough-text:#0f172a;--rough-muted:#64748b;--rough-blue:#2563eb;--rough-blue-soft:#eff6ff;--rough-green:#15803d;--rough-green-soft:#dcfce7;--rough-amber:#92400e;--rough-amber-soft:#fef3c7}
+:root[data-theme='dark']{--rough-page:#1e1e1e;--rough-shell:#202022;--rough-nav:#252526;--rough-card:#252526;--rough-card-alt:#2d2d30;--rough-border:#3c3c3c;--rough-divider:#3b3b3f;--rough-text:#f3f4f6;--rough-muted:#9d9da5;--rough-blue:#0e639c;--rough-blue-soft:#04395e;--rough-green:#89d185;--rough-green-soft:#20382b;--rough-amber:#f0d48a;--rough-amber-soft:#40340e}
+body{background:var(--rough-page);color:var(--rough-text)}
+.wrap{box-sizing:border-box;max-width:1440px;padding:0 42px 42px}
+.app-header{height:72px;margin:0 -42px;padding:0 42px;border-bottom:1px solid var(--rough-border);background:var(--rough-shell)}
+.app-title-row{align-items:center;gap:12px}
+.app-title-row h1{font-size:19px;font-weight:800;letter-spacing:0}
+.app-brand-mark{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff;font-size:23px;font-weight:900}
+.app-brand-copy{display:flex;align-items:baseline;min-width:0}
+.app-brand-sub{margin-left:4px;color:var(--rough-muted);font-size:11px}
+.app-version{display:none}
+.app-header-actions{gap:8px}
+button.icon-btn{min-height:34px;padding:7px 12px;border-radius:8px;background:var(--rough-card-alt);border-color:#55555d;color:var(--rough-text);font-size:12px;font-weight:650}
+.tab-bar{height:60px;margin:0 -42px 28px;padding:0 42px;border-bottom:1px solid var(--rough-border);background:var(--rough-nav);align-items:center;gap:7px}
+.tab-btn{display:flex;align-items:center;gap:8px;min-height:40px;padding:9px 14px;border-color:transparent;background:transparent;color:var(--rough-muted);font-size:13px;font-weight:700}
+.tab-btn.active{background:var(--rough-blue-soft);border-color:var(--rough-blue);color:#4fc1ff;box-shadow:inset 0 0 0 1px var(--rough-blue)}
+:root:not([data-theme='dark']) .tab-btn.active{color:#1d4ed8}
+.tab-symbol{font-size:15px}
+.control-target{gap:8px;color:var(--rough-muted);font-size:11px;font-weight:500}
+.control-target select{max-width:190px;padding:4px 18px 4px 4px;border:0;background:transparent;color:var(--rough-text);font-size:11px;font-weight:700}
+.page-heading{margin:0 0 20px;align-items:flex-end}
+.page-heading h2{margin:0 0 5px;font-size:29px;letter-spacing:-.02em}
+.page-heading p{font-size:13px;color:var(--rough-muted)}
+.page-heading-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;justify-content:flex-end}
+.rough-status{display:none}
+.rough-grid{display:grid;gap:14px}.rough-two{grid-template-columns:1.35fr .85fr}.rough-half{grid-template-columns:repeat(2,minmax(0,1fr))}
+.rough-card{min-width:0;padding:19px;border:1px solid var(--rough-border);border-radius:14px;background:var(--rough-card);box-shadow:0 8px 24px rgba(0,0,0,.14)}
+.rough-card h2{margin:0;font-size:18px}
+.rough-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:15px}
+.rough-card-sub{margin:4px 0 0;color:var(--rough-muted);font-size:11px;line-height:1.4}
+.rough-pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:var(--rough-green-soft);color:var(--rough-green);font-size:11px;font-weight:750;white-space:nowrap}
+.rough-pill.blue{background:var(--rough-blue-soft);color:#4fc1ff}.rough-pill.gray{background:var(--rough-card-alt);color:var(--rough-muted)}
+:root:not([data-theme='dark']) .rough-pill.blue{color:#1d4ed8}
+.rough-label{color:var(--rough-muted);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.rough-small{font-size:11px}.rough-value{margin-top:4px;font-size:15px;font-weight:800}
+.rough-metric-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.rough-metric{min-width:0;padding:14px;border:1px solid var(--rough-border);border-radius:11px;background:var(--rough-card-alt)}
+.rough-big-time{margin:4px 0 1px;font:800 clamp(24px,2.3vw,31px)/1.1 Consolas,'Courier New',monospace;letter-spacing:.03em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.rough-progress-block{margin-top:14px}.rough-gauge-labels{display:flex;justify-content:space-between;color:var(--rough-muted);font-size:9px}.rough-progress{height:8px;margin-top:7px;border-radius:99px;background:var(--rough-divider);overflow:hidden}.rough-progress>span{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#2563eb,#38bdf8);transition:width .35s ease}
+.rough-divider{height:1px;margin:15px 0;background:var(--rough-divider)}
+.rough-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.rough-actions button{min-height:34px;border-radius:8px;font-size:12px;font-weight:650}
+.rough-action-popover,.rough-history-details,.rough-advanced-details{position:relative}
+.rough-action-popover>summary,.rough-history-details>summary,.rough-advanced-details>summary{list-style:none;display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:7px 12px;border:1px solid #55555d;border-radius:8px;background:var(--rough-card-alt);color:var(--rough-text);font-size:12px;font-weight:650;cursor:pointer}
+.rough-action-popover>summary::-webkit-details-marker,.rough-history-details>summary::-webkit-details-marker,.rough-advanced-details>summary::-webkit-details-marker{display:none}
+.rough-popover-panel{position:absolute;left:0;top:calc(100% + 7px);z-index:10;display:grid;gap:8px;width:250px;padding:12px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card);box-shadow:0 16px 34px rgba(0,0,0,.3)}
+.rough-popover-panel input{box-sizing:border-box;width:100%}
+.rough-timeline{display:grid}.rough-event{position:relative;display:grid;grid-template-columns:70px 18px 1fr;gap:8px;min-height:50px}.rough-event:after{content:'';position:absolute;left:78px;top:20px;bottom:-4px;width:1px;background:var(--rough-divider)}.rough-event:last-child:after{display:none}.rough-event-time{padding-top:4px;color:var(--rough-muted);font-size:10px;text-align:right}.rough-event-mark{position:relative;z-index:1;margin-top:3px;width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px #25372d}.rough-event-mark.future{background:#3b82f6;box-shadow:0 0 0 4px #173a5e}.rough-event-title{font-size:12px;font-weight:700}.rough-event-note{margin-top:3px;color:var(--rough-muted);font-size:10px;line-height:1.35}
+.rough-message{padding:12px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card-alt)}.rough-message strong{font-size:11px}.rough-message p{margin:6px 0 0;font-size:12px}
+.rough-weekly-card,.communications-bottom-grid,.processing-history-card,.processing-tool-health-card,.system-overview-row,.system-activity-card{margin-top:14px}
+.rough-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}.rough-day{min-width:0;padding:11px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card-alt)}.rough-day.today{border-color:var(--rough-blue);background:var(--rough-blue-soft)}.rough-day-name{font-size:11px;font-weight:800}.rough-day-hours{margin-top:13px;color:#4fc1ff;font-size:17px;font-weight:800}.rough-day-note{margin-top:3px;color:var(--rough-muted);font-size:9px}
+.rough-history-panel{position:absolute;right:0;top:calc(100% + 8px);z-index:15;width:min(920px,calc(100vw - 84px));max-height:70vh;overflow:auto;padding:15px;border:1px solid var(--rough-border);border-radius:12px;background:var(--rough-card);box-shadow:0 20px 50px rgba(0,0,0,.38)}
+.rough-sync-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.rough-sync-summary>div{padding:9px;border:1px solid var(--rough-border);border-radius:8px;background:var(--rough-card-alt)}.rough-sync-summary span{display:block;color:var(--rough-muted);font-size:9px;text-transform:uppercase}.rough-sync-summary strong{display:block;margin-top:4px;font-size:13px}.rough-planning-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}.rough-planning-row input{width:80px}
+.rough-activity{display:grid;gap:9px}.rough-activity-row{display:grid;grid-template-columns:9px minmax(0,1fr) auto;gap:9px;align-items:start;padding-bottom:9px;border-bottom:1px solid var(--rough-divider)}.rough-activity-row:last-child{padding-bottom:0;border-bottom:0}.rough-activity-dot{width:8px;height:8px;margin-top:4px;border-radius:50%;background:#22c55e}.rough-activity-dot.blue{background:#3b82f6}.rough-activity-title{font-size:11px;font-weight:700}.rough-activity-note,.rough-activity-time{color:var(--rough-muted);font-size:9px}
+.workspace-nav{width:max-content;max-width:100%;margin:0 0 16px;padding:5px;border-color:var(--rough-border);border-radius:10px;background:var(--rough-shell)}
+.workspace-nav-btn{min-height:30px;padding:7px 11px;border-radius:7px;font-size:11px}.workspace-nav-btn.active{background:var(--rough-card-alt)!important;border-color:transparent!important;color:var(--rough-text)!important}
+.rough-modebar{display:flex;gap:6px;flex-wrap:wrap}.rough-mode{min-height:32px;padding:8px 12px;border:1px solid #4a4a50!important;border-radius:8px;background:var(--rough-card-alt)!important;color:var(--rough-muted)!important;font-size:11px;font-weight:800;text-transform:uppercase}.rough-mode.active{background:#7f1d1d!important;border-color:#ef4444!important;color:#fecaca!important}
+button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;gap:6px;min-height:32px;min-width:0;padding:7px 10px;border-radius:8px;font-size:10px;font-weight:750}.processing-tool-toggle.active:before{content:'✓';color:#89d185;font-weight:900}
+.rough-action-split{display:grid;grid-template-columns:minmax(0,1fr) 1px minmax(0,.9fr);gap:15px;align-items:center;margin-top:15px;padding:14px;border:1px solid var(--rough-border);border-radius:11px;background:var(--rough-shell)}.rough-action-separator{align-self:stretch;background:var(--rough-border)}.rough-action-row{display:flex;align-items:center;justify-content:space-between;gap:10px}.rough-action-title{font-size:12px;font-weight:800}.rough-action-note{margin-top:3px;color:var(--rough-muted);font-size:9px;line-height:1.35}.rough-advanced-details{margin-top:8px}.rough-advanced-details>summary{min-height:28px;padding:5px 9px;font-size:11px}.rough-advanced-panel{margin-top:8px;padding:10px;border:1px solid var(--rough-border);border-radius:9px;background:var(--rough-card-alt)}
+.rough-run-id{color:#4fc1ff;font:700 11px Consolas,'Courier New',monospace}.rough-latest-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.rough-stat{min-width:0;padding:12px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card-alt)}.rough-stat b{display:block;margin-top:5px;font-size:18px;overflow-wrap:anywhere}.rough-latest-tool-list{display:grid;gap:7px;margin-top:12px}.rough-latest-tool{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 9px;border:1px solid var(--rough-border);border-radius:8px;background:var(--rough-card-alt);font-size:10px}.rough-latest-tool-check{display:grid;place-items:center;width:17px;height:17px;border-radius:50%;background:var(--rough-green-soft);color:var(--rough-green);font-size:9px;font-weight:900}.rough-latest-tool-time{color:var(--rough-muted);font-size:9px}.rough-clarity-note{margin-top:12px;padding:9px 10px;border-left:3px solid var(--rough-blue);border-radius:5px;background:var(--rough-blue-soft);color:#a9cce3;font-size:9px;line-height:1.4}:root:not([data-theme='dark']) .rough-clarity-note{color:#1e3a8a}
+.run-state-badge{background:var(--rough-card-alt);color:var(--rough-muted)}.run-state-badge.success{background:var(--rough-green-soft);color:var(--rough-green)}
+.rough-table th,.rough-table td{padding:9px 8px}.rough-table th{color:var(--rough-muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em}.rough-table tr:first-child td{background:rgba(59,130,246,.06)}
+.rough-tool{display:flex;align-items:center;gap:8px}.rough-tool-icon{display:grid;place-items:center;width:25px;height:25px;border-radius:7px;background:var(--rough-blue-soft);color:#4fc1ff;font-size:10px;font-weight:900}.rough-health{display:inline-flex;align-items:center;gap:5px;color:var(--rough-green);font-size:10px;font-weight:750}
+.rough-system-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.rough-system-metric{position:relative;min-width:0;min-height:122px;padding:15px;border:1px solid var(--rough-border);border-radius:12px;background:var(--rough-card-alt)}.rough-system-icon{position:absolute;right:13px;top:13px;color:var(--rough-muted);font-size:20px}.rough-system-value{margin-top:4px;font-size:25px;font-weight:800}.rough-system-state{margin-top:6px;color:var(--rough-green);font-size:10px;font-weight:700}.rough-system-state.amber{color:var(--rough-amber)}.rough-gauge-bar{height:7px;margin-top:10px;border-radius:99px;background:var(--rough-divider);overflow:hidden}.rough-gauge-fill{height:100%;width:0;border-radius:99px;background:#22c55e}.rough-gauge-fill.blue{background:#3b82f6}.rough-gauge-fill.amber{background:#f59e0b}
+.rough-power-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.rough-power-action{min-width:0;padding:12px;border:1px solid #4a4a50!important;border-radius:10px!important;background:var(--rough-card-alt)!important;color:var(--rough-text)!important;text-align:center}.rough-power-action b{display:block;margin-top:5px;font-size:11px}.rough-power-action.danger-outline{border-color:#7f1d1d!important}.rough-note{margin-top:12px;padding:11px 12px;border:1px solid var(--rough-border);border-radius:9px;background:var(--rough-card-alt);color:var(--rough-muted);font-size:10px;line-height:1.45}.rough-schedule{display:grid;grid-template-columns:1fr 1fr auto;gap:8px}.rough-schedule select,.rough-schedule input{min-width:0;padding:9px 10px;border:1px solid #55555d;border-radius:8px;background:var(--rough-card-alt);color:var(--rough-text);font-size:11px}.rough-status-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}.rough-status-line strong{color:var(--rough-text)}
+@media (max-width:980px){.rough-two,.rough-half{grid-template-columns:1fr}.rough-system-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-week{grid-template-columns:repeat(4,minmax(0,1fr))}.rough-history-panel{width:calc(100vw - 48px)}}
+@media (max-width:700px){.wrap{padding:0 16px 28px}.app-header{height:auto;min-height:72px;margin:0 -16px;padding:12px 16px;align-items:flex-start;flex-direction:column}.app-header-actions{justify-content:flex-start;width:100%}.tab-bar{height:auto;min-height:60px;margin:0 -16px 22px;padding:10px 16px;flex-wrap:wrap;overflow:visible}.control-target{width:100%;margin-left:0}.control-target select{flex:1;min-width:0;max-width:none}.page-heading{align-items:flex-start;flex-direction:column}.page-heading-actions{justify-content:flex-start}.rough-metric-row{grid-template-columns:1fr}.rough-week{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-latest-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-action-split{grid-template-columns:1fr}.rough-action-separator{display:none}.rough-power-actions{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-schedule{grid-template-columns:1fr}.rough-sync-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-history-panel{position:fixed;inset:70px 12px auto;width:auto;max-height:75vh}.workspace-nav{width:100%}.workspace-nav-btn{flex:1}.compact-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.compact-tools button{width:100%}.rough-action-row{align-items:flex-start;flex-direction:column}.rough-action-row button{width:100%}}
+@media (max-width:560px){.app-brand-sub{display:none}.app-header-actions{gap:6px}.app-header-actions button{padding:7px 9px}.tab-bar{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:auto}.tab-btn{min-width:0;padding:8px 6px;justify-content:center}.control-target{grid-column:1/-1}.workspace-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));box-sizing:border-box}.workspace-nav-btn{min-width:0;white-space:normal}.rough-system-metrics{grid-template-columns:1fr}.rough-card{padding:15px}.rough-card-head{flex-wrap:wrap}.rough-week{grid-template-columns:1fr 1fr}.rough-big-time{font-size:25px}.rough-actions>*{max-width:100%}.rough-power-actions{grid-template-columns:1fr}.rough-history-panel{inset:54px 8px auto}.processing-history-card .rough-card-head button,.processing-tool-health-card .rough-card-head button{width:100%}}
 </style>
 </head>
 <body>
 <div class='wrap'>
 <div class='app-header'>
   <div class='app-title-row'>
-    <h1>Automation Control Panel</h1>
+    <span class='app-brand-mark' aria-hidden='true'>✓</span>
+    <div class='app-brand-copy'><h1>Automation</h1><span class='app-brand-sub'>Control Panel</span></div>
     <span class='app-version' id='appVersionText'>Version: loading</span>
   </div>
   <div class='app-header-actions'>
@@ -609,10 +680,10 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
   </div>
 </div>
 <div class='tab-bar'>
-  <button class='tab-btn active' id='tabBtnAutomation' onclick="setActiveTab('automation')">Communications</button>
-  <button class='tab-btn' id='tabBtnProcessing' onclick="setActiveTab('processing')">Processing</button>
-  <button class='tab-btn' id='tabBtnSystem' onclick="setActiveTab('system')">System</button>
-  <label class='control-target'><span id='controlTargetLabel'>Control target</span><select id='controlTargetSelect' onchange='changeControlTarget(this.value)'><option value=''>Any available computer</option></select></label>
+  <button class='tab-btn active' id='tabBtnAutomation' onclick="setActiveTab('automation')"><span class='tab-symbol'>◉</span>Communications</button>
+  <button class='tab-btn' id='tabBtnProcessing' onclick="setActiveTab('processing')"><span class='tab-symbol'>▤</span>Processing</button>
+  <button class='tab-btn' id='tabBtnSystem' onclick="setActiveTab('system')"><span class='tab-symbol'>▦</span>System</button>
+  <label class='control-target'><span class='connectivity-dot online' aria-hidden='true'></span><span id='controlTargetLabel'>Controlling</span><select id='controlTargetSelect' onchange='changeControlTarget(this.value)'><option value=''>Any available computer</option></select></label>
 </div>
 <div id='platformCapabilityNotice' class='notice platform-capability-notice'>Windows only</div>
 <div id='versionGateNotice' class='notice version-gate-notice'></div>
@@ -679,199 +750,142 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
   <div class='page-heading'>
     <div>
       <h2>Communications</h2>
-      <p>Manage today’s workday, Paycom time, and Slack updates from one place.</p>
+      <p>Manage today’s workday, Slack presence, and weekly hours.</p>
     </div>
-    <button class='secondary' type='button' onclick='loadStatus(true)'>Refresh status</button>
+    <div class='page-heading-actions'>
+      <span class='rough-pill' id='workClockStateBadge'>Loading workday</span>
+      <button class='secondary tiny' type='button' onclick="callEndpoint('/work/sync', this, 'Sync underway...')">Sync hours</button>
+    </div>
   </div>
-  <div class='status' id='statusBox'>Loading status...</div>
+  <div class='status rough-status' id='statusBox' role='status' aria-live='polite'>Loading status...</div>
 
-  <div class='communications-grid'>
-    <div class='card'>
-      <div class='card-title-row'>
-        <div>
-          <div class='card-eyebrow'>Today</div>
-          <h2>Workday actions</h2>
-          <p class='card-description'>Clock Paycom and send the matching Slack update together.</p>
-        </div>
-        <details class='section-note'>
-          <summary>Read More</summary>
-          <div class='section-note-body'>
-            <p>Work In/Out runs Paycom clock + Slack message together. Use /clock/* or /slack/* endpoints to run them separately from Home Assistant.</p>
-            <p>Slack Lunch is a toggle: press once to start, press again to cancel before auto-return.</p>
-            <p>Schedule Auto Out uses your synced week hours, active shift, cap settings, and Paycom break rule.</p>
-            <p>Use Manual Auto Out Time after a schedule exists to move clock-out earlier or later for today.</p>
+  <div class='rough-grid rough-two communications-overview-grid'>
+    <section class='card rough-card'>
+      <div class='rough-card-head'>
+        <div><h2>Today’s workday</h2><p class='rough-card-sub' id='communicationWorkdaySummary'>Workday status loading...</p></div>
+        <span class='rough-pill blue' id='autoScheduleText'>Auto out loading</span>
+      </div>
+      <div class='rough-metric-row'>
+        <div class='rough-metric'><div class='rough-label'>Today</div><div class='rough-big-time' id='communicationTodayTimer'>00:00:00</div><div class='rough-small muted'>Paid time</div></div>
+        <div class='rough-metric'><div class='rough-label'>This week</div><div class='rough-big-time' id='weeklyAccumulatedTimer'>00:00</div><div class='rough-small muted' id='weeklyAccumulatedNote'>Loading tracked hours...</div></div>
+        <div class='rough-metric'><div class='rough-label'>Remaining</div><div class='rough-big-time' id='weeklyRemainingTimer'>00:00</div><div class='rough-small muted' id='weeklyRemainingNote'>Until weekly cap</div></div>
+      </div>
+      <div class='rough-progress-block'>
+        <div class='rough-gauge-labels'><span>Weekly progress</span><span id='communicationWeekProgressText'>0%</span></div>
+        <div class='rough-progress'><span id='workHoursProgressFill'></span></div>
+      </div>
+      <div class='rough-divider'></div>
+      <div class='rough-actions'>
+        <button id='communicationWorkToggleBtn' onclick='toggleCommunicationWorkday(this)'>Work in</button>
+        <button class='secondary' id='slackLunchToggleBtn' onclick='toggleSlackLunch(this)'>Start lunch</button>
+        <details class='rough-action-popover'>
+          <summary>Change auto-out</summary>
+          <div class='rough-popover-panel'>
+            <label for='manualAutoOutTime' class='muted'>Today’s auto-out time</label>
+            <input id='manualAutoOutTime' type='time' step='60'>
+            <button class='secondary' onclick='updateManualAutoOutTime(this)'>Update time</button>
           </div>
         </details>
+        <button class='secondary' onclick="callEndpoint('/work/cancel-schedule', this, 'Canceling...')">Cancel auto-out</button>
       </div>
-      <div class='action-group'>
-        <div class='action-group-title'>Start or end the workday</div>
-        <div class='row'>
-          <button onclick="callEndpoint('/work/in', this, 'Work In underway...')">Work In</button>
-          <button onclick="callEndpoint('/work/out', this, 'Work Out underway...')">Work Out</button>
-          <button class='secondary' onclick="callEndpoint('/work/sync', this, 'Sync underway...')">Sync Hours</button>
-        </div>
-      </div>
-      <div class='action-group'>
-        <div class='action-group-title'>Automatic clock-out</div>
-        <div class='row'>
-          <button onclick="callEndpoint('/work/schedule', this, 'Scheduling...')">Schedule Auto Out</button>
-          <button class='secondary' onclick="callEndpoint('/work/cancel-schedule', this, 'Canceling...')">Cancel Auto Out</button>
-        </div>
-        <div class='auto-override-row'>
-          <label for='manualAutoOutTime' class='muted'>Change today’s time</label>
-          <input id='manualAutoOutTime' type='time' step='60'>
-          <button class='secondary' onclick='updateManualAutoOutTime(this)'>Update time</button>
-        </div>
-      </div>
-    </div>
+    </section>
 
-    <div class='card'>
-      <div class='card-eyebrow'>Live status</div>
-      <h2 style='margin:0 0 12px'>Today’s communication</h2>
-      <div class='communication-status-stack'>
-        <div class='communication-status-item'>
-          <h3>Slack lunch message</h3>
-          <div class='row' style='margin-bottom:5px'>
-            <button class='secondary' id='slackLunchToggleBtn' onclick='toggleSlackLunch(this)'>Slack Lunch (1 Hour)</button>
+    <aside class='card rough-card'>
+      <div class='rough-card-head'>
+        <div><h2>Today’s timeline</h2><p class='rough-card-sub' id='communicationTimelineDate'>Today</p></div>
+        <button class='secondary tiny' onclick="callEndpoint('/work/schedule', this, 'Scheduling...')">Edit schedule</button>
+      </div>
+      <div class='rough-timeline'>
+        <div class='rough-event'><div class='rough-event-time' id='communicationStartTime'>—</div><div class='rough-event-mark'></div><div><div class='rough-event-title'>Workday started</div><div class='rough-event-note' id='communicationStartNote'>Paycom clock-in and Slack update</div></div></div>
+        <div class='rough-event'><div class='rough-event-time'>Lunch</div><div class='rough-event-mark future'></div><div><div class='rough-event-title'>Lunch window</div><div class='rough-event-note' id='slackLunchStatusText'>One-hour Slack lunch toggle</div></div></div>
+        <div class='rough-event'><div class='rough-event-time' id='communicationAutoOutTime'>—</div><div class='rough-event-mark future'></div><div><div class='rough-event-title'>Automatic work out</div><div class='rough-event-note' id='autoScheduleSubText'>Projected from weekly hours</div></div></div>
+      </div>
+      <div class='rough-message'><strong>Slack message preview</strong><p id='communicationSlackPreview'>Loading today’s message...</p></div>
+    </aside>
+  </div>
+
+  <section class='card rough-card rough-weekly-card'>
+    <div class='rough-card-head'>
+      <div><h2>Weekly hours</h2><p class='rough-card-sub' id='workHoursRangeText'>Current Sunday–Saturday work week</p></div>
+      <details class='rough-history-details'>
+        <summary>View sync history</summary>
+        <div class='rough-history-panel'>
+          <div class='rough-sync-summary'>
+            <div><span>Week start</span><strong id='weekStartText'>-</strong></div>
+            <div><span>Local hours</span><strong id='localWeekHoursText'>0.00</strong></div>
+            <div><span>Paycom hours</span><strong id='paycomWeekHoursText'>-</strong></div>
+            <div><span>Last sync</span><strong id='lastSyncText'>-</strong></div>
           </div>
-          <span class='muted' id='slackLunchStatusText'>Lunch timer not active.</span>
+          <div class='rough-planning-row'>
+            <label for='weeklyCapHoursInput'>Weekly cap</label>
+            <input id='weeklyCapHoursInput' type='number' min='1' max='168' step='0.25' inputmode='decimal'>
+            <button class='secondary tiny' id='weeklyCapHoursSaveBtn' type='button' onclick='saveWeeklyHoursCap(this)'>Apply</button>
+            <button class='secondary tiny' onclick='syncPaycomNow(this)'>Sync from Paycom</button>
+          </div>
+          <div class='muted' id='syncMessageText'>No sync details yet.</div>
+          <div class='work-plan' style='margin-top:12px'>
+            <div class='work-plan-header'><div><h3>Weekly prediction</h3><div class='muted'>Toggle planned work days.</div></div><div class='work-plan-summary' id='workPlanSummary'>Loading prediction...</div></div>
+            <div class='work-plan-days' id='workPredictionDays'></div>
+            <div class='muted' id='workPlanBreakNote' style='margin-top:8px'></div>
+          </div>
+          <div class='tbl-wrap' style='margin-top:12px'><table class='tbl'><thead><tr><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Paycom Hours</th><th>Auto Out</th></tr></thead><tbody id='hoursRows'><tr><td colspan='5' class='muted'>No tracked days yet.</td></tr></tbody></table></div>
+          <div class='tbl-wrap' style='margin-top:12px'><table class='tbl'><thead><tr><th>When</th><th>Week Hours</th><th>Status</th><th>Message</th></tr></thead><tbody id='syncRows'><tr><td colspan='4' class='muted'>No Paycom sync history yet.</td></tr></tbody></table></div>
         </div>
-        <div class='communication-status-item'>
-          <h3>Automatic clock-out</h3>
-          <div class='notice' id='autoScheduleText'>Auto clock-out status loading...</div>
-          <div class='muted' id='autoScheduleSubText'></div>
-        </div>
-      </div>
+      </details>
     </div>
-  </div>
+    <div class='rough-week' id='communicationWeekDays'><div class='rough-day'><div class='rough-day-name'>Loading week…</div></div></div>
+  </section>
 
-  <div class='card work-hours-card' style='margin-top:14px'>
-    <div class='card-title-row'>
-      <div>
-        <div class='work-hours-heading-row'>
-          <h2>Weekly Work Hours</h2>
-          <span class='badge' id='workClockStateBadge'>Loading</span>
-        </div>
-        <div class='muted' id='workHoursRangeText'>Current Sunday-Saturday work week</div>
+  <div class='rough-grid rough-half communications-bottom-grid'>
+    <section class='card rough-card'>
+      <div class='rough-card-head'><div><h2>Slack presence</h2><p class='rough-card-sub'>Current and next automatic message</p></div><span class='rough-pill' id='communicationSlackState'>Online</span></div>
+      <div class='rough-message'><strong>Current</strong><p id='communicationSlackCurrent'>Loading Slack presence...</p></div>
+    </section>
+    <section class='card rough-card'>
+      <div class='rough-card-head'><div><h2>Recent activity</h2><p class='rough-card-sub'>Workday and communication events</p></div><button class='secondary tiny' onclick="setActiveTab('console')">View all</button></div>
+      <div class='rough-activity'>
+        <div class='rough-activity-row'><span class='rough-activity-dot'></span><div><div class='rough-activity-title'>Hours synchronized with Paycom</div><div class='rough-activity-note' id='communicationSyncActivity'>Waiting for the latest sync</div></div><span class='rough-activity-time' id='communicationSyncWhen'>—</span></div>
+        <div class='rough-activity-row'><span class='rough-activity-dot blue'></span><div><div class='rough-activity-title'>Slack workday message</div><div class='rough-activity-note' id='communicationSlackActivity'>Waiting for today’s workday</div></div><span class='rough-activity-time'>Today</span></div>
       </div>
-      <div class='work-hours-title-actions'>
-        <div class='work-cap-quick-setting'>
-          <label class='vscode-blue-title' for='weeklyCapHoursInput'>Weekly Cap</label>
-          <input id='weeklyCapHoursInput' type='number' min='1' max='168' step='0.25' inputmode='decimal' aria-label='Weekly hours cap'>
-          <button class='secondary tiny' id='weeklyCapHoursSaveBtn' type='button' onclick='saveWeeklyHoursCap(this)'>Apply</button>
-        </div>
-      </div>
-    </div>
-    <div class='work-timer-grid'>
-      <div class='work-timer' id='weeklyAccumulatedTimerCard'>
-        <div class='work-timer-label'>Accumulated This Week</div>
-        <div class='work-timer-value' id='weeklyAccumulatedTimer'>00:00:00</div>
-        <div class='work-timer-note' id='weeklyAccumulatedNote'>Loading tracked hours...</div>
-      </div>
-      <div class='work-timer remaining' id='weeklyRemainingTimerCard'>
-        <div class='work-timer-label'>Hours Left Until Cap</div>
-        <div class='work-timer-value' id='weeklyRemainingTimer'>00:00:00</div>
-        <div class='work-timer-note' id='weeklyRemainingNote'>Loading weekly cap...</div>
-      </div>
-    </div>
-    <div class='work-hours-progress' title='Progress toward weekly cap'>
-      <div class='work-hours-progress-fill' id='workHoursProgressFill'></div>
-    </div>
-
-    <div class='work-plan'>
-      <div class='work-plan-header'>
-        <div>
-          <h3>Weekly Prediction</h3>
-          <div class='muted'>Toggle the days you plan to work. Remaining paid hours are divided evenly across enabled days.</div>
-        </div>
-        <div class='work-plan-summary' id='workPlanSummary'>Loading prediction...</div>
-      </div>
-      <div class='work-plan-days' id='workPredictionDays' aria-label='Planned work days from Sunday through Saturday'></div>
-      <div class='muted' id='workPlanBreakNote' style='margin-top:8px'></div>
-    </div>
-  </div>
-
-  <div class='card hours-sync-card' style='margin-top:14px'>
-    <div class='card-title-row'>
-      <div><h2>Paycom cross-reference</h2><p class='card-description'>Compare local time tracking with the latest Paycom totals.</p></div>
-      <button class='secondary' onclick='syncPaycomNow(this)'>Sync from Paycom</button>
-    </div>
-    <div class='metrics'>
-      <div class='metric'>
-        <div class='k'>Week Start</div>
-        <div class='v' id='weekStartText'>-</div>
-      </div>
-      <div class='metric'>
-        <div class='k'>Local Week Hours</div>
-        <div class='v' id='localWeekHoursText'>0.00</div>
-      </div>
-      <div class='metric'>
-        <div class='k'>Paycom Week Hours</div>
-        <div class='v' id='paycomWeekHoursText'>-</div>
-      </div>
-      <div class='metric'>
-        <div class='k'>Last Paycom Sync</div>
-        <div class='v' id='lastSyncText'>-</div>
-      </div>
-    </div>
-    <div class='muted' id='syncMessageText'>No sync details yet. Click "Sync from Paycom" to refresh.</div>
-    <div class='tbl-wrap' style='margin-top:10px'>
-        <table class='tbl'>
-          <thead>
-          <tr><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Paycom Hours</th><th>Auto Out</th></tr>
-        </thead>
-        <tbody id='hoursRows'><tr><td colspan='5' class='muted'>No tracked days yet.</td></tr></tbody>
-      </table>
-    </div>
-    <details style='margin-top:12px'>
-      <summary style='cursor:pointer;font-weight:700'>Paycom sync history</summary>
-      <div class='tbl-wrap' style='margin-top:8px'>
-        <table class='tbl'>
-          <thead><tr><th>When</th><th>Week Hours</th><th>Status</th><th>Message</th></tr></thead>
-          <tbody id='syncRows'><tr><td colspan='4' class='muted'>No Paycom sync history yet.</td></tr></tbody>
-        </table>
-      </div>
-    </details>
+    </section>
   </div>
 </div>
 
 <div id='tabProcessing' class='tab-panel'>
   <div class='page-heading'>
-    <div><h2>Processing</h2><p>Start an automation, review the latest result, and inspect history without mixing the two.</p></div>
-    <button class='secondary' type='button' onclick='loadCrmProcessingStatus(true)'>Refresh status</button>
+    <div><h2>Processing</h2><p>Build, run, and monitor CRM automation workflows.</p></div>
+    <div class='page-heading-actions'><span class='rough-pill gray' id='processingPageState'>Idle</span><button class='secondary tiny' type='button' onclick="showProcessingSection('reports')">Open full history</button></div>
   </div>
   <nav class='workspace-nav' aria-label='Processing sections'>
     <button class='workspace-nav-btn active' type='button' data-processing-target='run' onclick="showProcessingSection('run')">Run automation</button>
-    <button class='workspace-nav-btn' type='button' data-processing-target='reports' onclick="showProcessingSection('reports')">Reports &amp; history</button>
+    <button class='workspace-nav-btn' type='button' data-processing-target='reports' onclick="showProcessingSection('reports')">Main run history</button>
     <button class='workspace-nav-btn' type='button' data-processing-target='tools' onclick="showProcessingSection('tools')">Tool details</button>
   </nav>
 
   <section class='workspace-section active' data-processing-section='run'>
-  <div class='status' id='processingStatusBox'>Automate Processing status loading...</div>
-  <div class='processing-run-grid'>
-  <div class='card'>
-    <div class='card-title-row'>
-      <div><div class='card-eyebrow'>New run</div><h2>Automate Processing</h2><p class='card-description'>Choose a mode and the tools to include, then start the main automation.</p></div>
-      <details class='section-note'>
-        <summary>Read More</summary>
-        <div class='section-note-body'>
-          <p>The mode dropdown here only affects Automate Processing steps. Rush and High Value can run Validator, Separator, Unlocker, Order Goods, Bypasser, and Push Back. Free Ship can run Validator, Separator, Unlocker, and Order Goods. ALL can run Validator, Separator, Unlocker, and Order Goods. 813 uses its own CRM lists and runs without Unlocker or Separator.</p>
-          <p>Home Assistant / Alexa endpoints: /crm/process/rush, /crm/process/high-value, /crm/process/free-ship, /crm/process/all, and /crm/process/813. The original /crm/process endpoint still runs whatever is currently selected above.</p>
-        </div>
-      </details>
+  <div class='status rough-status' id='processingStatusBox' role='status' aria-live='polite'>Automate Processing status loading...</div>
+  <div class='rough-grid rough-two processing-overview-grid'>
+  <section class='card rough-card'>
+    <div class='rough-card-head'>
+      <div><h2>New main automation run</h2><p class='rough-card-sub'>Choose a list mode and toggle the tools to include.</p></div>
+      <button class='secondary tiny' id='crmProcessingBulkToggleBtn' onclick='toggleCrmProcessingBulkSelection()'>Clear selection</button>
     </div>
-    <div class='processing-mode-row'>
-      <label for='crmProcessingFilterSelect' class='muted'>Mode</label>
-      <select class='select processing-mode-select' id='crmProcessingFilterSelect' onchange='setCrmProcessingFilter(this.value)' title='Automate Processing mode'>
+    <div class='rough-label' style='margin-bottom:7px'>List mode</div>
+    <select class='sr-only' id='crmProcessingFilterSelect' onchange='setCrmProcessingFilter(this.value)' title='Automate Processing mode'>
         <option value='rush'>RUSH</option>
         <option value='high_value'>HIGH VALUE</option>
         <option value='free'>FREE</option>
         <option value='all'>ALL</option>
         <option value='813'>813</option>
-      </select>
-      <button class='secondary tiny' id='crmProcessingBulkToggleBtn' onclick='toggleCrmProcessingBulkSelection()'>Clear All</button>
+    </select>
+    <div class='rough-modebar'>
+      <button class='rough-mode active' id='crmProcessingRushFilterBtn' onclick="setCrmProcessingFilter('rush')">Rush</button>
+      <button class='rough-mode' id='crmProcessingHighValueFilterBtn' onclick="setCrmProcessingFilter('high_value')">High Value</button>
+      <button class='rough-mode' id='crmProcessingFreeFilterBtn' onclick="setCrmProcessingFilter('free')">Free</button>
+      <button class='rough-mode' id='crmProcessingAllFilterBtn' onclick="setCrmProcessingFilter('all')">All</button>
+      <button class='rough-mode' id='crmProcessing813FilterBtn' onclick="setCrmProcessingFilter('813')">813</button>
     </div>
-    <div class='action-group-title' style='margin-top:13px'>Automation tools</div>
+    <div class='rough-label' style='margin:16px 0 7px'>Automation tools</div>
     <div class='compact-tools'>
       <button class='secondary toggle-btn processing-tool-toggle active' id='crmProcessingAddressToggleBtn' onclick='toggleCrmProcessingSelection("address_validator_batch")'>Validator</button>
       <button class='secondary toggle-btn processing-tool-toggle active' id='crmProcessingSeparatorToggleBtn' onclick='toggleCrmProcessingSelection("product_separator")'>Separator</button>
@@ -881,9 +895,13 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
       <button class='secondary toggle-btn processing-tool-toggle' id='crmProcessingShippingBypasserToggleBtn' onclick='toggleCrmProcessingSelection("shipping_bypasser")'>Bypasser</button>
       <button class='secondary toggle-btn processing-tool-toggle' id='crmProcessingPushBackToggleBtn' onclick='toggleCrmProcessingSelection("push_back")'>Push Back</button>
     </div>
-    <details class='section-note' style='margin-top:8px'>
-      <summary>Advanced Controls</summary>
-      <div class='section-note-body'>
+    <div class='muted' id='crmProcessingSelectionText' style='margin-top:8px'>Selected automations: loading...</div>
+    <div class='rough-action-split'>
+      <div>
+        <div class='rough-action-row'><div><div class='rough-action-title'>Main automation</div><div class='rough-action-note'>Runs the selected tools above in order</div></div><button id='crmProcessingRunBtn' onclick='startCrmProcessingRun(this)'>Automate →</button></div>
+        <details class='rough-advanced-details'>
+          <summary>Schedule / repeat</summary>
+          <div class='rough-advanced-panel'>
         <div class='row' style='align-items:center;flex-wrap:wrap'>
           <label class='check'><input type='checkbox' id='crmProcessingRepeatToggle' onchange='syncCrmProcessingAdvancedControls("repeat")'> REPEAT</label>
           <label for='crmProcessingRepeatMinutesInput' class='muted'>Every</label>
@@ -894,45 +912,47 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
           <input id='crmProcessingScheduledTimeInput' type='time' step='60' style='width:140px;padding:7px;border:1px solid #cbd5e1;border-radius:6px' onchange='syncCrmProcessingAdvancedControls()'>
         </div>
         <div class='muted' id='crmProcessingAdvancedSummaryText'>Advanced controls are off.</div>
+          </div>
+        </details>
       </div>
-    </details>
-    <div class='notice' id='crmProcessingStatusText' style='display:none'>Automate Processing status loading...</div>
-    <div class='muted' id='crmProcessingSelectionText'>Selected automations: loading...</div>
-    <div class='processing-run-actions'>
-      <button class='processing-primary-btn' id='crmProcessingRunBtn' onclick='startCrmProcessingRun(this)'>Run main automation</button>
-      <button class='processing-primary-btn scanner-action' id='crmMassEmailerRunBtn' onclick="startCrmMassEmailerRun('live', this)">Run Sheet Scanner</button>
+      <div class='rough-action-separator'></div>
+      <div>
+        <div class='rough-action-row'><div><div class='rough-action-title'>Sheet Scanner</div><div class='rough-action-note'>Runs supported Sheet queue rows separately</div></div><button class='secondary' id='crmMassEmailerRunBtn' onclick="startCrmMassEmailerRun('live', this)">Run Sheet Scanner</button></div>
+        <div class='rough-action-note' id='processingScannerLastRun' style='margin-top:9px'>Last run: loading...</div>
+      </div>
     </div>
-  </div>
+    <div class='notice' id='crmProcessingStatusText' style='display:none'>Automate Processing status loading...</div>
+  </section>
 
-  <div class='card latest-run-card'>
-    <div class='latest-run-header'>
-      <div><div class='card-eyebrow'>Main automation only</div><h2>Latest run</h2></div>
+  <aside class='card rough-card latest-run-card'>
+    <div class='rough-card-head'>
+      <div><h2>Latest main automation run</h2><p class='rough-card-sub'><span class='rough-run-id' id='crmProcessingLatestRunId'>-</span> • <span id='crmProcessingLatestWhen'>No completed run</span></p></div>
       <span class='run-state-badge' id='crmProcessingLatestState'>No runs</span>
     </div>
-    <div class='latest-run-meta'>
-      <div class='latest-run-stat'><div class='k'>Run</div><div class='v' id='crmProcessingLatestRunId'>-</div></div>
-      <div class='latest-run-stat'><div class='k'>When</div><div class='v' id='crmProcessingLatestWhen'>-</div></div>
-      <div class='latest-run-stat'><div class='k'>Mode</div><div class='v' id='crmProcessingLatestMode'>-</div></div>
-      <div class='latest-run-stat'><div class='k'>Duration</div><div class='v' id='crmProcessingLatestDuration'>-</div></div>
+    <div class='rough-latest-summary'>
+      <div class='rough-stat'><div class='rough-label'>Mode</div><b id='crmProcessingLatestMode'>-</b></div>
+      <div class='rough-stat'><div class='rough-label'>Orders</div><b id='crmProcessingLatestOrders'>0</b></div>
+      <div class='rough-stat'><div class='rough-label'>Errors</div><b id='crmProcessingLatestErrors'>0</b></div>
+      <div class='rough-stat'><div class='rough-label'>Duration</div><b id='crmProcessingLatestDuration'>-</b></div>
     </div>
-    <div class='muted' id='crmProcessingRuntimeText'>No automated processing runs yet.</div>
-    <div class='run-steps' id='crmProcessingLatestSteps'>No main automation activity yet.</div>
+    <div class='rough-latest-tool-list' id='crmProcessingLatestSteps'><div class='muted'>No main automation activity yet.</div></div>
+    <div class='muted' id='crmProcessingRuntimeText' style='margin-top:10px'>No automated processing runs yet.</div>
+    <div class='rough-clarity-note'>This panel always represents the most recently started <strong>main automation</strong> run. Sheet Scanner activity is tracked separately beside its button.</div>
+  </aside>
   </div>
-  </div>
+
+  <section class='card rough-card processing-history-card'>
+    <div class='rough-card-head'><div><h2>Previous main automation runs</h2><p class='rough-card-sub'>Completed before the latest run shown above.</p></div><button class='secondary tiny' onclick="showProcessingSection('reports')">View full main-run history</button></div>
+    <div class='tbl-wrap'><table class='tbl rough-table'><thead><tr><th>When</th><th>Run ID</th><th>Mode</th><th>Tools</th><th>Orders</th><th>Errors</th><th>Duration</th><th>Status</th></tr></thead><tbody id='crmProcessingMainHistoryRows'><tr><td colspan='8' class='muted'>No previous main automation runs yet.</td></tr></tbody></table></div>
+  </section>
+
+  <section class='card rough-card processing-tool-health-card'>
+    <div class='rough-card-head'><div><h2>Automation tool health</h2><p class='rough-card-sub'>Compact per-tool status; detailed reports stay under Tool Details.</p></div><button class='secondary tiny' onclick="showProcessingSection('tools')">Manage tool details</button></div>
+    <div class='tbl-wrap'><table class='tbl rough-table'><thead><tr><th>Tool</th><th>Status</th><th>Latest tool run</th><th>Orders</th><th>Errors</th><th>Action</th></tr></thead><tbody id='crmProcessingToolHealthRows'><tr><td colspan='6' class='muted'>Tool health loading...</td></tr></tbody></table></div>
+  </section>
   </section>
 
   <section class='workspace-section' data-processing-section='reports'>
-    <div class='card' style='margin-bottom:14px'>
-      <div class='history-card-heading'>
-        <div><div class='card-eyebrow'>Main automation only</div><h2>Previous runs</h2><p class='card-description'>Older main automation runs, kept separate from the latest result and individual tools.</p></div>
-      </div>
-      <div class='tbl-wrap'>
-        <table class='tbl'>
-          <thead><tr><th>Run</th><th>When</th><th>Mode</th><th>Automations</th><th>Duration</th><th>Status</th><th>Message</th></tr></thead>
-          <tbody id='crmProcessingMainHistoryRows'><tr><td colspan='7' class='muted'>No previous main automation runs yet.</td></tr></tbody>
-        </table>
-      </div>
-    </div>
     <div class='card processing-report-card'>
     <div class='processing-report'>
       <div class='processing-report-header'>
@@ -1206,7 +1226,8 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 </dialog>
 <div id='tabSystem' class='tab-panel'>
   <div class='page-heading'>
-    <div><h2>System</h2><p>Computer health, clipboard sharing, and power controls in one workspace.</p></div>
+    <div><h2>System</h2><p>Computer health, cross-system connectivity, and power controls in one place.</p></div>
+    <div class='page-heading-actions'><span class='rough-pill' id='systemOverviewHealthState'>All systems normal</span><button class='secondary tiny' onclick='refreshSystemOverview(this)'>Refresh</button></div>
   </div>
   <nav class='workspace-nav' aria-label='System sections'>
     <button class='workspace-nav-btn active' type='button' data-system-target='overview' onclick="showSystemSection('overview')">Overview</button>
@@ -1216,32 +1237,56 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
   </nav>
 
   <section class='workspace-section active' data-system-section='overview'>
-    <div class='system-overview-grid'>
-      <div class='card system-overview-card'>
-        <div class='card-eyebrow'>Hardware</div><h2>Desktop health</h2>
-        <div class='system-overview-value' id='systemOverviewHardwareValue'>Waiting for metrics</div>
-        <div class='system-overview-detail' id='systemOverviewHardwareDetail'>CPU, GPU, memory, and temperature readings.</div>
-        <button class='secondary tiny' type='button' onclick="showSystemSection('hardware')">View hardware metrics</button>
-      </div>
-      <div class='card system-overview-card'>
-        <div class='card-eyebrow'>Sharing</div><h2>Cross-system clipboard</h2>
-        <div class='system-overview-value' id='systemOverviewClipboardValue'>Checking connection</div>
-        <div class='system-overview-detail' id='systemOverviewClipboardDetail'>Text and image sync status.</div>
-        <button class='secondary tiny' type='button' onclick="showSystemSection('clipboard')">Manage clipboard</button>
-      </div>
-      <div class='card system-overview-card'>
-        <div class='card-eyebrow'>Power</div><h2>Power &amp; scheduling</h2>
-        <div class='system-overview-value' id='systemOverviewPowerValue'>No active countdown</div>
-        <div class='system-overview-detail' id='systemOverviewPowerDetail'>Sleep, restart, shut down, or schedule an action.</div>
-        <button class='secondary tiny' type='button' onclick="showSystemSection('power')">Open power controls</button>
-      </div>
-      <div class='card system-overview-card'>
-        <div class='card-eyebrow'>Server</div><h2>Application runtime</h2>
-        <div class='system-overview-value' id='systemOverviewRuntimeValue'>Loading</div>
-        <div class='system-overview-detail' id='systemOverviewRuntimeDetail'>Local server status and uptime.</div>
-        <button class='secondary tiny' type='button' onclick="showSystemSection('hardware')">View server details</button>
-      </div>
+    <div class='rough-system-metrics'>
+      <div class='rough-system-metric'><span class='rough-system-icon'>◉</span><div class='rough-label'>CPU temperature</div><div class='rough-system-value' id='systemOverviewCpuTemp'>-</div><div class='rough-system-state' id='systemOverviewCpuState'>Waiting</div><div class='rough-gauge-bar'><div class='rough-gauge-fill' id='systemOverviewCpuTempFill'></div></div></div>
+      <div class='rough-system-metric'><span class='rough-system-icon'>◇</span><div class='rough-label'>GPU temperature</div><div class='rough-system-value' id='systemOverviewGpuTemp'>-</div><div class='rough-system-state' id='systemOverviewGpuState'>Waiting</div><div class='rough-gauge-bar'><div class='rough-gauge-fill blue' id='systemOverviewGpuTempFill'></div></div></div>
+      <div class='rough-system-metric'><span class='rough-system-icon'>⌁</span><div class='rough-label'>CPU usage</div><div class='rough-system-value' id='systemOverviewCpuUsage'>-</div><div class='rough-system-state' id='systemOverviewCpuUsageState'>Waiting</div><div class='rough-gauge-bar'><div class='rough-gauge-fill blue' id='systemOverviewCpuUsageFill'></div></div></div>
+      <div class='rough-system-metric'><span class='rough-system-icon'>▤</span><div class='rough-label'>Memory usage</div><div class='rough-system-value' id='systemOverviewRamUsage'>-</div><div class='rough-system-state amber' id='systemOverviewRamState'>Waiting</div><div class='rough-gauge-bar'><div class='rough-gauge-fill amber' id='systemOverviewRamUsageFill'></div></div></div>
     </div>
+
+    <div class='rough-grid rough-half system-overview-row'>
+      <section class='card rough-card'>
+        <div class='rough-card-head'><div><h2>Cross-system clipboard</h2><p class='rough-card-sub'>Secure text and PNG transfer between your computers.</p></div><span class='rough-pill' id='systemOverviewClipboardValue'>Checking</span></div>
+        <div class='rough-grid rough-half'>
+          <div class='rough-metric'><div class='rough-label'>This computer</div><div class='rough-value' id='systemOverviewThisComputer'>Current computer</div><div class='rough-small muted' id='systemOverviewClipboardLocal'>Automatic sync status loading</div></div>
+          <div class='rough-metric'><div class='rough-label'>Peer computer</div><div class='rough-value' id='systemOverviewPeerComputer'>Other computer</div><div class='rough-small muted' id='systemOverviewClipboardDetail'>Checking connection...</div></div>
+        </div>
+        <div class='rough-actions' style='margin-top:13px'><button onclick='sendClipboard(this)'>Send clipboard</button><button class='secondary' onclick='pullClipboard(this)'>Get clipboard</button><button class='secondary' id='clipboardAutoOverviewBtn' onclick='toggleClipboardAutoSync(this)'>Automatic sync off</button></div>
+      </section>
+      <section class='card rough-card'>
+        <div class='rough-card-head'><div><h2>Metrics service</h2><p class='rough-card-sub'>LibreHardwareMonitor and desktop metrics endpoint.</p></div><span class='rough-pill' id='systemOverviewRuntimeValue'>Loading</span></div>
+        <div class='rough-activity'>
+          <div class='rough-activity-row'><span class='rough-activity-dot'></span><div><div class='rough-activity-title' id='systemOverviewHardwareValue'>Metrics status loading</div><div class='rough-activity-note' id='systemOverviewHardwareDetail'>Waiting for first update</div></div><span class='rough-activity-time'>Live</span></div>
+          <div class='rough-activity-row'><span class='rough-activity-dot blue'></span><div><div class='rough-activity-title'>Temperature alerts enabled</div><div class='rough-activity-note'>Threshold rules remain under Hardware metrics</div></div><span class='rough-activity-time'>4 rules</span></div>
+        </div>
+        <div class='rough-actions' style='margin-top:13px'><button class='secondary' onclick="showSystemSection('hardware')">Open hardware metrics</button><button class='secondary' onclick="showSystemSection('hardware')">Edit thresholds</button></div>
+        <span class='sr-only' id='systemOverviewRuntimeDetail'>Local server status and uptime.</span>
+      </section>
+    </div>
+
+    <div class='rough-grid rough-half system-overview-row'>
+      <section class='card rough-card'>
+        <div class='rough-card-head'><div><h2>Power controls</h2><p class='rough-card-sub'>Immediate actions require confirmation.</p></div><span class='rough-pill gray' id='systemOverviewPowerValue'>No countdown</span></div>
+        <div class='rough-power-actions'>
+          <button class='rough-power-action' onclick="callPowerEndpoint('/pc/sleep', this, 'Sleep underway...')">☾<b>Sleep</b></button>
+          <button class='rough-power-action' onclick="callPowerEndpoint('/pc/restart', this, 'Restart underway...')">↻<b>Restart</b></button>
+          <button class='rough-power-action danger-outline' onclick="callPowerEndpoint('/pc/shutdown', this, 'Shutdown underway...')">◉<b>Shut down</b></button>
+          <button class='rough-power-action' onclick="callPowerEndpoint('/pc/restart-explorer', this, 'Restarting Explorer...')">▣<b>Explorer</b></button>
+        </div>
+        <div class='rough-note'>Power controls run on the selected computer. Confirmation prevents accidental immediate actions.</div>
+      </section>
+      <section class='card rough-card'>
+        <div class='rough-card-head'><div><h2>Schedule a power action</h2><p class='rough-card-sub'>Use a countdown or choose a specific time.</p></div><button class='secondary tiny' onclick="showSystemSection('power')">View schedules</button></div>
+        <div class='rough-schedule'><select id='systemOverviewScheduleAction'><option value='shutdown'>Shutdown</option><option value='sleep'>Sleep</option><option value='restart'>Restart</option></select><input id='systemOverviewScheduleTime' type='time'><button onclick='scheduleOverviewPowerAction(this)'>Schedule</button></div>
+        <div class='rough-divider'></div>
+        <div class='rough-status-line'><span class='connectivity-dot'></span><strong id='systemOverviewPowerHeadline'>No active countdown</strong><span class='muted' id='systemOverviewPowerDetail'>The next scheduled action will appear here.</span></div>
+      </section>
+    </div>
+
+    <section class='card rough-card system-activity-card'>
+      <div class='rough-card-head'><div><h2>System activity</h2><p class='rough-card-sub'>Recent health, connectivity, and control events.</p></div><button class='secondary tiny' onclick="setActiveTab('console')">Open full log</button></div>
+      <div class='tbl-wrap'><table class='tbl rough-table'><thead><tr><th>When</th><th>Event</th><th>Computer</th><th>Status</th></tr></thead><tbody id='systemOverviewActivityRows'><tr><td>Now</td><td>System overview loaded</td><td>Selected computer</td><td class='ok'>Normal</td></tr></tbody></table></div>
+    </section>
   </section>
 
   <section class='workspace-section' data-system-section='hardware'>
@@ -2469,10 +2514,21 @@ function renderClipboardStatus(payload) {
   const overviewDetail = document.getElementById('systemOverviewClipboardDetail');
   if (overviewValue) overviewValue.textContent = enabled ? (stateClass === 'online' ? 'Sync active' : 'Sync waiting') : 'Sync off';
   if (overviewDetail) overviewDetail.textContent = message;
+  const localDetail = document.getElementById('systemOverviewClipboardLocal');
+  const peerName = document.getElementById('systemOverviewPeerComputer');
+  const overviewToggle = document.getElementById('clipboardAutoOverviewBtn');
+  if (localDetail) localDetail.textContent = enabled ? 'Automatic sync enabled' : 'Automatic sync disabled';
+  if (peerName) peerName.textContent = clipboardStatusPayload.peer_name || 'Other computer';
+  if (overviewToggle) {
+    overviewToggle.textContent = enabled ? 'Auto sync on' : 'Auto sync off';
+    overviewToggle.classList.toggle('active', enabled);
+    overviewToggle.disabled = !clipboardStatusPayload.available;
+  }
   if (dot) {
     dot.classList.remove('online', 'waiting', 'error');
     if (stateClass) dot.classList.add(stateClass);
   }
+  updateSystemActivityOverview();
 }
 
 async function loadClipboardStatus() {
@@ -3231,6 +3287,8 @@ function renderNodeRuntime(payload) {
   nodeRuntimePayload = payload || {};
   const platform = nodeRuntimePayload.platform || {};
   const settings = nodeRuntimePayload.worker_settings || {};
+  const overviewComputer = document.getElementById('systemOverviewThisComputer');
+  if (overviewComputer) overviewComputer.textContent = platform.node_name || platform.os_display_name || 'This computer';
   renderHeadlessMode(nodeRuntimePayload.headless);
   const recommendation = settings.recommendation || {};
   const git = nodeRuntimePayload.git || {};
@@ -3835,6 +3893,7 @@ function renderDesktopServerRuntime(payload) {
     box.textContent = p.message ? `Runtime status failed: ${p.message}` : 'Runtime status unavailable.';
     if (overviewValue) overviewValue.textContent = 'Unavailable';
     if (overviewDetail) overviewDetail.textContent = p.message || 'Runtime status could not be loaded.';
+    updateSystemActivityOverview();
     return;
   }
   if (overviewValue) overviewValue.textContent = p.metricsRuntimeReady ? 'Server ready' : 'Server online';
@@ -3875,6 +3934,24 @@ function renderDesktopServerRuntime(payload) {
   }
 
   box.textContent = lines.join('\n');
+  updateSystemActivityOverview();
+}
+
+function setSystemOverviewMetric(valueId, stateId, fillId, valueText, valueNumber, stateText, tone = '') {
+  const value = document.getElementById(valueId);
+  const state = document.getElementById(stateId);
+  const fill = document.getElementById(fillId);
+  if (value) value.textContent = valueText;
+  if (state) {
+    state.textContent = stateText;
+    state.classList.toggle('amber', tone === 'amber');
+    state.classList.toggle('bad', tone === 'bad');
+  }
+  if (fill) {
+    fill.style.width = `${Math.max(0, Math.min(100, Number(valueNumber) || 0)).toFixed(1)}%`;
+    fill.classList.toggle('amber', tone === 'amber');
+    fill.classList.toggle('danger', tone === 'bad');
+  }
 }
 
 function renderDesktopMetrics(payload) {
@@ -3887,6 +3964,26 @@ function renderDesktopMetrics(payload) {
     overviewDetail.textContent = isAvailable
       ? `RAM ${fmtMetricPercent(p.ramUsagePercent)} • CPU ${fmtMetricTemp(p.cpuTempC)} • GPU ${fmtMetricTemp(p.gpuTempC)}`
       : (p.error || 'Hardware metrics are not available on this computer.');
+  }
+  const cpuTemp = toFiniteMetricNumber(p.cpuTempC);
+  const gpuTemp = toFiniteMetricNumber(p.gpuTempC);
+  const cpuUsage = toFiniteMetricNumber(p.cpuUsagePercent);
+  const ramUsage = toFiniteMetricNumber(p.ramUsagePercent);
+  const tempState = (key, value) => {
+    const severity = getTemperatureSeverity(key, value);
+    return severity === 'danger' ? ['Critical', 'bad'] : severity === 'high' ? ['Elevated', 'amber'] : severity === 'idle' ? ['Normal', ''] : ['Unavailable', ''];
+  };
+  const cpuState = tempState('cpuTempC', cpuTemp);
+  const gpuState = tempState('gpuTempC', gpuTemp);
+  setSystemOverviewMetric('systemOverviewCpuTemp', 'systemOverviewCpuState', 'systemOverviewCpuTempFill', fmtMetricTemp(cpuTemp), cpuTemp, isAvailable ? cpuState[0] : 'Unavailable', isAvailable ? cpuState[1] : '');
+  setSystemOverviewMetric('systemOverviewGpuTemp', 'systemOverviewGpuState', 'systemOverviewGpuTempFill', fmtMetricTemp(gpuTemp), gpuTemp, isAvailable ? gpuState[0] : 'Unavailable', isAvailable ? gpuState[1] : '');
+  setSystemOverviewMetric('systemOverviewCpuUsage', 'systemOverviewCpuUsageState', 'systemOverviewCpuUsageFill', fmtMetricPercent(cpuUsage), cpuUsage, cpuUsage == null ? 'Unavailable' : cpuUsage >= 85 ? 'High' : 'Normal', cpuUsage != null && cpuUsage >= 85 ? 'amber' : '');
+  setSystemOverviewMetric('systemOverviewRamUsage', 'systemOverviewRamState', 'systemOverviewRamUsageFill', fmtMetricPercent(ramUsage), ramUsage, ramUsage == null ? 'Unavailable' : ramUsage >= 85 ? 'High' : 'Normal', ramUsage != null && ramUsage >= 85 ? 'amber' : '');
+  const health = document.getElementById('systemOverviewHealthState');
+  if (health) {
+    const warning = !isAvailable || cpuState[1] || gpuState[1] || (cpuUsage != null && cpuUsage >= 85) || (ramUsage != null && ramUsage >= 85);
+    health.textContent = !isAvailable ? 'Metrics unavailable' : warning ? 'Review system health' : 'All systems normal';
+    health.classList.toggle('amber', Boolean(warning));
   }
 
   for (const sensor of TEMP_SENSOR_CONFIG) {
@@ -3929,6 +4026,7 @@ function renderDesktopMetrics(payload) {
         : 'Set LHM_PATH if LibreHardwareMonitorLib.dll is stored in a custom folder.');
     errText.textContent = p.error ? `Error: ${p.error}` : 'Error: Unknown metrics failure.';
   }
+  updateSystemActivityOverview();
 }
 
 async function loadDesktopServerRuntime(showBusy = true) {
@@ -4080,6 +4178,7 @@ function renderPowerCountdown(payload) {
   powerCountdownPayload = payload || { active: false, status_text: 'Power status unavailable.' };
   const overviewValue = document.getElementById('systemOverviewPowerValue');
   const overviewDetail = document.getElementById('systemOverviewPowerDetail');
+  const overviewHeadline = document.getElementById('systemOverviewPowerHeadline');
   if (overviewValue) {
     overviewValue.textContent = powerCountdownPayload.active
       ? `${powerCountdownPayload.action_label || powerCountdownPayload.action || 'Power'} scheduled`
@@ -4090,12 +4189,62 @@ function renderPowerCountdown(payload) {
       ? `Runs ${fmtDateTime(powerCountdownPayload.execute_at)}.`
       : (powerCountdownPayload.status_text || 'Sleep, restart, shut down, or schedule an action.');
   }
+  if (overviewHeadline) {
+    overviewHeadline.textContent = powerCountdownPayload.active
+      ? `${powerCountdownPayload.action_label || powerCountdownPayload.action || 'Power action'} scheduled`
+      : 'No active countdown';
+  }
   if (powerCountdownPayload.active) {
     startPowerCountdownTicker();
   } else {
     stopPowerCountdownTicker();
   }
   updatePowerCountdownVisual();
+  updateSystemActivityOverview();
+}
+
+function updateSystemActivityOverview() {
+  const root = document.getElementById('systemOverviewActivityRows');
+  if (!root) return;
+  const computer = nodeRuntimePayload && nodeRuntimePayload.platform
+    ? (nodeRuntimePayload.platform.node_name || nodeRuntimePayload.platform.os_display_name || 'This computer')
+    : 'This computer';
+  const rows = [];
+  if (desktopMetricsLastPayload) {
+    rows.push({when: 'Now', event: desktopMetricsLastPayload.available ? 'Hardware metrics refreshed' : 'Hardware metrics unavailable', status: desktopMetricsLastPayload.available ? 'Normal' : 'Review', ok: Boolean(desktopMetricsLastPayload.available)});
+  }
+  if (clipboardStatusPayload) {
+    const when = clipboardStatusPayload.last_sync_at
+      ? new Date(Number(clipboardStatusPayload.last_sync_at) * 1000).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})
+      : 'Now';
+    rows.push({when, event: clipboardStatusPayload.enabled ? 'Clipboard sync checked' : 'Clipboard sync is off', status: clipboardStatusPayload.last_error ? 'Review' : 'Ready', ok: !clipboardStatusPayload.last_error});
+  }
+  if (powerCountdownPayload) {
+    rows.push({when: powerCountdownPayload.active && powerCountdownPayload.execute_at ? fmtTime(powerCountdownPayload.execute_at) : 'Now', event: powerCountdownPayload.active ? `${powerCountdownPayload.action_label || powerCountdownPayload.action || 'Power action'} scheduled` : 'Power controls ready', status: powerCountdownPayload.active ? 'Scheduled' : 'Ready', ok: true});
+  }
+  if (!rows.length) rows.push({when: 'Now', event: 'System overview loaded', status: 'Ready', ok: true});
+  root.innerHTML = rows.slice(0, 4).map((row) => `<tr><td>${esc(row.when)}</td><td>${esc(row.event)}</td><td>${esc(computer)}</td><td class='${row.ok ? 'ok' : 'bad'}'>${esc(row.status)}</td></tr>`).join('');
+}
+
+async function refreshSystemOverview(button = null) {
+  return withButtonBusy(button, 'Refreshing...', async () => {
+    await Promise.all([loadClipboardStatus(), loadPowerStatus(false), loadDesktopServerRuntime(false)]);
+    if (platformFeatureAvailable('metrics')) await loadDesktopMetrics(false);
+    updateSystemActivityOverview();
+    setStatus('System overview refreshed.', 'system');
+  });
+}
+
+async function scheduleOverviewPowerAction(button = null) {
+  const overviewAction = document.getElementById('systemOverviewScheduleAction');
+  const overviewTime = document.getElementById('systemOverviewScheduleTime');
+  const action = document.getElementById('powerCountdownAction');
+  const date = document.getElementById('powerScheduleDate');
+  const time = document.getElementById('powerScheduleTime');
+  if (action && overviewAction) action.value = overviewAction.value;
+  if (date) date.value = '';
+  if (time && overviewTime) time.value = overviewTime.value;
+  await schedulePowerAtTime(button);
 }
 
 function stopSlackLunchTicker() {
@@ -4152,7 +4301,13 @@ function applySlackLunchControlVisual(mode, buttonId, statusId, idleLabel) {
 }
 
 function updateSlackLunchVisual() {
-  applySlackLunchControlVisual('production', 'slackLunchToggleBtn', 'slackLunchStatusText', 'Slack Lunch (1 Hour)');
+  applySlackLunchControlVisual('production', 'slackLunchToggleBtn', 'slackLunchStatusText', 'Start lunch');
+  const current = document.getElementById('communicationSlackCurrent');
+  const state = document.getElementById('communicationSlackState');
+  const activity = document.getElementById('communicationSlackActivity');
+  if (current) current.textContent = slackLunchPayload && slackLunchPayload.active ? 'Lunch' : (workHoursStatusPayload && liveWorkHoursSnapshot(workHoursStatusPayload).isActive ? 'Available' : 'Offline');
+  if (state) state.textContent = slackLunchPayload && slackLunchPayload.active ? 'Lunch active' : 'Up to date';
+  if (activity) activity.textContent = slackLunchPayload && slackLunchPayload.active ? 'Lunch presence scheduled' : 'Slack presence ready';
 }
 
 function renderSlackLunchStatus(payload) {
@@ -4597,6 +4752,62 @@ function formatWorkHoursMinutes(hours) {
   return `${hourPart}h ${String(minutePart).padStart(2, '0')}m`;
 }
 
+function formatWorkHoursCompact(hours) {
+  const totalMinutes = Math.max(0, Math.round((Number(hours) || 0) * 60));
+  return `${Math.floor(totalMinutes / 60)}:${String(totalMinutes % 60).padStart(2, '0')}`;
+}
+
+function updateCommunicationDashboard(snapshot) {
+  if (!snapshot) return;
+  const today = new Date();
+  const todayIso = workDateIso(today);
+  const todayEntry = snapshot.state && snapshot.state.days ? (snapshot.state.days[todayIso] || {}) : {};
+  const savedToday = Math.max(0, Number(todayEntry.paid_hours != null ? todayEntry.paid_hours : todayEntry.paycom_hours) || 0);
+  const todayHours = savedToday + (snapshot.active && snapshot.active.date === todayIso ? snapshot.activePaidHours : 0);
+  const setText = (id, value) => {
+    const element = document.getElementById(id);
+    if (element) element.textContent = value;
+  };
+  setText('communicationTodayTimer', formatWorkTimer(todayHours));
+  setText('communicationTimelineDate', today.toLocaleDateString([], {weekday: 'long', month: 'short', day: 'numeric'}));
+  setText('communicationStartTime', snapshot.isActive ? fmtTime(snapshot.active && snapshot.active.clock_in_at) : (todayEntry.clock_in_at ? fmtTime(todayEntry.clock_in_at) : 'Not started'));
+  setText('communicationStartNote', snapshot.isActive ? 'Workday is active' : (todayEntry.clock_out_at ? `Finished ${fmtTime(todayEntry.clock_out_at)}` : 'Start when you are ready'));
+  const lastSyncText = snapshot.state && snapshot.state.last_sync_at ? ` • Last synced ${fmtTime(snapshot.state.last_sync_at)}` : '';
+  setText('communicationWorkdaySummary', snapshot.isActive ? `Clocked in at ${fmtTime(snapshot.active && snapshot.active.clock_in_at)}${lastSyncText}` : (todayEntry.clock_out_at ? `Workday completed at ${fmtTime(todayEntry.clock_out_at)}${lastSyncText}` : 'Your workday has not started'));
+  const percentage = snapshot.capped && snapshot.capHours > 0 ? Math.max(0, Math.min(100, (snapshot.accumulatedHours / snapshot.capHours) * 100)) : 0;
+  setText('communicationWeekProgressText', snapshot.capped ? `${Math.round(percentage)}% of ${formatWorkHoursCompact(snapshot.capHours)} weekly goal` : 'Weekly cap is disabled');
+
+  const toggle = document.getElementById('communicationWorkToggleBtn');
+  if (toggle) {
+    toggle.textContent = snapshot.isActive ? 'Clock out' : 'Clock in';
+    toggle.classList.toggle('secondary', snapshot.isActive);
+  }
+
+  const daysRoot = document.getElementById('communicationWeekDays');
+  const weekStart = snapshot.state && snapshot.state.week_start ? snapshot.state.week_start : '';
+  const weekDays = workWeekDates(weekStart);
+  if (daysRoot && weekDays.length) {
+    const plannedDates = loadWorkPlanDates(weekStart);
+    const futurePlanned = weekDays.filter((day) => day.dateIso >= todayIso && plannedDates.has(day.dateIso));
+    const plannedPerDay = snapshot.capped && futurePlanned.length ? snapshot.remainingHours / futurePlanned.length : 0;
+    daysRoot.innerHTML = weekDays.map((day) => {
+      const entry = snapshot.state.days && snapshot.state.days[day.dateIso] ? snapshot.state.days[day.dateIso] : {};
+      let hours = Math.max(0, Number(entry.paid_hours != null ? entry.paid_hours : entry.paycom_hours) || 0);
+      if (snapshot.isActive && snapshot.active && snapshot.active.date === day.dateIso) hours += snapshot.activePaidHours;
+      const isToday = day.dateIso === todayIso;
+      const planned = day.dateIso >= todayIso && plannedDates.has(day.dateIso);
+      const displayHours = hours > 0 ? hours : (planned ? plannedPerDay : 0);
+      const note = isToday && snapshot.isActive ? 'In progress' : hours > 0 ? 'Recorded' : planned ? 'Planned' : 'Off';
+      return `<div class='rough-day${isToday ? ' today' : ''}'><div class='rough-day-name'>${esc(day.name.slice(0, 3))}</div><div class='rough-day-hours'>${displayHours > 0 ? esc(formatWorkHoursCompact(displayHours)) : '—'}</div><div class='rough-day-state'>${esc(note)}</div></div>`;
+    }).join('');
+  }
+
+  const lastSync = snapshot.state && snapshot.state.last_sync_at ? fmtDateTime(snapshot.state.last_sync_at) : 'Not synced yet';
+  setText('communicationSyncActivity', 'Work hours synchronized');
+  setText('communicationSyncWhen', lastSync);
+  updateSlackLunchVisual();
+}
+
 function liveWorkHoursSnapshot(payload) {
   const state = payload && payload.state ? payload.state : {};
   const autoClock = payload && payload.auto_clock ? payload.auto_clock : {};
@@ -4804,12 +5015,12 @@ function updateWorkHoursVisual() {
   const progress = document.getElementById('workHoursProgressFill');
   const capInput = document.getElementById('weeklyCapHoursInput');
 
-  if (accumulatedEl) accumulatedEl.textContent = formatWorkTimer(snapshot.accumulatedHours);
-  if (remainingEl) remainingEl.textContent = snapshot.capped ? formatWorkTimer(snapshot.remainingHours) : 'NO CAP';
+  if (accumulatedEl) accumulatedEl.textContent = formatWorkHoursCompact(snapshot.accumulatedHours);
+  if (remainingEl) remainingEl.textContent = snapshot.capped ? formatWorkHoursCompact(snapshot.remainingHours) : 'NO CAP';
   if (capInput && capInput.dataset.dirty !== '1') capInput.value = String(snapshot.capHours);
   if (accumulatedCard) accumulatedCard.classList.toggle('live', snapshot.isActive);
   if (remainingCard) remainingCard.classList.toggle('live', snapshot.isActive && snapshot.capped && snapshot.remainingHours > 0);
-  if (stateBadge) stateBadge.textContent = snapshot.isActive ? 'Clocked In • Live' : 'Clocked Out • Paused';
+  if (stateBadge) stateBadge.textContent = snapshot.isActive ? 'Workday active' : 'Workday inactive';
   if (accumulatedNote) {
     accumulatedNote.textContent = snapshot.isActive
       ? `Live paid-hours estimate since ${new Date(snapshot.clockInMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
@@ -4833,6 +5044,7 @@ function updateWorkHoursVisual() {
     const last = weekDates[6].date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
     rangeText.textContent = `${first} - ${last}`;
   }
+  updateCommunicationDashboard(snapshot);
   updateWorkPlanVisual(snapshot);
 }
 
@@ -4858,8 +5070,10 @@ function renderAutoClockInfo(payload) {
   if (!box || !sub) return;
 
   if (!payload) {
-    box.textContent = 'Auto clock-out status unavailable.';
+    box.textContent = 'No auto-out';
     sub.textContent = '';
+    const timelineTime = document.getElementById('communicationAutoOutTime');
+    if (timelineTime) timelineTime.textContent = 'Not scheduled';
     if (manualInput && !manualAutoOutTouched) {
       manualInput.value = '';
     }
@@ -4870,7 +5084,12 @@ function renderAutoClockInfo(payload) {
     manualInput.value = toTimeInputValue(payload.auto_clock_out_at);
   }
 
-  box.textContent = payload.status_text || 'Auto clock-out status unavailable.';
+  const scheduledTime = payload.auto_clock_out_at ? fmtTime(payload.auto_clock_out_at) : '';
+  box.textContent = scheduledTime ? `Auto out ${scheduledTime}` : 'No auto-out';
+  const timelineTime = document.getElementById('communicationAutoOutTime');
+  const slackPreview = document.getElementById('communicationSlackPreview');
+  if (timelineTime) timelineTime.textContent = scheduledTime || 'Not scheduled';
+  if (slackPreview) slackPreview.textContent = payload.slack_out_message_today || getTodaySlackOutFromConfig() || 'Slack sign-off message will appear here';
   const parts = [];
   if (payload.capped) {
     if (payload.planned_paid_hours_today != null) {
@@ -4896,7 +5115,9 @@ function renderAutoClockInfo(payload) {
   } else {
     parts.push('Set WORK_CLOCK_CAPPED = True to enable automatic scheduling.');
   }
-  sub.textContent = parts.join(' | ');
+  sub.textContent = payload.capped
+    ? (payload.manual_override ? 'Manual end time' : 'Calculated from your weekly goal')
+    : 'Weekly auto-out is disabled';
 }
 
 function getTodaySlackOutFromConfig() {
@@ -5804,6 +6025,39 @@ function acknowledgeCrmAutoSplitReview() {
   setTimeout(() => maybeShowCrmAutoSplitReview(crmProcessingStatusPayload), 0);
 }
 
+function crmProcessingRunTotals(row) {
+  const results = Array.isArray(row && row.step_results) ? row.step_results : [];
+  return results.reduce((totals, result) => {
+    totals.orders += Math.max(0, Number(result && result.order_count) || 0);
+    totals.errors += Math.max(0, Number(result && result.error_count) || 0);
+    if (result && result.success === false && !(Number(result.error_count) > 0)) totals.errors += 1;
+    return totals;
+  }, {orders: 0, errors: 0});
+}
+
+function crmProcessingRunId(timestamp, fallbackNumber = 0) {
+  const date = timestamp ? new Date(timestamp) : null;
+  if (date && !Number.isNaN(date.getTime())) {
+    const two = (value) => String(value).padStart(2, '0');
+    return `RUN-${two(date.getMonth() + 1)}${two(date.getDate())}-${two(date.getHours())}${two(date.getMinutes())}`;
+  }
+  return fallbackNumber > 0 ? `RUN-${fallbackNumber}` : '-';
+}
+
+function crmProcessingToolRowsHtml(results, selectedSteps, state, running = false) {
+  const resultMap = new Map((Array.isArray(results) ? results : []).map((row) => [String(row && row.key || ''), row]));
+  const steps = normalizeCrmProcessingStepList(selectedSteps, state);
+  if (!steps.length) return "<div class='muted'>No main automation activity yet.</div>";
+  return steps.map((key) => {
+    const result = resultMap.get(key);
+    const current = running && crmProcessingStatusPayload && crmProcessingStatusPayload.runtime && crmProcessingStatusPayload.runtime.currentStep === key;
+    const status = result ? (result.success ? 'Completed' : 'Needs attention') : current ? 'Running' : running ? 'Queued' : 'Included';
+    const duration = result ? fmtDuration(result.duration_seconds) : current ? 'In progress' : '—';
+    const statusClass = result && !result.success ? 'bad' : result && result.success ? 'ok' : current ? 'running' : '';
+    return `<div class='rough-latest-tool'><span class='rough-tool-check ${esc(statusClass)}'>${result && result.success ? '✓' : result && !result.success ? '!' : current ? '•' : '○'}</span><div><strong>${esc(formatCrmProcessingStepLabelForState(key, state))}</strong><span>${esc(status)}</span></div><time>${esc(duration)}</time></div>`;
+  }).join('');
+}
+
 function renderCrmProcessingMainRunViews(payload) {
   const state = payload && payload.state ? payload.state : {};
   const runtime = payload && payload.runtime ? payload.runtime : {};
@@ -5816,6 +6070,7 @@ function renderCrmProcessingMainRunViews(payload) {
         success: null,
         processing_filter: runtime.processingFilter || state.processing_filter,
         selected_steps: runtime.selectedSteps,
+        step_results: runtime.completedSteps,
         duration_seconds: runtime.startedAt ? Math.max(0, (Date.now() - Date.parse(runtime.startedAt)) / 1000) : null,
       }
     : (history[0] || (state.last_run_timestamp ? {
@@ -5823,6 +6078,7 @@ function renderCrmProcessingMainRunViews(payload) {
         success: state.last_run_success,
         processing_filter: state.last_filter_used || state.processing_filter,
         selected_steps: state.last_selected_steps,
+        step_results: state.last_step_results,
         duration_seconds: state.last_run_duration_seconds,
       } : null));
   const previous = running ? history : history.slice(1);
@@ -5833,6 +6089,14 @@ function renderCrmProcessingMainRunViews(payload) {
   const modeEl = document.getElementById('crmProcessingLatestMode');
   const durationEl = document.getElementById('crmProcessingLatestDuration');
   const stepsEl = document.getElementById('crmProcessingLatestSteps');
+  const ordersEl = document.getElementById('crmProcessingLatestOrders');
+  const errorsEl = document.getElementById('crmProcessingLatestErrors');
+  const pageState = document.getElementById('processingPageState');
+  if (pageState) {
+    pageState.textContent = running ? 'Running' : 'Idle';
+    pageState.classList.toggle('running', running);
+    pageState.classList.toggle('gray', !running);
+  }
   if (stateEl) {
     stateEl.classList.remove('success', 'failed', 'running');
     if (running) {
@@ -5845,15 +6109,20 @@ function renderCrmProcessingMainRunViews(payload) {
       stateEl.textContent = 'No runs';
     }
   }
-  if (runIdEl) runIdEl.textContent = latest ? `#${Math.max(1, latestRunNumber)}` : '-';
-  if (whenEl) whenEl.textContent = latest && latest.timestamp ? fmtDateTime(latest.timestamp) : '-';
+  if (runIdEl) runIdEl.textContent = latest ? crmProcessingRunId(latest.timestamp, latestRunNumber) : '-';
+  if (whenEl) whenEl.textContent = latest && latest.timestamp ? `${running ? 'Started' : 'Finished'} ${fmtDateTime(latest.timestamp)}` : 'No completed run';
   if (modeEl) modeEl.textContent = latest ? formatCrmAddressFilterLabel(latest.processing_filter) : '-';
   if (durationEl) durationEl.textContent = latest ? fmtDuration(latest.duration_seconds) : '-';
+  const totals = crmProcessingRunTotals(latest);
+  if (ordersEl) ordersEl.textContent = String(totals.orders);
+  if (errorsEl) {
+    errorsEl.textContent = String(totals.errors);
+    errorsEl.classList.toggle('bad', totals.errors > 0);
+  }
   if (stepsEl) {
-    const selectedSteps = latest ? normalizeCrmProcessingStepList(latest.selected_steps, {...state, processing_filter: latest.processing_filter}) : [];
-    stepsEl.textContent = selectedSteps.length
-      ? `Included: ${selectedSteps.map((step) => formatCrmProcessingStepLabelForState(step, state)).join(' • ')}`
-      : 'No main automation activity yet.';
+    stepsEl.innerHTML = latest
+      ? crmProcessingToolRowsHtml(latest.step_results, latest.selected_steps, {...state, processing_filter: latest.processing_filter}, running)
+      : "<div class='muted'>No main automation activity yet.</div>";
   }
 
   const rowsEl = document.getElementById('crmProcessingMainHistoryRows');
@@ -5862,11 +6131,21 @@ function renderCrmProcessingMainRunViews(payload) {
       ? previous.map((row, index) => {
           const runNumber = Math.max(1, totalRuns - (running ? index : index + 1));
           const steps = normalizeCrmProcessingStepList(row && row.selected_steps, {...state, processing_filter: row && row.processing_filter});
-          const stepText = steps.length ? steps.map((step) => formatCrmProcessingStepShortLabel(step)).join(', ') : '-';
+          const stepText = steps.length ? String(steps.length) : '-';
+          const rowTotals = crmProcessingRunTotals(row);
           const ok = Boolean(row && row.success);
-          return `<tr><td>#${esc(runNumber)}</td><td>${esc(fmtDateTime(row && row.timestamp))}</td><td>${esc(formatCrmAddressFilterLabel(row && row.processing_filter))}</td><td>${esc(stepText)}</td><td>${esc(fmtDuration(row && row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${ok ? 'Completed' : 'Needs attention'}</td><td>${esc(row && row.message ? row.message : '')}</td></tr>`;
+          return `<tr><td>${esc(fmtDateTime(row && row.timestamp))}</td><td>${esc(crmProcessingRunId(row && row.timestamp, runNumber))}</td><td>${esc(formatCrmAddressFilterLabel(row && row.processing_filter))}</td><td>${esc(stepText)}</td><td>${esc(String(rowTotals.orders))}</td><td class='${rowTotals.errors ? 'bad' : ''}'>${esc(String(rowTotals.errors))}</td><td>${esc(fmtDuration(row && row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${ok ? 'Completed' : 'Needs attention'}</td></tr>`;
         }).join('')
-      : "<tr><td colspan='7' class='muted'>No previous main automation runs yet.</td></tr>";
+      : "<tr><td colspan='8' class='muted'>No previous main automation runs yet.</td></tr>";
+  }
+
+  const healthRows = document.getElementById('crmProcessingToolHealthRows');
+  if (healthRows) {
+    const healthResults = Array.isArray(state.last_step_results) ? state.last_step_results : [];
+    healthRows.innerHTML = healthResults.length ? healthResults.map((row) => {
+      const ok = Boolean(row && row.success);
+      return `<tr><td><strong>${esc(row.label || formatCrmProcessingStepLabelForState(row.key, state))}</strong></td><td class='${ok ? 'ok' : 'bad'}'>${ok ? 'Healthy' : 'Needs attention'}</td><td>${esc(state.last_run_timestamp ? fmtDateTime(state.last_run_timestamp) : '-')}</td><td>${esc(String(Math.max(0, Number(row.order_count) || 0)))}</td><td class='${Number(row.error_count) > 0 ? 'bad' : ''}'>${esc(String(Math.max(0, Number(row.error_count) || 0)))}</td><td><button class='secondary tiny' type='button' onclick="showProcessingSection('tools')">View report</button></td></tr>`;
+    }).join('') : "<tr><td colspan='6' class='muted'>No tool runs are available yet.</td></tr>";
   }
 }
 
@@ -5916,12 +6195,17 @@ function renderCrmProcessingStatus(payload) {
   setProcessingStatus(processingBannerText);
   document.getElementById('crmProcessingStatusText').textContent = headline;
   document.getElementById('crmProcessingRuntimeText').textContent = runtimeTextWithTiming;
-  document.getElementById('crmProcessingSelectionText').textContent = `Automate selection: ${selectionText}`;
+  document.getElementById('crmProcessingSelectionText').textContent = selectedSteps.length
+    ? `${selectedSteps.length} tool${selectedSteps.length === 1 ? '' : 's'} selected • ${formatCrmAddressFilterLabel(processingFilter)} list`
+    : `No tools selected • ${formatCrmAddressFilterLabel(processingFilter)} list`;
   renderCrmProcessingReport(payload);
   renderCrmProcessingMainRunViews(payload);
   renderCrmProcessingSelectionButtons({ ...state, processing_filter: processingFilter });
   if (runBtn) {
-    setAutomationButtonRunning(runBtn, selectedSteps.length === 0);
+    setAutomationButtonRunning(runBtn, running || selectedSteps.length === 0);
+    runBtn.textContent = running
+      ? 'Running…'
+      : `Automate ${selectedSteps.length} tool${selectedSteps.length === 1 ? '' : 's'} →`;
   }
   if (queueVisible && queuePayload) renderQueue(queuePayload);
   syncCrmProcessingPolling();
@@ -7401,6 +7685,14 @@ function renderCrmMassEmailerStatus(payload) {
   const runtimeText = running
     ? `${mode}${progressText} | Orders ${orderCount} | Failures ${failureCount} | Skipped ${skippedCount}. ${runtime.lastMessage || ''}`.trim()
     : (state.last_run_message || 'No Sheets Scanner runs yet.');
+  const scannerSummary = document.getElementById('processingScannerLastRun');
+  if (scannerSummary) {
+    scannerSummary.textContent = running
+      ? `Running now • ${orderCount} order${orderCount === 1 ? '' : 's'} found`
+      : state.last_run_timestamp
+        ? `Last run ${fmtDateTime(state.last_run_timestamp)} • ${Number(state.last_order_count || 0)} order${Number(state.last_order_count || 0) === 1 ? '' : 's'}`
+        : 'No Sheet Scanner runs yet';
+  }
   const statusText = document.getElementById('crmMassEmailerStatusText');
   if (statusText) statusText.textContent = headline;
   const runtimeNode = document.getElementById('crmMassEmailerRuntimeText');
@@ -8329,6 +8621,11 @@ async function callEndpoint(path, button = null, busyLabel = 'Automation underwa
   const status = await loadStatus(false);
   setStatus(resultMsg + ' | ' + status.summary);
   });
+}
+
+async function toggleCommunicationWorkday(button = null) {
+  const active = workHoursStatusPayload ? liveWorkHoursSnapshot(workHoursStatusPayload).isActive : false;
+  await callEndpoint(active ? '/work/out' : '/work/in', button, active ? 'Clocking out...' : 'Clocking in...');
 }
 
 async function updateManualAutoOutTime(button = null) {
