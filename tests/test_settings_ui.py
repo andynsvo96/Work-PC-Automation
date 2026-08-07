@@ -96,7 +96,10 @@ class SettingsUiStructureTests(unittest.TestCase):
         sections = set(re.findall(r"data-system-section=['\"]([^'\"]+)", self.html))
         targets = set(re.findall(r"data-system-target=['\"]([^'\"]+)", self.html))
         self.assertEqual(sections, expected)
-        self.assertEqual(targets, expected)
+        self.assertEqual(targets, set())
+        self.assertEqual(self.html.count("system-legacy-section"), 4)
+        self.assertIn("data-windows-control", self.html)
+        self.assertIn("function windowsControlsAvailable(", self.html)
         self.assertIn("function showSystemSection(", self.html)
         self.assertIn("function showProcessingSection(", self.html)
         self.assertIn("function refreshSystemOverview(", self.html)
@@ -116,12 +119,25 @@ class SettingsUiStructureTests(unittest.TestCase):
         self.assertRegex(self.html, r"@media \(max-width:560px\)\{")
         self.assertRegex(
             self.html,
-            r"@media \(max-width:560px\)\{.*?\.tab-bar\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)",
+            r"@media \(max-width:560px\)\{.*?\.tab-bar\{[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)",
         )
         self.assertRegex(
             self.html,
             r"@media \(max-width:560px\)\{.*?\.rough-system-metrics\{grid-template-columns:1fr\}",
         )
+
+    def test_communications_show_compact_week_calculator_and_today_slack_history(self):
+        self.assertIn("Weekly schedule calculator", self.html)
+        self.assertIn("id='workPredictionDays'", self.html)
+        self.assertIn("id='communicationSlackHistory'", self.html)
+        self.assertIn("function loadTodaySlackHistory(", self.html)
+
+    def test_processing_reports_and_shared_schedule_controls_are_visible(self):
+        self.assertNotRegex(self.html, r"<details[^>]*rough-advanced-details")
+        self.assertIn("Optional controls apply to either Main automation or Sheet Scanner.", self.html)
+        self.assertIn("id='crmProcessingLatestReportBtn'", self.html)
+        self.assertIn("function openCrmProcessingRunReport(", self.html)
+        self.assertIn(">View Report</button>", self.html)
 
     def test_existing_backend_control_roots_remain_unique(self):
         for element_id in (

@@ -637,7 +637,9 @@ button.icon-btn{min-height:34px;padding:7px 12px;border-radius:8px;background:va
 .rough-timeline{display:grid}.rough-event{position:relative;display:grid;grid-template-columns:70px 18px 1fr;gap:8px;min-height:50px}.rough-event:after{content:'';position:absolute;left:78px;top:20px;bottom:-4px;width:1px;background:var(--rough-divider)}.rough-event:last-child:after{display:none}.rough-event-time{padding-top:4px;color:var(--rough-muted);font-size:10px;text-align:right}.rough-event-mark{position:relative;z-index:1;margin-top:3px;width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px #25372d}.rough-event-mark.future{background:#3b82f6;box-shadow:0 0 0 4px #173a5e}.rough-event-title{font-size:12px;font-weight:700}.rough-event-note{margin-top:3px;color:var(--rough-muted);font-size:10px;line-height:1.35}
 .rough-message{padding:12px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card-alt)}.rough-message strong{font-size:11px}.rough-message p{margin:6px 0 0;font-size:12px}
 .rough-weekly-card,.communications-bottom-grid,.processing-history-card,.processing-tool-health-card,.system-overview-row,.system-activity-card{margin-top:14px}
-.rough-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}.rough-day{min-width:0;padding:11px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card-alt)}.rough-day.today{border-color:var(--rough-blue);background:var(--rough-blue-soft)}.rough-day-name{font-size:11px;font-weight:800}.rough-day-hours{margin-top:13px;color:#4fc1ff;font-size:17px;font-weight:800}.rough-day-note{margin-top:3px;color:var(--rough-muted);font-size:9px}
+.rough-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--rough-border);border-radius:10px;overflow:hidden}.rough-day{min-width:0;padding:8px 10px;border-right:1px solid var(--rough-border);background:transparent}.rough-day:last-child{border-right:0}.rough-day.today{background:var(--rough-blue-soft);box-shadow:inset 0 -2px 0 var(--rough-blue)}.rough-day-name{font-size:10px;font-weight:800}.rough-day-hours{margin-top:3px;color:#4fc1ff;font-size:14px;font-weight:800}.rough-day-state{margin-top:2px;color:var(--rough-muted);font-size:8px}.rough-day-note{margin-top:2px;color:var(--rough-muted);font-size:8px}
+.weekly-calculator{margin-top:12px;padding:12px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card-alt)}.weekly-calculator .work-plan{margin:0;padding:0;border:0}.weekly-calculator .work-plan-header{margin-bottom:8px}.weekly-calculator .work-plan-header h3{font-size:13px}.weekly-calculator .work-plan-summary{font-size:11px}.weekly-calculator .work-plan-days{grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}.weekly-calculator .work-day-toggle{display:grid;grid-template-columns:1fr auto;gap:2px 6px;min-height:58px;padding:7px 8px;border-radius:8px}.weekly-calculator .work-day-name{font-size:9px}.weekly-calculator .work-day-date{font-size:8px}.weekly-calculator .work-day-hours{grid-column:2;grid-row:1 / span 2;align-self:center;font-size:11px;text-align:right}.weekly-calculator .work-day-state{display:none}
+.slack-history{display:grid;gap:7px;margin-top:10px}.slack-history-row{display:grid;grid-template-columns:minmax(90px,.35fr) minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 10px;border:1px solid var(--rough-border);border-radius:8px;background:var(--rough-card-alt)}.slack-history-channel{font-size:10px;font-weight:800}.slack-history-message{font-size:10px;line-height:1.4;overflow-wrap:anywhere}.slack-history-time{color:var(--rough-muted);font-size:9px;white-space:nowrap}
 .rough-history-panel{position:absolute;right:0;top:calc(100% + 8px);z-index:15;width:min(920px,calc(100vw - 84px));max-height:70vh;overflow:auto;padding:15px;border:1px solid var(--rough-border);border-radius:12px;background:var(--rough-card);box-shadow:0 20px 50px rgba(0,0,0,.38)}
 .rough-sync-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.rough-sync-summary>div{padding:9px;border:1px solid var(--rough-border);border-radius:8px;background:var(--rough-card-alt)}.rough-sync-summary span{display:block;color:var(--rough-muted);font-size:9px;text-transform:uppercase}.rough-sync-summary strong{display:block;margin-top:4px;font-size:13px}.rough-planning-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}.rough-planning-row input{width:80px}
 .rough-activity{display:grid;gap:9px}.rough-activity-row{display:grid;grid-template-columns:9px minmax(0,1fr) auto;gap:9px;align-items:start;padding-bottom:9px;border-bottom:1px solid var(--rough-divider)}.rough-activity-row:last-child{padding-bottom:0;border-bottom:0}.rough-activity-dot{width:8px;height:8px;margin-top:4px;border-radius:50%;background:#22c55e}.rough-activity-dot.blue{background:#3b82f6}.rough-activity-title{font-size:11px;font-weight:700}.rough-activity-note,.rough-activity-time{color:var(--rough-muted);font-size:9px}
@@ -645,16 +647,17 @@ button.icon-btn{min-height:34px;padding:7px 12px;border-radius:8px;background:va
 .workspace-nav-btn{min-height:30px;padding:7px 11px;border-radius:7px;font-size:11px}.workspace-nav-btn.active{background:var(--rough-card-alt)!important;border-color:transparent!important;color:var(--rough-text)!important}
 .rough-modebar{display:flex;gap:6px;flex-wrap:wrap}.rough-mode{min-height:32px;padding:8px 12px;border:1px solid #4a4a50!important;border-radius:8px;background:var(--rough-card-alt)!important;color:var(--rough-muted)!important;font-size:11px;font-weight:800;text-transform:uppercase}.rough-mode.active{background:#7f1d1d!important;border-color:#ef4444!important;color:#fecaca!important}
 button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;gap:6px;min-height:32px;min-width:0;padding:7px 10px;border-radius:8px;font-size:10px;font-weight:750}.processing-tool-toggle.active:before{content:'✓';color:#89d185;font-weight:900}
-.rough-action-split{display:grid;grid-template-columns:minmax(0,1fr) 1px minmax(0,.9fr);gap:15px;align-items:center;margin-top:15px;padding:14px;border:1px solid var(--rough-border);border-radius:11px;background:var(--rough-shell)}.rough-action-separator{align-self:stretch;background:var(--rough-border)}.rough-action-row{display:flex;align-items:center;justify-content:space-between;gap:10px}.rough-action-title{font-size:12px;font-weight:800}.rough-action-note{margin-top:3px;color:var(--rough-muted);font-size:9px;line-height:1.35}.rough-advanced-details{margin-top:8px}.rough-advanced-details>summary{min-height:28px;padding:5px 9px;font-size:11px}.rough-advanced-panel{margin-top:8px;padding:10px;border:1px solid var(--rough-border);border-radius:9px;background:var(--rough-card-alt)}
-.rough-run-id{color:#4fc1ff;font:700 11px Consolas,'Courier New',monospace}.rough-latest-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.rough-stat{min-width:0;padding:12px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card-alt)}.rough-stat b{display:block;margin-top:5px;font-size:18px;overflow-wrap:anywhere}.rough-latest-tool-list{display:grid;gap:7px;margin-top:12px}.rough-latest-tool{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 9px;border:1px solid var(--rough-border);border-radius:8px;background:var(--rough-card-alt);font-size:10px}.rough-latest-tool-check{display:grid;place-items:center;width:17px;height:17px;border-radius:50%;background:var(--rough-green-soft);color:var(--rough-green);font-size:9px;font-weight:900}.rough-latest-tool-time{color:var(--rough-muted);font-size:9px}.rough-clarity-note{margin-top:12px;padding:9px 10px;border-left:3px solid var(--rough-blue);border-radius:5px;background:var(--rough-blue-soft);color:#a9cce3;font-size:9px;line-height:1.4}:root:not([data-theme='dark']) .rough-clarity-note{color:#1e3a8a}
+.rough-action-split{display:grid;grid-template-columns:minmax(0,1fr) 1px minmax(0,1fr);gap:15px;align-items:stretch;margin-top:15px;padding:14px;border:1px solid var(--rough-border);border-radius:11px;background:var(--rough-shell)}.rough-action-separator{align-self:stretch;background:var(--rough-border)}.rough-action-cell{display:flex;flex-direction:column;justify-content:center;min-height:76px}.rough-action-row{display:grid;grid-template-columns:minmax(0,1fr) 176px;align-items:center;gap:12px}.rough-action-row>button{width:176px;min-height:42px;font-weight:750}.rough-action-title{font-size:12px;font-weight:800}.rough-action-note{margin-top:3px;color:var(--rough-muted);font-size:9px;line-height:1.35}.rough-advanced-details{margin-top:8px}.rough-advanced-details>summary{min-height:28px;padding:5px 9px;font-size:11px}.rough-advanced-panel{margin-top:12px;padding:12px;border:1px solid var(--rough-border);border-radius:9px;background:var(--rough-card-alt)}.processing-schedule-panel{margin-top:12px}.processing-schedule-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:9px}.processing-schedule-head h3{margin:0;font-size:13px}.processing-schedule-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.processing-schedule-controls input[type=number]{width:76px}.processing-schedule-controls input[type=time]{width:124px}.processing-schedule-controls .check{font-weight:750}
+.rough-run-id{color:#4fc1ff;font:700 11px Consolas,'Courier New',monospace}.rough-latest-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.rough-stat{min-width:0;padding:12px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card-alt)}.rough-stat b{display:block;margin-top:5px;font-size:18px;overflow-wrap:anywhere}.rough-latest-tool-list{display:grid;gap:7px;margin-top:12px}.rough-latest-tool{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 9px;border:1px solid var(--rough-border);border-radius:8px;background:var(--rough-card-alt);font-size:10px}.rough-latest-tool>div{display:flex;align-items:baseline;gap:7px;min-width:0}.rough-latest-tool>div span{color:var(--rough-muted);white-space:nowrap}.rough-latest-tool-check{display:grid;place-items:center;width:19px;height:19px;padding:0;border:0;border-radius:50%;background:var(--rough-green-soft);color:var(--rough-green);font-size:10px;font-weight:900}.rough-latest-tool-check.bad{background:#fee2e2;color:#b91c1c;cursor:pointer}.rough-latest-tool-check.bad:hover{box-shadow:0 0 0 2px rgba(239,68,68,.2)}.rough-latest-tool-time{color:var(--rough-muted);font-size:9px}.rough-clarity-note{margin-top:12px;padding:9px 10px;border-left:3px solid var(--rough-blue);border-radius:5px;background:var(--rough-blue-soft);color:#a9cce3;font-size:9px;line-height:1.4}:root:not([data-theme='dark']) .rough-clarity-note{color:#1e3a8a}
 .run-state-badge{background:var(--rough-card-alt);color:var(--rough-muted)}.run-state-badge.success{background:var(--rough-green-soft);color:var(--rough-green)}
 .rough-table th,.rough-table td{padding:9px 8px}.rough-table th{color:var(--rough-muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em}.rough-table tr:first-child td{background:rgba(59,130,246,.06)}
 .rough-tool{display:flex;align-items:center;gap:8px}.rough-tool-icon{display:grid;place-items:center;width:25px;height:25px;border-radius:7px;background:var(--rough-blue-soft);color:#4fc1ff;font-size:10px;font-weight:900}.rough-health{display:inline-flex;align-items:center;gap:5px;color:var(--rough-green);font-size:10px;font-weight:750}
 .rough-system-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.rough-system-metric{position:relative;min-width:0;min-height:122px;padding:15px;border:1px solid var(--rough-border);border-radius:12px;background:var(--rough-card-alt)}.rough-system-icon{position:absolute;right:13px;top:13px;color:var(--rough-muted);font-size:20px}.rough-system-value{margin-top:4px;font-size:25px;font-weight:800}.rough-system-state{margin-top:6px;color:var(--rough-green);font-size:10px;font-weight:700}.rough-system-state.amber{color:var(--rough-amber)}.rough-gauge-bar{height:7px;margin-top:10px;border-radius:99px;background:var(--rough-divider);overflow:hidden}.rough-gauge-fill{height:100%;width:0;border-radius:99px;background:#22c55e}.rough-gauge-fill.blue{background:#3b82f6}.rough-gauge-fill.amber{background:#f59e0b}
 .rough-power-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.rough-power-action{min-width:0;padding:12px;border:1px solid #4a4a50!important;border-radius:10px!important;background:var(--rough-card-alt)!important;color:var(--rough-text)!important;text-align:center}.rough-power-action b{display:block;margin-top:5px;font-size:11px}.rough-power-action.danger-outline{border-color:#7f1d1d!important}.rough-note{margin-top:12px;padding:11px 12px;border:1px solid var(--rough-border);border-radius:9px;background:var(--rough-card-alt);color:var(--rough-muted);font-size:10px;line-height:1.45}.rough-schedule{display:grid;grid-template-columns:1fr 1fr auto;gap:8px}.rough-schedule select,.rough-schedule input{min-width:0;padding:9px 10px;border:1px solid #55555d;border-radius:8px;background:var(--rough-card-alt);color:var(--rough-text);font-size:11px}.rough-status-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}.rough-status-line strong{color:var(--rough-text)}
-@media (max-width:980px){.rough-two,.rough-half{grid-template-columns:1fr}.rough-system-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-week{grid-template-columns:repeat(4,minmax(0,1fr))}.rough-history-panel{width:calc(100vw - 48px)}}
-@media (max-width:700px){.wrap{padding:0 16px 28px}.app-header{height:auto;min-height:72px;margin:0 -16px;padding:12px 16px;align-items:flex-start;flex-direction:column}.app-header-actions{justify-content:flex-start;width:100%}.tab-bar{height:auto;min-height:60px;margin:0 -16px 22px;padding:10px 16px;flex-wrap:wrap;overflow:visible}.control-target{width:100%;margin-left:0}.control-target select{flex:1;min-width:0;max-width:none}.page-heading{align-items:flex-start;flex-direction:column}.page-heading-actions{justify-content:flex-start}.rough-metric-row{grid-template-columns:1fr}.rough-week{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-latest-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-action-split{grid-template-columns:1fr}.rough-action-separator{display:none}.rough-power-actions{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-schedule{grid-template-columns:1fr}.rough-sync-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-history-panel{position:fixed;inset:70px 12px auto;width:auto;max-height:75vh}.workspace-nav{width:100%}.workspace-nav-btn{flex:1}.compact-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.compact-tools button{width:100%}.rough-action-row{align-items:flex-start;flex-direction:column}.rough-action-row button{width:100%}}
-@media (max-width:560px){.app-brand-sub{display:none}.app-header-actions{gap:6px}.app-header-actions button{padding:7px 9px}.tab-bar{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:auto}.tab-btn{min-width:0;padding:8px 6px;justify-content:center}.control-target{grid-column:1/-1}.workspace-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));box-sizing:border-box}.workspace-nav-btn{min-width:0;white-space:normal}.rough-system-metrics{grid-template-columns:1fr}.rough-card{padding:15px}.rough-card-head{flex-wrap:wrap}.rough-week{grid-template-columns:1fr 1fr}.rough-big-time{font-size:25px}.rough-actions>*{max-width:100%}.rough-power-actions{grid-template-columns:1fr}.rough-history-panel{inset:54px 8px auto}.processing-history-card .rough-card-head button,.processing-tool-health-card .rough-card-head button{width:100%}}
+.platform-unavailable{position:relative;opacity:.45;filter:grayscale(1);pointer-events:none;user-select:none}.platform-unavailable::after{content:attr(data-unavailable-label);position:absolute;inset:0;display:grid;place-items:center;padding:14px;border:1px dashed var(--rough-border);border-radius:inherit;background:rgba(244,246,248,.72);color:#475569;font-size:12px;font-weight:800;text-align:center;z-index:5}:root[data-theme='dark'] .platform-unavailable::after{background:rgba(30,30,30,.78);color:#c8c8c8}.system-legacy-section{display:none!important}
+@media (max-width:980px){.rough-two,.rough-half{grid-template-columns:1fr}.rough-system-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-week{grid-template-columns:repeat(4,minmax(0,1fr))}.rough-day:nth-child(4){border-right:0}.rough-day:nth-child(n+5){border-top:1px solid var(--rough-border)}.weekly-calculator .work-plan-days{grid-template-columns:repeat(4,minmax(0,1fr))}.rough-history-panel{width:calc(100vw - 48px)}}
+@media (max-width:700px){.wrap{padding:0 16px 28px}.app-header{height:auto;min-height:72px;margin:0 -16px;padding:12px 16px;align-items:flex-start;flex-direction:column}.app-header-actions{justify-content:flex-start;width:100%}.tab-bar{height:auto;min-height:60px;margin:0 -16px 22px;padding:10px 16px;flex-wrap:wrap;overflow:visible}.control-target{width:100%;margin-left:0}.control-target select{flex:1;min-width:0;max-width:none}.page-heading{align-items:flex-start;flex-direction:column}.page-heading-actions{justify-content:flex-start}.rough-metric-row{grid-template-columns:1fr}.rough-week{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-day:nth-child(2n){border-right:0}.rough-day:nth-child(n+3){border-top:1px solid var(--rough-border)}.weekly-calculator .work-plan-days{grid-template-columns:repeat(2,minmax(0,1fr))}.slack-history-row{grid-template-columns:1fr auto}.slack-history-message{grid-column:1/-1}.rough-latest-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-action-split{grid-template-columns:1fr}.rough-action-separator{display:none}.rough-action-row{grid-template-columns:1fr}.rough-action-row>button{width:100%}.rough-power-actions{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-schedule{grid-template-columns:1fr}.rough-sync-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-history-panel{position:fixed;inset:70px 12px auto;width:auto;max-height:75vh}.workspace-nav{width:100%}.workspace-nav-btn{flex:1}.compact-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.compact-tools button{width:100%}}
+@media (max-width:560px){.app-brand-sub{display:none}.app-header-actions{gap:6px}.app-header-actions button{padding:7px 9px}.tab-bar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:auto}.tab-btn{min-width:0;padding:8px 4px;justify-content:center;font-size:11px}.control-target{grid-column:1/-1}.workspace-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));box-sizing:border-box}.workspace-nav-btn{min-width:0;white-space:normal}.rough-system-metrics{grid-template-columns:1fr}.rough-card{padding:15px}.rough-card-head{flex-wrap:wrap}.rough-week{grid-template-columns:1fr 1fr}.rough-big-time{font-size:25px}.rough-actions>*{max-width:100%}.rough-power-actions{grid-template-columns:1fr}.rough-history-panel{inset:54px 8px auto}.processing-history-card .rough-card-head button,.processing-tool-health-card .rough-card-head button{width:100%}}
 </style>
 </head>
 <body>
@@ -666,7 +669,6 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
     <span class='app-version' id='appVersionText'>Version: loading</span>
   </div>
   <div class='app-header-actions'>
-    <button class='icon-btn' id='tabBtnConsole' onclick="setActiveTab('console')">Console</button>
     <button class='icon-btn' id='themeToggleBtn' type='button' onclick='toggleColorTheme()' title='Switch color theme' aria-label='Switch color theme'>Dark Mode</button>
     <button class='icon-btn' id='tabBtnQueue' onclick='toggleQueuePanel()'>Queue</button>
     <button class='icon-btn' id='headlessToggleBtn' type='button' onclick='toggleHeadlessMode()' title='Loading Headless mode' aria-label='Loading Headless mode'>Headless</button>
@@ -683,6 +685,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
   <button class='tab-btn active' id='tabBtnAutomation' onclick="setActiveTab('automation')"><span class='tab-symbol'>◉</span>Communications</button>
   <button class='tab-btn' id='tabBtnProcessing' onclick="setActiveTab('processing')"><span class='tab-symbol'>▤</span>Processing</button>
   <button class='tab-btn' id='tabBtnSystem' onclick="setActiveTab('system')"><span class='tab-symbol'>▦</span>System</button>
+  <button class='tab-btn' id='tabBtnConsole' onclick="setActiveTab('console')"><span class='tab-symbol'>›_</span>Console</button>
   <label class='control-target'><span class='connectivity-dot online' aria-hidden='true'></span><span id='controlTargetLabel'>Controlling</span><select id='controlTargetSelect' onchange='changeControlTarget(this.value)'><option value=''>Any available computer</option></select></label>
 </div>
 <div id='platformCapabilityNotice' class='notice platform-capability-notice'>Windows only</div>
@@ -823,23 +826,27 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
             <button class='secondary tiny' onclick='syncPaycomNow(this)'>Sync from Paycom</button>
           </div>
           <div class='muted' id='syncMessageText'>No sync details yet.</div>
-          <div class='work-plan' style='margin-top:12px'>
-            <div class='work-plan-header'><div><h3>Weekly prediction</h3><div class='muted'>Toggle planned work days.</div></div><div class='work-plan-summary' id='workPlanSummary'>Loading prediction...</div></div>
-            <div class='work-plan-days' id='workPredictionDays'></div>
-            <div class='muted' id='workPlanBreakNote' style='margin-top:8px'></div>
-          </div>
           <div class='tbl-wrap' style='margin-top:12px'><table class='tbl'><thead><tr><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Paycom Hours</th><th>Auto Out</th></tr></thead><tbody id='hoursRows'><tr><td colspan='5' class='muted'>No tracked days yet.</td></tr></tbody></table></div>
           <div class='tbl-wrap' style='margin-top:12px'><table class='tbl'><thead><tr><th>When</th><th>Week Hours</th><th>Status</th><th>Message</th></tr></thead><tbody id='syncRows'><tr><td colspan='4' class='muted'>No Paycom sync history yet.</td></tr></tbody></table></div>
         </div>
       </details>
     </div>
     <div class='rough-week' id='communicationWeekDays'><div class='rough-day'><div class='rough-day-name'>Loading week…</div></div></div>
+    <div class='weekly-calculator'>
+      <div class='work-plan'>
+        <div class='work-plan-header'><div><h3>Weekly schedule calculator</h3><div class='muted'>Select the days you plan to work; remaining paid hours are split evenly.</div></div><div class='work-plan-summary' id='workPlanSummary'>Loading prediction...</div></div>
+        <div class='work-plan-days' id='workPredictionDays'></div>
+        <div class='muted' id='workPlanBreakNote' style='margin-top:7px'></div>
+      </div>
+    </div>
   </section>
 
   <div class='rough-grid rough-half communications-bottom-grid'>
     <section class='card rough-card'>
-      <div class='rough-card-head'><div><h2>Slack presence</h2><p class='rough-card-sub'>Current and next automatic message</p></div><span class='rough-pill' id='communicationSlackState'>Online</span></div>
+      <div class='rough-card-head'><div><h2>Slack presence</h2><p class='rough-card-sub'>Current state and automation posts made today</p></div><span class='rough-pill' id='communicationSlackState'>Online</span></div>
       <div class='rough-message'><strong>Current</strong><p id='communicationSlackCurrent'>Loading Slack presence...</p></div>
+      <div class='rough-label' style='margin-top:12px'>Today’s Slack history</div>
+      <div class='slack-history' id='communicationSlackHistory'><div class='muted'>Loading today’s Slack posts...</div></div>
     </section>
     <section class='card rough-card'>
       <div class='rough-card-head'><div><h2>Recent activity</h2><p class='rough-card-sub'>Workday and communication events</p></div><button class='secondary tiny' onclick="setActiveTab('console')">View all</button></div>
@@ -897,29 +904,27 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
     </div>
     <div class='muted' id='crmProcessingSelectionText' style='margin-top:8px'>Selected automations: loading...</div>
     <div class='rough-action-split'>
-      <div>
+      <div class='rough-action-cell'>
         <div class='rough-action-row'><div><div class='rough-action-title'>Main automation</div><div class='rough-action-note'>Runs the selected tools above in order</div></div><button id='crmProcessingRunBtn' onclick='startCrmProcessingRun(this)'>Automate →</button></div>
-        <details class='rough-advanced-details'>
-          <summary>Schedule / repeat</summary>
-          <div class='rough-advanced-panel'>
-        <div class='row' style='align-items:center;flex-wrap:wrap'>
-          <label class='check'><input type='checkbox' id='crmProcessingRepeatToggle' onchange='syncCrmProcessingAdvancedControls("repeat")'> REPEAT</label>
-          <label for='crmProcessingRepeatMinutesInput' class='muted'>Every</label>
-          <input id='crmProcessingRepeatMinutesInput' type='number' min='0' step='1' value='5' style='width:92px;padding:7px;border:1px solid #cbd5e1;border-radius:6px' oninput='syncCrmProcessingAdvancedControls()'>
-          <span class='muted'>minutes</span>
-          <label class='check' style='margin-left:8px'><input type='checkbox' id='crmProcessingScheduledToggle' onchange='syncCrmProcessingAdvancedControls("scheduled")'> SCHEDULED</label>
-          <label for='crmProcessingScheduledTimeInput' class='muted'>At</label>
-          <input id='crmProcessingScheduledTimeInput' type='time' step='60' style='width:140px;padding:7px;border:1px solid #cbd5e1;border-radius:6px' onchange='syncCrmProcessingAdvancedControls()'>
-        </div>
-        <div class='muted' id='crmProcessingAdvancedSummaryText'>Advanced controls are off.</div>
-          </div>
-        </details>
       </div>
       <div class='rough-action-separator'></div>
-      <div>
-        <div class='rough-action-row'><div><div class='rough-action-title'>Sheet Scanner</div><div class='rough-action-note'>Runs supported Sheet queue rows separately</div></div><button class='secondary' id='crmMassEmailerRunBtn' onclick="startCrmMassEmailerRun('live', this)">Run Sheet Scanner</button></div>
+      <div class='rough-action-cell'>
+        <div class='rough-action-row'><div><div class='rough-action-title'>Sheet Scanner</div><div class='rough-action-note'>Runs supported Sheet queue rows separately</div></div><button id='crmMassEmailerRunBtn' onclick="startCrmMassEmailerRun('live', this)">Run Sheet Scanner</button></div>
         <div class='rough-action-note' id='processingScannerLastRun' style='margin-top:9px'>Last run: loading...</div>
       </div>
+    </div>
+    <div class='rough-advanced-panel processing-schedule-panel'>
+      <div class='processing-schedule-head'><div><h3>Schedule / repeat</h3><div class='rough-action-note'>Optional controls apply to either Main automation or Sheet Scanner.</div></div><span class='rough-pill gray'>Optional</span></div>
+      <div class='processing-schedule-controls'>
+        <label class='check'><input type='checkbox' id='crmProcessingRepeatToggle' onchange='syncCrmProcessingAdvancedControls("repeat")'> Repeat</label>
+        <label for='crmProcessingRepeatMinutesInput' class='muted'>Every</label>
+        <input id='crmProcessingRepeatMinutesInput' type='number' min='0' step='1' value='5' oninput='syncCrmProcessingAdvancedControls()'>
+        <span class='muted'>minutes</span>
+        <label class='check' style='margin-left:8px'><input type='checkbox' id='crmProcessingScheduledToggle' onchange='syncCrmProcessingAdvancedControls("scheduled")'> Scheduled</label>
+        <label for='crmProcessingScheduledTimeInput' class='muted'>At</label>
+        <input id='crmProcessingScheduledTimeInput' type='time' step='60' onchange='syncCrmProcessingAdvancedControls()'>
+      </div>
+      <div class='muted' id='crmProcessingAdvancedSummaryText' style='margin-top:8px'>Runs once immediately unless an option is checked.</div>
     </div>
     <div class='notice' id='crmProcessingStatusText' style='display:none'>Automate Processing status loading...</div>
   </section>
@@ -927,7 +932,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
   <aside class='card rough-card latest-run-card'>
     <div class='rough-card-head'>
       <div><h2>Latest main automation run</h2><p class='rough-card-sub'><span class='rough-run-id' id='crmProcessingLatestRunId'>-</span> • <span id='crmProcessingLatestWhen'>No completed run</span></p></div>
-      <span class='run-state-badge' id='crmProcessingLatestState'>No runs</span>
+      <div class='rough-actions'><button class='secondary tiny' id='crmProcessingLatestReportBtn' type='button' onclick="openCrmProcessingRunReport('latest')">View report</button><span class='run-state-badge' id='crmProcessingLatestState'>No runs</span></div>
     </div>
     <div class='rough-latest-summary'>
       <div class='rough-stat'><div class='rough-label'>Mode</div><b id='crmProcessingLatestMode'>-</b></div>
@@ -943,7 +948,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
 
   <section class='card rough-card processing-history-card'>
     <div class='rough-card-head'><div><h2>Previous main automation runs</h2><p class='rough-card-sub'>Completed before the latest run shown above.</p></div><button class='secondary tiny' onclick="showProcessingSection('reports')">View full main-run history</button></div>
-    <div class='tbl-wrap'><table class='tbl rough-table'><thead><tr><th>When</th><th>Run ID</th><th>Mode</th><th>Tools</th><th>Orders</th><th>Errors</th><th>Duration</th><th>Status</th></tr></thead><tbody id='crmProcessingMainHistoryRows'><tr><td colspan='8' class='muted'>No previous main automation runs yet.</td></tr></tbody></table></div>
+    <div class='tbl-wrap'><table class='tbl rough-table'><thead><tr><th>When</th><th>Run ID</th><th>Mode</th><th>Tools</th><th>Orders</th><th>Errors</th><th>Duration</th><th>Status</th><th>Report</th></tr></thead><tbody id='crmProcessingMainHistoryRows'><tr><td colspan='9' class='muted'>No previous main automation runs yet.</td></tr></tbody></table></div>
   </section>
 
   <section class='card rough-card processing-tool-health-card'>
@@ -1190,7 +1195,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
 <dialog id='crmProcessingErrorsDialog' style='max-width:820px;width:min(820px, calc(100vw - 32px));border:none;border-radius:14px;padding:0;'>
   <div class='card' style='margin:0'>
     <div class='row' style='justify-content:space-between;align-items:center'>
-      <h3 style='margin:0'>Automate Processing Errors</h3>
+      <h3 id='crmProcessingErrorsDialogTitle' style='margin:0'>Main Automation Run Report</h3>
       <button class='secondary' onclick='closeCrmProcessingErrorsDialog()'>Close</button>
     </div>
     <div class='muted' id='crmProcessingErrorsDialogSummary'>No errors loaded.</div>
@@ -1229,15 +1234,8 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
     <div><h2>System</h2><p>Computer health, cross-system connectivity, and power controls in one place.</p></div>
     <div class='page-heading-actions'><span class='rough-pill' id='systemOverviewHealthState'>All systems normal</span><button class='secondary tiny' onclick='refreshSystemOverview(this)'>Refresh</button></div>
   </div>
-  <nav class='workspace-nav' aria-label='System sections'>
-    <button class='workspace-nav-btn active' type='button' data-system-target='overview' onclick="showSystemSection('overview')">Overview</button>
-    <button class='workspace-nav-btn' id='systemSectionHardwareBtn' type='button' data-system-target='hardware' onclick="showSystemSection('hardware')">Hardware metrics</button>
-    <button class='workspace-nav-btn' type='button' data-system-target='clipboard' onclick="showSystemSection('clipboard')">Clipboard</button>
-    <button class='workspace-nav-btn' id='systemSectionPowerBtn' type='button' data-system-target='power' onclick="showSystemSection('power')">Power &amp; scheduling</button>
-  </nav>
-
   <section class='workspace-section active' data-system-section='overview'>
-    <div class='rough-system-metrics'>
+    <div class='rough-system-metrics' data-windows-control>
       <div class='rough-system-metric'><span class='rough-system-icon'>◉</span><div class='rough-label'>CPU temperature</div><div class='rough-system-value' id='systemOverviewCpuTemp'>-</div><div class='rough-system-state' id='systemOverviewCpuState'>Waiting</div><div class='rough-gauge-bar'><div class='rough-gauge-fill' id='systemOverviewCpuTempFill'></div></div></div>
       <div class='rough-system-metric'><span class='rough-system-icon'>◇</span><div class='rough-label'>GPU temperature</div><div class='rough-system-value' id='systemOverviewGpuTemp'>-</div><div class='rough-system-state' id='systemOverviewGpuState'>Waiting</div><div class='rough-gauge-bar'><div class='rough-gauge-fill blue' id='systemOverviewGpuTempFill'></div></div></div>
       <div class='rough-system-metric'><span class='rough-system-icon'>⌁</span><div class='rough-label'>CPU usage</div><div class='rough-system-value' id='systemOverviewCpuUsage'>-</div><div class='rough-system-state' id='systemOverviewCpuUsageState'>Waiting</div><div class='rough-gauge-bar'><div class='rough-gauge-fill blue' id='systemOverviewCpuUsageFill'></div></div></div>
@@ -1253,19 +1251,19 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
         </div>
         <div class='rough-actions' style='margin-top:13px'><button onclick='sendClipboard(this)'>Send clipboard</button><button class='secondary' onclick='pullClipboard(this)'>Get clipboard</button><button class='secondary' id='clipboardAutoOverviewBtn' onclick='toggleClipboardAutoSync(this)'>Automatic sync off</button></div>
       </section>
-      <section class='card rough-card'>
+      <section class='card rough-card' data-windows-control>
         <div class='rough-card-head'><div><h2>Metrics service</h2><p class='rough-card-sub'>LibreHardwareMonitor and desktop metrics endpoint.</p></div><span class='rough-pill' id='systemOverviewRuntimeValue'>Loading</span></div>
         <div class='rough-activity'>
           <div class='rough-activity-row'><span class='rough-activity-dot'></span><div><div class='rough-activity-title' id='systemOverviewHardwareValue'>Metrics status loading</div><div class='rough-activity-note' id='systemOverviewHardwareDetail'>Waiting for first update</div></div><span class='rough-activity-time'>Live</span></div>
-          <div class='rough-activity-row'><span class='rough-activity-dot blue'></span><div><div class='rough-activity-title'>Temperature alerts enabled</div><div class='rough-activity-note'>Threshold rules remain under Hardware metrics</div></div><span class='rough-activity-time'>4 rules</span></div>
+          <div class='rough-activity-row'><span class='rough-activity-dot blue'></span><div><div class='rough-activity-title'>Temperature alerts enabled</div><div class='rough-activity-note'>Hardware thresholds are monitored automatically</div></div><span class='rough-activity-time'>4 rules</span></div>
         </div>
-        <div class='rough-actions' style='margin-top:13px'><button class='secondary' onclick="showSystemSection('hardware')">Open hardware metrics</button><button class='secondary' onclick="showSystemSection('hardware')">Edit thresholds</button></div>
+        <div class='rough-actions' style='margin-top:13px'><button class='secondary' onclick='loadDesktopMetrics(false)'>Refresh metrics</button></div>
         <span class='sr-only' id='systemOverviewRuntimeDetail'>Local server status and uptime.</span>
       </section>
     </div>
 
     <div class='rough-grid rough-half system-overview-row'>
-      <section class='card rough-card'>
+      <section class='card rough-card' data-windows-control>
         <div class='rough-card-head'><div><h2>Power controls</h2><p class='rough-card-sub'>Immediate actions require confirmation.</p></div><span class='rough-pill gray' id='systemOverviewPowerValue'>No countdown</span></div>
         <div class='rough-power-actions'>
           <button class='rough-power-action' onclick="callPowerEndpoint('/pc/sleep', this, 'Sleep underway...')">☾<b>Sleep</b></button>
@@ -1275,8 +1273,8 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
         </div>
         <div class='rough-note'>Power controls run on the selected computer. Confirmation prevents accidental immediate actions.</div>
       </section>
-      <section class='card rough-card'>
-        <div class='rough-card-head'><div><h2>Schedule a power action</h2><p class='rough-card-sub'>Use a countdown or choose a specific time.</p></div><button class='secondary tiny' onclick="showSystemSection('power')">View schedules</button></div>
+      <section class='card rough-card' data-windows-control>
+        <div class='rough-card-head'><div><h2>Schedule a power action</h2><p class='rough-card-sub'>Choose a specific time; active countdown status appears below.</p></div></div>
         <div class='rough-schedule'><select id='systemOverviewScheduleAction'><option value='shutdown'>Shutdown</option><option value='sleep'>Sleep</option><option value='restart'>Restart</option></select><input id='systemOverviewScheduleTime' type='time'><button onclick='scheduleOverviewPowerAction(this)'>Schedule</button></div>
         <div class='rough-divider'></div>
         <div class='rough-status-line'><span class='connectivity-dot'></span><strong id='systemOverviewPowerHeadline'>No active countdown</strong><span class='muted' id='systemOverviewPowerDetail'>The next scheduled action will appear here.</span></div>
@@ -1289,7 +1287,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
     </section>
   </section>
 
-  <section class='workspace-section' data-system-section='hardware'>
+  <section class='workspace-section system-legacy-section' data-system-section='hardware'>
   <div class='system-section-heading'><div><h2>Hardware metrics</h2><p>Live desktop temperatures, usage, thresholds, and server runtime.</p></div></div>
   <div class='status' id='metricsStatusBox'>Desktop metrics status: waiting for first update...</div>
   <div class='card'>
@@ -1391,7 +1389,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
   </div>
   </section>
 
-  <section class='workspace-section' data-system-section='clipboard'>
+  <section class='workspace-section system-legacy-section' data-system-section='clipboard'>
   <div class='system-section-heading'><div><h2>Clipboard</h2><p>Move text and PNG images between connected computers.</p></div></div>
   <div class='card'>
     <div class='card-title-row'>
@@ -1410,7 +1408,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
   </div>
   </section>
 
-  <section class='workspace-section' data-system-section='power'>
+  <section class='workspace-section system-legacy-section' data-system-section='power'>
   <div class='system-section-heading'><div><h2>Power &amp; scheduling</h2><p>Immediate system actions and timed countdowns.</p></div></div>
   <div class='status' id='powerStatusBox'>System controls status: loading...</div>
   <div class='notice' id='systemPowerUnavailableNotice' style='display:none;margin-top:14px'>Power controls are available on Windows only.</div>
@@ -1671,6 +1669,7 @@ let queuePayload = null;
 let queueExpandedTaskId = null;
 let nodeRuntimePayload = null;
 let clipboardStatusPayload = null;
+let slackHistoryPayload = null;
 let dismissedAppUpdateTarget = null;
 let appUpdateInProgress = false;
 let queueDragTaskId = null;
@@ -2083,11 +2082,83 @@ function renderCrmProcessingErrorMore(payload) {
     : '';
 }
 
+function crmProcessingRunForReport(runRef = 'latest') {
+  const payload = crmProcessingStatusPayload || {};
+  const state = payload.state || {};
+  const runtime = payload.runtime || {};
+  const history = Array.isArray(state.run_history) ? state.run_history : [];
+  if (runRef !== 'latest') {
+    const index = Math.max(0, Math.trunc(Number(runRef) || 0));
+    return history[index] || null;
+  }
+  if (payload.running) {
+    return {
+      timestamp: runtime.startedAt,
+      success: null,
+      processing_filter: runtime.processingFilter || state.processing_filter,
+      selected_steps: runtime.selectedSteps,
+      step_results: runtime.completedSteps,
+      duration_seconds: runtime.startedAt ? Math.max(0, (Date.now() - Date.parse(runtime.startedAt)) / 1000) : null,
+      message: runtime.lastMessage || 'Main automation is running.',
+      running: true,
+    };
+  }
+  return history[0] || (state.last_run_timestamp ? {
+    timestamp: state.last_run_timestamp,
+    success: state.last_run_success,
+    processing_filter: state.last_filter_used || state.processing_filter,
+    selected_steps: state.last_selected_steps,
+    step_results: state.last_step_results,
+    duration_seconds: state.last_run_duration_seconds,
+    message: state.last_run_message,
+  } : null);
+}
+
+function openCrmProcessingRunReport(runRef = 'latest') {
+  const dialog = document.getElementById('crmProcessingErrorsDialog');
+  const title = document.getElementById('crmProcessingErrorsDialogTitle');
+  const summary = document.getElementById('crmProcessingErrorsDialogSummary');
+  const body = document.getElementById('crmProcessingErrorsDialogBody');
+  if (!dialog || !title || !summary || !body) return;
+  const row = crmProcessingRunForReport(runRef);
+  if (!row) {
+    title.textContent = 'Main Automation Run Report';
+    summary.textContent = 'No main automation run is available.';
+    body.innerHTML = "<div class='muted'>Run an automation to create a report.</div>";
+  } else {
+    const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
+    const totals = crmProcessingRunTotals(row);
+    const steps = normalizeCrmProcessingStepList(row.selected_steps, {...state, processing_filter: row.processing_filter});
+    const resultMap = new Map((Array.isArray(row.step_results) ? row.step_results : []).map((result) => [String(result && result.key || ''), result]));
+    const status = row.running ? 'Running' : row.success ? 'Completed' : 'Needs attention';
+    title.textContent = `Main Automation Run Report • ${crmProcessingRunId(row.timestamp)}`;
+    summary.textContent = `${fmtDateTime(row.timestamp)} • ${formatCrmAddressFilterLabel(row.processing_filter)} • ${status}`;
+    const metrics = `<div class='rough-latest-summary'><div class='rough-stat'><div class='rough-label'>Tools</div><b>${esc(String(steps.length))}</b></div><div class='rough-stat'><div class='rough-label'>Orders</div><b>${esc(String(totals.orders))}</b></div><div class='rough-stat'><div class='rough-label'>Errors</div><b class='${totals.errors ? 'bad' : ''}'>${esc(String(totals.errors))}</b></div><div class='rough-stat'><div class='rough-label'>Duration</div><b>${esc(fmtDuration(row.duration_seconds))}</b></div></div>`;
+    const stepReports = steps.map((key) => {
+      const result = resultMap.get(key);
+      const label = formatCrmProcessingStepLabelForState(key, {...state, processing_filter: row.processing_filter});
+      const hasErrors = Boolean(result && (!result.success || Number(result.error_count || 0) > 0));
+      const stateText = !result ? (row.running ? 'Queued' : 'Included') : hasErrors ? 'Needs attention' : 'Completed';
+      const errors = result && Array.isArray(result.errors) ? result.errors : [];
+      const errorHtml = errors.length ? `<ol style='margin:8px 0 0;padding-left:22px'>${errors.map((error) => {
+        const orderId = String(error && error.order_id || '').trim();
+        const message = String(error && error.message || 'Automation needs attention.');
+        return `<li style='margin-bottom:5px'>${orderId ? `<strong>Order ${esc(orderId)}</strong> — ` : ''}<span class='bad'>${esc(message)}</span></li>`;
+      }).join('')}</ol>` : '';
+      return `<section style='border-top:1px solid var(--rough-divider);padding-top:10px;margin-top:10px'><div style='display:flex;justify-content:space-between;gap:10px'><strong>${esc(label)}</strong><span class='${hasErrors ? 'bad' : result ? 'ok' : 'muted'}'>${hasErrors ? '× ' : result ? '✓ ' : ''}${esc(stateText)}</span></div><div class='muted' style='margin-top:4px'>${esc(result && result.message ? result.message : 'No result message recorded.')} • ${esc(fmtDuration(result && result.duration_seconds))}</div>${errorHtml}</section>`;
+    }).join('');
+    body.innerHTML = `${metrics}${row.message ? `<div class='notice' style='margin-top:12px'>${esc(row.message)}</div>` : ''}${stepReports || "<div class='muted' style='margin-top:12px'>No tool results recorded.</div>"}`;
+  }
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+}
+
 function openCrmProcessingErrorsDialog() {
   const dialog = document.getElementById('crmProcessingErrorsDialog');
+  const title = document.getElementById('crmProcessingErrorsDialogTitle');
   const summary = document.getElementById('crmProcessingErrorsDialogSummary');
   const body = document.getElementById('crmProcessingErrorsDialogBody');
   if (!dialog || !summary || !body) return;
+  if (title) title.textContent = 'Latest Main Automation Errors';
   const groups = crmProcessingErrorGroups();
   const errorCount = groups.reduce((total, group) => total + group.errors.length, 0);
   summary.textContent = errorCount > 0
@@ -3234,13 +3305,26 @@ function platformFeatureAvailable(name) {
   return capabilities[name] !== false;
 }
 
+function windowsControlsAvailable() {
+  const platform = nodeRuntimePayload && nodeRuntimePayload.platform ? nodeRuntimePayload.platform : {};
+  const localOs = String(platform.os_name || platform.platform || '').toLowerCase().replace('darwin', 'macos');
+  if (localOs === 'windows') return true;
+  if (localOs !== 'macos') return platformFeatureAvailable('system_power') || platformFeatureAvailable('metrics');
+  const nodes = queuePayload && Array.isArray(queuePayload.nodes) ? queuePayload.nodes : [];
+  const isWindowsNode = (node) => /^win/.test(String(node && node.os_name || '').toLowerCase());
+  const savedTarget = String(localStorage.getItem('automationControlTargetNode') || '').trim();
+  if (savedTarget) {
+    const selected = nodes.find((node) => String(node && node.node_key || '') === savedTarget);
+    return Boolean(selected && selected.online && isWindowsNode(selected));
+  }
+  return nodes.some((node) => node && node.online && isWindowsNode(node));
+}
+
 function applyPlatformCapabilities() {
   const windowsOnly = nodeRuntimePayload && nodeRuntimePayload.windows_only_message
     ? nodeRuntimePayload.windows_only_message
     : 'Windows only';
-  const mappings = [
-    ['systemSectionHardwareBtn', 'metrics'],
-  ];
+  const mappings = [];
   for (const [buttonId, capability] of mappings) {
     const button = document.getElementById(buttonId);
     if (!button) continue;
@@ -3249,13 +3333,14 @@ function applyPlatformCapabilities() {
     button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
     button.title = disabled ? windowsOnly : '';
   }
-  if (!platformFeatureAvailable('metrics')) {
+  const windowsAvailable = windowsControlsAvailable();
+  if (!windowsAvailable) {
     const value = document.getElementById('systemOverviewHardwareValue');
     const detail = document.getElementById('systemOverviewHardwareDetail');
     if (value) value.textContent = 'Windows only';
     if (detail) detail.textContent = windowsOnly;
   }
-  const powerAvailable = platformFeatureAvailable('system_power');
+  const powerAvailable = windowsAvailable;
   const powerSectionButton = document.getElementById('systemSectionPowerBtn');
   if (powerSectionButton) {
     powerSectionButton.title = powerAvailable ? '' : 'Power controls are available on Windows only.';
@@ -3266,6 +3351,29 @@ function applyPlatformCapabilities() {
   }
   const powerNotice = document.getElementById('systemPowerUnavailableNotice');
   if (powerNotice) powerNotice.style.display = powerAvailable ? 'none' : 'block';
+  const health = document.getElementById('systemOverviewHealthState');
+  if (health && !windowsAvailable) {
+    health.textContent = 'Windows offline';
+    health.classList.add('gray');
+  } else if (health) {
+    health.classList.remove('gray');
+  }
+  const unavailableLabel = 'Windows is offline — controls are unavailable from this Mac';
+  document.querySelectorAll('[data-windows-control]').forEach((section) => {
+    section.classList.toggle('platform-unavailable', !windowsAvailable);
+    if (windowsAvailable) section.removeAttribute('data-unavailable-label');
+    else section.setAttribute('data-unavailable-label', unavailableLabel);
+    section.setAttribute('aria-disabled', windowsAvailable ? 'false' : 'true');
+    section.querySelectorAll('button,input,select').forEach((control) => {
+      if (!windowsAvailable) {
+        if (!control.disabled) control.dataset.platformDisabled = '1';
+        control.disabled = true;
+      } else if (control.dataset.platformDisabled === '1') {
+        control.disabled = false;
+        delete control.dataset.platformDisabled;
+      }
+    });
+  });
 }
 
 function syncWorkerModeControls() {
@@ -3707,15 +3815,7 @@ function showProcessingSection(sectionName) {
 }
 
 function showSystemSection(sectionName) {
-  const normalized = ['overview', 'hardware', 'clipboard', 'power'].includes(sectionName) ? sectionName : 'overview';
-  if (normalized === 'hardware' && !platformFeatureAvailable('metrics')) {
-    const notice = document.getElementById('platformCapabilityNotice');
-    if (notice) {
-      notice.textContent = 'Hardware metrics are available on Windows only.';
-      notice.classList.add('active');
-    }
-    return;
-  }
+  const normalized = 'overview';
   const notice = document.getElementById('platformCapabilityNotice');
   if (notice) notice.classList.remove('active');
   activeSystemSection = normalized;
@@ -3725,12 +3825,10 @@ function showSystemSection(sectionName) {
   document.querySelectorAll('[data-system-target]').forEach((button) => {
     button.classList.toggle('active', button.dataset.systemTarget === normalized);
   });
-  if (normalized === 'hardware') {
+  loadClipboardStatus();
+  if (windowsControlsAvailable()) {
     loadDesktopMetrics(false);
     loadDesktopServerRuntime(false);
-  } else if (normalized === 'clipboard') {
-    loadClipboardStatus();
-  } else if (normalized === 'power') {
     loadPowerStatus(false);
   }
 }
@@ -3758,6 +3856,7 @@ function setActiveTab(tabName) {
   document.getElementById('settingsGearBtn').classList.toggle('active', isSettings);
   if (isAutomation) {
     loadSlackLunchStatus(false);
+    loadTodaySlackHistory();
   }
   if (isAutomation) {
     loadStatus(true);
@@ -4806,6 +4905,32 @@ function updateCommunicationDashboard(snapshot) {
   setText('communicationSyncActivity', 'Work hours synchronized');
   setText('communicationSyncWhen', lastSync);
   updateSlackLunchVisual();
+}
+
+function renderTodaySlackHistory(payload) {
+  slackHistoryPayload = payload || {};
+  const root = document.getElementById('communicationSlackHistory');
+  if (!root) return;
+  const posts = Array.isArray(slackHistoryPayload.posts) ? slackHistoryPayload.posts : [];
+  if (!posts.length) {
+    root.innerHTML = "<div class='muted'>No Slack messages have been posted by automation today.</div>";
+    return;
+  }
+  root.innerHTML = posts.map((post) => {
+    const channel = String(post && post.channel_name || post && post.channel_id || 'Slack channel').replace(/^#/, '');
+    const message = String(post && post.message || '');
+    const when = post && post.posted_at ? fmtTime(post.posted_at) : '—';
+    return `<div class='slack-history-row'><div class='slack-history-channel'>#${esc(channel)}</div><div class='slack-history-message'>${esc(message)}</div><time class='slack-history-time'>${esc(when)}</time></div>`;
+  }).join('');
+}
+
+async function loadTodaySlackHistory() {
+  try {
+    renderTodaySlackHistory(await api('/api/slack/history/today'));
+  } catch (error) {
+    const root = document.getElementById('communicationSlackHistory');
+    if (root) root.innerHTML = `<div class='muted'>Could not load today’s Slack history: ${esc(error.message)}</div>`;
+  }
 }
 
 function liveWorkHoursSnapshot(payload) {
@@ -6051,10 +6176,14 @@ function crmProcessingToolRowsHtml(results, selectedSteps, state, running = fals
   return steps.map((key) => {
     const result = resultMap.get(key);
     const current = running && crmProcessingStatusPayload && crmProcessingStatusPayload.runtime && crmProcessingStatusPayload.runtime.currentStep === key;
-    const status = result ? (result.success ? 'Completed' : 'Needs attention') : current ? 'Running' : running ? 'Queued' : 'Included';
+    const resultNeedsAttention = Boolean(result && (!result.success || Number(result.error_count || 0) > 0));
+    const status = result ? (resultNeedsAttention ? 'Needs attention' : 'Completed') : current ? 'Running' : running ? 'Queued' : 'Included';
     const duration = result ? fmtDuration(result.duration_seconds) : current ? 'In progress' : '—';
-    const statusClass = result && !result.success ? 'bad' : result && result.success ? 'ok' : current ? 'running' : '';
-    return `<div class='rough-latest-tool'><span class='rough-tool-check ${esc(statusClass)}'>${result && result.success ? '✓' : result && !result.success ? '!' : current ? '•' : '○'}</span><div><strong>${esc(formatCrmProcessingStepLabelForState(key, state))}</strong><span>${esc(status)}</span></div><time>${esc(duration)}</time></div>`;
+    const statusClass = resultNeedsAttention ? 'bad' : result ? 'ok' : current ? 'running' : '';
+    const icon = result && (!result.success || Number(result.error_count || 0) > 0)
+      ? `<button class='rough-latest-tool-check bad' type='button' title='View this run’s errors' aria-label='View errors for ${esc(formatCrmProcessingStepLabelForState(key, state))}' onclick="openCrmProcessingRunReport('latest')">×</button>`
+      : `<span class='rough-latest-tool-check ${esc(statusClass)}'>${result && result.success ? '✓' : current ? '•' : '○'}</span>`;
+    return `<div class='rough-latest-tool'>${icon}<div><strong>${esc(formatCrmProcessingStepLabelForState(key, state))}</strong><span>${esc(status)}</span></div><time>${esc(duration)}</time></div>`;
   }).join('');
 }
 
@@ -6092,6 +6221,7 @@ function renderCrmProcessingMainRunViews(payload) {
   const ordersEl = document.getElementById('crmProcessingLatestOrders');
   const errorsEl = document.getElementById('crmProcessingLatestErrors');
   const pageState = document.getElementById('processingPageState');
+  const reportBtn = document.getElementById('crmProcessingLatestReportBtn');
   if (pageState) {
     pageState.textContent = running ? 'Running' : 'Idle';
     pageState.classList.toggle('running', running);
@@ -6109,6 +6239,7 @@ function renderCrmProcessingMainRunViews(payload) {
       stateEl.textContent = 'No runs';
     }
   }
+  if (reportBtn) reportBtn.disabled = !latest;
   if (runIdEl) runIdEl.textContent = latest ? crmProcessingRunId(latest.timestamp, latestRunNumber) : '-';
   if (whenEl) whenEl.textContent = latest && latest.timestamp ? `${running ? 'Started' : 'Finished'} ${fmtDateTime(latest.timestamp)}` : 'No completed run';
   if (modeEl) modeEl.textContent = latest ? formatCrmAddressFilterLabel(latest.processing_filter) : '-';
@@ -6134,9 +6265,10 @@ function renderCrmProcessingMainRunViews(payload) {
           const stepText = steps.length ? String(steps.length) : '-';
           const rowTotals = crmProcessingRunTotals(row);
           const ok = Boolean(row && row.success);
-          return `<tr><td>${esc(fmtDateTime(row && row.timestamp))}</td><td>${esc(crmProcessingRunId(row && row.timestamp, runNumber))}</td><td>${esc(formatCrmAddressFilterLabel(row && row.processing_filter))}</td><td>${esc(stepText)}</td><td>${esc(String(rowTotals.orders))}</td><td class='${rowTotals.errors ? 'bad' : ''}'>${esc(String(rowTotals.errors))}</td><td>${esc(fmtDuration(row && row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${ok ? 'Completed' : 'Needs attention'}</td></tr>`;
+          const historyIndex = running ? index : index + 1;
+          return `<tr><td>${esc(fmtDateTime(row && row.timestamp))}</td><td>${esc(crmProcessingRunId(row && row.timestamp, runNumber))}</td><td>${esc(formatCrmAddressFilterLabel(row && row.processing_filter))}</td><td>${esc(stepText)}</td><td>${esc(String(rowTotals.orders))}</td><td class='${rowTotals.errors ? 'bad' : ''}'>${esc(String(rowTotals.errors))}</td><td>${esc(fmtDuration(row && row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${ok ? 'Completed' : 'Needs attention'}</td><td><button class='secondary tiny' type='button' onclick='openCrmProcessingRunReport(${historyIndex})'>View Report</button></td></tr>`;
         }).join('')
-      : "<tr><td colspan='8' class='muted'>No previous main automation runs yet.</td></tr>";
+      : "<tr><td colspan='9' class='muted'>No previous main automation runs yet.</td></tr>";
   }
 
   const healthRows = document.getElementById('crmProcessingToolHealthRows');
@@ -6410,15 +6542,15 @@ function syncCrmProcessingAdvancedControls(source = '') {
   if (mode === 'repeat') {
     const repeatMinutes = normalizeCrmProcessingRepeatMinutes(minutes ? minutes.value : 5);
     summary.textContent = repeatMinutes === 0
-      ? 'Repeat is on. AUTOMATE will rerun immediately after each finish until canceled.'
-      : `Repeat is on. AUTOMATE will stay in Queue and rerun every ${repeatMinutes} minute${repeatMinutes === 1 ? '' : 's'} until canceled.`;
+      ? 'Repeat is on. The action you start will rerun immediately after each finish until canceled.'
+      : `Repeat is on. The action you start will stay in Queue and rerun every ${repeatMinutes} minute${repeatMinutes === 1 ? '' : 's'} until canceled.`;
   } else if (mode === 'scheduled') {
     const scheduledDateTime = timeInput && timeInput.value ? resolveCrmProcessingScheduledDateTime(timeInput.value) : null;
     summary.textContent = scheduledDateTime
-      ? `Scheduled is on. AUTOMATE will stay idle in Queue until ${fmtDateTime(formatCrmProcessingLocalDateTime(scheduledDateTime))}.`
-      : 'Scheduled is on. AUTOMATE will stay idle in Queue until the selected time.';
+      ? `Scheduled is on. The action you start will stay idle in Queue until ${fmtDateTime(formatCrmProcessingLocalDateTime(scheduledDateTime))}.`
+      : 'Scheduled is on. The action you start will stay idle in Queue until the selected time.';
   } else {
-    summary.textContent = 'Advanced controls are off.';
+    summary.textContent = 'Runs once immediately unless Repeat or Scheduled is checked.';
   }
 }
 
@@ -7776,6 +7908,7 @@ async function startCrmMassEmailerRun(mode, button = null) {
   let payload;
   try {
     payload = buildCrmMassEmailerPayload();
+    Object.assign(payload, buildCrmProcessingAdvancedPayload());
   } catch (e) {
     setStatus(e.message);
     return;
@@ -8690,6 +8823,7 @@ async function reloadAll() {
   await loadCrmAddressStatus(false);
   await loadConfig();
   await loadSlackLunchStatus(false);
+  await loadTodaySlackHistory();
   await loadPowerStatus(false);
   await loadConsoleLog(false);
   await loadQueue(false);
@@ -8722,6 +8856,7 @@ if (!UI_OPENED_FROM_FILE) {
     loadCrmAutoSplitterStatus(false);
     loadCrmAddressStatus(false);
     loadSlackLunchStatus(false);
+    loadTodaySlackHistory();
     loadPowerStatus(false);
     loadNodeRuntime(false);
     loadClipboardStatus();

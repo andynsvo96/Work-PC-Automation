@@ -39,6 +39,7 @@ from config import (
     SLACK_FORCE_HEADLESS,
 )
 from slack_message_rotation import record_slack_day_message_use, select_slack_day_message
+from slack_post_history import record_slack_post
 
 configure_console_utf8()
 
@@ -328,6 +329,31 @@ def wait_for_composer(driver, timeout=18):
     return None, ""
 
 
+def resolve_channel_name(driver):
+    """Best-effort read of the visible Slack channel heading."""
+    selectors = (
+        '[data-qa="channel_name"]',
+        '[data-qa="channel_header"] h1',
+        '[data-qa="channel_header"] button',
+        'button[aria-label^="Channel "]',
+    )
+    for selector in selectors:
+        try:
+            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+        except Exception:
+            continue
+        for element in elements:
+            try:
+                text = (element.text or element.get_attribute("aria-label") or "").strip()
+            except Exception:
+                continue
+            if text.lower().startswith("channel "):
+                text = text[8:].strip()
+            if text and len(text) <= 120:
+                return text.lstrip("#").strip()
+    return ""
+
+
 def _did_recent_message_match(driver, message):
     target = (message or "").strip()
     if not target:
@@ -554,6 +580,16 @@ def _run_once(action, message, channel_url, profile_path, headless_mode):
             safe_take_screenshot(driver, f"slack_{action}_send_not_confirmed")
             return False, "Slack message send could not be confirmed.", True
 
+        channel_name = resolve_channel_name(driver)
+        try:
+            record_slack_post(
+                channel_url=channel_url,
+                channel_name=channel_name,
+                message=message,
+                action=action,
+            )
+        except Exception as history_error:
+            print(f"Warning: could not record Slack post history: {history_error}")
         safe_take_screenshot(driver, f"slack_{action}_sent")
         elapsed = time.time() - start_time
         return True, f"Slack '{message}' sent successfully! ({elapsed:.1f}s)", False

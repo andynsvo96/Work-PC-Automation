@@ -764,6 +764,18 @@ def register_work_routes(
                     request.args.get("retryErrors"),
                 )
             ),
+            "advanced_mode": _first_present(
+                data.get("advanced_mode"), data.get("advancedMode"), data.get("queue_mode"), data.get("queueMode"),
+                request.args.get("advanced_mode"), request.args.get("advancedMode"), request.args.get("queue_mode"), request.args.get("queueMode"),
+            ),
+            "repeat_interval_minutes": _first_present(
+                data.get("repeat_interval_minutes"), data.get("repeatIntervalMinutes"), data.get("repeat_minutes"), data.get("repeatMinutes"),
+                request.args.get("repeat_interval_minutes"), request.args.get("repeatIntervalMinutes"), request.args.get("repeat_minutes"), request.args.get("repeatMinutes"),
+            ),
+            "scheduled_time": _first_present(
+                data.get("scheduled_time"), data.get("scheduledTime"), data.get("scheduled_for"), data.get("scheduledFor"),
+                request.args.get("scheduled_time"), request.args.get("scheduledTime"), request.args.get("scheduled_for"), request.args.get("scheduledFor"),
+            ),
         }
 
     def _crm_mass_emailer_queue_details(options):
@@ -775,46 +787,88 @@ def register_work_routes(
             parts.append("Retry errors")
         return " | ".join(parts)
 
+    def _crm_mass_emailer_run_options(options):
+        return {key: options.get(key) for key in ("limit", "retry_errors")}
+
+    def _crm_mass_emailer_queue_options(options, *, action, dry_run):
+        mode = _crm_processing_advanced_mode(options)
+        signature = {
+            "type": "crm_mass_emailer",
+            "action": action,
+            "dry_run": bool(dry_run),
+            "advanced_mode": mode,
+        }
+        queue_options = {"automation_signature": signature}
+        if mode == "repeat":
+            interval = options.get("repeat_interval_minutes")
+            interval_label = 5 if interval in (None, "") else interval
+            repeat_label = "Repeat immediately" if str(interval_label).strip() == "0" else f"Repeat every {interval_label} minutes"
+            queue_options.update(
+                {
+                    "queue_mode": "repeat",
+                    "repeat_interval_minutes": interval,
+                    "advanced_summary": f"{repeat_label} | Sheets Scanner",
+                }
+            )
+            signature["repeat_interval_minutes"] = interval
+        elif mode == "scheduled":
+            scheduled = options.get("scheduled_time")
+            queue_options.update(
+                {
+                    "queue_mode": "scheduled",
+                    "scheduled_for": scheduled,
+                    "advanced_summary": f"Scheduled for {_crm_processing_schedule_label(scheduled)} | Sheets Scanner",
+                }
+            )
+            signature["scheduled_time"] = scheduled
+        return queue_options
+
     @app.route("/crm/mass-emailer", methods=["POST", "GET"])
     @app.route("/crm/mass-email", methods=["POST", "GET"])
     def crm_mass_emailer():
         options = _crm_mass_emailer_request_options()
+        run_options = _crm_mass_emailer_run_options(options)
         return _queue_response(
             "Sheets Scanner",
             "Processing",
-            lambda: run_crm_mass_emailer_run_queued(action="process_queue", dry_run=False, **options),
+            lambda: run_crm_mass_emailer_run_queued(action="process_queue", dry_run=False, **run_options),
             get_crm_mass_emailer_status_payload,
             queue_details=_crm_mass_emailer_queue_details(options),
+            queue_options=_crm_mass_emailer_queue_options(options, action="process_queue", dry_run=False),
             task_type="crm.mass_emailer",
-            task_arguments={"action": "process_queue", "dry_run": False, **options},
+            task_arguments={"action": "process_queue", "dry_run": False, **run_options},
         )
 
     @app.route("/crm/mass-emailer/dry-run", methods=["POST", "GET"])
     @app.route("/crm/mass-email/dry-run", methods=["POST", "GET"])
     def crm_mass_emailer_dry_run():
         options = _crm_mass_emailer_request_options()
+        run_options = _crm_mass_emailer_run_options(options)
         return _queue_response(
             "Sheets Scanner Dry Run",
             "Processing",
-            lambda: run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, **options),
+            lambda: run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, **run_options),
             get_crm_mass_emailer_status_payload,
             queue_details=_crm_mass_emailer_queue_details(options),
+            queue_options=_crm_mass_emailer_queue_options(options, action="process_queue", dry_run=True),
             task_type="crm.mass_emailer",
-            task_arguments={"action": "process_queue", "dry_run": True, **options},
+            task_arguments={"action": "process_queue", "dry_run": True, **run_options},
         )
 
     @app.route("/crm/mass-emailer/scan", methods=["POST", "GET"])
     @app.route("/crm/mass-email/scan", methods=["POST", "GET"])
     def crm_mass_emailer_scan():
         options = _crm_mass_emailer_request_options()
+        run_options = _crm_mass_emailer_run_options(options)
         return _queue_response(
             "Sheets Scanner Sheet Scan",
             "Processing",
-            lambda: run_crm_mass_emailer_run_queued(action="scan_sheet", dry_run=True, **options),
+            lambda: run_crm_mass_emailer_run_queued(action="scan_sheet", dry_run=True, **run_options),
             get_crm_mass_emailer_status_payload,
             queue_details=_crm_mass_emailer_queue_details(options),
+            queue_options=_crm_mass_emailer_queue_options(options, action="scan_sheet", dry_run=True),
             task_type="crm.mass_emailer",
-            task_arguments={"action": "scan_sheet", "dry_run": True, **options},
+            task_arguments={"action": "scan_sheet", "dry_run": True, **run_options},
         )
 
     @app.route("/crm/mass-emailer/status", methods=["GET"])

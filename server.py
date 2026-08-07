@@ -62,6 +62,7 @@ from safe_sync import publish_repository_update
 from shared_queue import SharedQueueBlocked, SharedQueueConfig, SupabaseQueueClient
 from shared_queue_runtime import SharedQueueRuntime
 from slack_message_rotation import select_slack_day_message
+from slack_post_history import get_todays_slack_posts
 from task_registry import TaskRegistry
 from version_state import get_git_version_state, refresh_origin_main
 
@@ -13408,6 +13409,23 @@ def api_headless_mode():
 def api_console():
     try:
         return jsonify(get_console_log_payload(request.args.get("lines", 300)))
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/api/slack/history/today", methods=["GET"])
+def api_slack_history_today():
+    try:
+        now = datetime.now()
+        rows = get_todays_slack_posts(now=now, limit=request.args.get("limit", 100))
+        return jsonify(
+            {
+                "success": True,
+                "date": now.date().isoformat(),
+                "posts": rows,
+                "count": len(rows),
+            }
+        )
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 
