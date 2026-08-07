@@ -53,6 +53,63 @@ class SettingsUiStructureTests(unittest.TestCase):
             r"\.settings-connection-grid\{[^}]*grid-template-columns:repeat\(auto-fit,minmax\(140px,1fr\)\)",
         )
 
+    def test_primary_navigation_is_consolidated(self):
+        self.assertIn("id='tabBtnAutomation'", self.html)
+        self.assertIn("id='tabBtnProcessing'", self.html)
+        self.assertIn("id='tabBtnSystem'", self.html)
+        self.assertNotIn("id='tabBtnMetrics'", self.html)
+        self.assertNotIn("id='tabBtnPower'", self.html)
+        self.assertIn("id='tabSystem'", self.html)
+
+    def test_processing_sections_and_main_run_views_are_present(self):
+        expected = {"run", "reports", "tools"}
+        sections = set(re.findall(r"data-processing-section=['\"]([^'\"]+)", self.html))
+        targets = set(re.findall(r"data-processing-target=['\"]([^'\"]+)", self.html))
+        self.assertEqual(sections, expected)
+        self.assertEqual(targets, expected)
+        for element_id in (
+            "crmProcessingLatestRunId",
+            "crmProcessingLatestState",
+            "crmProcessingLatestWhen",
+            "crmProcessingLatestMode",
+            "crmProcessingLatestDuration",
+            "crmProcessingLatestSteps",
+            "crmProcessingMainHistoryRows",
+        ):
+            self.assertEqual(len(re.findall(rf"\bid=['\"]{element_id}['\"]", self.html)), 1)
+
+    def test_sheet_scanner_has_one_simple_live_action(self):
+        self.assertEqual(len(re.findall(r"id=['\"]crmMassEmailerRunBtn['\"]", self.html)), 1)
+        for removed_id in (
+            "crmMassEmailerScanBtn",
+            "crmMassEmailerDryRunBtn",
+            "crmMassEmailerLimitInput",
+            "crmMassEmailerRetryErrorsInput",
+        ):
+            self.assertNotRegex(self.html, rf"\bid=['\"]{removed_id}['\"]")
+
+    def test_system_sections_are_merged_and_wired(self):
+        expected = {"overview", "hardware", "clipboard", "power"}
+        sections = set(re.findall(r"data-system-section=['\"]([^'\"]+)", self.html))
+        targets = set(re.findall(r"data-system-target=['\"]([^'\"]+)", self.html))
+        self.assertEqual(sections, expected)
+        self.assertEqual(targets, expected)
+        self.assertIn("function showSystemSection(", self.html)
+        self.assertIn("function showProcessingSection(", self.html)
+
+    def test_existing_backend_control_roots_remain_unique(self):
+        for element_id in (
+            "statusBox",
+            "processingStatusBox",
+            "metricsStatusBox",
+            "powerStatusBox",
+            "clipboardAutoToggleBtn",
+            "crmProcessingRunBtn",
+            "crmMassEmailerRunBtn",
+        ):
+            with self.subTest(element_id=element_id):
+                self.assertEqual(len(re.findall(rf"\bid=['\"]{element_id}['\"]", self.html)), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

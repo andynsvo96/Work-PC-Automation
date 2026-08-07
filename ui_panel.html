@@ -320,6 +320,78 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .connectivity-dot.online{background:#22c55e}
 .connectivity-dot.waiting{background:#eab308}
 .connectivity-dot.error{background:#ef4444}
+.page-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:4px 0 16px}
+.page-heading h2{margin:0 0 5px;font-size:27px;letter-spacing:-.02em}
+.page-heading p{margin:0;color:#64748b;font-size:14px}
+.workspace-nav{display:flex;gap:6px;overflow-x:auto;margin:0 0 14px;padding:4px;border:1px solid #dbe3ef;border-radius:10px;background:#fff;scrollbar-width:thin}
+.workspace-nav-btn{flex:0 0 auto;background:transparent;border-color:transparent;color:#64748b;font-weight:700;white-space:nowrap}
+.workspace-nav-btn:hover{background:#f1f5f9;border-color:#f1f5f9}
+.workspace-nav-btn.active{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
+.workspace-nav-btn.platform-disabled{color:#94a3b8;cursor:not-allowed}
+.workspace-section{display:none}
+.workspace-section.active{display:block}
+.communications-grid,.processing-run-grid,.system-overview-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(300px,.75fr);gap:14px}
+.communications-grid>.card,.processing-run-grid>.card,.system-overview-grid>.card{min-width:0}
+.card-eyebrow{margin-bottom:5px;color:#2563eb;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.card-description{margin:3px 0 12px;color:#64748b;font-size:12px;line-height:1.5}
+.action-group{padding-top:12px;margin-top:12px;border-top:1px solid #e2e8f0}
+.action-group:first-of-type{padding-top:0;margin-top:0;border-top:0}
+.action-group-title{margin:0 0 8px;color:#334155;font-size:12px;font-weight:800}
+.communication-status-stack{display:grid;gap:10px}
+.communication-status-item{padding:12px;border:1px solid #e2e8f0;border-radius:9px;background:#f8fafc}
+.communication-status-item h3{margin:0 0 7px;font-size:14px}
+.communication-status-item .notice{margin:0}
+.compact-tools{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 12px}
+button.toggle-btn.processing-tool-toggle{min-width:0;padding:6px 9px;font-size:12px;font-weight:700}
+.processing-run-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:9px;margin-top:12px}
+.processing-run-actions button{width:100%;min-width:0;min-height:46px;padding:9px 12px;font-size:13px;letter-spacing:.03em}
+.processing-run-actions .scanner-action{background:#fff;color:#2563eb}
+.processing-mode-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.processing-mode-row .processing-mode-select{flex:1;min-width:150px}
+.latest-run-card{display:flex;flex-direction:column}
+.latest-run-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.latest-run-header h2{margin:0}
+.run-state-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;background:#e2e8f0;color:#475569;font-size:11px;font-weight:800;white-space:nowrap}
+.run-state-badge::before{content:'';width:8px;height:8px;border-radius:50%;background:#94a3b8}
+.run-state-badge.success{background:#dcfce7;color:#166534}.run-state-badge.success::before{background:#22c55e}
+.run-state-badge.failed{background:#fee2e2;color:#991b1b}.run-state-badge.failed::before{background:#ef4444}
+.run-state-badge.running{background:#dbeafe;color:#1d4ed8}.run-state-badge.running::before{background:#3b82f6;animation:workTimerPulse 1.5s ease-out infinite}
+.latest-run-meta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:14px 0}
+.latest-run-stat{min-width:0;padding:9px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc}
+.latest-run-stat .k{color:#64748b;font-size:10px;font-weight:800;text-transform:uppercase}
+.latest-run-stat .v{margin-top:4px;font-size:13px;font-weight:750;overflow-wrap:anywhere}
+.run-steps{margin-top:auto;padding:10px;border-radius:8px;background:#eff6ff;color:#1e3a8a;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+.processing-report-card .processing-report{border-top:0;margin-top:0;padding-top:0}
+.history-card-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.history-card-heading h2{margin:0}
+.system-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.system-overview-card{display:flex;flex-direction:column;min-height:150px}
+.system-overview-card h2{margin:0 0 5px;font-size:17px}
+.system-overview-value{margin:9px 0 4px;font-size:24px;font-weight:800;color:#0f172a}
+.system-overview-detail{color:#64748b;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+.system-overview-card button{align-self:flex-start;margin-top:auto}
+.system-section-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:10px}
+.system-section-heading h2{margin:0 0 4px}
+.system-section-heading p{margin:0;color:#64748b;font-size:12px}
+:root[data-theme='dark'] .workspace-nav{background:#252526;border-color:#3c3c3c}
+:root[data-theme='dark'] .workspace-nav-btn{background:transparent;border-color:transparent;color:#b8b8b8}
+:root[data-theme='dark'] .workspace-nav-btn:hover{background:#2d2d30;border-color:#2d2d30;color:#f0f0f0}
+:root[data-theme='dark'] .workspace-nav-btn.active{background:#04395e;border-color:#007acc;color:#4fc1ff}
+:root[data-theme='dark'] .communication-status-item,
+:root[data-theme='dark'] .latest-run-stat{background:#2d2d30;border-color:#3c3c3c}
+:root[data-theme='dark'] .action-group{border-color:#3c3c3c}
+:root[data-theme='dark'] .page-heading p,
+:root[data-theme='dark'] .card-description,
+:root[data-theme='dark'] .system-section-heading p,
+:root[data-theme='dark'] .system-overview-detail{color:#9d9d9d}
+:root[data-theme='dark'] .action-group-title{color:#d4d4d4}
+:root[data-theme='dark'] .run-state-badge{background:#3c3c3c;color:#d4d4d4}
+:root[data-theme='dark'] .run-state-badge.success{background:#20382b;color:#89d185}
+:root[data-theme='dark'] .run-state-badge.failed{background:#3b2527;color:#f48771}
+:root[data-theme='dark'] .run-state-badge.running{background:#04395e;color:#4fc1ff}
+:root[data-theme='dark'] .run-steps{background:#04395e;color:#d9efff}
+:root[data-theme='dark'] .system-overview-value{color:#f0f0f0}
+:root[data-theme='dark'] .processing-run-actions .scanner-action{background:#2d2d30;color:#4fc1ff}
 :root{
   --vscode-blue:#007acc;
   --vscode-blue-hover:#0062a3;
@@ -504,12 +576,15 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 :root[data-theme='dark'] .settings-connection-mark{background:#04395e;color:#4fc1ff}
 :root[data-theme='dark'] .settings-nav-badge{background:#20382b;color:#89d185}
 @media (max-width:980px){.grid,.subgrid,.slack-day-message-panel{grid-template-columns:1fr}}
+@media (max-width:980px){.communications-grid,.processing-run-grid{grid-template-columns:1fr}}
 @media (max-width:980px){.work-plan-days{grid-template-columns:repeat(4,minmax(110px,1fr))}}
 @media (max-width:980px){.settings-shell{grid-template-columns:1fr}.settings-sidebar{border-right:0;border-bottom:1px solid #e2e8f0}.settings-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.settings-health{margin-top:0}.settings-main{padding:24px}}
 @media (max-width:760px){.metrics,.desktop-metrics-grid,.processing-report-metrics,.work-timer-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}.work-plan-days{grid-template-columns:repeat(2,minmax(120px,1fr))}}
 @media (max-width:760px){.settings-page-header{align-items:flex-start;flex-direction:column}.settings-page-actions{width:100%;justify-content:flex-start}.settings-overview-grid,.settings-form-grid{grid-template-columns:1fr}.settings-overview-card.wide{grid-column:auto}.settings-task-grid{grid-template-columns:1fr}.settings-nav{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:760px){.page-heading,.system-section-heading{align-items:flex-start;flex-direction:column}.latest-run-meta{grid-template-columns:1fr 1fr}.system-overview-grid{grid-template-columns:1fr}.workspace-nav{margin-left:-2px;margin-right:-2px}.tab-bar{flex-wrap:nowrap;overflow-x:auto;padding-bottom:3px}.control-target{margin-left:0;flex:0 0 auto}}
 @media (max-width:520px){.work-hours-title-actions{width:100%;justify-content:flex-end}.work-cap-quick-setting{justify-content:flex-end}.work-timer-grid{grid-template-columns:1fr}.work-plan-days{grid-template-columns:1fr 1fr}.work-timer-value{font-size:30px}}
 @media (max-width:520px){.settings-sidebar,.settings-main{padding:16px}.settings-page-actions button{flex:1}.settings-save-state{width:100%;box-sizing:border-box;justify-content:center}}
+@media (max-width:520px){.wrap{padding:12px}.app-header{align-items:flex-start;flex-direction:column}.app-header-actions{justify-content:flex-start}.tab-bar{flex-wrap:wrap;overflow:visible}.control-target{width:100%;margin-left:0}.control-target select{flex:1;min-width:0;max-width:none}.processing-run-actions{grid-template-columns:1fr}.latest-run-meta{grid-template-columns:1fr}.compact-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.compact-tools button{width:100%}.metrics,.desktop-metrics-grid,.processing-report-metrics{grid-template-columns:1fr}.card{padding:12px}}
 </style>
 </head>
 <body>
@@ -536,8 +611,7 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 <div class='tab-bar'>
   <button class='tab-btn active' id='tabBtnAutomation' onclick="setActiveTab('automation')">Communications</button>
   <button class='tab-btn' id='tabBtnProcessing' onclick="setActiveTab('processing')">Processing</button>
-  <button class='tab-btn' id='tabBtnMetrics' onclick="setActiveTab('metrics')">Desktop Metrics Server</button>
-  <button class='tab-btn' id='tabBtnPower' onclick="setActiveTab('power')">System Controls</button>
+  <button class='tab-btn' id='tabBtnSystem' onclick="setActiveTab('system')">System</button>
   <label class='control-target'><span id='controlTargetLabel'>Control target</span><select id='controlTargetSelect' onchange='changeControlTarget(this.value)'><option value=''>Any available computer</option></select></label>
 </div>
 <div id='platformCapabilityNotice' class='notice platform-capability-notice'>Windows only</div>
@@ -602,12 +676,23 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 </dialog>
 
 <div id='tabAutomation' class='tab-panel active'>
+  <div class='page-heading'>
+    <div>
+      <h2>Communications</h2>
+      <p>Manage today’s workday, Paycom time, and Slack updates from one place.</p>
+    </div>
+    <button class='secondary' type='button' onclick='loadStatus(true)'>Refresh status</button>
+  </div>
   <div class='status' id='statusBox'>Loading status...</div>
 
-  <div>
+  <div class='communications-grid'>
     <div class='card'>
       <div class='card-title-row'>
-        <h2>Work / Paycom / Slack Automation</h2>
+        <div>
+          <div class='card-eyebrow'>Today</div>
+          <h2>Workday actions</h2>
+          <p class='card-description'>Clock Paycom and send the matching Slack update together.</p>
+        </div>
         <details class='section-note'>
           <summary>Read More</summary>
           <div class='section-note-body'>
@@ -618,21 +703,44 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
           </div>
         </details>
       </div>
-      <div class='row'>
-        <button onclick="callEndpoint('/work/in', this, 'Work In underway...')">Work In</button>
-        <button onclick="callEndpoint('/work/out', this, 'Work Out underway...')">Work Out</button>
-        <button onclick="callEndpoint('/work/sync', this, 'Sync underway...')">Sync Hours</button>
-        <button onclick="callEndpoint('/work/schedule', this, 'Scheduling...')">Schedule Auto Out</button>
-        <button class='secondary' onclick="callEndpoint('/work/cancel-schedule', this, 'Canceling...')">Cancel Auto Out</button>
+      <div class='action-group'>
+        <div class='action-group-title'>Start or end the workday</div>
+        <div class='row'>
+          <button onclick="callEndpoint('/work/in', this, 'Work In underway...')">Work In</button>
+          <button onclick="callEndpoint('/work/out', this, 'Work Out underway...')">Work Out</button>
+          <button class='secondary' onclick="callEndpoint('/work/sync', this, 'Sync underway...')">Sync Hours</button>
+        </div>
       </div>
-      <div class='auto-override-row'>
-        <label for='manualAutoOutTime' class='muted'>Manual Auto Out Time:</label>
-        <input id='manualAutoOutTime' type='time' step='60'>
-        <button class='secondary' onclick='updateManualAutoOutTime(this)'>Update Auto Out Time</button>
+      <div class='action-group'>
+        <div class='action-group-title'>Automatic clock-out</div>
+        <div class='row'>
+          <button onclick="callEndpoint('/work/schedule', this, 'Scheduling...')">Schedule Auto Out</button>
+          <button class='secondary' onclick="callEndpoint('/work/cancel-schedule', this, 'Canceling...')">Cancel Auto Out</button>
+        </div>
+        <div class='auto-override-row'>
+          <label for='manualAutoOutTime' class='muted'>Change today’s time</label>
+          <input id='manualAutoOutTime' type='time' step='60'>
+          <button class='secondary' onclick='updateManualAutoOutTime(this)'>Update time</button>
+        </div>
       </div>
-      <div class='row'>
-        <button class='secondary' id='slackLunchToggleBtn' onclick='toggleSlackLunch(this)'>Slack Lunch (1 Hour)</button>
-        <span class='muted' id='slackLunchStatusText'>Lunch timer not active.</span>
+    </div>
+
+    <div class='card'>
+      <div class='card-eyebrow'>Live status</div>
+      <h2 style='margin:0 0 12px'>Today’s communication</h2>
+      <div class='communication-status-stack'>
+        <div class='communication-status-item'>
+          <h3>Slack lunch message</h3>
+          <div class='row' style='margin-bottom:5px'>
+            <button class='secondary' id='slackLunchToggleBtn' onclick='toggleSlackLunch(this)'>Slack Lunch (1 Hour)</button>
+          </div>
+          <span class='muted' id='slackLunchStatusText'>Lunch timer not active.</span>
+        </div>
+        <div class='communication-status-item'>
+          <h3>Automatic clock-out</h3>
+          <div class='notice' id='autoScheduleText'>Auto clock-out status loading...</div>
+          <div class='muted' id='autoScheduleSubText'></div>
+        </div>
       </div>
     </div>
   </div>
@@ -684,7 +792,10 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
   </div>
 
   <div class='card hours-sync-card' style='margin-top:14px'>
-    <h2>Hours Sync Cross-Reference</h2>
+    <div class='card-title-row'>
+      <div><h2>Paycom cross-reference</h2><p class='card-description'>Compare local time tracking with the latest Paycom totals.</p></div>
+      <button class='secondary' onclick='syncPaycomNow(this)'>Sync from Paycom</button>
+    </div>
     <div class='metrics'>
       <div class='metric'>
         <div class='k'>Week Start</div>
@@ -697,7 +808,6 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
       <div class='metric'>
         <div class='k'>Paycom Week Hours</div>
         <div class='v' id='paycomWeekHoursText'>-</div>
-        <button class='secondary tiny' onclick='syncPaycomNow(this)'>Sync from Paycom</button>
       </div>
       <div class='metric'>
         <div class='k'>Last Paycom Sync</div>
@@ -705,8 +815,6 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
       </div>
     </div>
     <div class='muted' id='syncMessageText'>No sync details yet. Click "Sync from Paycom" to refresh.</div>
-    <div class='notice' id='autoScheduleText'>Auto clock-out status loading...</div>
-    <div class='muted' id='autoScheduleSubText'></div>
     <div class='tbl-wrap' style='margin-top:10px'>
         <table class='tbl'>
           <thead>
@@ -715,22 +823,35 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
         <tbody id='hoursRows'><tr><td colspan='5' class='muted'>No tracked days yet.</td></tr></tbody>
       </table>
     </div>
-    <h3 style='margin-top:12px'>Paycom Sync History</h3>
-    <div class='tbl-wrap'>
-      <table class='tbl'>
-        <thead><tr><th>When</th><th>Week Hours</th><th>Status</th><th>Message</th></tr></thead>
-        <tbody id='syncRows'><tr><td colspan='4' class='muted'>No Paycom sync history yet.</td></tr></tbody>
-      </table>
-    </div>
+    <details style='margin-top:12px'>
+      <summary style='cursor:pointer;font-weight:700'>Paycom sync history</summary>
+      <div class='tbl-wrap' style='margin-top:8px'>
+        <table class='tbl'>
+          <thead><tr><th>When</th><th>Week Hours</th><th>Status</th><th>Message</th></tr></thead>
+          <tbody id='syncRows'><tr><td colspan='4' class='muted'>No Paycom sync history yet.</td></tr></tbody>
+        </table>
+      </div>
+    </details>
   </div>
 </div>
 
 <div id='tabProcessing' class='tab-panel'>
-  <div class='status' id='processingStatusBox'>Automate Processing status loading...</div>
+  <div class='page-heading'>
+    <div><h2>Processing</h2><p>Start an automation, review the latest result, and inspect history without mixing the two.</p></div>
+    <button class='secondary' type='button' onclick='loadCrmProcessingStatus(true)'>Refresh status</button>
+  </div>
+  <nav class='workspace-nav' aria-label='Processing sections'>
+    <button class='workspace-nav-btn active' type='button' data-processing-target='run' onclick="showProcessingSection('run')">Run automation</button>
+    <button class='workspace-nav-btn' type='button' data-processing-target='reports' onclick="showProcessingSection('reports')">Reports &amp; history</button>
+    <button class='workspace-nav-btn' type='button' data-processing-target='tools' onclick="showProcessingSection('tools')">Tool details</button>
+  </nav>
 
+  <section class='workspace-section active' data-processing-section='run'>
+  <div class='status' id='processingStatusBox'>Automate Processing status loading...</div>
+  <div class='processing-run-grid'>
   <div class='card'>
     <div class='card-title-row'>
-      <h2>Automate Processing</h2>
+      <div><div class='card-eyebrow'>New run</div><h2>Automate Processing</h2><p class='card-description'>Choose a mode and the tools to include, then start the main automation.</p></div>
       <details class='section-note'>
         <summary>Read More</summary>
         <div class='section-note-body'>
@@ -739,8 +860,8 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
         </div>
       </details>
     </div>
-    <div class='row' style='align-items:center;margin-bottom:6px'>
-      <button class='processing-primary-btn' id='crmProcessingRunBtn' onclick='startCrmProcessingRun(this)'>AUTOMATE</button>
+    <div class='processing-mode-row'>
+      <label for='crmProcessingFilterSelect' class='muted'>Mode</label>
       <select class='select processing-mode-select' id='crmProcessingFilterSelect' onchange='setCrmProcessingFilter(this.value)' title='Automate Processing mode'>
         <option value='rush'>RUSH</option>
         <option value='high_value'>HIGH VALUE</option>
@@ -749,16 +870,16 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
         <option value='813'>813</option>
       </select>
       <button class='secondary tiny' id='crmProcessingBulkToggleBtn' onclick='toggleCrmProcessingBulkSelection()'>Clear All</button>
-      <button class='processing-primary-btn' id='crmMassEmailerRunBtn' onclick="startCrmMassEmailerRun('live', this)">SHEETS SCANNER</button>
     </div>
-    <div class='row' style='align-items:center'>
-      <button class='secondary toggle-btn active' id='crmProcessingAddressToggleBtn' onclick='toggleCrmProcessingSelection("address_validator_batch")'>Validator</button>
-      <button class='secondary toggle-btn active' id='crmProcessingSeparatorToggleBtn' onclick='toggleCrmProcessingSelection("product_separator")'>Separator</button>
-      <button class='secondary toggle-btn active' id='crmProcessingAutoSplitterToggleBtn' onclick='toggleCrmProcessingSelection("auto_splitter")'>Auto Splitter</button>
-      <button class='secondary toggle-btn active' id='crmProcessingUnlockToggleBtn' onclick='toggleCrmProcessingSelection("stock_unlocker")'>Unlocker</button>
-      <button class='secondary toggle-btn active' id='crmProcessingOrderGoodsToggleBtn' onclick='toggleCrmProcessingSelection("order_goods")'>Order Goods</button>
-      <button class='secondary toggle-btn' id='crmProcessingShippingBypasserToggleBtn' onclick='toggleCrmProcessingSelection("shipping_bypasser")'>Bypasser</button>
-      <button class='secondary toggle-btn' id='crmProcessingPushBackToggleBtn' onclick='toggleCrmProcessingSelection("push_back")'>Push Back</button>
+    <div class='action-group-title' style='margin-top:13px'>Automation tools</div>
+    <div class='compact-tools'>
+      <button class='secondary toggle-btn processing-tool-toggle active' id='crmProcessingAddressToggleBtn' onclick='toggleCrmProcessingSelection("address_validator_batch")'>Validator</button>
+      <button class='secondary toggle-btn processing-tool-toggle active' id='crmProcessingSeparatorToggleBtn' onclick='toggleCrmProcessingSelection("product_separator")'>Separator</button>
+      <button class='secondary toggle-btn processing-tool-toggle active' id='crmProcessingAutoSplitterToggleBtn' onclick='toggleCrmProcessingSelection("auto_splitter")'>Auto Splitter</button>
+      <button class='secondary toggle-btn processing-tool-toggle active' id='crmProcessingUnlockToggleBtn' onclick='toggleCrmProcessingSelection("stock_unlocker")'>Unlocker</button>
+      <button class='secondary toggle-btn processing-tool-toggle active' id='crmProcessingOrderGoodsToggleBtn' onclick='toggleCrmProcessingSelection("order_goods")'>Order Goods</button>
+      <button class='secondary toggle-btn processing-tool-toggle' id='crmProcessingShippingBypasserToggleBtn' onclick='toggleCrmProcessingSelection("shipping_bypasser")'>Bypasser</button>
+      <button class='secondary toggle-btn processing-tool-toggle' id='crmProcessingPushBackToggleBtn' onclick='toggleCrmProcessingSelection("push_back")'>Push Back</button>
     </div>
     <details class='section-note' style='margin-top:8px'>
       <summary>Advanced Controls</summary>
@@ -776,8 +897,43 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
       </div>
     </details>
     <div class='notice' id='crmProcessingStatusText' style='display:none'>Automate Processing status loading...</div>
-    <div class='muted' id='crmProcessingRuntimeText'>No automated processing runs yet.</div>
     <div class='muted' id='crmProcessingSelectionText'>Selected automations: loading...</div>
+    <div class='processing-run-actions'>
+      <button class='processing-primary-btn' id='crmProcessingRunBtn' onclick='startCrmProcessingRun(this)'>Run main automation</button>
+      <button class='processing-primary-btn scanner-action' id='crmMassEmailerRunBtn' onclick="startCrmMassEmailerRun('live', this)">Run Sheet Scanner</button>
+    </div>
+  </div>
+
+  <div class='card latest-run-card'>
+    <div class='latest-run-header'>
+      <div><div class='card-eyebrow'>Main automation only</div><h2>Latest run</h2></div>
+      <span class='run-state-badge' id='crmProcessingLatestState'>No runs</span>
+    </div>
+    <div class='latest-run-meta'>
+      <div class='latest-run-stat'><div class='k'>Run</div><div class='v' id='crmProcessingLatestRunId'>-</div></div>
+      <div class='latest-run-stat'><div class='k'>When</div><div class='v' id='crmProcessingLatestWhen'>-</div></div>
+      <div class='latest-run-stat'><div class='k'>Mode</div><div class='v' id='crmProcessingLatestMode'>-</div></div>
+      <div class='latest-run-stat'><div class='k'>Duration</div><div class='v' id='crmProcessingLatestDuration'>-</div></div>
+    </div>
+    <div class='muted' id='crmProcessingRuntimeText'>No automated processing runs yet.</div>
+    <div class='run-steps' id='crmProcessingLatestSteps'>No main automation activity yet.</div>
+  </div>
+  </div>
+  </section>
+
+  <section class='workspace-section' data-processing-section='reports'>
+    <div class='card' style='margin-bottom:14px'>
+      <div class='history-card-heading'>
+        <div><div class='card-eyebrow'>Main automation only</div><h2>Previous runs</h2><p class='card-description'>Older main automation runs, kept separate from the latest result and individual tools.</p></div>
+      </div>
+      <div class='tbl-wrap'>
+        <table class='tbl'>
+          <thead><tr><th>Run</th><th>When</th><th>Mode</th><th>Automations</th><th>Duration</th><th>Status</th><th>Message</th></tr></thead>
+          <tbody id='crmProcessingMainHistoryRows'><tr><td colspan='7' class='muted'>No previous main automation runs yet.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class='card processing-report-card'>
     <div class='processing-report'>
       <div class='processing-report-header'>
         <div>
@@ -834,6 +990,9 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
       </div>
     </div>
   </div>
+  </section>
+
+  <section class='workspace-section' data-processing-section='tools'>
 
   <div class='card stock-automation-card' style='margin-top:14px'>
     <h2 class='vscode-blue-title'>Stock Automation</h2>
@@ -944,21 +1103,12 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
     <div class='card-title-row'>
       <h2 class='vscode-blue-title'>Sheets Scanner</h2>
       <details class='section-note'>
-        <summary>Read More</summary>
-        <div class='section-note-body'>
-          <p>Sheets Scanner reads the Google Sheet queue for supported Issue rows, including Auto Splitter and Manual Stock Order. Email/cancel rows can update CRM, send Salesforce email, cancel, refund, and delete successful sheet rows during live runs. Auto Splitter and Manual Stock Order rows run their stock/order automation without email. Scan and dry run modes do not make live changes or delete sheet rows.</p>
-        </div>
-      </details>
-    </div>
-    <div class='row' style='margin-top:10px;align-items:end;flex-wrap:wrap'>
-      <div class='field' style='width:150px'>
-        <label for='crmMassEmailerLimitInput'>Row Limit</label>
-        <input id='crmMassEmailerLimitInput' type='number' min='0' step='1' placeholder='All'>
+          <summary>Read More</summary>
+          <div class='section-note-body'>
+          <p>Sheets Scanner reads the Google Sheet queue for supported Issue rows. Start it from the Run automation section; this section contains status and history only.</p>
+          </div>
+        </details>
       </div>
-      <label class='check' style='align-self:center;margin-top:20px'><input type='checkbox' id='crmMassEmailerRetryErrorsInput'> Retry Error Rows</label>
-      <button class='secondary' id='crmMassEmailerScanBtn' onclick="startCrmMassEmailerRun('scan', this)">Scan Sheet</button>
-      <button class='secondary' id='crmMassEmailerDryRunBtn' onclick="startCrmMassEmailerRun('dry-run', this)">Dry Run</button>
-    </div>
     <div class='notice' id='crmMassEmailerStatusText'>Sheets Scanner status loading...</div>
     <div class='muted' id='crmMassEmailerRuntimeText'>No Sheets Scanner runs yet.</div>
     <div class='metrics' style='margin-top:10px'>
@@ -995,6 +1145,7 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
     </div>
   </div>
 
+  </section>
 </div>
 <dialog id='crmOrderIdsDialog' style='max-width:680px;width:min(680px, calc(100vw - 32px));border:none;border-radius:14px;padding:0;'>
   <div class='card' style='margin:0'>
@@ -1053,11 +1204,52 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
     </div>
   </div>
 </dialog>
-<div id='tabMetrics' class='tab-panel'>
+<div id='tabSystem' class='tab-panel'>
+  <div class='page-heading'>
+    <div><h2>System</h2><p>Computer health, clipboard sharing, and power controls in one workspace.</p></div>
+  </div>
+  <nav class='workspace-nav' aria-label='System sections'>
+    <button class='workspace-nav-btn active' type='button' data-system-target='overview' onclick="showSystemSection('overview')">Overview</button>
+    <button class='workspace-nav-btn' id='systemSectionHardwareBtn' type='button' data-system-target='hardware' onclick="showSystemSection('hardware')">Hardware metrics</button>
+    <button class='workspace-nav-btn' type='button' data-system-target='clipboard' onclick="showSystemSection('clipboard')">Clipboard</button>
+    <button class='workspace-nav-btn' id='systemSectionPowerBtn' type='button' data-system-target='power' onclick="showSystemSection('power')">Power &amp; scheduling</button>
+  </nav>
+
+  <section class='workspace-section active' data-system-section='overview'>
+    <div class='system-overview-grid'>
+      <div class='card system-overview-card'>
+        <div class='card-eyebrow'>Hardware</div><h2>Desktop health</h2>
+        <div class='system-overview-value' id='systemOverviewHardwareValue'>Waiting for metrics</div>
+        <div class='system-overview-detail' id='systemOverviewHardwareDetail'>CPU, GPU, memory, and temperature readings.</div>
+        <button class='secondary tiny' type='button' onclick="showSystemSection('hardware')">View hardware metrics</button>
+      </div>
+      <div class='card system-overview-card'>
+        <div class='card-eyebrow'>Sharing</div><h2>Cross-system clipboard</h2>
+        <div class='system-overview-value' id='systemOverviewClipboardValue'>Checking connection</div>
+        <div class='system-overview-detail' id='systemOverviewClipboardDetail'>Text and image sync status.</div>
+        <button class='secondary tiny' type='button' onclick="showSystemSection('clipboard')">Manage clipboard</button>
+      </div>
+      <div class='card system-overview-card'>
+        <div class='card-eyebrow'>Power</div><h2>Power &amp; scheduling</h2>
+        <div class='system-overview-value' id='systemOverviewPowerValue'>No active countdown</div>
+        <div class='system-overview-detail' id='systemOverviewPowerDetail'>Sleep, restart, shut down, or schedule an action.</div>
+        <button class='secondary tiny' type='button' onclick="showSystemSection('power')">Open power controls</button>
+      </div>
+      <div class='card system-overview-card'>
+        <div class='card-eyebrow'>Server</div><h2>Application runtime</h2>
+        <div class='system-overview-value' id='systemOverviewRuntimeValue'>Loading</div>
+        <div class='system-overview-detail' id='systemOverviewRuntimeDetail'>Local server status and uptime.</div>
+        <button class='secondary tiny' type='button' onclick="showSystemSection('hardware')">View server details</button>
+      </div>
+    </div>
+  </section>
+
+  <section class='workspace-section' data-system-section='hardware'>
+  <div class='system-section-heading'><div><h2>Hardware metrics</h2><p>Live desktop temperatures, usage, thresholds, and server runtime.</p></div></div>
   <div class='status' id='metricsStatusBox'>Desktop metrics status: waiting for first update...</div>
   <div class='card'>
     <div class='metrics-title-row'>
-      <h2 style='margin:0'>Desktop Metrics Server</h2>
+      <h2 style='margin:0'>Desktop metrics</h2>
       <div class='temp-unit-group'>
         <span class='muted'>Temperature</span>
         <button class='secondary tiny temp-btn active' id='tempUnitCBtn' onclick="setTemperatureUnit('C')">C</button>
@@ -1152,11 +1344,10 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
     <div class='section-title'>Current Server Status</div>
     <div class='suite-output' id='metricsRuntimeOutput'>Runtime status not loaded yet.</div>
   </div>
-</div>
+  </section>
 
-<div id='tabPower' class='tab-panel'>
-  <div class='status' id='powerStatusBox'>System controls status: loading...</div>
-
+  <section class='workspace-section' data-system-section='clipboard'>
+  <div class='system-section-heading'><div><h2>Clipboard</h2><p>Move text and PNG images between connected computers.</p></div></div>
   <div class='card'>
     <div class='card-title-row'>
       <h2>Cross-System Clipboard</h2>
@@ -1172,7 +1363,11 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
     </div>
     <div class='muted'>Transfers text and PNG images. Automatic monitoring runs only while enabled on both computers. Clipboard contents are never stored.</div>
   </div>
+  </section>
 
+  <section class='workspace-section' data-system-section='power'>
+  <div class='system-section-heading'><div><h2>Power &amp; scheduling</h2><p>Immediate system actions and timed countdowns.</p></div></div>
+  <div class='status' id='powerStatusBox'>System controls status: loading...</div>
   <div class='notice' id='systemPowerUnavailableNotice' style='display:none;margin-top:14px'>Power controls are available on Windows only.</div>
 
   <div class='card' id='systemPowerActionsCard' style='margin-top:14px'>
@@ -1232,6 +1427,7 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
       <div class='muted' id='powerCountdownDetails'>Countdown details will appear here.</div>
     </div>
   </div>
+  </section>
 </div>
 
 <div id='tabConsole' class='tab-panel'>
@@ -1244,7 +1440,7 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
         <details class='section-note'>
           <summary>Read More</summary>
           <div class='section-note-body'>
-            <p>Shows the latest automation events from Communications, Processing, System Controls, and other shared automation actions.</p>
+            <p>Shows the latest automation events from Communications, Processing, System, and other shared automation actions.</p>
           </div>
         </details>
         <button onclick='loadConsoleLog(true)'>Refresh Console</button>
@@ -1423,6 +1619,8 @@ if (UI_OPENED_FROM_FILE) {
 const fieldMap = {};
 let lastConfigGroups = null;
 let activeTab = 'automation';
+let activeProcessingSection = 'run';
+let activeSystemSection = 'overview';
 let queueVisible = false;
 let queuePayload = null;
 let queueExpandedTaskId = null;
@@ -2220,6 +2418,7 @@ function setStatus(msg, targetTab = null) {
   const idsByTab = {
     automation: 'statusBox',
     processing: 'processingStatusBox',
+    system: 'powerStatusBox',
     metrics: 'metricsStatusBox',
     power: 'powerStatusBox',
     console: 'consoleStatusBox',
@@ -2266,6 +2465,10 @@ function renderClipboardStatus(payload) {
     message += ` Last ${clipboardStatusPayload.last_direction || 'synced'} ${clipboardStatusPayload.last_kind || 'item'} at ${when}.`;
   }
   if (text) text.textContent = message;
+  const overviewValue = document.getElementById('systemOverviewClipboardValue');
+  const overviewDetail = document.getElementById('systemOverviewClipboardDetail');
+  if (overviewValue) overviewValue.textContent = enabled ? (stateClass === 'online' ? 'Sync active' : 'Sync waiting') : 'Sync off';
+  if (overviewDetail) overviewDetail.textContent = message;
   if (dot) {
     dot.classList.remove('online', 'waiting', 'error');
     if (stateClass) dot.classList.add(stateClass);
@@ -2980,7 +3183,7 @@ function applyPlatformCapabilities() {
     ? nodeRuntimePayload.windows_only_message
     : 'Windows only';
   const mappings = [
-    ['tabBtnMetrics', 'metrics'],
+    ['systemSectionHardwareBtn', 'metrics'],
   ];
   for (const [buttonId, capability] of mappings) {
     const button = document.getElementById(buttonId);
@@ -2990,7 +3193,17 @@ function applyPlatformCapabilities() {
     button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
     button.title = disabled ? windowsOnly : '';
   }
+  if (!platformFeatureAvailable('metrics')) {
+    const value = document.getElementById('systemOverviewHardwareValue');
+    const detail = document.getElementById('systemOverviewHardwareDetail');
+    if (value) value.textContent = 'Windows only';
+    if (detail) detail.textContent = windowsOnly;
+  }
   const powerAvailable = platformFeatureAvailable('system_power');
+  const powerSectionButton = document.getElementById('systemSectionPowerBtn');
+  if (powerSectionButton) {
+    powerSectionButton.title = powerAvailable ? '' : 'Power controls are available on Windows only.';
+  }
   for (const elementId of ['systemPowerActionsCard', 'systemPowerCountdownCard']) {
     const element = document.getElementById(elementId);
     if (element) element.style.display = powerAvailable ? '' : 'none';
@@ -3424,37 +3637,66 @@ function renderTemperatureGauges(payload) {
   }
 }
 
-function setActiveTab(tabName) {
-  const requestedCapability = tabName === 'metrics' ? 'metrics' : null;
-  if (requestedCapability && !platformFeatureAvailable(requestedCapability)) {
+function showProcessingSection(sectionName) {
+  const normalized = ['run', 'reports', 'tools'].includes(sectionName) ? sectionName : 'run';
+  activeProcessingSection = normalized;
+  document.querySelectorAll('[data-processing-section]').forEach((section) => {
+    section.classList.toggle('active', section.dataset.processingSection === normalized);
+  });
+  document.querySelectorAll('[data-processing-target]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.processingTarget === normalized);
+  });
+}
+
+function showSystemSection(sectionName) {
+  const normalized = ['overview', 'hardware', 'clipboard', 'power'].includes(sectionName) ? sectionName : 'overview';
+  if (normalized === 'hardware' && !platformFeatureAvailable('metrics')) {
     const notice = document.getElementById('platformCapabilityNotice');
     if (notice) {
-      notice.textContent = 'Windows only';
+      notice.textContent = 'Hardware metrics are available on Windows only.';
       notice.classList.add('active');
     }
-    setStatus('Windows only');
     return;
   }
+  const notice = document.getElementById('platformCapabilityNotice');
+  if (notice) notice.classList.remove('active');
+  activeSystemSection = normalized;
+  document.querySelectorAll('[data-system-section]').forEach((section) => {
+    section.classList.toggle('active', section.dataset.systemSection === normalized);
+  });
+  document.querySelectorAll('[data-system-target]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.systemTarget === normalized);
+  });
+  if (normalized === 'hardware') {
+    loadDesktopMetrics(false);
+    loadDesktopServerRuntime(false);
+  } else if (normalized === 'clipboard') {
+    loadClipboardStatus();
+  } else if (normalized === 'power') {
+    loadPowerStatus(false);
+  }
+}
+
+function setActiveTab(tabName) {
+  const legacySystemSection = tabName === 'metrics' ? 'hardware' : (tabName === 'power' ? 'power' : null);
+  if (legacySystemSection) tabName = 'system';
   const capabilityNotice = document.getElementById('platformCapabilityNotice');
   if (capabilityNotice) capabilityNotice.classList.remove('active');
-  activeTab = ['automation', 'processing', 'console', 'metrics', 'power', 'settings'].includes(tabName) ? tabName : 'automation';
+  activeTab = ['automation', 'processing', 'console', 'system', 'settings'].includes(tabName) ? tabName : 'automation';
   const isAutomation = activeTab === 'automation';
   const isProcessing = activeTab === 'processing';
   const isConsole = activeTab === 'console';
-  const isMetrics = activeTab === 'metrics';
-  const isPower = activeTab === 'power';
+  const isSystem = activeTab === 'system';
   const isSettings = activeTab === 'settings';
   document.getElementById('tabAutomation').classList.toggle('active', isAutomation);
   document.getElementById('tabProcessing').classList.toggle('active', isProcessing);
   document.getElementById('tabConsole').classList.toggle('active', isConsole);
-  document.getElementById('tabMetrics').classList.toggle('active', isMetrics);
-  document.getElementById('tabPower').classList.toggle('active', isPower);
+  document.getElementById('tabSystem').classList.toggle('active', isSystem);
   document.getElementById('tabSettings').classList.toggle('active', isSettings);
   document.getElementById('tabBtnAutomation').classList.toggle('active', isAutomation);
   document.getElementById('tabBtnProcessing').classList.toggle('active', isProcessing);
   document.getElementById('tabBtnConsole').classList.toggle('active', isConsole);
-  document.getElementById('tabBtnMetrics').classList.toggle('active', isMetrics);
-  document.getElementById('tabBtnPower').classList.toggle('active', isPower);
+  document.getElementById('tabBtnSystem').classList.toggle('active', isSystem);
   document.getElementById('settingsGearBtn').classList.toggle('active', isSettings);
   if (isAutomation) {
     loadSlackLunchStatus(false);
@@ -3463,6 +3705,7 @@ function setActiveTab(tabName) {
     loadStatus(true);
   }
   if (isProcessing) {
+    showProcessingSection(activeProcessingSection);
     loadCrmProcessingStatus(false);
     loadCrmStatus(false);
     loadCrmProductSeparatorStatus(false);
@@ -3480,11 +3723,13 @@ function setActiveTab(tabName) {
     restoreSettingsSection();
     loadConfig();
   }
-  if (isMetrics) {
-    loadDesktopMetrics(false);
-    loadDesktopServerRuntime(false);
-  }
-  if (isPower) {
+  if (isSystem) {
+    showSystemSection(legacySystemSection || activeSystemSection);
+    loadClipboardStatus();
+    if (platformFeatureAvailable('metrics')) {
+      loadDesktopMetrics(false);
+      loadDesktopServerRuntime(false);
+    }
     loadPowerStatus(false);
   }
 }
@@ -3584,10 +3829,16 @@ function processingStepTimingsText(stepResults, limit = 4) {
 function renderDesktopServerRuntime(payload) {
   const box = document.getElementById('metricsRuntimeOutput');
   const p = payload || {};
+  const overviewValue = document.getElementById('systemOverviewRuntimeValue');
+  const overviewDetail = document.getElementById('systemOverviewRuntimeDetail');
   if (!p.success) {
     box.textContent = p.message ? `Runtime status failed: ${p.message}` : 'Runtime status unavailable.';
+    if (overviewValue) overviewValue.textContent = 'Unavailable';
+    if (overviewDetail) overviewDetail.textContent = p.message || 'Runtime status could not be loaded.';
     return;
   }
+  if (overviewValue) overviewValue.textContent = p.metricsRuntimeReady ? 'Server ready' : 'Server online';
+  if (overviewDetail) overviewDetail.textContent = `Uptime ${fmtUptime(p.uptimeSeconds)} • PID ${p.pid || '-'}`;
 
   const lines = [];
   lines.push(`Bind address: ${p.bindAddress || '-'}`);
@@ -3629,6 +3880,14 @@ function renderDesktopServerRuntime(payload) {
 function renderDesktopMetrics(payload) {
   const p = payload || {};
   const isAvailable = Boolean(p.available);
+  const overviewValue = document.getElementById('systemOverviewHardwareValue');
+  const overviewDetail = document.getElementById('systemOverviewHardwareDetail');
+  if (overviewValue) overviewValue.textContent = isAvailable ? `${fmtMetricPercent(p.cpuUsagePercent)} CPU` : 'Metrics unavailable';
+  if (overviewDetail) {
+    overviewDetail.textContent = isAvailable
+      ? `RAM ${fmtMetricPercent(p.ramUsagePercent)} • CPU ${fmtMetricTemp(p.cpuTempC)} • GPU ${fmtMetricTemp(p.gpuTempC)}`
+      : (p.error || 'Hardware metrics are not available on this computer.');
+  }
 
   for (const sensor of TEMP_SENSOR_CONFIG) {
     const sensorEl = document.getElementById(sensor.elementId);
@@ -3677,7 +3936,7 @@ async function loadDesktopServerRuntime(showBusy = true) {
     const payload = await api('/api/server-runtime');
     desktopRuntimeLastPayload = payload;
     renderDesktopServerRuntime(payload);
-    if (showBusy && activeTab === 'metrics') {
+    if (showBusy && activeTab === 'system' && activeSystemSection === 'hardware') {
       const bind = payload && payload.bindAddress ? payload.bindAddress : 'unknown';
       setMetricsStatus(`Desktop metrics status: online | Server bind ${bind}`);
     }
@@ -3732,7 +3991,7 @@ function startDesktopMetricsTimer() {
   stopDesktopMetricsTimer();
   if (!desktopMetricsAutoRefresh) return;
   desktopMetricsTimer = setInterval(() => {
-    if (activeTab === 'metrics') {
+    if (activeTab === 'system' && activeSystemSection === 'hardware') {
       loadDesktopMetrics(false);
     }
   }, 10000);
@@ -3744,7 +4003,7 @@ function toggleDesktopMetricsAutoRefresh() {
   if (desktopMetricsAutoRefresh) {
     btn.textContent = 'Pause Auto Refresh';
     startDesktopMetricsTimer();
-    if (activeTab === 'metrics') {
+    if (activeTab === 'system' && activeSystemSection === 'hardware') {
       loadDesktopMetrics(false);
     }
   } else {
@@ -3819,6 +4078,18 @@ function updatePowerCountdownVisual() {
 
 function renderPowerCountdown(payload) {
   powerCountdownPayload = payload || { active: false, status_text: 'Power status unavailable.' };
+  const overviewValue = document.getElementById('systemOverviewPowerValue');
+  const overviewDetail = document.getElementById('systemOverviewPowerDetail');
+  if (overviewValue) {
+    overviewValue.textContent = powerCountdownPayload.active
+      ? `${powerCountdownPayload.action_label || powerCountdownPayload.action || 'Power'} scheduled`
+      : 'No active countdown';
+  }
+  if (overviewDetail) {
+    overviewDetail.textContent = powerCountdownPayload.active && powerCountdownPayload.execute_at
+      ? `Runs ${fmtDateTime(powerCountdownPayload.execute_at)}.`
+      : (powerCountdownPayload.status_text || 'Sleep, restart, shut down, or schedule an action.');
+  }
   if (powerCountdownPayload.active) {
     startPowerCountdownTicker();
   } else {
@@ -5533,6 +5804,72 @@ function acknowledgeCrmAutoSplitReview() {
   setTimeout(() => maybeShowCrmAutoSplitReview(crmProcessingStatusPayload), 0);
 }
 
+function renderCrmProcessingMainRunViews(payload) {
+  const state = payload && payload.state ? payload.state : {};
+  const runtime = payload && payload.runtime ? payload.runtime : {};
+  const running = Boolean(payload && payload.running);
+  const history = Array.isArray(state.run_history) ? state.run_history : [];
+  const totalRuns = Math.max(0, Number(state.total_runs || history.length));
+  const latest = running
+    ? {
+        timestamp: runtime.startedAt,
+        success: null,
+        processing_filter: runtime.processingFilter || state.processing_filter,
+        selected_steps: runtime.selectedSteps,
+        duration_seconds: runtime.startedAt ? Math.max(0, (Date.now() - Date.parse(runtime.startedAt)) / 1000) : null,
+      }
+    : (history[0] || (state.last_run_timestamp ? {
+        timestamp: state.last_run_timestamp,
+        success: state.last_run_success,
+        processing_filter: state.last_filter_used || state.processing_filter,
+        selected_steps: state.last_selected_steps,
+        duration_seconds: state.last_run_duration_seconds,
+      } : null));
+  const previous = running ? history : history.slice(1);
+  const latestRunNumber = running ? totalRuns + 1 : totalRuns;
+  const stateEl = document.getElementById('crmProcessingLatestState');
+  const runIdEl = document.getElementById('crmProcessingLatestRunId');
+  const whenEl = document.getElementById('crmProcessingLatestWhen');
+  const modeEl = document.getElementById('crmProcessingLatestMode');
+  const durationEl = document.getElementById('crmProcessingLatestDuration');
+  const stepsEl = document.getElementById('crmProcessingLatestSteps');
+  if (stateEl) {
+    stateEl.classList.remove('success', 'failed', 'running');
+    if (running) {
+      stateEl.textContent = 'Running';
+      stateEl.classList.add('running');
+    } else if (latest) {
+      stateEl.textContent = latest.success ? 'Completed' : 'Needs attention';
+      stateEl.classList.add(latest.success ? 'success' : 'failed');
+    } else {
+      stateEl.textContent = 'No runs';
+    }
+  }
+  if (runIdEl) runIdEl.textContent = latest ? `#${Math.max(1, latestRunNumber)}` : '-';
+  if (whenEl) whenEl.textContent = latest && latest.timestamp ? fmtDateTime(latest.timestamp) : '-';
+  if (modeEl) modeEl.textContent = latest ? formatCrmAddressFilterLabel(latest.processing_filter) : '-';
+  if (durationEl) durationEl.textContent = latest ? fmtDuration(latest.duration_seconds) : '-';
+  if (stepsEl) {
+    const selectedSteps = latest ? normalizeCrmProcessingStepList(latest.selected_steps, {...state, processing_filter: latest.processing_filter}) : [];
+    stepsEl.textContent = selectedSteps.length
+      ? `Included: ${selectedSteps.map((step) => formatCrmProcessingStepLabelForState(step, state)).join(' • ')}`
+      : 'No main automation activity yet.';
+  }
+
+  const rowsEl = document.getElementById('crmProcessingMainHistoryRows');
+  if (rowsEl) {
+    rowsEl.innerHTML = previous.length
+      ? previous.map((row, index) => {
+          const runNumber = Math.max(1, totalRuns - (running ? index : index + 1));
+          const steps = normalizeCrmProcessingStepList(row && row.selected_steps, {...state, processing_filter: row && row.processing_filter});
+          const stepText = steps.length ? steps.map((step) => formatCrmProcessingStepShortLabel(step)).join(', ') : '-';
+          const ok = Boolean(row && row.success);
+          return `<tr><td>#${esc(runNumber)}</td><td>${esc(fmtDateTime(row && row.timestamp))}</td><td>${esc(formatCrmAddressFilterLabel(row && row.processing_filter))}</td><td>${esc(stepText)}</td><td>${esc(fmtDuration(row && row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${ok ? 'Completed' : 'Needs attention'}</td><td>${esc(row && row.message ? row.message : '')}</td></tr>`;
+        }).join('')
+      : "<tr><td colspan='7' class='muted'>No previous main automation runs yet.</td></tr>";
+  }
+}
+
 function renderCrmProcessingStatus(payload) {
   crmProcessingStatusPayload = payload;
   const state = payload && payload.state ? payload.state : {};
@@ -5581,6 +5918,7 @@ function renderCrmProcessingStatus(payload) {
   document.getElementById('crmProcessingRuntimeText').textContent = runtimeTextWithTiming;
   document.getElementById('crmProcessingSelectionText').textContent = `Automate selection: ${selectionText}`;
   renderCrmProcessingReport(payload);
+  renderCrmProcessingMainRunViews(payload);
   renderCrmProcessingSelectionButtons({ ...state, processing_filter: processingFilter });
   if (runBtn) {
     setAutomationButtonRunning(runBtn, selectedSteps.length === 0);
