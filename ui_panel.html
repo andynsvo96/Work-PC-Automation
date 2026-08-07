@@ -170,6 +170,7 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .tbl th,.tbl td{border-bottom:1px solid #e2e8f0;padding:6px;text-align:left}
 .tbl th{background:#f8fafc}
 .crm-address-failure-message{color:#b91c1c}
+.crm-address-shipping-issue-message{color:#b45309;font-weight:700}
 .section-title{margin:12px 0 6px;font-size:14px;font-weight:700}
 .subgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .slack-day-message-panel{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -398,9 +399,11 @@ button.toggle-btn.processing-tool-toggle{min-width:0;padding:6px 9px;font-size:1
   --vscode-blue-text:#0451a5;
   --vscode-red:#a31515;
   --vscode-green:#098658;
+  --vscode-orange:#b45309;
 }
 .ok,.crm-link-btn.configured .state,.queue-status.completed{color:var(--vscode-green)}
 .bad,.crm-address-failure-message,.queue-status.failed,.queue-status.canceled,.temp-state-danger{color:var(--vscode-red)}
+.crm-address-shipping-issue-message{color:var(--vscode-orange)}
 .queue-status.running,.work-plan-summary,.work-day-toggle.active .work-day-hours{color:var(--vscode-blue-text)}
 .hours-sync-card .metric .k,.hours-sync-card .metric .v{color:#111}
 button.icon-btn.has-items{background:#007acc;border-color:#007acc;color:#fff}
@@ -412,6 +415,7 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
   --vscode-blue-text:#4fc1ff;
   --vscode-red:#f44747;
   --vscode-green:#89d185;
+  --vscode-orange:#e5a54b;
 }
 :root[data-theme='dark'] body{background:#1e1e1e;color:#d4d4d4}
 :root[data-theme='dark'] .app-version{color:#9d9d9d}
@@ -8253,7 +8257,7 @@ function buildCrmAddressReportHtml(report, fallbackOrderId = '') {
       `Resolution: ${esc(formatCrmAddressResolution(row.resolution))}`,
       `Manual Review Required: ${esc(row.manual_review_required ? 'Yes' : 'No')}`,
       `Retry Attempted: ${esc(row.retry_attempted ? 'Yes' : 'No')}`,
-      `Message: ${esc(row.message || '-')}`,
+      `<span${isCrmAddressShippingIssue(row) ? " class='crm-address-shipping-issue-message'" : ''}>Message: ${esc(row.message || '-')}</span>`,
       `Original Address: ${esc(row.original_address_text || '-')}`,
       `Final Address: ${esc(row.final_address_text || '-')}`,
       'Warnings:',
@@ -8392,6 +8396,28 @@ function formatCrmAddressIssueLabel(item) {
   return '';
 }
 
+function isCrmAddressShippingIssue(item) {
+  const outcome = String(item && item.outcome || '').trim().toLowerCase();
+  const resolution = String(item && item.resolution || '').trim().toLowerCase();
+  return Boolean(formatCrmAddressIssueLabel(item))
+    || outcome.includes('_shipping_issue_')
+    || resolution.startsWith('shipping_issue_');
+}
+
+function buildCrmAddressShippingIssueMessagesHtml(row, fallbackOrderId = '') {
+  const report = normalizeCrmAddressReport(row && row.report, fallbackOrderId);
+  const issues = report.filter(isCrmAddressShippingIssue);
+  if (issues.length === 0) return '';
+  return issues.map((item) => {
+    const rawOrderId = String(item && item.order_id || fallbackOrderId || '').trim();
+    const orderId = rawOrderId === '-' ? '' : rawOrderId;
+    const issueLabel = formatCrmAddressIssueLabel(item) || 'Shipping Issue';
+    const message = String(item && item.message || '').trim();
+    const orderPrefix = orderId ? `Order ${esc(orderId)}: ` : '';
+    return `<div class='crm-address-shipping-issue-message'><strong>${orderPrefix}${esc(issueLabel)}</strong>${message ? ` — ${esc(message)}` : ''}</div>`;
+  }).join('');
+}
+
 function buildCrmAddressHistoryDiffHtml(row, fallbackOrderId = '') {
   const report = normalizeCrmAddressReport(row && row.report, fallbackOrderId);
   if (report.length === 0) return esc(row && row.message ? row.message : '-');
@@ -8406,7 +8432,7 @@ function buildCrmAddressHistoryDiffHtml(row, fallbackOrderId = '') {
     const oldAddress = formatCrmAddressWithContHtml(item.original_address, item.original_address_text);
     const issueLabel = formatCrmAddressIssueLabel(item);
     const resultLine = issueLabel
-      ? `<div><strong>Issue:</strong> ${esc(issueLabel)}</div>`
+      ? `<div class='crm-address-shipping-issue-message'><strong>Issue:</strong> ${esc(issueLabel)}${item.message ? ` — ${esc(item.message)}` : ''}</div>`
       : `<div><strong>New:</strong> ${formatCrmAddressWithContHtml(item.final_address, item.final_address_text)}</div>`;
     return `${prefix}<div><strong>Old:</strong> ${oldAddress}</div>${resultLine}${failedMessage}`;
   }).join("<div style='height:8px'></div>");
@@ -8470,7 +8496,10 @@ function renderCrmAddressHistory(rows) {
         : (orderCount > 0 ? esc(`${orderCount} order${orderCount === 1 ? '' : 's'}`) : '-');
     }
     else if (orderId !== '-') orderCell = crmOrderLinkHtml(orderId);
-    const valueCell = crmAddressHistoryShowDiff ? buildCrmAddressHistoryDiffHtml(row, orderId) : `${esc(message)}${stageTimingsHtml(row && row.stage_timings, 4)}`;
+    const shippingIssueMessages = buildCrmAddressShippingIssueMessagesHtml(row, orderId);
+    const valueCell = crmAddressHistoryShowDiff
+      ? buildCrmAddressHistoryDiffHtml(row, orderId)
+      : `${esc(message)}${shippingIssueMessages}${stageTimingsHtml(row && row.stage_timings, 4)}`;
     return `<tr>${historyWhenCellHtml(when, latestRows.has(row))}<td>${orderCell}</td><td>${esc(duration)}</td><td>${details}</td><td>${esc(modeLabel)}</td><td>${esc(filterLabel)}</td><td>${esc(status)}</td><td>${esc(resolution)}</td><td>${valueCell}</td></tr>`;
   }).join('');
 }

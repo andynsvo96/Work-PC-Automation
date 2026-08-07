@@ -139,6 +139,14 @@ class SettingsUiStructureTests(unittest.TestCase):
         self.assertIn("function openCrmProcessingRunReport(", self.html)
         self.assertIn(">View Report</button>", self.html)
 
+    def test_shipping_issue_history_messages_use_orange_attention_style(self):
+        self.assertIn("--vscode-orange:#b45309", self.html)
+        self.assertIn("--vscode-orange:#e5a54b", self.html)
+        self.assertIn(".crm-address-shipping-issue-message{color:var(--vscode-orange)}", self.html)
+        self.assertIn("function isCrmAddressShippingIssue(", self.html)
+        self.assertIn("function buildCrmAddressShippingIssueMessagesHtml(", self.html)
+        self.assertIn("const shippingIssueMessages = buildCrmAddressShippingIssueMessagesHtml(row, orderId);", self.html)
+
     def test_existing_backend_control_roots_remain_unique(self):
         for element_id in (
             "statusBox",
