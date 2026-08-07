@@ -60,6 +60,7 @@ def register_work_routes(
     run_crm_mass_emailer_run_queued,
     get_crm_mass_emailer_status_payload,
     clear_crm_mass_emailer_history,
+    queue_crm_sheet_scanner_retry_order,
     start_crm_processing_run,
     run_crm_processing_run_queued,
     get_crm_processing_status_payload,
@@ -828,6 +829,20 @@ def register_work_routes(
         payload = get_crm_mass_emailer_status_payload()
         payload.update({"success": ok, "message": msg})
         return jsonify(payload), 200
+
+    @app.route("/crm/mass-emailer/retry-order", methods=["POST"])
+    @app.route("/crm/mass-email/retry-order", methods=["POST"])
+    def crm_mass_emailer_retry_order():
+        data = request.get_json(silent=True) or {}
+        ok, msg, task = queue_crm_sheet_scanner_retry_order(
+            data.get("order_id") or data.get("orderId"),
+            data.get("process"),
+            data.get("reason"),
+            data.get("row_number") or data.get("rowNumber"),
+        )
+        payload = get_crm_mass_emailer_status_payload()
+        payload.update({"success": ok, "message": msg, "queued": ok, "queue_task": task})
+        return jsonify(payload), (202 if ok else 400)
 
     @app.route("/crm/address-validator", methods=["POST", "GET"])
     def crm_address_validator():

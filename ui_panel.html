@@ -5562,6 +5562,10 @@ function normalizeCrmOrderDetails(details, orderIds = [], fallbackDetail = null)
       stock_tab_count: row.stock_tab_count != null ? Number(row.stock_tab_count) : null,
       stock_tab_label: String(row.stock_tab_label || ''),
       stock_ordered_status: row.stock_ordered_status && typeof row.stock_ordered_status === 'object' ? row.stock_ordered_status : null,
+      row_number: row.row_number != null ? Number(row.row_number) : null,
+      process: String(row.process || ''),
+      reason: String(row.reason || ''),
+      retryable: Boolean(row.retryable),
     };
   }).filter(Boolean);
   const fallback = fallbackDetail && typeof fallbackDetail === 'object' ? fallbackDetail : {};
@@ -5580,6 +5584,10 @@ function normalizeCrmOrderDetails(details, orderIds = [], fallbackDetail = null)
       stock_tab_count: null,
       stock_tab_label: '',
       stock_ordered_status: fallback.stock_ordered_status && typeof fallback.stock_ordered_status === 'object' ? fallback.stock_ordered_status : null,
+      row_number: null,
+      process: String(fallback.process || ''),
+      reason: String(fallback.reason || ''),
+      retryable: Boolean(fallback.retryable),
     });
   });
   return normalizedRows;
@@ -5636,7 +5644,10 @@ function buildCrmOrderDetailsHtml(details, orderIds = []) {
     const tabText = crmStockTabDetailText(row);
     const tabInfo = tabText ? ` <span class='muted'>${esc(tabText)}</span>` : '';
     const stockOrdered = crmStockOrderedDetailHtml(row);
-    return `${crmOrderLinkHtml(row.order_id)}${tabInfo} <span class='${statusClass}'>${esc(resultText)}</span>${duration}${stockOrdered}${sanmarLink}${message}`;
+    const retryButton = !row.success && row.retryable && row.process
+      ? ` <button class='secondary tiny' data-order-id='${esc(row.order_id)}' data-process='${esc(row.process)}' data-reason='${esc(row.reason)}' data-row-number='${esc(row.row_number || '')}' onclick='retryCrmMassEmailerOrder(this)'>Retry</button>`
+      : '';
+    return `${crmOrderLinkHtml(row.order_id)}${tabInfo} <span class='${statusClass}'>${esc(resultText)}</span>${duration}${stockOrdered}${sanmarLink}${message}${retryButton}`;
   }).join('<br>');
 }
 
@@ -5709,6 +5720,40 @@ function openCrmOrderIdsDialogFromButton(button) {
 function closeCrmOrderIdsDialog() {
   const dialog = document.getElementById('crmOrderIdsDialog');
   if (dialog && dialog.open && typeof dialog.close === 'function') dialog.close();
+}
+
+async function retryCrmMassEmailerOrder(button) {
+  if (!button) return;
+  const orderId = String(button.dataset.orderId || '').trim();
+  const process = String(button.dataset.process || '').trim();
+  const reason = String(button.dataset.reason || '').trim();
+  const rowNumber = Number(button.dataset.rowNumber || 0);
+  if (!orderId || !process) {
+    setStatus('This failed order does not have enough saved information to retry safely.');
+    return;
+  }
+  button.disabled = true;
+  button.textContent = 'Retrying...';
+  try {
+    const d = await api('/crm/mass-emailer/retry-order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        order_id: orderId,
+        process,
+        reason,
+        row_number: Number.isFinite(rowNumber) && rowNumber > 0 ? rowNumber : null,
+      }),
+    });
+    closeCrmOrderIdsDialog();
+    setStatus(d.message || `Retry queued for order ${orderId}.`);
+    await loadQueue(false);
+    await loadCrmMassEmailerStatus(false);
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = 'Retry';
+    setStatus('Order retry failed: ' + error.message);
+  }
 }
 
 function normalizeCrmHistoryAutomationKey(row) {

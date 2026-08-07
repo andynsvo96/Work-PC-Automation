@@ -8471,6 +8471,8 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertEqual(details[1]["status"], "Needs attention")
         self.assertEqual(details[1]["function_label"], "Copyright - Cancel")
         self.assertEqual(details[1]["message"], "Google Sheet error text.")
+        self.assertEqual(details[1]["process"], "")
+        self.assertFalse(details[1]["retryable"])
         _mock_processing_report.assert_called_once()
 
     def test_mass_emailer_history_keeps_same_order_failures_for_different_sheet_rows(self):
@@ -8502,6 +8504,153 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertEqual(len(details), 2)
         self.assertEqual([item["function_label"] for item in details], ["Copyright - Cancel", "Copyright Removal"])
         self.assertEqual([item["message"] for item in details], ["Refund fee skipped.", "Removal template missing."])
+
+    def test_mass_emailer_live_failure_preserves_retry_context(self):
+        payload = {
+            "success": False,
+            "message": "Processed 0 sheet scanner row(s); 1 failed.",
+            "action": "process_queue",
+            "dry_run": False,
+            "failures": [
+                {
+                    "row_number": 13,
+                    "order_id": "4705293",
+                    "issue_type": "Copyright - Cancel",
+                    "process": "copyright_cancel",
+                    "reason": "Customer artwork is copyrighted",
+                    "error": "Salesforce login required.",
+                }
+            ],
+        }
+
+        details = server._crm_mass_emailer_order_details_from_payload(payload)
+
+        self.assertEqual(details[0]["row_number"], 13)
+        self.assertEqual(details[0]["process"], "copyright_cancel")
+        self.assertEqual(details[0]["reason"], "Customer artwork is copyrighted")
+        self.assertTrue(details[0]["retryable"])
+
+    @mock.patch.object(server.os.path, "exists", return_value=True)
+    @mock.patch("builtins.open", new_callable=mock.mock_open)
+    @mock.patch.object(server.json, "load")
+    def test_mass_emailer_state_enriches_existing_latest_failure_for_retry(self, mock_json_load, _mock_open, _mock_exists):
+        timestamp = "2026-08-07T10:30:00"
+        mock_json_load.return_value = {
+            "last_run_timestamp": timestamp,
+            "last_payload": {
+                "action": "process_queue",
+                "dry_run": False,
+                "failures": [
+                    {
+                        "row_number": 13,
+                        "order_id": "4705293",
+                        "process": "copyright_cancel",
+                        "reason": "Customer artwork is copyrighted",
+                        "error": "Salesforce login required.",
+                    }
+                ],
+            },
+            "run_history": [
+                {
+                    "timestamp": timestamp,
+                    "success": False,
+                    "action": "process_queue",
+                    "dry_run": False,
+                    "order_details": [
+                        {
+                            "order_id": "4705293",
+                            "success": False,
+                            "status": "Needs attention",
+                            "outcome": "copyright_cancel",
+                            "message": "Salesforce login required.",
+                        }
+                    ],
+                }
+            ],
+        }
+
+        state = server.load_crm_mass_emailer_state()
+
+        recovered = state["run_history"][0]["order_details"][0]
+        self.assertEqual(recovered["reason"], "Customer artwork is copyrighted")
+        self.assertEqual(recovered["row_number"], 13)
+        self.assertTrue(recovered["retryable"])
+
+    @mock.patch.object(crm_copyright_cancel, "_clear_sheet_queue_row")
+    @mock.patch.object(crm_copyright_cancel, "_scan_queue_rows")
+    def test_retry_clears_only_matching_original_sheet_row(self, mock_scan, mock_clear):
+        worksheet = mock.Mock()
+        row = crm_copyright_cancel.QueueRow(
+            13,
+            "4705293",
+            "4705293",
+            "Copyright - Cancel",
+            "Customer artwork is copyrighted",
+            "copyright_cancel",
+            "Salesforce login required.",
+        )
+        mock_scan.return_value = (mock.Mock(), worksheet, [], [row], [])
+
+        cleared = crm_copyright_cancel._clear_retried_sheet_queue_row(
+            "4705293",
+            "copyright_cancel",
+            "Customer artwork is copyrighted",
+            expected_row_number=13,
+        )
+
+        self.assertEqual(cleared, 13)
+        mock_clear.assert_called_once_with(worksheet, 13)
+
+    @mock.patch.object(crm_copyright_cancel, "_write_result")
+    @mock.patch.object(crm_copyright_cancel, "process_single_order")
+    @mock.patch.object(crm_copyright_cancel, "_find_retried_sheet_queue_row")
+    def test_stale_duplicate_retry_stops_before_touching_crm(self, mock_find, mock_process, _mock_write):
+        mock_find.side_effect = crm_copyright_cancel.CopyrightCancelError(
+            "Retry completed previously; its Google Sheet row could not be found to clear."
+        )
+        args = mock.Mock(
+            order_id="4705293",
+            order_url="",
+            reason="Customer artwork is copyrighted",
+            dry_run=False,
+            process="copyright_cancel",
+            visible=False,
+            attach_browser=False,
+            debugger_address="127.0.0.1:9222",
+            login_wait_seconds=0,
+            skip_refund_click=False,
+            keep_browser_open=False,
+            keep_browser_open_on_error=False,
+            delete_sheet_row=True,
+            sheet_row_number=13,
+            result_file="result.json",
+        )
+
+        exit_code = crm_copyright_cancel.run_process_order(args)
+
+        self.assertEqual(exit_code, 1)
+        mock_process.assert_not_called()
+
+    @mock.patch.object(server, "_run_script")
+    def test_single_order_retry_worker_passes_sheet_resume_guards(self, mock_run_script):
+        mock_run_script.return_value = (True, "ok", {"success": True, "message": "ok"})
+
+        ok, message, _payload = server._execute_crm_mass_emailer_worker(
+            action="process_order",
+            dry_run=False,
+            order_id="4705293",
+            process="copyright_cancel",
+            reason="Customer artwork is copyrighted",
+            delete_sheet_row=True,
+            sheet_row_number=13,
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(message, "ok")
+        worker_args = mock_run_script.call_args.args[1]
+        self.assertIn("--delete-sheet-row", worker_args)
+        self.assertIn("--sheet-row-number", worker_args)
+        self.assertIn("13", worker_args)
 
     @mock.patch.object(server, "_run_script")
     def test_order_goods_worker_defaults_to_continuous_rush_dry_run(self, mock_run_script):

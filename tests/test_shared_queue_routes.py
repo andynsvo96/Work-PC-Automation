@@ -141,6 +141,37 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertFalse(task["arguments"]["dry_run"])
         self.assertEqual(task["required_capability"], "crm")
 
+    def test_failed_sheet_order_retry_has_resume_safe_portable_descriptor(self):
+        response = self.client.post(
+            "/crm/mass-emailer/retry-order",
+            json={
+                "order_id": "4705293",
+                "process": "copyright_cancel",
+                "reason": "Customer artwork is copyrighted",
+                "row_number": 13,
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        task = self.runtime.enqueued[-1]
+        self.assertEqual(task["task_type"], "crm.sheet_scanner_order")
+        self.assertEqual(task["arguments"]["order_id"], "4705293")
+        self.assertEqual(task["arguments"]["process"], "copyright_cancel")
+        self.assertEqual(task["arguments"]["reason"], "Customer artwork is copyrighted")
+        self.assertTrue(task["arguments"]["delete_sheet_row"])
+        self.assertEqual(task["arguments"]["sheet_row_number"], 13)
+        self.assertEqual(task["required_capability"], "crm")
+
+    def test_sheet_order_retry_rejects_non_resume_safe_automation(self):
+        response = self.client.post(
+            "/crm/mass-emailer/retry-order",
+            json={"order_id": "4705293", "process": "auto_splitter", "row_number": 13},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("cannot be retried safely", response.get_json()["message"])
+        self.assertEqual(self.runtime.enqueued, [])
+
     def test_registered_executors_cover_route_task_types(self):
         registered = set(server.register_shared_queue_task_executors())
         self.assertIn("communications.paycom_clock", registered)

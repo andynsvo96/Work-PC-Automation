@@ -9688,6 +9688,20 @@ def _default_crm_mass_emailer_state():
     }
 
 
+CRM_SHEET_SCANNER_RETRYABLE_PROCESSES = frozenset(
+    {
+        "copyright_cancel",
+        "content_violation_cancel",
+        "existing_designs_cancel",
+        "outside_limit_cancel",
+        "complicated_emb_to_hdd",
+        "oversize_emb_to_hdd",
+        "copyright_removal",
+        "copyright_reachout",
+    }
+)
+
+
 def ensure_crm_mass_emailer_state_file():
     if os.path.exists(CRM_MASS_EMAILER_STATE_FILE):
         return
@@ -9780,6 +9794,10 @@ def _crm_mass_emailer_order_details_from_payload(payload):
             return
         order_id = order_id[0]
         message = _row_message(row) or default_message
+        process_key = str(row.get("process") or "").strip()
+        legacy_outcome = str(row.get("outcome") or "").strip()
+        if not process_key and legacy_outcome in CRM_SHEET_SCANNER_RETRYABLE_PROCESSES:
+            process_key = legacy_outcome
         process_identity = str(row.get("process") or row.get("outcome") or row.get("issue_type") or "").strip()
         row_identity = str(row.get("row_number") or "").strip()
         detail_key = (order_id, row_identity or process_identity or order_id)
@@ -9803,6 +9821,15 @@ def _crm_mass_emailer_order_details_from_payload(payload):
                 "function_label": _crm_mass_emailer_sheet_function_label(row),
                 "message": str(message or ""),
                 "duration_seconds": _normalize_duration_seconds(row.get("duration_seconds")),
+                "row_number": max(0, int(_safe_float(row.get("row_number") or row.get("sheet_row_number"), 0))),
+                "process": process_key,
+                "reason": str(row.get("reason") or row.get("cancellation_reason") or "").strip(),
+                "retryable": bool(
+                    not success
+                    and _normalize_crm_mass_emailer_action(payload.get("action")) == "process_queue"
+                    and not bool(payload.get("dry_run"))
+                    and process_key in CRM_SHEET_SCANNER_RETRYABLE_PROCESSES
+                ),
             }
         )
 
@@ -9901,6 +9928,16 @@ def load_crm_mass_emailer_state():
     state["total_runs"] = max(0, int(_safe_float(state.get("total_runs"), 0)))
     state["total_orders_processed"] = max(0, int(_safe_float(state.get("total_orders_processed"), 0)))
     state["run_history"] = _normalize_crm_mass_emailer_history(state.get("run_history"))
+    # Older saved history omitted retry context, while last_payload retained the
+    # original failed sheet rows. Enrich the latest matching run so an existing
+    # failure gains the Retry button immediately after this update.
+    last_payload = state.get("last_payload")
+    if isinstance(last_payload, dict) and state["run_history"]:
+        latest = state["run_history"][0]
+        if str(latest.get("timestamp") or "") == str(state.get("last_run_timestamp") or ""):
+            recovered_details = _crm_mass_emailer_order_details_from_payload(last_payload)
+            if recovered_details:
+                latest["order_details"] = recovered_details
     return state
 
 
@@ -9969,6 +10006,8 @@ def _execute_crm_mass_emailer_worker(
     order_id=None,
     process=None,
     reason="",
+    delete_sheet_row=False,
+    sheet_row_number=None,
 ):
     normalized_action = _normalize_crm_mass_emailer_action(action)
     args = ["--action", normalized_action]
@@ -9985,6 +10024,10 @@ def _execute_crm_mass_emailer_worker(
             args.extend(["--process", str(process).strip()])
         if str(reason or "").strip():
             args.extend(["--reason", str(reason).strip()])
+        if delete_sheet_row:
+            args.append("--delete-sheet-row")
+        if int(_safe_float(sheet_row_number, 0)) > 0:
+            args.extend(["--sheet-row-number", str(int(_safe_float(sheet_row_number, 0)))])
     if int(_safe_float(limit, 0)) > 0:
         args.extend(["--limit", str(int(_safe_float(limit, 0)))])
     if retry_errors:
@@ -10120,7 +10163,7 @@ CRM_EXTENSION_SHEET_SCANNER_ORDER_AUTOMATIONS = {
 }
 
 
-def run_crm_sheet_scanner_order_queued(order_id, process, reason=""):
+def run_crm_sheet_scanner_order_queued(order_id, process, reason="", delete_sheet_row=False, sheet_row_number=None):
     """Run one confirmed Sheets Scanner process for one CRM order.
 
     This is separate from the report-wide scanner queue: extension controls
@@ -10146,11 +10189,45 @@ def run_crm_sheet_scanner_order_queued(order_id, process, reason=""):
             order_id=normalized_order_id,
             process=process_key,
             reason=clean_reason,
+            delete_sheet_row=bool(delete_sheet_row),
+            sheet_row_number=sheet_row_number,
         )
         _persist_crm_mass_emailer_run_result(ok, message, payload, dry_run=False)
         return ok, message
     finally:
         crm_lock.release()
+
+
+def queue_crm_sheet_scanner_retry_order(order_id, process, reason="", sheet_row_number=None):
+    """Queue a resume-safe retry for one failed live Sheets Scanner row."""
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    process_key = str(process or "").strip().lower()
+    automation = CRM_EXTENSION_SHEET_SCANNER_ORDER_AUTOMATIONS.get(process_key)
+    clean_reason = str(reason or "").strip()
+    if not normalized_order_id:
+        return False, "A valid 7-digit CRM order number is required for retry.", None
+    if not automation:
+        return False, "This failed Sheets Scanner automation cannot be retried safely.", None
+    if automation["requires_reason"] and not clean_reason:
+        return False, f"{automation['label']} requires its original reason before retry.", None
+    row_number = max(0, int(_safe_float(sheet_row_number, 0)))
+    task_arguments = {
+        "order_id": normalized_order_id,
+        "process": process_key,
+        "reason": clean_reason,
+        "delete_sheet_row": True,
+        "sheet_row_number": row_number or None,
+    }
+    return enqueue_automation(
+        f"Retry {automation['label']} Order {normalized_order_id}",
+        "Processing",
+        lambda: run_crm_sheet_scanner_order_queued(**task_arguments),
+        details="Resume failed Sheets Scanner order; completed CRM actions are detected and skipped.",
+        status_fn=get_crm_mass_emailer_status_payload,
+        task_type="crm.sheet_scanner_order",
+        task_arguments=task_arguments,
+        required_capability="crm",
+    )
 
 
 def get_crm_mass_emailer_status_payload():
@@ -13510,6 +13587,7 @@ register_work_routes(
     run_crm_mass_emailer_run_queued=run_crm_mass_emailer_run_queued,
     get_crm_mass_emailer_status_payload=get_crm_mass_emailer_status_payload,
     clear_crm_mass_emailer_history=clear_crm_mass_emailer_history,
+    queue_crm_sheet_scanner_retry_order=queue_crm_sheet_scanner_retry_order,
     start_crm_processing_run=start_crm_processing_run,
     run_crm_processing_run_queued=run_crm_processing_run_queued,
     get_crm_processing_status_payload=get_crm_processing_status_payload,

@@ -563,6 +563,54 @@ def _clear_sheet_queue_row(worksheet, row_number):
     worksheet.update(range_name, [["", "", "", ""]])
 
 
+def _find_retried_sheet_queue_row(order_id, process_key, reason="", expected_row_number=None):
+    """Find only the sheet row that a one-order retry is allowed to resume.
+
+    Row numbers can move while a retry is waiting in the automation queue, so
+    the stored row number is accepted only when its order/process still match.
+    Otherwise a unique matching row may be used; ambiguous matches fail closed
+    instead of deleting the wrong operator request.
+    """
+    _spreadsheet, worksheet, _headers, eligible, _skipped = _scan_queue_rows(include_error_rows=True)
+    normalized_order_id = _normalize_order_id(order_id)
+    normalized_process = str(process_key or "").strip()
+    normalized_reason = _clean_text(reason)
+    matches = [
+        row
+        for row in eligible
+        if row.order_id == normalized_order_id
+        and row.process_key == normalized_process
+        and (not normalized_reason or _clean_text(row.reason) == normalized_reason)
+    ]
+    try:
+        expected = int(expected_row_number) if expected_row_number not in (None, "") else None
+    except (TypeError, ValueError):
+        expected = None
+    selected = next((row for row in matches if expected and row.row_number == expected), None)
+    if selected is None and len(matches) == 1:
+        selected = matches[0]
+    if selected is None:
+        if not matches:
+            raise CopyrightCancelError(
+                f"Retry completed for order {normalized_order_id}, but its Google Sheet row could not be found to clear."
+            )
+        raise CopyrightCancelError(
+            f"Retry completed for order {normalized_order_id}, but multiple matching Google Sheet rows remain; none were cleared."
+        )
+    return worksheet, selected
+
+
+def _clear_retried_sheet_queue_row(order_id, process_key, reason="", expected_row_number=None):
+    worksheet, selected = _find_retried_sheet_queue_row(
+        order_id,
+        process_key,
+        reason,
+        expected_row_number=expected_row_number,
+    )
+    _clear_sheet_queue_row(worksheet, selected.row_number)
+    return selected.row_number
+
+
 def _visible_text(driver):
     return _clean_text(driver.execute_script("return document.body ? document.body.innerText : '';"))
 
@@ -8576,6 +8624,16 @@ def run_process_order(args):
     started = time.monotonic()
     order_ref = args.order_id or args.order_url
     try:
+        if args.delete_sheet_row and not args.dry_run:
+            # Refuse duplicate/stale retry tasks before touching CRM. A prior
+            # successful retry clears this row, so a second queued click cannot
+            # repeat the email or any other side effect.
+            _find_retried_sheet_queue_row(
+                order_ref,
+                args.process,
+                args.reason,
+                expected_row_number=args.sheet_row_number,
+            )
         details = process_single_order(
             order_ref,
             args.reason,
@@ -8589,11 +8647,20 @@ def run_process_order(args):
             keep_browser_open=args.keep_browser_open,
             keep_browser_open_on_error=args.keep_browser_open_on_error,
         )
+        cleared_sheet_row = None
+        if args.delete_sheet_row and not args.dry_run:
+            cleared_sheet_row = _clear_retried_sheet_queue_row(
+                details["order_id"],
+                args.process,
+                args.reason,
+                expected_row_number=args.sheet_row_number,
+            )
         _write_result(
             True,
             f"Sheet scanner {'dry run' if args.dry_run else 'automation'} complete for order {details['order_id']}.",
             result_file=args.result_file,
             action="process_order",
+            cleared_sheet_row=cleared_sheet_row,
             duration_seconds=round(time.monotonic() - started, 2),
             **details,
         )
@@ -8607,6 +8674,9 @@ def run_process_order(args):
             action="process_order",
             dry_run=bool(args.dry_run),
             order_reference=order_ref,
+            process=args.process,
+            reason=args.reason,
+            sheet_row_number=args.sheet_row_number,
             error_type=type(exc).__name__,
             duration_seconds=round(time.monotonic() - started, 2),
         )
@@ -8906,6 +8976,7 @@ def main(argv=None):
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--retry-errors", action="store_true")
     parser.add_argument("--delete-sheet-row", action="store_true")
+    parser.add_argument("--sheet-row-number", type=int, default=0)
     parser.add_argument("--refund-fee-amount", default="", help="Override the CRM Refund fee amount for one-off recovery.")
     parser.add_argument(
         "--skip-refund-click",
