@@ -11843,11 +11843,15 @@ def run_work_sync():
     try:
         ok, msg, hours, day_rows = sync_week_hours_from_paycom("manual")
         has_active_shift = False
+        inferred_active = False
+        inferred_note = ""
         possible_pto_days = _count_paycom_possible_pto_days(day_rows) if ok else 0
         with state_lock:
             state = load_work_state()
             _record_sync_result(state, ok, msg, hours if ok else None)
             merged_days = _merge_paycom_day_rows_into_state(state, day_rows) if ok else 0
+            if ok and not state.get("active_shift"):
+                inferred_active, inferred_note = _infer_active_shift_from_paycom_rows(state)
             has_active_shift = bool(state.get("active_shift"))
             save_work_state(state)
             refresh_tray_status_from_state(state)
@@ -11858,10 +11862,11 @@ def run_work_sync():
                 sch_ok, sch_msg = ensure_auto_clock_out_schedule_if_needed(force_recompute=True)
                 if sch_ok:
                     schedule_note = f" {sch_msg}"
+            inferred_note_text = f" {inferred_note}" if inferred_active and inferred_note else ""
             pto_note = f" Possible PTO/paid leave rows detected: {possible_pto_days}." if possible_pto_days else ""
             return _finish(True, (
                 f"Manual Paycom sync completed. Week hours: {hours:.2f}. Daily rows: {merged_days}."
-                f"{pto_note}{schedule_note}"
+                f"{inferred_note_text}{pto_note}{schedule_note}"
             ))
         return _finish(False, f"Manual Paycom sync failed: {msg}")
     except Exception as e:
