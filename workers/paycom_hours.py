@@ -371,6 +371,55 @@ def extract_week_hours(body_text):
     return round(candidates[0][0], 2), candidates[0][1]
 
 
+def extract_completed_week_hours_from_day_rows(day_rows):
+    """
+    Sum completed daily totals when Paycom leaves the weekly total blank.
+
+    Paycom's current UI does this while a punch is open.  The open row must not
+    be estimated here because server.py adds the active shift to this completed-
+    hours baseline in real time.
+
+    Returns (hours, numeric_day_count, open_shift_count).  ``hours`` is None
+    when the rows do not look like a Paycom Sunday-through-Saturday time sheet.
+    """
+    if not isinstance(day_rows, list):
+        return None, 0, 0
+
+    day_re = re.compile(r"^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)\s+\d{2}/\d{2}$", flags=re.IGNORECASE)
+    recognized_rows = 0
+    numeric_day_count = 0
+    open_shift_count = 0
+    completed_hours = 0.0
+
+    for row in day_rows:
+        if not isinstance(row, dict):
+            continue
+        date_label = _normalize_text(row.get("date_label", ""))
+        if not day_re.match(date_label):
+            continue
+        recognized_rows += 1
+
+        raw_hours = row.get("hours")
+        try:
+            hours = float(raw_hours) if raw_hours is not None else None
+        except (TypeError, ValueError):
+            hours = None
+        if hours is not None and 0.0 <= hours <= 24.0:
+            completed_hours += hours
+            numeric_day_count += 1
+
+        clock_in = _normalize_text(row.get("clock_in", ""))
+        clock_out = _normalize_text(row.get("clock_out", ""))
+        if clock_in and not _is_missing_punch_marker(clock_in) and (
+            not clock_out or _is_missing_punch_marker(clock_out)
+        ):
+            open_shift_count += 1
+
+    if recognized_rows == 0:
+        return None, 0, 0
+    return round(completed_hours, 2), numeric_day_count, open_shift_count
+
+
 def _get_body_text(driver):
     try:
         return driver.find_element(By.TAG_NAME, "body").text or ""
@@ -442,6 +491,7 @@ const ensureEntry = (dateText) => {
   return outByDate.get(dateText);
 };
 for (const table of Array.from(document.querySelectorAll('table'))) {
+  if (!table.getClientRects().length) continue;
   const rows = Array.from(table.querySelectorAll('tr'));
   if (!rows.length) continue;
 
@@ -1171,14 +1221,21 @@ def _run_once(headless_mode):
         week_hours, match_text, body_text, parsed_from_url = _try_extract_from_current_page(driver)
         day_rows = extract_day_rows_from_timesheet(driver)
         if week_hours is None:
-            take_screenshot(driver, "paycom_hours_not_found")
-            snippet = _normalize_text(body_text)[:300]
-            msg = (
-                "Could not parse weekly hours from the required Paycom Web Time Sheet page."
-            )
-            if snippet:
-                msg += f" Text snippet: {snippet}"
-            return False, msg, None, parsed_from_url or target_url, day_rows
+            fallback_hours, numeric_days, open_shifts = extract_completed_week_hours_from_day_rows(day_rows)
+            if fallback_hours is not None:
+                week_hours = fallback_hours
+                match_text = f"sum of {numeric_days} completed daily total(s)"
+                if open_shifts:
+                    match_text += f"; {open_shifts} open shift(s) excluded"
+            else:
+                take_screenshot(driver, "paycom_hours_not_found")
+                snippet = _normalize_text(body_text)[:300]
+                msg = (
+                    "Could not parse weekly hours from the required Paycom Web Time Sheet page."
+                )
+                if snippet:
+                    msg += f" Text snippet: {snippet}"
+                return False, msg, None, parsed_from_url or target_url, day_rows
 
         adjusted_week_hours, flex_days_found, flex_hours_removed, flex_days_with_hours = (
             adjust_week_hours_for_flex_days(week_hours, day_rows)
