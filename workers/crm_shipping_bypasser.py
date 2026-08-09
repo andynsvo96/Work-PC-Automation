@@ -201,6 +201,8 @@ SANMAR_COLOR_ALIASES = {
 SANMAR_PRODUCT_COLOR_ALIASES = {
     ("4528", "TRUENAVY"): ["J. Navy"],
     ("3330", "WHITESOLIDBLACK"): ["White/ Black"],
+    ("BG936", "FORESTGRN"): ["Forest Green"],
+    ("BG936", "RIVERBLNV"): ["River Blue Navy"],
     ("RS3330", "WHITESOLIDBLACK"): ["White/ Black"],
     # CRM abbreviates several DM136L color components differently from SanMar.
     ("DM136L", "BLACKFRGYFR"): ["Black Frost/ Grey Frost"],

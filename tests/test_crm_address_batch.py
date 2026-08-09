@@ -3077,6 +3077,33 @@ class ShippingBypasserTests(unittest.TestCase):
             )
         )
 
+    def test_sanmar_bg936_compact_color_ids_match_sanmar_labels(self):
+        product = {
+            "product_id": "BG936",
+            "product_name": "Port Authority Matte Hip Pack",
+        }
+        cases = [
+            ("ForestGrn", "Forest Green"),
+            ("RiverBlNv", "River Blue Navy"),
+        ]
+
+        for crm_color, sanmar_color in cases:
+            with self.subTest(crm_color=crm_color):
+                self.assertIn(
+                    sanmar_color,
+                    crm_shipping_bypasser._sanmar_color_label_options(
+                        crm_color,
+                        product=product,
+                    ),
+                )
+                self.assertTrue(
+                    crm_shipping_bypasser._cart_color_matches(
+                        sanmar_color,
+                        crm_color,
+                        product=product,
+                    )
+                )
+
     def test_sanmar_true_navy_j_navy_alias_is_limited_to_4528(self):
         self.assertNotIn("J. Navy", crm_shipping_bypasser._sanmar_color_alias_labels("TRUE NAVY"))
         self.assertFalse(
