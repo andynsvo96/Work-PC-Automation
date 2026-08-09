@@ -190,7 +190,10 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .section-note-body p{margin:0 0 6px}
 .section-note-body p:last-child{margin-bottom:0}
 .notice{border:1px solid #cbd5e1;background:#f8fafc;border-radius:8px;padding:8px;margin:8px 0;font-size:13px}
-.version-gate-notice{display:none;border-color:#f59e0b;background:#fffbeb;color:#92400e;font-weight:700}
+.version-gate-notice,.queue-gate-notice{display:none;border-color:#f59e0b;background:#fffbeb;color:#92400e;font-weight:700}
+.action-feedback{position:fixed;right:18px;bottom:18px;z-index:70;display:none;width:min(520px,calc(100vw - 36px));box-sizing:border-box;padding:11px 13px;border:1px solid #93c5fd;border-radius:10px;background:#eff6ff;color:#1e3a8a;box-shadow:0 16px 42px rgba(15,23,42,.28);font-size:13px;line-height:1.45}
+.action-feedback.active{display:block}
+.action-feedback.error{border-color:#fca5a5;background:#fef2f2;color:#991b1b}
 .app-update-modal{max-width:560px}
 .app-update-details{margin-top:10px;white-space:pre-wrap}
 .auto-split-review-modal{max-width:560px}
@@ -499,7 +502,10 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 :root[data-theme='dark'] .badge{background:#3c3c3c;color:#d4d4d4}
 :root[data-theme='dark'] .console-output{background:#181818;color:#dcdcaa;border-color:#3c3c3c}
 :root[data-theme='dark'] .version-gate-notice,
+:root[data-theme='dark'] .queue-gate-notice,
 :root[data-theme='dark'] .platform-capability-notice{background:#332b00;color:#f0d48a;border-color:#cca700}
+:root[data-theme='dark'] .action-feedback{border-color:#0e639c;background:#04395e;color:#dbeafe}
+:root[data-theme='dark'] .action-feedback.error{border-color:#a31515;background:#3f1d22;color:#fecaca}
 :root[data-theme='dark'] .ok,
 :root[data-theme='dark'] .crm-link-btn.configured .state,
 :root[data-theme='dark'] .queue-status.completed{color:var(--vscode-green)}
@@ -615,7 +621,7 @@ button.icon-btn{min-height:34px;padding:7px 12px;border-radius:8px;background:va
 .page-heading h2{margin:0 0 5px;font-size:29px;letter-spacing:-.02em}
 .page-heading p{font-size:13px;color:var(--rough-muted)}
 .page-heading-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;justify-content:flex-end}
-.rough-status{display:none}
+.rough-status{display:block;margin:-6px 0 16px;border:1px solid var(--rough-border);background:var(--rough-card-alt);color:var(--rough-text)}
 .rough-grid{display:grid;gap:14px}.rough-two{grid-template-columns:1.35fr .85fr}.rough-half{grid-template-columns:repeat(2,minmax(0,1fr))}
 .rough-card{min-width:0;padding:19px;border:1px solid var(--rough-border);border-radius:14px;background:var(--rough-card);box-shadow:0 8px 24px rgba(0,0,0,.14)}
 .rough-card h2{margin:0;font-size:18px}
@@ -694,6 +700,8 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
 </div>
 <div id='platformCapabilityNotice' class='notice platform-capability-notice'>Windows only</div>
 <div id='versionGateNotice' class='notice version-gate-notice'></div>
+<div id='queueGateNotice' class='notice queue-gate-notice' role='alert'></div>
+<div id='actionFeedback' class='action-feedback' role='status' aria-live='polite'></div>
 <div id='appUpdateModal' class='modal-backdrop' role='presentation'>
   <div class='modal app-update-modal' role='dialog' aria-modal='true' aria-labelledby='appUpdateTitle'>
     <div class='modal-title-row'>
@@ -1676,6 +1684,7 @@ let clipboardStatusPayload = null;
 let slackHistoryPayload = null;
 let dismissedAppUpdateTarget = null;
 let appUpdateInProgress = false;
+let actionFeedbackTimer = null;
 let queueDragTaskId = null;
 let settingsSaveTimer = null;
 let settingsSavePromise = Promise.resolve();
@@ -2548,8 +2557,24 @@ function setStatus(msg, targetTab = null) {
   const el = document.getElementById(id);
   if (tab === 'settings') setSettingsSaveState(msg);
   else if (el) el.textContent = msg;
+  showActionFeedback(msg);
 }
 function setProcessingStatus(msg) { setStatus(msg, 'processing'); }
+
+function showActionFeedback(message) {
+  const feedback = document.getElementById('actionFeedback');
+  const text = String(message || '').trim();
+  if (!feedback || !text) return;
+  const isError = /fail|error|could not|cannot|locked|blocked|offline|unavailable|missing|required|invalid/i.test(text);
+  feedback.textContent = text;
+  feedback.classList.toggle('error', isError);
+  feedback.classList.add('active');
+  if (actionFeedbackTimer) clearTimeout(actionFeedbackTimer);
+  actionFeedbackTimer = setTimeout(() => {
+    feedback.classList.remove('active', 'error');
+    actionFeedbackTimer = null;
+  }, isError ? 15000 : 7000);
+}
 
 function renderClipboardStatus(payload) {
   clipboardStatusPayload = payload || {};
@@ -2796,6 +2821,14 @@ function renderQueue(payload) {
   const summary = document.getElementById('queueSummaryText');
   const sharedMode = String(queuePayload.mode || '').toLowerCase() === 'shared';
   const coordinator = queuePayload.coordinator || {};
+  const queueNotice = document.getElementById('queueGateNotice');
+  const queueBlocked = sharedMode && coordinator.eligible === false && Boolean(coordinator.block_reason);
+  if (queueNotice) {
+    queueNotice.style.display = queueBlocked ? 'block' : 'none';
+    queueNotice.textContent = queueBlocked
+      ? `Automation queue is locked: ${coordinator.block_reason || 'This computer is not eligible to run tasks.'} Open Queue for details or review controls.`
+      : '';
+  }
   renderControlTargetNodes(Array.isArray(queuePayload.nodes) ? queuePayload.nodes : []);
   applyPlatformCapabilities();
   const resumeButton = document.getElementById('queueResumeBtn');

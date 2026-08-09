@@ -160,6 +160,16 @@ class SettingsUiStructureTests(unittest.TestCase):
             with self.subTest(element_id=element_id):
                 self.assertEqual(len(re.findall(rf"\bid=['\"]{element_id}['\"]", self.html)), 1)
 
+    def test_action_failures_remain_visible_after_dashboard_redesign(self):
+        self.assertNotIn(".rough-status{display:none}", self.html)
+        self.assertIn("id='actionFeedback'", self.html)
+        self.assertIn("function showActionFeedback(", self.html)
+        self.assertIn("showActionFeedback(msg);", self.html)
+
+    def test_shared_queue_lock_is_shown_outside_the_queue_drawer(self):
+        self.assertIn("id='queueGateNotice'", self.html)
+        self.assertIn("Automation queue is locked:", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()
