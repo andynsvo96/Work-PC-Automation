@@ -312,27 +312,45 @@ class SupabaseQueueClient:
         task_type = str(task_type or "").strip()
         if not task_type:
             raise ValueError("task_type is required for safe cross-device execution.")
-        return self._rpc(
-            "automation_enqueue_task",
-            {
-                "p_workspace_id": self.config.workspace_id,
-                "p_label": str(label or "Automation Task"),
-                "p_category": str(category or "Automation"),
-                "p_task_type": task_type,
-                "p_encrypted_payload": self.cipher.encrypt(arguments),
-                "p_requested_by_node": self.config.node_key,
-                "p_requested_client_os": str(requested_client_os or platform.system() or "unknown").strip().lower(),
-                "p_target_node": normalize_node_key(target_node) if target_node else None,
-                "p_preferred_node": normalize_node_key(preferred_node) if preferred_node else None,
-                "p_required_capability": str(required_capability or "").strip() or None,
-                "p_details": str(details or "").strip() or None,
-                "p_queue_mode": str(queue_mode or "normal").strip().lower(),
-                "p_available_at": available_at,
-                "p_repeat_interval_minutes": repeat_interval_minutes,
-                "p_app_commit": str(commit or "unknown"),
-                "p_protocol_version": QUEUE_PROTOCOL_VERSION,
-            },
-        )
+        body = {
+            "p_workspace_id": self.config.workspace_id,
+            "p_label": str(label or "Automation Task"),
+            "p_category": str(category or "Automation"),
+            "p_task_type": task_type,
+            "p_encrypted_payload": self.cipher.encrypt(arguments),
+            "p_requested_by_node": self.config.node_key,
+            "p_requested_client_os": str(requested_client_os or platform.system() or "unknown").strip().lower(),
+            "p_target_node": normalize_node_key(target_node) if target_node else None,
+            "p_preferred_node": normalize_node_key(preferred_node) if preferred_node else None,
+            "p_required_capability": str(required_capability or "").strip() or None,
+            "p_details": str(details or "").strip() or None,
+            "p_queue_mode": str(queue_mode or "normal").strip().lower(),
+            "p_available_at": available_at,
+            "p_repeat_interval_minutes": repeat_interval_minutes,
+            "p_app_commit": str(commit or "unknown"),
+            "p_protocol_version": QUEUE_PROTOCOL_VERSION,
+        }
+        try:
+            return self._rpc("automation_enqueue_task", body)
+        except SharedQueueError as exc:
+            detail = str(exc).lower()
+            missing_preferred_node_signature = (
+                "automation_enqueue_task" in detail
+                and "p_preferred_node" in detail
+                and ("pgrst202" in detail or "schema cache" in detail or "could not find" in detail)
+            )
+            if not missing_preferred_node_signature:
+                raise
+            if body["p_preferred_node"]:
+                raise SharedQueueBlocked(
+                    "Shared queue needs Supabase migration 005_preferred_auto_clock_out_node.sql "
+                    "before preferred-node automatic clock-out tasks can be scheduled."
+                ) from exc
+            # Migration 005 only changes preferred-node failover. Tasks that do
+            # not request that feature remain safe on the original RPC signature.
+            legacy_body = dict(body)
+            legacy_body.pop("p_preferred_node", None)
+            return self._rpc("automation_enqueue_task", legacy_body)
 
     def claim_next(self, *, commit: str):
         result = self._rpc(

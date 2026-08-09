@@ -86,6 +86,42 @@ class SharedQueueTests(unittest.TestCase):
         self.assertIsNone(captured["body"]["p_target_node"])
         self.assertEqual(captured["body"]["p_preferred_node"], "windows-pc")
 
+    def test_enqueue_falls_back_before_preferred_node_migration_for_ordinary_tasks(self):
+        client = SupabaseQueueClient(make_test_config(node_key="windows-pc"))
+        missing_signature = SharedQueueUnavailable(
+            '{"code":"PGRST202","details":"automation_enqueue_task with p_preferred_node was not found in the schema cache"}'
+        )
+        with mock.patch.object(client, "_rpc", side_effect=[missing_signature, {"id": "task-1"}]) as rpc:
+            result = client.enqueue(
+                label="Main Processing",
+                category="Processing",
+                task_type="crm.processing",
+                arguments={"processing_filter": "rush"},
+                commit="abc123",
+            )
+
+        self.assertEqual(result["id"], "task-1")
+        self.assertIn("p_preferred_node", rpc.call_args_list[0].args[1])
+        self.assertNotIn("p_preferred_node", rpc.call_args_list[1].args[1])
+
+    def test_enqueue_requires_migration_for_preferred_node_tasks(self):
+        client = SupabaseQueueClient(make_test_config(node_key="windows-pc"))
+        missing_signature = SharedQueueUnavailable(
+            '{"code":"PGRST202","details":"automation_enqueue_task with p_preferred_node was not found in the schema cache"}'
+        )
+        with mock.patch.object(client, "_rpc", side_effect=missing_signature) as rpc:
+            with self.assertRaisesRegex(SharedQueueBlocked, "migration 005_preferred_auto_clock_out_node.sql"):
+                client.enqueue(
+                    label="Automatic Work Clock Out",
+                    category="Communications",
+                    task_type="communications.automatic_work_out",
+                    arguments={"origin_node": "windows-pc"},
+                    preferred_node="windows-pc",
+                    commit="abc123",
+                )
+
+        self.assertEqual(rpc.call_count, 1)
+
     def test_clear_finished_uses_scoped_rpc(self):
         captured = {}
 
