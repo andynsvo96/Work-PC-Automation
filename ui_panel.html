@@ -917,11 +917,11 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
     <div class='muted' id='crmProcessingSelectionText' style='margin-top:8px'>Selected automations: loading...</div>
     <div class='rough-action-split'>
       <div class='rough-action-cell'>
-        <div class='rough-action-row'><div><div class='rough-action-title'>Main automation</div><div class='rough-action-note'>Runs the selected tools above in order</div></div><button id='crmProcessingRunBtn' onclick='startCrmProcessingRun(this)'>Automate →</button></div>
+        <div class='rough-action-row'><div><div class='rough-action-title'>Main automation</div><div class='rough-action-note'>Runs the selected tools above in order</div></div><button id='crmProcessingRunBtn' onclick='startCrmProcessingRun(this)'>Add to Queue →</button></div>
       </div>
       <div class='rough-action-separator'></div>
       <div class='rough-action-cell'>
-        <div class='rough-action-row'><div><div class='rough-action-title'>Sheet Scanner</div><div class='rough-action-note'>Runs supported Sheet queue rows separately</div></div><button id='crmMassEmailerRunBtn' onclick="startCrmMassEmailerRun('live', this)">Run Sheet Scanner</button></div>
+        <div class='rough-action-row'><div><div class='rough-action-title'>Sheet Scanner</div><div class='rough-action-note'>Runs supported Sheet queue rows separately</div></div><button id='crmMassEmailerRunBtn' onclick="startCrmMassEmailerRun('live', this)">Add Scanner to Queue</button></div>
         <div class='rough-action-note' id='processingScannerLastRun' style='margin-top:9px'>Last run: loading...</div>
       </div>
     </div>
@@ -3182,9 +3182,16 @@ async function openChromeProfileSetup(profile, button = null) {
 
 function setButtonBusy(button, busy, busyLabel = 'Automation underway...') {
   if (!button) return;
-  if (!button.dataset.originalText) button.dataset.originalText = button.textContent;
-  button.disabled = Boolean(busy);
-  button.textContent = busy ? busyLabel : button.dataset.originalText;
+  if (busy) {
+    if (button.dataset.busy !== 'true') button.dataset.originalText = button.textContent;
+    button.dataset.busy = 'true';
+    button.disabled = true;
+    button.textContent = busyLabel;
+    return;
+  }
+  button.dataset.busy = 'false';
+  button.disabled = false;
+  if (button.dataset.originalText) button.textContent = button.dataset.originalText;
 }
 async function withButtonBusy(button, busyLabel, task) {
   if (button && button.disabled) return null;
@@ -6371,10 +6378,14 @@ function renderCrmProcessingStatus(payload) {
   renderCrmProcessingMainRunViews(payload);
   renderCrmProcessingSelectionButtons({ ...state, processing_filter: processingFilter });
   if (runBtn) {
-    setAutomationButtonRunning(runBtn, running || selectedSteps.length === 0);
-    runBtn.textContent = running
-      ? 'Running…'
-      : `Automate ${selectedSteps.length} tool${selectedSteps.length === 1 ? '' : 's'} →`;
+    const submitting = runBtn.dataset.busy === 'true';
+    setAutomationButtonRunning(runBtn, submitting || selectedSteps.length === 0);
+    if (!submitting) {
+      runBtn.textContent = `Add ${selectedSteps.length} tool${selectedSteps.length === 1 ? '' : 's'} to Queue →`;
+    }
+    runBtn.title = running
+      ? 'A Main automation is running. This adds another run to the queue.'
+      : 'Add this Main automation run to the queue.';
   }
   if (queueVisible && queuePayload) renderQueue(queuePayload);
   syncCrmProcessingPolling();
@@ -7881,16 +7892,15 @@ function renderCrmMassEmailerStatus(payload) {
   const scanBtn = document.getElementById('crmMassEmailerScanBtn');
   const dryBtn = document.getElementById('crmMassEmailerDryRunBtn');
   const runBtn = document.getElementById('crmMassEmailerRunBtn');
-  if (running) {
-    if (scanBtn) scanBtn.disabled = true;
-    if (dryBtn) dryBtn.disabled = true;
-    if (runBtn) setAutomationButtonRunning(runBtn, true);
-  } else {
-    if (scanBtn) scanBtn.disabled = false;
-    if (dryBtn) dryBtn.disabled = false;
-    if (runBtn) {
-      setAutomationButtonRunning(runBtn, false);
-    }
+  if (scanBtn) scanBtn.disabled = false;
+  if (dryBtn) dryBtn.disabled = false;
+  if (runBtn) {
+    const submitting = runBtn.dataset.busy === 'true';
+    setAutomationButtonRunning(runBtn, submitting);
+    if (!submitting) runBtn.textContent = 'Add Scanner to Queue';
+    runBtn.title = running
+      ? 'A Sheet Scanner run is active. This adds another run to the queue.'
+      : 'Add a Sheet Scanner run to the queue.';
   }
   renderCrmMassEmailerHistory(state.run_history || []);
   syncCrmMassEmailerPolling();
@@ -7950,26 +7960,26 @@ async function startCrmMassEmailerRun(mode, button = null) {
     setStatus(e.message);
     return;
   }
-  let resultMsg = `Starting ${label}...`;
-  setStatus(resultMsg);
-  setAutomationButtonRunning(button, true);
-  try {
-    const d = await api(path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    renderCrmMassEmailerStatus(d);
-    resultMsg = d.message || resultMsg;
-  } catch (e) {
-    resultMsg = 'Sheets Scanner request failed: ' + e.message;
-  }
-  await loadCrmMassEmailerStatus(false);
-  await loadCrmProcessingStatus(false);
-  await loadCrmAddressStatus(false);
-  await loadQueue(false);
-  setStatus(resultMsg);
-  setAutomationButtonRunning(button, Boolean(crmMassEmailerStatusPayload && crmMassEmailerStatusPayload.running));
+  return withButtonBusy(button, 'QUEUING...', async () => {
+    let resultMsg = `Starting ${label}...`;
+    setStatus(resultMsg);
+    try {
+      const d = await api(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      renderCrmMassEmailerStatus(d);
+      resultMsg = d.message || resultMsg;
+    } catch (e) {
+      resultMsg = 'Sheets Scanner request failed: ' + e.message;
+    }
+    await loadCrmMassEmailerStatus(false);
+    await loadCrmProcessingStatus(false);
+    await loadCrmAddressStatus(false);
+    await loadQueue(false);
+    setStatus(resultMsg);
+  });
 }
 
 function toggleCrmMassEmailerHistory() {

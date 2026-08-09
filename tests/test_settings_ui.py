@@ -91,6 +91,18 @@ class SettingsUiStructureTests(unittest.TestCase):
         ):
             self.assertNotRegex(self.html, rf"\bid=['\"]{removed_id}['\"]")
 
+    def test_processing_run_buttons_remain_queue_controls_while_a_run_is_active(self):
+        self.assertIn("Add to Queue →", self.html)
+        self.assertIn("Add Scanner to Queue", self.html)
+        self.assertIn("const submitting = runBtn.dataset.busy === 'true';", self.html)
+        self.assertIn(
+            "setAutomationButtonRunning(runBtn, submitting || selectedSteps.length === 0);",
+            self.html,
+        )
+        self.assertIn("setAutomationButtonRunning(runBtn, submitting);", self.html)
+        self.assertNotIn("setAutomationButtonRunning(runBtn, running || selectedSteps.length === 0);", self.html)
+        self.assertNotIn("? 'Running…'", self.html)
+
     def test_system_sections_are_merged_and_wired(self):
         expected = {"overview", "hardware", "clipboard", "power"}
         sections = set(re.findall(r"data-system-section=['\"]([^'\"]+)", self.html))
