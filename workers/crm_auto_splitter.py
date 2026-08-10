@@ -18,6 +18,7 @@ from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from urllib.parse import urlparse
 
+from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
 from _bootstrap import ensure_project_root_on_path
@@ -38,6 +39,7 @@ from automation_runtime import (
     write_result_payload,
 )
 from runtime_paths import GENERATED_PROFILES_DIR
+from credential_store import CRM_CREDENTIAL_TARGET, CredentialStoreError, read_credential
 import config as _config
 from config import (
     PROCESSOR_ACTION_TIMEOUT,
@@ -678,6 +680,8 @@ def _maybe_click_saved_login(driver):
     except Exception:
         pass
 
+    _fill_crm_login_from_stored_credential(driver)
+
     clicked = bool(
         driver.execute_script(
             """
@@ -706,6 +710,57 @@ def _maybe_click_saved_login(driver):
     return clicked
 
 
+def _fill_crm_login_from_stored_credential(driver):
+    """Fill the CRM login without exposing stored values in logs or results."""
+    try:
+        credential = read_credential(CRM_CREDENTIAL_TARGET)
+    except CredentialStoreError:
+        return False
+
+    def first_visible(selectors):
+        for selector in selectors:
+            try:
+                candidates = driver.find_elements(By.CSS_SELECTOR, selector)
+            except Exception:
+                continue
+            for candidate in candidates:
+                try:
+                    if candidate.is_displayed() and candidate.is_enabled():
+                        return candidate
+                except Exception:
+                    continue
+        return None
+
+    username_field = first_visible(
+        (
+            "input[name='username']",
+            "input[name='userName']",
+            "input[name='email']",
+            "input[id*='username' i]",
+            "input[type='email']",
+            "input[autocomplete='username']",
+        )
+    )
+    password_field = first_visible(
+        (
+            "input[name='password']",
+            "input[id*='password' i]",
+            "input[type='password']",
+            "input[autocomplete='current-password']",
+        )
+    )
+    if username_field is None or password_field is None:
+        return False
+    try:
+        username_field.clear()
+        username_field.send_keys(credential.username)
+        password_field.clear()
+        password_field.send_keys(credential.secret)
+        return True
+    except Exception:
+        return False
+
+
 def _is_login_page(driver):
     body_text = _clean_text(driver.execute_script("return document.body ? document.body.innerText : '';")).lower()
     current_url = str(driver.current_url or "").lower()
@@ -724,7 +779,10 @@ def _handle_login_if_needed(driver, target_url, login_wait_seconds=0):
         return True
 
     if login_wait_seconds <= 0:
-        return False
+        raise SplitterError(
+            "CRM login is required and the stored CRM credential did not complete login. "
+            "Open the CRM setup profile or rerun with --login-wait-seconds."
+        )
 
     print(f"Login is required. Complete login in the Chrome window within {login_wait_seconds} seconds.")
     deadline = time.monotonic() + login_wait_seconds
@@ -739,7 +797,7 @@ def _handle_login_if_needed(driver, target_url, login_wait_seconds=0):
                 last_url = driver.current_url
         except Exception:
             pass
-    return False
+    raise SplitterError("CRM login did not complete before the wait timeout.")
 
 
 def _switch_to_crm_app_frame(driver):
@@ -1362,7 +1420,13 @@ def _click_ng_button(driver, ng_click, text=None):
               const ng = el.getAttribute('ng-click') || '';
               const text = (el.innerText || el.value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
               const rect = el.getBoundingClientRect();
-              return ng === ngClick && (!expectedText || text === expectedText) && rect.width >= 0 && rect.height >= 0;
+              const style = window.getComputedStyle ? window.getComputedStyle(el) : {};
+              const visible = rect.width > 0 && rect.height > 0 &&
+                style.display !== 'none' && style.visibility !== 'hidden' &&
+                !el.closest('[hidden],[aria-hidden="true"]');
+              const enabled = !el.disabled && el.getAttribute('disabled') === null &&
+                el.getAttribute('aria-disabled') !== 'true';
+              return ng === ngClick && (!expectedText || text === expectedText) && visible && enabled;
             });
             if (!button) return false;
             const label = (button.innerText || button.value || '').replace(/\\s+/g, ' ').trim();
@@ -1422,6 +1486,39 @@ def _save_quote(driver):
         except Exception:
             pass
     raise SplitterError(f"Quote save did not complete. Last quote state: {last}")
+
+
+def _prepare_and_save_split_quote(
+    driver,
+    original_order_url,
+    original_order_id,
+    expected_design_count,
+    split,
+    original_state,
+    max_attempts=2,
+):
+    """Build and save one split quote, recovering once from a stale quote view."""
+    max_attempts = max(1, int(max_attempts or 1))
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        if attempt > 1:
+            _open_order_scope_with_reload(
+                driver,
+                original_order_url,
+                order_id=original_order_id,
+                label=f"original CRM order before split {split['split_index']} quote-save recovery",
+            )
+        _copy_order_to_quote(driver, original_order_id, expected_design_count)
+        configured = _configure_quote_split(driver, split, original_state)
+        promo_discount_fee = _add_discount_fee_to_split_quote(driver, split.get("promo_credit", "0.00"))
+        try:
+            saved_quote = _save_quote(driver)
+            return configured, promo_discount_fee, saved_quote
+        except SplitterError as err:
+            last_error = err
+            if "Quote save did not complete" not in str(err) or attempt >= max_attempts:
+                raise
+    raise last_error
 
 
 def _find_modal_text(driver):
@@ -1794,10 +1891,14 @@ def _create_split_order_in_worker(
             f"worker original CRM order before split {split['split_index']}",
         )
         _wait_for_order_scope(driver, order_id=original_order_id)
-        _copy_order_to_quote(driver, original_order_id, expected_tab_count)
-        configured = _configure_quote_split(driver, split, original_state)
-        promo_discount_fee = _add_discount_fee_to_split_quote(driver, split.get("promo_credit", "0.00"))
-        saved_quote = _save_quote(driver)
+        configured, promo_discount_fee, saved_quote = _prepare_and_save_split_quote(
+            driver,
+            original_order_url,
+            original_order_id,
+            expected_tab_count,
+            split,
+            original_state,
+        )
         new_order_id = _finalize_split_quote_and_wait_for_order(driver, payment_type, transaction_id)
         _open_order_scope_with_reload(
             driver,
@@ -3315,10 +3416,14 @@ def run_split_order(
                         order_id=resolved_order_id,
                         label=f"original CRM order before split {split['split_index']}",
                     )
-                    _copy_order_to_quote(driver, resolved_order_id, expected_tab_count)
-                    configured = _configure_quote_split(driver, split, original_state)
-                    promo_discount_fee = _add_discount_fee_to_split_quote(driver, split.get("promo_credit", "0.00"))
-                    saved_quote = _save_quote(driver)
+                    configured, promo_discount_fee, saved_quote = _prepare_and_save_split_quote(
+                        driver,
+                        target_url,
+                        resolved_order_id,
+                        expected_tab_count,
+                        split,
+                        original_state,
+                    )
                     new_order_id = _finalize_split_quote_and_wait_for_order(driver, payment_type, transaction_id)
                     _open_order_scope_with_reload(
                         driver,

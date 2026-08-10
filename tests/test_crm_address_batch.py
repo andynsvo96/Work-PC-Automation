@@ -6220,6 +6220,74 @@ class CrmProductSeparatorTests(unittest.TestCase):
 
         self.assertTrue(result["editOrderVisible"])
 
+    def test_auto_splitter_ng_click_rejects_hidden_or_disabled_stale_controls(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = True
+
+        self.assertTrue(crm_auto_splitter._click_ng_button(driver, "saveQuote();", "save quote"))
+
+        script, ng_click, text = driver.execute_script.call_args.args
+        self.assertIn("rect.width > 0 && rect.height > 0", script)
+        self.assertIn("!el.closest('[hidden],[aria-hidden=\"true\"]')", script)
+        self.assertIn("el.getAttribute('aria-disabled') !== 'true'", script)
+        self.assertEqual(ng_click, "saveQuote();")
+        self.assertEqual(text, "save quote")
+
+    def test_auto_splitter_quote_save_reloads_original_and_retries_once(self):
+        driver = mock.Mock()
+        split = {"split_index": 2, "promo_credit": "0.00"}
+        with mock.patch.object(crm_auto_splitter, "_copy_order_to_quote") as mock_copy, \
+             mock.patch.object(crm_auto_splitter, "_configure_quote_split", side_effect=[{"attempt": 1}, {"attempt": 2}]), \
+             mock.patch.object(crm_auto_splitter, "_add_discount_fee_to_split_quote", return_value={"skipped": True}), \
+             mock.patch.object(
+                 crm_auto_splitter,
+                 "_save_quote",
+                 side_effect=[crm_auto_splitter.SplitterError("Quote save did not complete. Last quote state: {}"), {"quote_id": 77}],
+             ) as mock_save, \
+             mock.patch.object(crm_auto_splitter, "_open_order_scope_with_reload") as mock_reload:
+            configured, promo_fee, saved = crm_auto_splitter._prepare_and_save_split_quote(
+                driver,
+                "https://crm2.legacy.printfly.com/order/4995270",
+                "4995270",
+                25,
+                split,
+                {"grand_total": "419.83"},
+            )
+
+        self.assertEqual(mock_copy.call_count, 2)
+        self.assertEqual(mock_save.call_count, 2)
+        mock_reload.assert_called_once_with(
+            driver,
+            "https://crm2.legacy.printfly.com/order/4995270",
+            order_id="4995270",
+            label="original CRM order before split 2 quote-save recovery",
+        )
+        self.assertEqual(configured, {"attempt": 2})
+        self.assertEqual(promo_fee, {"skipped": True})
+        self.assertEqual(saved, {"quote_id": 77})
+
+    def test_auto_splitter_can_fill_crm_login_from_stored_credential(self):
+        driver = mock.Mock()
+        username = mock.Mock()
+        password = mock.Mock()
+        username.is_displayed.return_value = username.is_enabled.return_value = True
+        password.is_displayed.return_value = password.is_enabled.return_value = True
+
+        def find_elements(_by, selector):
+            if selector == "input[name='username']":
+                return [username]
+            if selector == "input[name='password']":
+                return [password]
+            return []
+
+        driver.find_elements.side_effect = find_elements
+        credential = mock.Mock(username="stored-user", secret="stored-password")
+        with mock.patch.object(crm_auto_splitter, "read_credential", return_value=credential):
+            self.assertTrue(crm_auto_splitter._fill_crm_login_from_stored_credential(driver))
+
+        username.send_keys.assert_called_once_with("stored-user")
+        password.send_keys.assert_called_once_with("stored-password")
+
     @mock.patch.object(crm_auto_splitter.time, "sleep", return_value=None)
     @mock.patch.object(crm_auto_splitter.time, "monotonic", side_effect=[0, 1, 2, 3, 4])
     @mock.patch.object(crm_auto_splitter, "_click_ng_button", return_value=True)
