@@ -3183,11 +3183,11 @@ def _is_retryable_product_separator_payload(payload):
     )
 
 
-def _run_order_dry_worker(order_id, profile_dir, result_dir, visible=False, login_wait_seconds=0):
+def _run_order_worker(order_id, profile_dir, result_dir, visible=False, login_wait_seconds=0, dry_run=True):
     result_file = os.path.join(result_dir, f"{order_id}.json")
     exit_code = run_product_separator_order(
         order_id=order_id,
-        dry_run=True,
+        dry_run=bool(dry_run),
         visible=visible,
         login_wait_seconds=login_wait_seconds,
         profile_dir=profile_dir,
@@ -3200,21 +3200,53 @@ def _run_order_dry_worker(order_id, profile_dir, result_dir, visible=False, logi
     return payload
 
 
-def _run_order_chunk_worker(order_ids, profile_dir, result_dir, visible=False, login_wait_seconds=0):
+def _run_order_dry_worker(order_id, profile_dir, result_dir, visible=False, login_wait_seconds=0):
+    return _run_order_worker(
+        order_id,
+        profile_dir,
+        result_dir,
+        visible=visible,
+        login_wait_seconds=login_wait_seconds,
+        dry_run=True,
+    )
+
+
+def _run_order_chunk_worker(order_ids, profile_dir, result_dir, visible=False, login_wait_seconds=0, dry_run=True):
     results = []
     for order_id in order_ids:
-        payload = _run_order_dry_worker(order_id, profile_dir, result_dir, visible, login_wait_seconds)
+        if dry_run:
+            payload = _run_order_dry_worker(order_id, profile_dir, result_dir, visible, login_wait_seconds)
+        else:
+            payload = _run_order_worker(
+                order_id,
+                profile_dir,
+                result_dir,
+                visible=visible,
+                login_wait_seconds=login_wait_seconds,
+                dry_run=False,
+            )
         if _is_retryable_product_separator_payload(payload):
             retry_message = payload.get("message")
-            print(f"Retrying Product Separator dry run for order {order_id} after transient CRM load error: {retry_message}")
-            payload = _run_order_dry_worker(order_id, profile_dir, result_dir, visible, login_wait_seconds)
+            mode_label = "dry run" if dry_run else "live run"
+            print(f"Retrying Product Separator {mode_label} for order {order_id} after transient CRM load error: {retry_message}")
+            if dry_run:
+                payload = _run_order_dry_worker(order_id, profile_dir, result_dir, visible, login_wait_seconds)
+            else:
+                payload = _run_order_worker(
+                    order_id,
+                    profile_dir,
+                    result_dir,
+                    visible=visible,
+                    login_wait_seconds=login_wait_seconds,
+                    dry_run=False,
+                )
             payload["retried_after_transient_error"] = True
             payload["first_attempt_message"] = retry_message
         results.append(payload)
     return results
 
 
-def _run_product_separator_order_id_batch(order_ids, profile_dirs, result_dir, visible=False, login_wait_seconds=0):
+def _run_product_separator_order_id_batch(order_ids, profile_dirs, result_dir, visible=False, login_wait_seconds=0, dry_run=True):
     worker_count = max(1, min(len(profile_dirs or []), len(order_ids) or 1))
     order_results = []
     split_order_ids = []
@@ -3227,7 +3259,15 @@ def _run_product_separator_order_id_batch(order_ids, profile_dirs, result_dir, v
         chunks[index % worker_count].append(order_id)
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = {
-            executor.submit(_run_order_chunk_worker, chunk, profile_dirs[index], result_dir, bool(visible), login_wait_seconds): chunk
+            executor.submit(
+                _run_order_chunk_worker,
+                chunk,
+                profile_dirs[index],
+                result_dir,
+                bool(visible),
+                login_wait_seconds,
+                bool(dry_run),
+            ): chunk
             for index, chunk in enumerate(chunks)
             if chunk
         }
@@ -3259,6 +3299,8 @@ def _run_product_separator_order_id_batch(order_ids, profile_dirs, result_dir, v
                     "manual_review_required": bool(payload.get("manual_review_required") or plan.get("manual_review_required")),
                     "split_tabs": plan.get("split_tabs") or [],
                     "production_notes": plan.get("production_notes") or [],
+                    "duration_seconds": payload.get("duration_seconds"),
+                    "report": payload.get("report") if isinstance(payload.get("report"), dict) else {},
                     "custom_names_and_numbers_present": bool(
                         payload.get("custom_names_and_numbers_present")
                         or plan.get("custom_names_and_numbers_present")
@@ -3294,6 +3336,91 @@ def _run_product_separator_order_id_batch(order_ids, profile_dirs, result_dir, v
         "manual_review_order_ids": manual_review_order_ids,
         "failed_order_ids": failed_order_ids,
     }
+
+
+def run_product_separator_live_batch(
+    order_ids,
+    workers=1,
+    visible=False,
+    login_wait_seconds=0,
+    result_file=None,
+):
+    started = time.monotonic()
+    normalized_order_ids = []
+    for value in order_ids or []:
+        order_id = _extract_order_id(order_id=value)
+        if order_id and order_id not in normalized_order_ids:
+            normalized_order_ids.append(order_id)
+    if not normalized_order_ids:
+        _write_result(
+            True,
+            "Product Separator live batch found no orders to process.",
+            result_file=result_file,
+            action="product_separator_live_batch",
+            dry_run=False,
+            parallel_workers=0,
+            order_count=0,
+            order_ids=[],
+            live_order_ids=[],
+            order_results=[],
+            duration_seconds=round(time.monotonic() - started, 2),
+        )
+        return 0
+
+    worker_count = max(1, min(int(workers or 1), len(normalized_order_ids)))
+    worker_profile_dir = None
+    result_dir = os.path.join(RESULTS_DIR, "product_separator_results", "live_batch_" + time.strftime("%Y%m%d_%H%M%S"))
+    os.makedirs(result_dir, exist_ok=True)
+    try:
+        worker_profile_dir, profile_dirs = _prepare_worker_profiles(worker_count)
+        batch = _run_product_separator_order_id_batch(
+            normalized_order_ids,
+            profile_dirs,
+            result_dir,
+            visible=visible,
+            login_wait_seconds=login_wait_seconds,
+            dry_run=False,
+        )
+    except Exception as err:
+        _write_result(
+            False,
+            f"Product Separator live batch failed: {err}",
+            result_file=result_file,
+            action="product_separator_live_batch",
+            dry_run=False,
+            parallel_workers=worker_count,
+            order_count=len(normalized_order_ids),
+            order_ids=normalized_order_ids,
+            live_order_ids=normalized_order_ids,
+            order_results=[],
+            error_type=type(err).__name__,
+            duration_seconds=round(time.monotonic() - started, 2),
+        )
+        return 1
+    finally:
+        if worker_profile_dir and os.path.isdir(worker_profile_dir):
+            shutil.rmtree(worker_profile_dir, ignore_errors=True)
+
+    order_results = batch.get("order_results") or []
+    succeeded = sum(1 for row in order_results if row.get("success"))
+    failed_order_ids = [str(row.get("order_id") or "") for row in order_results if not row.get("success")]
+    success = succeeded == len(normalized_order_ids) and not failed_order_ids
+    message = f"Product Separator completed {succeeded}/{len(normalized_order_ids)} live order(s) with {worker_count} worker(s)."
+    _write_result(
+        success,
+        message,
+        result_file=result_file,
+        action="product_separator_live_batch",
+        dry_run=False,
+        parallel_workers=worker_count,
+        order_count=len(normalized_order_ids),
+        order_ids=normalized_order_ids,
+        live_order_ids=normalized_order_ids,
+        failed_order_ids=failed_order_ids,
+        order_results=order_results,
+        duration_seconds=round(time.monotonic() - started, 2),
+    )
+    return 0 if success else 4
 
 
 def _product_separator_list_url_for_mode(list_mode):
@@ -3531,8 +3658,13 @@ def run_product_separator_list(
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="CRM Product Separator worker.")
-    parser.add_argument("--action", choices=["product_separator_order", "product_separator_list"], default="product_separator_order")
+    parser.add_argument(
+        "--action",
+        choices=["product_separator_order", "product_separator_list", "product_separator_live_batch"],
+        default="product_separator_order",
+    )
     parser.add_argument("--order-id", default="")
+    parser.add_argument("--order-ids", default="", help="Comma-separated order IDs for product_separator_live_batch.")
     parser.add_argument("--order-url", default="")
     parser.add_argument("--list-url", default="")
     parser.add_argument("--list-mode", choices=["free", "rush", "all", "813", "high_value"], default=PRODUCT_SEPARATOR_DEFAULT_LIST_MODE)
@@ -3548,6 +3680,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     dry_run = bool(args.dry_run and not args.real)
+    if args.action == "product_separator_live_batch":
+        return run_product_separator_live_batch(
+            [value.strip() for value in str(args.order_ids or "").split(",") if value.strip()],
+            workers=args.workers,
+            visible=args.visible,
+            login_wait_seconds=args.login_wait_seconds,
+            result_file=args.result_file,
+        )
     if args.action == "product_separator_list":
         return run_product_separator_list(
             list_url=args.list_url,

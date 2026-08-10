@@ -428,6 +428,7 @@ crm_mass_emailer_runtime = {
     "skippedCount": 0,
     "currentOrderIndex": 0,
     "totalOrderCount": 0,
+    "parallelWorkers": 1,
     "currentStage": None,
     "lastMessage": "No Sheets Scanner runs yet.",
     "lastSuccess": None,
@@ -8102,65 +8103,125 @@ def _execute_crm_product_separator_worker(dry_run=False, list_mode="rush", list_
         crm_product_separator_runtime["splitOrderCount"] = len(split_order_ids)
         crm_product_separator_runtime["currentOrderIndex"] = 0
         crm_product_separator_runtime["totalOrderCount"] = len(split_order_ids)
-    for index, split_order_id in enumerate(split_order_ids, start=1):
-        if _automation_stop_is_blocking():
-            msg = _force_stop_message("CRMProductSeparator")
+    use_parallel_live_batch = normalized_workers > 1 and len(split_order_ids) > 1
+    if use_parallel_live_batch:
+        with crm_product_separator_runtime_lock:
+            crm_product_separator_runtime["lastMessage"] = (
+                f"Separating {len(split_order_ids)} orders with "
+                f"{min(normalized_workers, len(split_order_ids))} workers."
+            )
+            crm_product_separator_runtime["targetOrderId"] = None
+            crm_product_separator_runtime["currentOrderIndex"] = 0
+            crm_product_separator_runtime["totalOrderCount"] = len(split_order_ids)
+        live_args = [
+            "--action",
+            "product_separator_live_batch",
+            "--order-ids",
+            ",".join(split_order_ids),
+            "--workers",
+            str(normalized_workers),
+            "--real",
+        ]
+        attempted_live_order_ids.extend(split_order_ids)
+        live_batch_ok, live_batch_message, live_batch_payload = _execute_crm_product_separator_script(
+            live_args,
+            timeout=_crm_product_separator_worker_timeout(
+                order_count=len(split_order_ids),
+                workers=normalized_workers,
+                live_order_count=math.ceil(len(split_order_ids) / max(1, normalized_workers)),
+            ),
+            show_terminal=False,
+        )
+        live_batch_payload = live_batch_payload if isinstance(live_batch_payload, dict) else {}
+        live_ok = live_ok and bool(live_batch_ok)
+        parallel_rows = _build_crm_product_separator_order_results(live_batch_payload)
+        rows_by_order = {row.get("order_id"): row for row in parallel_rows if row.get("order_id")}
+        for split_order_id in split_order_ids:
+            row = rows_by_order.get(split_order_id)
+            if row:
+                row = dict(row)
+                row["phase"] = "live"
+                if row.get("success") and row.get("status") == "Success":
+                    row["status"] = "Separated"
+                    row["outcome"] = str(row.get("outcome") or "split_complete")
+                live_results.append(row)
+                if row.get("success"):
+                    live_success_count += 1
+                continue
             live_results.append(
                 {
                     "order_id": split_order_id,
                     "success": False,
-                    "status": "Stopped",
-                    "outcome": "force_stopped",
-                    "message": msg,
+                    "status": "Needs attention",
+                    "outcome": "missing_worker_result",
+                    "message": str(live_batch_message or "Product Separator worker returned no result for this order."),
                     "phase": "live",
                 }
             )
             live_ok = False
-            break
         with crm_product_separator_runtime_lock:
-            crm_product_separator_runtime["lastMessage"] = f"Separating order {split_order_id} ({index}/{len(split_order_ids)})."
-            crm_product_separator_runtime["targetOrderId"] = split_order_id
-            crm_product_separator_runtime["currentOrderIndex"] = index
-            crm_product_separator_runtime["totalOrderCount"] = len(split_order_ids)
-        live_args = ["--action", "product_separator_order", "--order-id", split_order_id, "--real"]
-        attempted_live_order_ids.append(split_order_id)
-        live_step_ok, live_message, live_payload = _execute_crm_product_separator_script(
-            live_args,
-            timeout=_crm_product_separator_worker_timeout(order_count=1, workers=1, live_order_count=1),
-            show_terminal=False,
-        )
-        if _crm_product_separator_payload_retryable(live_step_ok, live_message, live_payload):
-            first_message = str(live_message or live_payload.get("message") or "")
+            crm_product_separator_runtime["currentOrderIndex"] = len(attempted_live_order_ids)
+            crm_product_separator_runtime["lastMessage"] = str(live_batch_message)
+    else:
+        for index, split_order_id in enumerate(split_order_ids, start=1):
+            if _automation_stop_is_blocking():
+                msg = _force_stop_message("CRMProductSeparator")
+                live_results.append(
+                    {
+                        "order_id": split_order_id,
+                        "success": False,
+                        "status": "Stopped",
+                        "outcome": "force_stopped",
+                        "message": msg,
+                        "phase": "live",
+                    }
+                )
+                live_ok = False
+                break
+            with crm_product_separator_runtime_lock:
+                crm_product_separator_runtime["lastMessage"] = f"Separating order {split_order_id} ({index}/{len(split_order_ids)})."
+                crm_product_separator_runtime["targetOrderId"] = split_order_id
+                crm_product_separator_runtime["currentOrderIndex"] = index
+                crm_product_separator_runtime["totalOrderCount"] = len(split_order_ids)
+            live_args = ["--action", "product_separator_order", "--order-id", split_order_id, "--real"]
+            attempted_live_order_ids.append(split_order_id)
             live_step_ok, live_message, live_payload = _execute_crm_product_separator_script(
                 live_args,
                 timeout=_crm_product_separator_worker_timeout(order_count=1, workers=1, live_order_count=1),
                 show_terminal=False,
             )
-            live_payload["retried_after_transient_error"] = True
-            live_payload["first_attempt_message"] = first_message
-        live_ok = live_ok and bool(live_step_ok)
-        order_result = _build_crm_product_separator_order_results(live_payload)
-        if order_result:
-            for row in order_result:
-                row["phase"] = "live"
-                if live_step_ok and row.get("order_id") == split_order_id and row.get("status") == "Success":
-                    row["status"] = "Separated"
-                    row["outcome"] = str(live_payload.get("resolution") or row.get("outcome") or "split_complete")
-            live_results.extend(order_result)
-        else:
-            live_results.append(
-                {
-                    "order_id": split_order_id,
-                    "success": bool(live_step_ok),
-                    "status": "Separated" if live_step_ok else "Needs attention",
-                    "outcome": str(live_payload.get("resolution") or ""),
-                    "message": str(live_message),
-                    "duration_seconds": _normalize_duration_seconds(live_payload.get("duration_seconds")),
-                    "phase": "live",
-                }
-            )
-        if live_step_ok:
-            live_success_count += 1
+            if _crm_product_separator_payload_retryable(live_step_ok, live_message, live_payload):
+                first_message = str(live_message or live_payload.get("message") or "")
+                live_step_ok, live_message, live_payload = _execute_crm_product_separator_script(
+                    live_args,
+                    timeout=_crm_product_separator_worker_timeout(order_count=1, workers=1, live_order_count=1),
+                    show_terminal=False,
+                )
+                live_payload["retried_after_transient_error"] = True
+                live_payload["first_attempt_message"] = first_message
+            live_ok = live_ok and bool(live_step_ok)
+            order_result = _build_crm_product_separator_order_results(live_payload)
+            if order_result:
+                for row in order_result:
+                    row["phase"] = "live"
+                    if live_step_ok and row.get("order_id") == split_order_id and row.get("status") == "Success":
+                        row["status"] = "Separated"
+                        row["outcome"] = str(live_payload.get("resolution") or row.get("outcome") or "split_complete")
+                live_results.extend(order_result)
+            else:
+                live_results.append(
+                    {
+                        "order_id": split_order_id,
+                        "success": bool(live_step_ok),
+                        "status": "Separated" if live_step_ok else "Needs attention",
+                        "outcome": str(live_payload.get("resolution") or ""),
+                        "message": str(live_message),
+                        "duration_seconds": _normalize_duration_seconds(live_payload.get("duration_seconds")),
+                        "phase": "live",
+                    }
+                )
+            if live_step_ok:
+                live_success_count += 1
     success = bool(preflight_ok and live_ok)
     attention_results = _product_separator_attention_rows(live_results)
     attention_count = len(attention_results)
@@ -9995,6 +10056,7 @@ def _default_crm_mass_emailer_state():
         "last_order_count": 0,
         "last_failure_count": 0,
         "last_skipped_count": 0,
+        "last_parallel_workers": 1,
         "last_order_ids": [],
         "last_payload": None,
         "total_runs": 0,
@@ -10239,6 +10301,12 @@ def load_crm_mass_emailer_state():
     state["last_order_count"] = max(0, int(_safe_float(state.get("last_order_count"), 0)))
     state["last_failure_count"] = max(0, int(_safe_float(state.get("last_failure_count"), 0)))
     state["last_skipped_count"] = max(0, int(_safe_float(state.get("last_skipped_count"), 0)))
+    state["last_parallel_workers"] = _normalize_crm_positive_int(
+        state.get("last_parallel_workers"),
+        default=1,
+        minimum=1,
+        maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
+    )
     state["last_order_ids"] = _extract_crm_order_ids({"order_ids": state.get("last_order_ids")})
     state["total_runs"] = max(0, int(_safe_float(state.get("total_runs"), 0)))
     state["total_orders_processed"] = max(0, int(_safe_float(state.get("total_orders_processed"), 0)))
@@ -10265,7 +10333,7 @@ def _crm_mass_emailer_runtime_snapshot():
         return dict(crm_mass_emailer_runtime)
 
 
-def _start_crm_mass_emailer_runtime(action="process_queue", dry_run=True, limit=None, retry_errors=False):
+def _start_crm_mass_emailer_runtime(action="process_queue", dry_run=True, limit=None, retry_errors=False, parallel_workers=1):
     normalized_action = _normalize_crm_mass_emailer_action(action)
     with crm_mass_emailer_runtime_lock:
         crm_mass_emailer_runtime["running"] = True
@@ -10277,6 +10345,12 @@ def _start_crm_mass_emailer_runtime(action="process_queue", dry_run=True, limit=
         crm_mass_emailer_runtime["skippedCount"] = 0
         crm_mass_emailer_runtime["currentOrderIndex"] = 0
         crm_mass_emailer_runtime["totalOrderCount"] = 0
+        crm_mass_emailer_runtime["parallelWorkers"] = _normalize_crm_positive_int(
+            parallel_workers,
+            default=1,
+            minimum=1,
+            maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
+        )
         crm_mass_emailer_runtime["currentStage"] = "queued"
         if normalized_action == "scan_sheet":
             message = "Sheets Scanner sheet scan queued."
@@ -10306,6 +10380,12 @@ def _finish_crm_mass_emailer_runtime(ok, message, payload, release_lock=True):
         crm_mass_emailer_runtime["skippedCount"] = counts["skipped_count"]
         crm_mass_emailer_runtime["currentOrderIndex"] = counts["order_count"]
         crm_mass_emailer_runtime["totalOrderCount"] = counts["eligible_count"]
+        crm_mass_emailer_runtime["parallelWorkers"] = _normalize_crm_positive_int(
+            payload.get("parallel_workers"),
+            default=crm_mass_emailer_runtime.get("parallelWorkers") or 1,
+            minimum=1,
+            maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
+        )
         crm_mass_emailer_runtime["currentStage"] = None
         crm_mass_emailer_runtime["payload"] = runtime_payload
     if release_lock and crm_lock.locked():
@@ -10323,6 +10403,7 @@ def _execute_crm_mass_emailer_worker(
     reason="",
     delete_sheet_row=False,
     sheet_row_number=None,
+    parallel_workers=1,
 ):
     normalized_action = _normalize_crm_mass_emailer_action(action)
     args = ["--action", normalized_action]
@@ -10347,6 +10428,14 @@ def _execute_crm_mass_emailer_worker(
         args.extend(["--limit", str(int(_safe_float(limit, 0)))])
     if retry_errors:
         args.append("--retry-errors")
+    normalized_parallel_workers = _normalize_crm_positive_int(
+        parallel_workers,
+        default=1,
+        minimum=1,
+        maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
+    )
+    if normalized_action == "process_queue":
+        args.extend(["--parallel-workers", str(normalized_parallel_workers)])
     if normalized_action != "scan_sheet":
         if dry_run:
             args.append("--dry-run")
@@ -10363,6 +10452,7 @@ def _execute_crm_mass_emailer_worker(
         payload = {"success": bool(ok), "message": str(message)}
     payload.setdefault("action", normalized_action)
     payload.setdefault("dry_run", bool(dry_run))
+    payload.setdefault("parallel_workers", normalized_parallel_workers if normalized_action == "process_queue" else 1)
     return ok, message, payload
 
 
@@ -10384,6 +10474,12 @@ def _persist_crm_mass_emailer_run_result(ok, message, payload, dry_run=True):
         "order_count": counts["order_count"],
         "failure_count": counts["failure_count"],
         "skipped_count": counts["skipped_count"],
+        "parallel_workers": _normalize_crm_positive_int(
+            payload.get("parallel_workers"),
+            default=1,
+            minimum=1,
+            maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
+        ),
         "order_ids": counts["order_ids"],
         "order_details": _crm_mass_emailer_order_details_from_payload(payload),
         "duration_seconds": duration_seconds,
@@ -10399,6 +10495,7 @@ def _persist_crm_mass_emailer_run_result(ok, message, payload, dry_run=True):
         state["last_order_count"] = counts["order_count"]
         state["last_failure_count"] = counts["failure_count"]
         state["last_skipped_count"] = counts["skipped_count"]
+        state["last_parallel_workers"] = entry["parallel_workers"]
         state["last_order_ids"] = counts["order_ids"]
         state["last_payload"] = _crm_mass_emailer_payload_snapshot(payload)
         state["total_runs"] = max(0, int(_safe_float(state.get("total_runs"), 0))) + 1
@@ -10426,7 +10523,7 @@ def _persist_crm_mass_emailer_run_result(ok, message, payload, dry_run=True):
     return state
 
 
-def _crm_mass_emailer_run_thread(action="process_queue", dry_run=True, limit=None, retry_errors=False):
+def _crm_mass_emailer_run_thread(action="process_queue", dry_run=True, limit=None, retry_errors=False, parallel_workers=1):
     ok = False
     message = "Sheets Scanner did not run."
     payload = {"success": False, "message": message}
@@ -10436,6 +10533,7 @@ def _crm_mass_emailer_run_thread(action="process_queue", dry_run=True, limit=Non
             dry_run=dry_run,
             limit=limit,
             retry_errors=retry_errors,
+            parallel_workers=parallel_workers,
             show_terminal=False,
         )
     except Exception as e:
@@ -10450,20 +10548,36 @@ def _crm_mass_emailer_run_thread(action="process_queue", dry_run=True, limit=Non
         _finish_crm_mass_emailer_runtime(ok, message, payload, release_lock=True)
 
 
-def start_crm_mass_emailer_run(action="process_queue", dry_run=True, limit=None, retry_errors=False):
+def start_crm_mass_emailer_run(action="process_queue", dry_run=True, limit=None, retry_errors=False, parallel_workers=None):
     normalized_action = _normalize_crm_mass_emailer_action(action)
+    normalized_parallel_workers = (
+        1
+        if normalized_action == "scan_sheet"
+        else _normalize_crm_positive_int(
+            parallel_workers,
+            default=_saved_crm_automation_parallel_workers(default=1),
+            minimum=1,
+            maximum=CRM_SHARED_MAX_PARALLEL_WORKERS,
+        )
+    )
     if not crm_lock.acquire(blocking=False):
         return False, "A CRM automation run is already in progress."
-    _start_crm_mass_emailer_runtime(normalized_action, dry_run=dry_run, limit=limit, retry_errors=retry_errors)
+    _start_crm_mass_emailer_runtime(
+        normalized_action,
+        dry_run=dry_run,
+        limit=limit,
+        retry_errors=retry_errors,
+        parallel_workers=normalized_parallel_workers,
+    )
     threading.Thread(
         target=_crm_mass_emailer_run_thread,
-        args=(normalized_action, bool(dry_run), limit, bool(retry_errors)),
+        args=(normalized_action, bool(dry_run), limit, bool(retry_errors), normalized_parallel_workers),
         daemon=True,
     ).start()
     if normalized_action == "scan_sheet":
         return True, "Sheets Scanner sheet scan started."
     mode = "dry run" if dry_run else "live run"
-    return True, f"Sheets Scanner {mode} started."
+    return True, f"Sheets Scanner {mode} started with {normalized_parallel_workers} worker(s)."
 
 
 CRM_EXTENSION_SHEET_SCANNER_ORDER_AUTOMATIONS = {
@@ -12673,12 +12787,13 @@ def run_crm_auto_splitter_run_queued(order_target=None, tab_count=None, division
     return _wait_for_status_completion(get_crm_auto_splitter_status_payload, msg)
 
 
-def run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, limit=None, retry_errors=False):
+def run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, limit=None, retry_errors=False, parallel_workers=None):
     ok, msg = start_crm_mass_emailer_run(
         action=action,
         dry_run=dry_run,
         limit=limit,
         retry_errors=retry_errors,
+        parallel_workers=parallel_workers,
     )
     if not ok:
         return ok, msg

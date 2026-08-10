@@ -7,6 +7,7 @@ save. Use --real only after selector verification on a safe test order.
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import ctypes
 import html
 import json
@@ -36,6 +37,7 @@ from automation_runtime import (
     build_chrome_driver,
     configure_console_utf8,
     kill_stale_chrome,
+    resolve_existing_automation_profile_path,
     safe_driver_quit,
     safe_get_with_partial_load,
     safe_take_screenshot,
@@ -96,6 +98,7 @@ from workers.crm_auto_splitter import (
     _wait_for_order_scope,
     run_split_order as _run_auto_split_order,
 )
+from crm_validate_address import _clone_profile_for_worker
 import crm_product_separator as _product_separator
 from crm_shipping_bypasser import run as _run_shipping_bypasser
 from slack_team import run as _run_slack_team
@@ -8623,8 +8626,9 @@ def _hold_browser_after_result_if_requested(args):
 def run_process_order(args):
     started = time.monotonic()
     order_ref = args.order_id or args.order_url
+    delete_sheet_row = getattr(args, "delete_sheet_row", False) is True
     try:
-        if args.delete_sheet_row and not args.dry_run:
+        if delete_sheet_row and not args.dry_run:
             # Refuse duplicate/stale retry tasks before touching CRM. A prior
             # successful retry clears this row, so a second queued click cannot
             # repeat the email or any other side effect.
@@ -8648,7 +8652,7 @@ def run_process_order(args):
             keep_browser_open_on_error=args.keep_browser_open_on_error,
         )
         cleared_sheet_row = None
-        if args.delete_sheet_row and not args.dry_run:
+        if delete_sheet_row and not args.dry_run:
             cleared_sheet_row = _clear_retried_sheet_queue_row(
                 details["order_id"],
                 args.process,
@@ -8820,6 +8824,179 @@ def run_post_cancel_stock_slack_order(args):
         return 1
 
 
+SHEET_SCANNER_SERIAL_PROCESS_KEYS = frozenset(
+    {
+        AUTO_SPLITTER_PROCESS.key,
+        MANUAL_STOCK_ORDER_PROCESS.key,
+    }
+)
+
+
+def _sheet_scanner_should_clear_row(row, args):
+    process = row.process
+    return not args.dry_run and (
+        row.process_key == AUTO_SPLITTER_PROCESS.key
+        or row.process_key == MANUAL_STOCK_ORDER_PROCESS.key
+        or not process.cancel_and_refund
+        or not args.skip_refund_click
+    )
+
+
+def _process_sheet_scanner_row_in_process(row, args):
+    if row.process_key == AUTO_SPLITTER_PROCESS.key:
+        return process_auto_splitter_order(
+            row.order_id,
+            dry_run=args.dry_run,
+            visible=args.visible,
+            attach_browser=args.attach_browser,
+            debugger_address=args.debugger_address,
+            login_wait_seconds=args.login_wait_seconds,
+        )
+    if row.process_key == MANUAL_STOCK_ORDER_PROCESS.key:
+        return process_manual_stock_order(
+            row.order_id,
+            dry_run=args.dry_run,
+            visible=args.visible,
+        )
+    return process_single_order(
+        row.order_id,
+        row.reason,
+        dry_run=args.dry_run,
+        process=row.process_key,
+        visible=args.visible,
+        attach_browser=args.attach_browser,
+        debugger_address=args.debugger_address,
+        login_wait_seconds=args.login_wait_seconds,
+        click_refund_button=not args.skip_refund_click,
+        keep_browser_open=args.keep_browser_open,
+        keep_browser_open_on_error=args.keep_browser_open_on_error,
+    )
+
+
+def _sheet_scanner_worker_profiles(worker_count):
+    crm_base_profile = resolve_existing_automation_profile_path(_profile_path())
+    slack_base_profile = resolve_existing_automation_profile_path(os.path.join(PROJECT_ROOT, "slack_chrome_profile"))
+    if not os.path.isdir(slack_base_profile):
+        raise CopyrightCancelError(
+            "Parallel Sheets Scanner requires an initialized Slack browser profile so each worker can send isolated notifications."
+        )
+    profiles = []
+    for slot in range(1, max(1, int(worker_count or 1)) + 1):
+        _temp_root, crm_profile = _clone_profile_for_worker(
+            crm_base_profile,
+            f"sheet_scanner_crm_{slot}",
+            worker_slot=slot,
+            pool_name="sheet_scanner_crm",
+        )
+        _temp_root, slack_profile = _clone_profile_for_worker(
+            slack_base_profile,
+            f"sheet_scanner_slack_{slot}",
+            worker_slot=slot,
+            pool_name="sheet_scanner_slack",
+        )
+        profiles.append((crm_profile, slack_profile))
+    return profiles
+
+
+def _sheet_scanner_row_subprocess(row, args, crm_profile, slack_profile):
+    result_handle = tempfile.NamedTemporaryFile(prefix=f"sheet_scanner_{row.order_id}_", suffix=".json", delete=False)
+    result_file = result_handle.name
+    result_handle.close()
+    command = [
+        sys.executable,
+        os.path.abspath(__file__),
+        "--action",
+        "process_order",
+        "--order-id",
+        row.order_id,
+        "--process",
+        row.process_key,
+        "--profile-dir",
+        crm_profile,
+        "--result-file",
+        result_file,
+    ]
+    if row.reason:
+        command.extend(["--reason", row.reason])
+    command.append("--dry-run" if args.dry_run else "--real")
+    if args.visible:
+        command.append("--visible")
+    if int(args.login_wait_seconds or 0) > 0:
+        command.extend(["--login-wait-seconds", str(int(args.login_wait_seconds))])
+    if args.skip_refund_click:
+        command.append("--skip-refund-click")
+
+    env = os.environ.copy()
+    env["SLACK_PROFILE_DIR"] = slack_profile
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=PROJECT_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=max(900, PROCESSOR_ACTION_TIMEOUT * 60),
+            creationflags=creation_flags,
+        )
+        try:
+            with open(result_file, "r", encoding="utf-8-sig") as handle:
+                payload = json.load(handle)
+        except Exception as exc:
+            stderr = str(completed.stderr or "").strip()
+            detail = stderr[-2000:] if stderr else f"exit code {completed.returncode}"
+            raise CopyrightCancelError(f"Sheets Scanner worker returned no readable result ({detail}): {exc}") from exc
+        if completed.returncode != 0 or not payload.get("success"):
+            raise CopyrightCancelError(payload.get("message") or f"Sheets Scanner worker exited with code {completed.returncode}.")
+        return payload
+    finally:
+        try:
+            os.remove(result_file)
+        except OSError:
+            pass
+
+
+def _run_sheet_scanner_parallel_rows(rows, args, worker_limit):
+    worker_count = max(1, min(int(worker_limit or 1), len(rows) or 1))
+    profiles = _sheet_scanner_worker_profiles(worker_count)
+    chunks = [[] for _ in range(worker_count)]
+    order_slots = {}
+    next_slot = 0
+    for row in rows:
+        slot = order_slots.get(row.order_id)
+        if slot is None:
+            slot = next_slot % worker_count
+            order_slots[row.order_id] = slot
+            next_slot += 1
+        chunks[slot].append(row)
+
+    def _run_chunk(chunk, profile_pair):
+        chunk_results = []
+        for row in chunk:
+            try:
+                details = _sheet_scanner_row_subprocess(row, args, profile_pair[0], profile_pair[1])
+                chunk_results.append((row, details, None))
+            except Exception as exc:
+                chunk_results.append((row, None, exc))
+        return chunk_results
+
+    results = []
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(_run_chunk, chunk, profiles[index]): chunk
+            for index, chunk in enumerate(chunks)
+            if chunk
+        }
+        for future in as_completed(futures):
+            try:
+                results.extend(future.result())
+            except Exception as exc:
+                results.extend((row, None, exc) for row in futures[future])
+    row_positions = {row.row_number: index for index, row in enumerate(rows)}
+    results.sort(key=lambda item: row_positions.get(item[0].row_number, 999999))
+    return results, worker_count
+
+
 def run_process_queue(args):
     started = time.monotonic()
     try:
@@ -8857,8 +9034,17 @@ def run_process_queue(args):
         current=0,
         total=total_orders,
     )
-    # Clear queue cells only; keep any operator instructions in later columns fixed.
-    for row in sorted(eligible, key=lambda item: item.row_number, reverse=True):
+    try:
+        requested_workers = max(1, int(getattr(args, "parallel_workers", 1) or 1))
+    except (TypeError, ValueError):
+        requested_workers = 1
+    worker_limit = min(requested_workers, max(1, total_orders))
+    if args.attach_browser or args.keep_browser_open or args.keep_browser_open_on_error:
+        worker_limit = 1
+    launched_workers = 1
+
+    def _record_row_result(row, details=None, error=None):
+        nonlocal launched_workers
         current_order = len(processed) + len(failures) + 1
         _publish_status(
             f"Processing Sheets Scanner order {row.order_id} ({current_order}/{total_orders}).",
@@ -8867,36 +9053,7 @@ def run_process_queue(args):
             total=total_orders,
             order_id=row.order_id,
         )
-        try:
-            if row.process_key == AUTO_SPLITTER_PROCESS.key:
-                details = process_auto_splitter_order(
-                    row.order_id,
-                    dry_run=args.dry_run,
-                    visible=args.visible,
-                    attach_browser=args.attach_browser,
-                    debugger_address=args.debugger_address,
-                    login_wait_seconds=args.login_wait_seconds,
-                )
-            elif row.process_key == MANUAL_STOCK_ORDER_PROCESS.key:
-                details = process_manual_stock_order(
-                    row.order_id,
-                    dry_run=args.dry_run,
-                    visible=args.visible,
-                )
-            else:
-                details = process_single_order(
-                    row.order_id,
-                    row.reason,
-                    dry_run=args.dry_run,
-                    process=row.process_key,
-                    visible=args.visible,
-                    attach_browser=args.attach_browser,
-                    debugger_address=args.debugger_address,
-                    login_wait_seconds=args.login_wait_seconds,
-                    click_refund_button=not args.skip_refund_click,
-                    keep_browser_open=args.keep_browser_open,
-                    keep_browser_open_on_error=args.keep_browser_open_on_error,
-                )
+        if error is None:
             processed.append(
                 {
                     "row_number": row.row_number,
@@ -8906,30 +9063,66 @@ def run_process_queue(args):
                     **details,
                 }
             )
-            process = row.process
-            should_delete_row = not args.dry_run and (
-                row.process_key == AUTO_SPLITTER_PROCESS.key
-                or row.process_key == MANUAL_STOCK_ORDER_PROCESS.key
-                or not process.cancel_and_refund
-                or not args.skip_refund_click
-            )
-            if should_delete_row:
+            if _sheet_scanner_should_clear_row(row, args):
                 _clear_sheet_queue_row(worksheet, row.row_number)
+            return
+        error_text = _concise_sheet_scanner_error(error)
+        failures.append(
+            {
+                "row_number": row.row_number,
+                "order_id": row.order_id,
+                "issue_type": row.issue_type,
+                "process": row.process_key,
+                "reason": row.reason,
+                "error": error_text,
+                "error_type": type(error).__name__,
+            }
+        )
+        if not args.dry_run:
+            _write_sheet_error(worksheet, headers, row.row_number, error_text)
+
+    def _flush_parallel_rows(rows):
+        nonlocal launched_workers
+        if not rows:
+            return
+        if worker_limit <= 1 or len(rows) <= 1:
+            for row in rows:
+                try:
+                    details = _process_sheet_scanner_row_in_process(row, args)
+                    _record_row_result(row, details=details)
+                except Exception as exc:
+                    _record_row_result(row, error=exc)
+            return
+        try:
+            results, actual_workers = _run_sheet_scanner_parallel_rows(rows, args, worker_limit)
+            launched_workers = max(launched_workers, actual_workers)
         except Exception as exc:
-            error_text = _concise_sheet_scanner_error(exc)
-            failures.append(
-                {
-                    "row_number": row.row_number,
-                    "order_id": row.order_id,
-                    "issue_type": row.issue_type,
-                    "process": row.process_key,
-                    "reason": row.reason,
-                    "error": error_text,
-                    "error_type": type(exc).__name__,
-                }
-            )
-            if not args.dry_run:
-                _write_sheet_error(worksheet, headers, row.row_number, error_text)
+            print(f"Parallel Sheets Scanner profile setup failed; continuing safely with one worker: {exc}")
+            results = []
+            for row in rows:
+                try:
+                    results.append((row, _process_sheet_scanner_row_in_process(row, args), None))
+                except Exception as row_exc:
+                    results.append((row, None, row_exc))
+        for row, details, error in results:
+            _record_row_result(row, details=details, error=error)
+
+    # Auto Splitter and Manual Stock Order are serial barriers. Manual Stock
+    # Order uses the single SanMar account/cart, while Auto Splitter owns its
+    # own CRM profile lifecycle. All Sheet writes remain in this parent process.
+    pending_parallel_rows = []
+    for row in sorted(eligible, key=lambda item: item.row_number, reverse=True):
+        if row.process_key in SHEET_SCANNER_SERIAL_PROCESS_KEYS:
+            _flush_parallel_rows(pending_parallel_rows)
+            pending_parallel_rows = []
+            try:
+                details = _process_sheet_scanner_row_in_process(row, args)
+                _record_row_result(row, details=details)
+            except Exception as exc:
+                _record_row_result(row, error=exc)
+        else:
+            pending_parallel_rows.append(row)
+    _flush_parallel_rows(pending_parallel_rows)
     ok = not failures
     message = (
         f"Processed {len(processed)} sheet scanner row(s); {len(failures)} failed."
@@ -8948,6 +9141,7 @@ def run_process_queue(args):
         failures=failures,
         skipped_rows=skipped,
         missing_reason_error_count=missing_reason_error_count,
+        parallel_workers=launched_workers,
         duration_seconds=round(time.monotonic() - started, 2),
     )
     _hold_browser_after_result_if_requested(args)
@@ -8974,6 +9168,12 @@ def main(argv=None):
     parser.add_argument("--reason", default="", help="Required for full cancellation processing; written to CRM Sales Notes.")
     parser.add_argument("--process", choices=sorted(CANCEL_PROCESSES_BY_KEY), default=COPYRIGHT_CANCEL_PROCESS.key)
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument(
+        "--parallel-workers",
+        type=int,
+        default=1,
+        help="Process independent Sheets Scanner rows with up to this many isolated workers. Auto Splitter and Manual Stock Order rows remain serial.",
+    )
     parser.add_argument("--retry-errors", action="store_true")
     parser.add_argument("--delete-sheet-row", action="store_true")
     parser.add_argument("--sheet-row-number", type=int, default=0)

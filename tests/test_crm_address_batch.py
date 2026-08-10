@@ -1101,6 +1101,64 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         worksheet.batch_clear.assert_called_once_with(["A2:D2"])
         self.assertEqual(payload["processed"][0]["process"], "manual_stock_order")
 
+    def test_process_queue_parallelizes_independent_rows_but_parent_updates_sheet(self):
+        headers = [
+            crm_copyright_cancel.GOOGLE_SHEET_ORDER_REFERENCE_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_ISSUE_TYPE_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_REASON_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_ERROR_COLUMN,
+        ]
+        rows = [
+            crm_copyright_cancel.QueueRow(3, "4600002", "4600002", crm_copyright_cancel.COPYRIGHT_REACHOUT_ISSUE_TYPE, "Reason 2", "copyright_reachout", ""),
+            crm_copyright_cancel.QueueRow(2, "4600001", "4600001", crm_copyright_cancel.COPYRIGHT_REACHOUT_ISSUE_TYPE, "Reason 1", "copyright_reachout", ""),
+        ]
+        worksheet = mock.Mock(title="Sheet1")
+        spreadsheet = mock.Mock(title="Queue")
+        args = mock.Mock(
+            retry_errors=False,
+            limit=0,
+            parallel_workers=2,
+            dry_run=False,
+            visible=False,
+            attach_browser=False,
+            debugger_address="127.0.0.1:9222",
+            login_wait_seconds=0,
+            skip_refund_click=False,
+            keep_browser_open=False,
+            keep_browser_open_on_error=False,
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+            args.result_file = handle.name
+
+        parallel_results = [
+            (rows[0], {"order_id": "4600002", "process": "copyright_reachout"}, None),
+            (rows[1], {"order_id": "4600001", "process": "copyright_reachout"}, None),
+        ]
+        try:
+            with mock.patch.object(
+                crm_copyright_cancel,
+                "_scan_queue_rows",
+                return_value=(spreadsheet, worksheet, headers, rows, []),
+            ), mock.patch.object(
+                crm_copyright_cancel,
+                "_run_sheet_scanner_parallel_rows",
+                return_value=(parallel_results, 2),
+            ) as mock_parallel, mock.patch.object(
+                crm_copyright_cancel,
+                "process_single_order",
+            ) as mock_single:
+                exit_code = crm_copyright_cancel.run_process_queue(args)
+            payload = json.loads(Path(args.result_file).read_text(encoding="utf-8"))
+        finally:
+            Path(args.result_file).unlink(missing_ok=True)
+
+        self.assertEqual(exit_code, 0)
+        mock_parallel.assert_called_once()
+        mock_single.assert_not_called()
+        self.assertEqual(worksheet.batch_clear.call_count, 2)
+        self.assertEqual(payload["parallel_workers"], 2)
+        self.assertEqual(len(payload["processed"]), 2)
+
     def test_process_single_order_routes_auto_splitter_process(self):
         with mock.patch.object(crm_copyright_cancel, "process_auto_splitter_order", return_value={"order_id": "4785121"}) as mock_auto:
             result = crm_copyright_cancel.process_single_order(
@@ -5068,6 +5126,83 @@ class CrmProductSeparatorTests(unittest.TestCase):
         self.assertTrue(results[0]["success"])
         self.assertTrue(results[0]["retried_after_transient_error"])
         self.assertIn("CRM app did not become ready", results[0]["first_attempt_message"])
+
+    @mock.patch.object(crm_product_separator, "_write_result")
+    @mock.patch.object(crm_product_separator, "_run_product_separator_order_id_batch")
+    @mock.patch.object(
+        crm_product_separator,
+        "_prepare_worker_profiles",
+        return_value=("missing-worker-root", ["profile-1", "profile-2"]),
+    )
+    def test_live_order_batch_uses_isolated_parallel_profiles(
+        self,
+        mock_prepare_profiles,
+        mock_run_batch,
+        mock_write_result,
+    ):
+        mock_run_batch.return_value = {
+            "worker_count": 2,
+            "order_results": [
+                {"order_id": "4600001", "success": True, "resolution": "split_complete"},
+                {"order_id": "4600002", "success": True, "resolution": "split_complete"},
+            ],
+            "failed_order_ids": [],
+        }
+
+        exit_code = crm_product_separator.run_product_separator_live_batch(
+            ["4600001", "4600002"],
+            workers=8,
+            result_file="result.json",
+        )
+
+        self.assertEqual(exit_code, 0)
+        mock_prepare_profiles.assert_called_once_with(2)
+        self.assertFalse(mock_run_batch.call_args.kwargs["dry_run"])
+        self.assertEqual(mock_write_result.call_args.kwargs["parallel_workers"], 2)
+        self.assertEqual(mock_write_result.call_args.kwargs["live_order_ids"], ["4600001", "4600002"])
+
+    @mock.patch.object(server, "_execute_crm_product_separator_script")
+    def test_server_runs_multiple_live_separator_orders_in_one_parallel_batch(self, mock_run_script):
+        preflight_payload = {
+            "success": True,
+            "message": "Two orders ready.",
+            "action": "product_separator_list",
+            "dry_run": True,
+            "order_ids": ["4600001", "4600002"],
+            "split_order_ids": ["4600001", "4600002"],
+            "report": [
+                {"order_id": "4600001", "success": True, "resolution": "dry_run_ready", "needs_split": True},
+                {"order_id": "4600002", "success": True, "resolution": "dry_run_ready", "needs_split": True},
+            ],
+        }
+        live_payload = {
+            "success": True,
+            "message": "Product Separator completed 2/2 live orders.",
+            "action": "product_separator_live_batch",
+            "live_order_ids": ["4600001", "4600002"],
+            "order_results": [
+                {"order_id": "4600001", "success": True, "resolution": "split_complete"},
+                {"order_id": "4600002", "success": True, "resolution": "split_complete"},
+            ],
+        }
+        mock_run_script.side_effect = [
+            (True, preflight_payload["message"], preflight_payload),
+            (True, live_payload["message"], live_payload),
+        ]
+
+        ok, _message, payload = server._execute_crm_product_separator_worker(
+            dry_run=False,
+            list_mode="rush",
+            parallel_workers=4,
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(mock_run_script.call_count, 2)
+        live_args = mock_run_script.call_args_list[1].args[0]
+        self.assertIn("product_separator_live_batch", live_args)
+        self.assertIn("4600001,4600002", live_args)
+        self.assertEqual(payload["live_order_ids"], ["4600001", "4600002"])
+        self.assertEqual([row["status"] for row in payload["order_results"]], ["Separated", "Separated"])
 
     def test_no_split_stock_ordered_missing_manual_order_row_is_skipped(self):
         driver = mock.Mock()

@@ -634,7 +634,7 @@ def run(action, force_test_url=False, custom_message=None, channel_url=None):
         else:
             print(f"Detected {day_name} message: '{message}'")
     channel_url = resolve_slack_channel_url(force_test_url=force_test_url, channel_url=channel_url)
-    profile_path = os.path.join(SCRIPT_DIR, "slack_chrome_profile")
+    profile_path = str(os.getenv("SLACK_PROFILE_DIR") or "").strip() or os.path.join(SCRIPT_DIR, "slack_chrome_profile")
 
     headless_enabled = os.getenv("AUTOMATION_HEADLESS", "1").strip().lower() not in ("0", "false", "no", "off")
     if not headless_enabled:

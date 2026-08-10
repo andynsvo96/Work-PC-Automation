@@ -2268,6 +2268,14 @@ function normalizeCrmParallelWorkers(value) {
   return Math.max(1, Math.min(Math.trunc(number), 8));
 }
 function getSavedCrmWorkerPreference() {
+  const effectiveWorkers = Number(
+    nodeRuntimePayload
+    && nodeRuntimePayload.worker_settings
+    && nodeRuntimePayload.worker_settings.effective_workers
+  );
+  if (Number.isFinite(effectiveWorkers) && effectiveWorkers >= 1) {
+    return normalizeCrmParallelWorkers(effectiveWorkers);
+  }
   const addressState = crmAddressStatusPayload && crmAddressStatusPayload.state ? crmAddressStatusPayload.state : {};
   const stockState = crmOrderGoodsStatusPayload && crmOrderGoodsStatusPayload.state ? crmOrderGoodsStatusPayload.state : {};
   return normalizeCrmParallelWorkers(
@@ -7863,7 +7871,7 @@ function renderCrmMassEmailerStatus(payload) {
     ? ` | Order ${Math.min(currentOrderIndex, totalOrderCount)}/${totalOrderCount}`
     : '';
   const runtimeText = running
-    ? `${mode}${progressText} | Orders ${orderCount} | Failures ${failureCount} | Skipped ${skippedCount}. ${runtime.lastMessage || ''}`.trim()
+    ? `${mode}${progressText} | Workers ${normalizeCrmParallelWorkers(runtime.parallelWorkers || 1)} | Orders ${orderCount} | Failures ${failureCount} | Skipped ${skippedCount}. ${runtime.lastMessage || ''}`.trim()
     : (state.last_run_message || 'No Sheets Scanner runs yet.');
   const scannerSummary = document.getElementById('processingScannerLastRun');
   if (scannerSummary) {
@@ -7931,7 +7939,10 @@ function buildCrmMassEmailerPayload() {
     throw new Error('Enter a row limit of 0 or higher.');
   }
   const retryErrors = Boolean((document.getElementById('crmMassEmailerRetryErrorsInput') || {}).checked);
-  const payload = { retry_errors: retryErrors };
+  const payload = {
+    retry_errors: retryErrors,
+    parallel_workers: getSavedCrmWorkerPreference(),
+  };
   if (limit > 0) payload.limit = Math.floor(limit);
   return payload;
 }

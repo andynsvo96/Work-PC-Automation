@@ -756,6 +756,12 @@ def register_work_routes(
         data = data if isinstance(data, dict) else {}
         return {
             "limit": _first_present(data.get("limit"), data.get("row_limit"), data.get("rowLimit"), request.args.get("limit"), request.args.get("row_limit"), request.args.get("rowLimit")),
+            "parallel_workers": _first_present(
+                data.get("parallel_workers"),
+                data.get("parallelWorkers"),
+                request.args.get("parallel_workers"),
+                request.args.get("parallelWorkers"),
+            ),
             "retry_errors": is_trueish(
                 _first_present(
                     data.get("retry_errors"),
@@ -785,10 +791,16 @@ def register_work_routes(
             parts.append(f"Limit {limit}")
         if options.get("retry_errors"):
             parts.append("Retry errors")
+        workers = options.get("parallel_workers")
+        if workers not in (None, ""):
+            parts.append(f"Workers {workers}")
         return " | ".join(parts)
 
     def _crm_mass_emailer_run_options(options):
-        return {key: options.get(key) for key in ("limit", "retry_errors")}
+        run_options = {key: options.get(key) for key in ("limit", "retry_errors")}
+        if options.get("parallel_workers") not in (None, ""):
+            run_options["parallel_workers"] = options.get("parallel_workers")
+        return run_options
 
     def _crm_mass_emailer_queue_options(options, *, action, dry_run):
         mode = _crm_processing_advanced_mode(options)
