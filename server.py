@@ -13904,11 +13904,7 @@ def _chrome_profile_setup_targets():
         "crm": {
             "label": "CRM",
             "profile_path": _resolve_profile_path(getattr(config_module, "CRM_PROFILE_DIR", "chrome_profile_crm")),
-            "url": str(
-                getattr(config_module, "CRM_LOGIN_URL", "")
-                or getattr(config_module, "CRM_SHIPPING_URL", "")
-                or "about:blank"
-            ),
+            "url": "https://crm2.legacy.printfly.com/",
         },
         "slack": {
             "label": "Slack",

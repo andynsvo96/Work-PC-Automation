@@ -8621,6 +8621,11 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
 
 class CrmAddressServerTests(unittest.TestCase):
+    def test_crm_profile_setup_opens_crm_root(self):
+        targets = server._chrome_profile_setup_targets()
+
+        self.assertEqual(targets["crm"]["url"], "https://crm2.legacy.printfly.com/")
+
     @mock.patch.object(server, "_run_script")
     def test_execute_worker_enriches_batch_payload_and_uses_scaled_timeout(self, mock_run_script):
         mock_run_script.return_value = (
