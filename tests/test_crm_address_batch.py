@@ -6244,6 +6244,8 @@ class CrmProductSeparatorTests(unittest.TestCase):
                  "_save_quote",
                  side_effect=[crm_auto_splitter.SplitterError("Quote save did not complete. Last quote state: {}"), {"quote_id": 77}],
              ) as mock_save, \
+             mock.patch.object(crm_auto_splitter, "_visible_crm_error_message", return_value=""), \
+             mock.patch.object(crm_auto_splitter, "_dismiss_crm_error_modal") as mock_dismiss, \
              mock.patch.object(crm_auto_splitter, "_open_order_scope_with_reload") as mock_reload:
             configured, promo_fee, saved = crm_auto_splitter._prepare_and_save_split_quote(
                 driver,
@@ -6256,6 +6258,7 @@ class CrmProductSeparatorTests(unittest.TestCase):
 
         self.assertEqual(mock_copy.call_count, 2)
         self.assertEqual(mock_save.call_count, 2)
+        mock_dismiss.assert_called_once_with(driver)
         mock_reload.assert_called_once_with(
             driver,
             "https://crm2.legacy.printfly.com/order/4995270",
@@ -6265,6 +6268,73 @@ class CrmProductSeparatorTests(unittest.TestCase):
         self.assertEqual(configured, {"attempt": 2})
         self.assertEqual(promo_fee, {"skipped": True})
         self.assertEqual(saved, {"quote_id": 77})
+
+    def test_auto_splitter_visible_error_during_prepare_rebuilds_pending_split(self):
+        driver = mock.Mock()
+        split = {"split_index": 3, "promo_credit": "0.00"}
+        with mock.patch.object(crm_auto_splitter, "_copy_order_to_quote") as mock_copy, \
+             mock.patch.object(
+                 crm_auto_splitter,
+                 "_configure_quote_split",
+                 side_effect=[crm_auto_splitter.RecoverableCrmError("CRM error while preparing split quote"), {"after": [3]}],
+             ) as mock_configure, \
+             mock.patch.object(crm_auto_splitter, "_add_discount_fee_to_split_quote", return_value={"skipped": True}), \
+             mock.patch.object(crm_auto_splitter, "_save_quote", return_value={"quote_id": 88}), \
+             mock.patch.object(crm_auto_splitter, "_visible_crm_error_message", return_value=""), \
+             mock.patch.object(crm_auto_splitter, "_dismiss_crm_error_modal") as mock_dismiss, \
+             mock.patch.object(crm_auto_splitter, "_open_order_scope_with_reload") as mock_reload:
+            configured, _promo_fee, saved = crm_auto_splitter._prepare_and_save_split_quote(
+                driver,
+                "https://crm2.legacy.printfly.com/order/4995270",
+                "4995270",
+                25,
+                split,
+                {"grand_total": "419.83"},
+            )
+
+        self.assertEqual(mock_copy.call_count, 2)
+        self.assertEqual(mock_configure.call_count, 2)
+        mock_dismiss.assert_called_once_with(driver)
+        mock_reload.assert_called_once()
+        self.assertEqual(configured, {"after": [3]})
+        self.assertEqual(saved, {"quote_id": 88})
+
+    def test_auto_splitter_nonrecoverable_prepare_error_does_not_retry(self):
+        driver = mock.Mock()
+        split = {"split_index": 2, "promo_credit": "0.00"}
+        with mock.patch.object(
+                 crm_auto_splitter,
+                 "_copy_order_to_quote",
+                 side_effect=crm_auto_splitter.SplitterError("Design IDs do not match the requested split."),
+             ) as mock_copy, \
+             mock.patch.object(crm_auto_splitter, "_visible_crm_error_message", return_value=""), \
+             mock.patch.object(crm_auto_splitter, "_open_order_scope_with_reload") as mock_reload:
+            with self.assertRaisesRegex(crm_auto_splitter.SplitterError, "Design IDs do not match"):
+                crm_auto_splitter._prepare_and_save_split_quote(
+                    driver,
+                    "https://crm2.legacy.printfly.com/order/4995270",
+                    "4995270",
+                    25,
+                    split,
+                    {},
+                )
+
+        mock_copy.assert_called_once()
+        mock_reload.assert_not_called()
+
+    @mock.patch.object(crm_auto_splitter.time, "sleep", return_value=None)
+    @mock.patch.object(crm_auto_splitter, "_click_ng_button", return_value=True)
+    @mock.patch.object(crm_auto_splitter, "_activate_crm_context")
+    @mock.patch.object(crm_auto_splitter, "_visible_crm_error_message", return_value="Error A quote with this Id was not found.")
+    def test_auto_splitter_quote_save_stops_immediately_for_visible_crm_error(
+        self,
+        _mock_error,
+        _mock_activate,
+        _mock_click,
+        _mock_sleep,
+    ):
+        with self.assertRaisesRegex(crm_auto_splitter.RecoverableCrmError, "quote with this Id was not found"):
+            crm_auto_splitter._save_quote(mock.Mock())
 
     def test_auto_splitter_can_fill_crm_login_from_stored_credential(self):
         driver = mock.Mock()

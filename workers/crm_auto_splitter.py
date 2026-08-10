@@ -80,6 +80,10 @@ class QuoteOrderConversionTimeout(SplitterError):
     """Raised when a quote never exposes the order created from it."""
 
 
+class RecoverableCrmError(SplitterError):
+    """Raised for a visible CRM error that is safe to retry before conversion."""
+
+
 def _profile_path():
     if os.path.isabs(PROCESSOR_PROFILE_DIR):
         return resolve_existing_automation_profile_path(PROCESSOR_PROFILE_DIR)
@@ -1480,9 +1484,14 @@ def _save_quote(driver):
         time.sleep(1)
         try:
             _activate_crm_context(driver)
+            modal_error = _visible_crm_error_message(driver)
+            if modal_error:
+                raise RecoverableCrmError(f"CRM error while saving quote: {modal_error}")
             last = _wait_for_quote_scope(driver, timeout=3)
             if last.get("quote_id") or re.search(r"/quotes/\d+", str(driver.current_url)):
                 return last
+        except RecoverableCrmError:
+            raise
         except Exception:
             pass
     raise SplitterError(f"Quote save did not complete. Last quote state: {last}")
@@ -1497,7 +1506,7 @@ def _prepare_and_save_split_quote(
     original_state,
     max_attempts=2,
 ):
-    """Build and save one split quote, recovering once from a stale quote view."""
+    """Build and save one split quote, recovering once before conversion starts."""
     max_attempts = max(1, int(max_attempts or 1))
     last_error = None
     for attempt in range(1, max_attempts + 1):
@@ -1508,17 +1517,93 @@ def _prepare_and_save_split_quote(
                 order_id=original_order_id,
                 label=f"original CRM order before split {split['split_index']} quote-save recovery",
             )
-        _copy_order_to_quote(driver, original_order_id, expected_design_count)
-        configured = _configure_quote_split(driver, split, original_state)
-        promo_discount_fee = _add_discount_fee_to_split_quote(driver, split.get("promo_credit", "0.00"))
         try:
+            # Copying from the original again establishes that all source
+            # designs still exist. Configuration then verifies the exact keep
+            # set, so the retry rebuilds only what this pending split needs.
+            _copy_order_to_quote(driver, original_order_id, expected_design_count)
+            configured = _configure_quote_split(driver, split, original_state)
+            modal_error = _visible_crm_error_message(driver)
+            if modal_error:
+                raise RecoverableCrmError(f"CRM error while preparing split quote: {modal_error}")
+            promo_discount_fee = _add_discount_fee_to_split_quote(driver, split.get("promo_credit", "0.00"))
+            modal_error = _visible_crm_error_message(driver)
+            if modal_error:
+                raise RecoverableCrmError(f"CRM error while preparing split quote: {modal_error}")
             saved_quote = _save_quote(driver)
             return configured, promo_discount_fee, saved_quote
         except SplitterError as err:
             last_error = err
-            if "Quote save did not complete" not in str(err) or attempt >= max_attempts:
+            modal_error = _visible_crm_error_message(driver)
+            recoverable = (
+                isinstance(err, RecoverableCrmError)
+                or "Quote save did not complete" in str(err)
+                or bool(modal_error)
+            )
+            if not recoverable or attempt >= max_attempts:
                 raise
+            _dismiss_crm_error_modal(driver)
+            print(
+                f"CRM error before split {split['split_index']} conversion; "
+                "reloading the original order, rechecking the pending design set, and retrying once."
+            )
     raise last_error
+
+
+def _visible_crm_error_message(driver):
+    try:
+        raw_message = driver.execute_script(
+                """
+                const isVisible = (el) => {
+                  if (!el) return false;
+                  const rect = el.getBoundingClientRect();
+                  const style = window.getComputedStyle ? window.getComputedStyle(el) : {};
+                  return rect.width > 0 && rect.height > 0 &&
+                    style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                const modals = Array.from(document.querySelectorAll('.modal, .modal-content')).filter(isVisible);
+                for (const modal of modals) {
+                  const title = (modal.querySelector('.modal-title,.modal-header,h1,h2,h3,h4')?.innerText || '')
+                    .replace(/\s+/g, ' ').trim();
+                  const text = (modal.innerText || '').replace(/\s+/g, ' ').trim();
+                  const dangerHeader = !!modal.querySelector('.modal-header.bg-danger,.modal-header.alert-danger,.text-danger');
+                  if (/^error\b/i.test(title) || /^error\b/i.test(text) || dangerHeader) return text || title;
+                }
+                return '';
+                """
+            )
+        return _clean_text(raw_message) if isinstance(raw_message, str) else ""
+    except Exception:
+        return ""
+
+
+def _dismiss_crm_error_modal(driver):
+    try:
+        return bool(
+            driver.execute_script(
+                """
+                const isVisible = (el) => {
+                  if (!el) return false;
+                  const rect = el.getBoundingClientRect();
+                  const style = window.getComputedStyle ? window.getComputedStyle(el) : {};
+                  return rect.width > 0 && rect.height > 0 &&
+                    style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                const modal = Array.from(document.querySelectorAll('.modal, .modal-content')).find(isVisible);
+                if (!modal) return false;
+                const button = Array.from(modal.querySelectorAll('button,a,[role=button]')).find((el) => {
+                  const text = (el.innerText || el.value || el.getAttribute('aria-label') || '')
+                    .replace(/\s+/g, ' ').trim().toLowerCase();
+                  return text === 'close' || text === 'ok' || text === '×' || text === 'x';
+                });
+                if (!button) return false;
+                button.click();
+                return true;
+                """
+            )
+        )
+    except Exception:
+        return False
 
 
 def _find_modal_text(driver):
