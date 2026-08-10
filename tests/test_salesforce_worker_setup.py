@@ -80,7 +80,7 @@ class SalesforceWorkerSetupTests(unittest.TestCase):
             mock.patch("server._salesforce_worker_count", return_value=3),
             mock.patch("server._salesforce_worker_profile_path", return_value="worker-profile"),
             mock.patch("server.os.path.isdir", return_value=True),
-            mock.patch("server.is_chrome_profile_in_use", return_value=False),
+            mock.patch("server._wait_for_salesforce_worker_profile_available", return_value=True),
             mock.patch("server.build_chrome_driver", return_value=driver) as build_driver,
             mock.patch("server.safe_get_with_partial_load") as open_page,
             mock.patch("server.safe_driver_quit") as quit_driver,
@@ -98,12 +98,38 @@ class SalesforceWorkerSetupTests(unittest.TestCase):
         self.assertTrue(update_state.call_args.kwargs["last_test_success"])
         quit_driver.assert_called_once_with(driver, profile_path="worker-profile")
 
+    def test_connection_test_selects_saved_username_before_verifying(self):
+        driver = object()
+        fake_worker = types.SimpleNamespace(
+            _is_salesforce_login_page=mock.Mock(side_effect=[True, False, False]),
+            _is_salesforce_login_approval_page=mock.Mock(return_value=False),
+            _click_salesforce_saved_username=mock.Mock(return_value=True),
+        )
+        with (
+            mock.patch("server._salesforce_worker_count", return_value=3),
+            mock.patch("server._salesforce_worker_profile_path", return_value="worker-profile"),
+            mock.patch("server.os.path.isdir", return_value=True),
+            mock.patch("server._wait_for_salesforce_worker_profile_available", return_value=True),
+            mock.patch("server.build_chrome_driver", return_value=driver),
+            mock.patch("server.safe_get_with_partial_load"),
+            mock.patch("server.safe_driver_quit"),
+            mock.patch("server._update_salesforce_worker_setup_state"),
+            mock.patch.dict(sys.modules, {"crm_copyright_cancel": fake_worker}),
+        ):
+            response = self.client.post("/automation/salesforce-worker-test", json={"worker": 1})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["connected"])
+        self.assertTrue(payload["selected_saved_username"])
+        fake_worker._click_salesforce_saved_username.assert_called_once_with(driver)
+
     def test_connection_test_refuses_to_interrupt_an_open_profile(self):
         with (
             mock.patch("server._salesforce_worker_count", return_value=3),
             mock.patch("server._salesforce_worker_profile_path", return_value="worker-profile"),
             mock.patch("server.os.path.isdir", return_value=True),
-            mock.patch("server.is_chrome_profile_in_use", return_value=True),
+            mock.patch("server._wait_for_salesforce_worker_profile_available", return_value=False),
             mock.patch("server.build_chrome_driver") as build_driver,
         ):
             response = self.client.post("/automation/salesforce-worker-test", json={"worker": 1})

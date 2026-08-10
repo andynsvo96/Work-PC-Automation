@@ -13804,6 +13804,13 @@ def _ensure_salesforce_worker_profile(worker_slot):
     return profile_path
 
 
+def _wait_for_salesforce_worker_profile_available(profile_path, timeout=8):
+    deadline = time.monotonic() + max(0, float(timeout or 0))
+    while is_chrome_profile_in_use(profile_path) and time.monotonic() < deadline:
+        time.sleep(0.25)
+    return not is_chrome_profile_in_use(profile_path)
+
+
 def _load_salesforce_worker_setup_state():
     state = {"workers": {}}
     if not os.path.exists(SALESFORCE_WORKER_SETUP_STATE_FILE):
@@ -14048,7 +14055,7 @@ def automation_salesforce_worker_test():
                 "message": f"Set up Salesforce Worker {worker_slot} before testing it.",
             }
         ), 400
-    if is_chrome_profile_in_use(profile_path):
+    if not _wait_for_salesforce_worker_profile_available(profile_path):
         return jsonify(
             {
                 "success": False,
@@ -14076,12 +14083,30 @@ def automation_salesforce_worker_test():
             script_timeout=int(getattr(config_module, "PROCESSOR_ACTION_TIMEOUT", 15) or 15),
         )
         safe_get_with_partial_load(driver, "https://login.salesforce.com/", f"Salesforce Worker {worker_slot} test")
+        selected_saved_username = False
+        if (
+            salesforce_worker._is_salesforce_login_page(driver)
+            and not salesforce_worker._is_salesforce_login_approval_page(driver)
+        ):
+            selected_saved_username = bool(salesforce_worker._click_salesforce_saved_username(driver))
+            if selected_saved_username:
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    if salesforce_worker._is_salesforce_login_approval_page(driver):
+                        break
+                    if not salesforce_worker._is_salesforce_login_page(driver):
+                        break
+                    time.sleep(0.5)
         connected = not (
             salesforce_worker._is_salesforce_login_page(driver)
             or salesforce_worker._is_salesforce_login_approval_page(driver)
         )
         if connected:
-            message = f"Salesforce Worker {worker_slot} is connected."
+            message = (
+                f"Salesforce Worker {worker_slot} selected its saved account and is connected."
+                if selected_saved_username
+                else f"Salesforce Worker {worker_slot} is connected."
+            )
         else:
             message = f"Salesforce Worker {worker_slot} requires login or 2FA."
         _update_salesforce_worker_setup_state(
@@ -14095,6 +14120,7 @@ def automation_salesforce_worker_test():
                 "success": connected,
                 "connected": connected,
                 "worker": worker_slot,
+                "selected_saved_username": selected_saved_username,
                 "message": message,
             }
         )

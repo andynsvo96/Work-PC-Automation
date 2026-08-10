@@ -1301,7 +1301,8 @@ def _is_salesforce_login_page(driver):
     url = str(driver.current_url or "").lower()
     username_input, password_input = _salesforce_login_fields(driver)
     has_login_form = username_input is not None and password_input is not None
-    return "salesforce login" in text or "log in to salesforce" in text or has_login_form or ("hello" in text and "login" in text) or (
+    has_saved_username_chooser = "choose a username" in text or "saved username" in text
+    return "salesforce login" in text or "log in to salesforce" in text or has_saved_username_chooser or has_login_form or ("hello" in text and "login" in text) or (
         "login.salesforce" in url and "login approval required" in text
     )
 
@@ -1607,8 +1608,6 @@ def _click_salesforce_saved_username(driver):
     """Select the matching account from Salesforce's saved-username chooser."""
     credential = read_windows_credential(SALESFORCE_CREDENTIAL_TARGET, required=False)
     configured_username = credential.username.strip() if credential else ""
-    if not configured_username:
-        return False
     try:
         return bool(
             driver.execute_script(
@@ -1621,16 +1620,18 @@ def _click_salesforce_saved_username(driver):
                   return rect.width > 0 && rect.height > 0
                     && style.display !== 'none' && style.visibility !== 'hidden';
                 }
-                const matches = Array.from(document.querySelectorAll('button,a,[role="button"],li,div'))
-                  .filter(visible)
-                  .filter((node) => String(node.innerText || node.textContent || '')
+                const chooser = document.querySelector('#chooser, #idlist') || document;
+                const candidates = Array.from(chooser.querySelectorAll('#idlist a, li > a, a[title], [role="button"]'))
+                  .filter(visible);
+                let target = null;
+                if (expected) {
+                  target = candidates.find((node) => String(node.innerText || node.textContent || node.title || '')
                     .replace(/\s+/g, ' ').trim().toLowerCase().includes(expected));
-                matches.sort((left, right) => {
-                  const a = left.getBoundingClientRect();
-                  const b = right.getBoundingClientRect();
-                  return (a.width * a.height) - (b.width * b.height);
-                });
-                const target = matches[0];
+                } else if (candidates.length === 1) {
+                  // With exactly one saved identity there is no ambiguous account
+                  // choice, even when the OS credential has not been configured.
+                  target = candidates[0];
+                }
                 if (!target) return false;
                 target.scrollIntoView({block: 'center', inline: 'center'});
                 target.click();

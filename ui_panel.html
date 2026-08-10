@@ -3346,12 +3346,17 @@ async function setupAllSalesforceWorkers(button = null) {
       try {
         const test = await requestSalesforceWorkerTest(slot);
         if (!test.connected) {
-          setStatus(test.message || `Salesforce Worker ${slot} still requires login.`, 'settings');
+          const message = test.message || `Salesforce Worker ${slot} still requires login.`;
+          setStatus(message, 'settings');
+          window.alert(`${message}\n\nReopen Set up for this worker and finish the Salesforce account selection before continuing.`);
           await loadSalesforceWorkerSetupStatus(false);
           return;
         }
+        setStatus(test.message || `Salesforce Worker ${slot} is connected. Opening the next worker…`, 'settings');
       } catch (error) {
-        setStatus(`Salesforce Worker ${slot} test failed: ${error.message}`, 'settings');
+        const message = `Salesforce Worker ${slot} test failed: ${error.message}`;
+        setStatus(message, 'settings');
+        window.alert(`${message}\n\nMake sure the setup browser is fully closed, then retry Set up all.`);
         await loadSalesforceWorkerSetupStatus(false);
         return;
       }

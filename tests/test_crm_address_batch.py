@@ -132,6 +132,21 @@ class CrmRecoverableErrorTests(unittest.TestCase):
 
 
 class CrmCopyrightCancelTests(unittest.TestCase):
+    def test_salesforce_saved_username_chooser_is_a_login_page(self):
+        driver = mock.Mock(current_url="https://login.salesforce.com/")
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_visible_text",
+            return_value="Choose a Username 1 Saved Username saved@example.test",
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_salesforce_login_fields",
+            return_value=(None, None),
+        ):
+            is_login = crm_copyright_cancel._is_salesforce_login_page(driver)
+
+        self.assertTrue(is_login)
+
     def test_salesforce_composer_maximize_retries_with_trusted_click(self):
         driver = mock.Mock()
         maximize_control = mock.Mock()
@@ -159,6 +174,19 @@ class CrmCopyrightCancelTests(unittest.TestCase):
 
         self.assertTrue(clicked)
         self.assertEqual(driver.execute_script.call_args.args[-1], "saved@example.test")
+
+    def test_salesforce_saved_username_chooser_allows_one_unambiguous_account(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = True
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "read_windows_credential",
+            return_value=None,
+        ):
+            clicked = crm_copyright_cancel._click_salesforce_saved_username(driver)
+
+        self.assertTrue(clicked)
+        self.assertEqual(driver.execute_script.call_args.args[-1], "")
 
     def test_salesforce_password_only_stage_uses_stored_password(self):
         password = mock.Mock()
