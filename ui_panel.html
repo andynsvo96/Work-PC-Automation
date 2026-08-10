@@ -2786,16 +2786,114 @@ function queueTimeText(task) {
   return task.activated_at ? `Queued ${fmtTime(task.activated_at)}` : '';
 }
 
+function queueRepeatHistoryRowsInWindow(task, history, historyIndexKey) {
+  const activatedAt = Date.parse(task.activated_at || task.created_at || '');
+  const completedAt = Date.parse(task.completed_at || '');
+  return (Array.isArray(history) ? history : []).map((row, historyIndex) => ({
+    ...row,
+    [historyIndexKey]: historyIndex,
+  })).filter((row) => {
+    const timestamp = Date.parse(row && row.timestamp || '');
+    if (Number.isFinite(activatedAt) && (!Number.isFinite(timestamp) || timestamp < activatedAt)) return false;
+    const durationMs = Math.max(0, Number(row && row.duration_seconds || 0)) * 1000;
+    const repeatCompletedGraceMs = Math.max(120000, durationMs + 60000);
+    if (Number.isFinite(completedAt) && Number.isFinite(timestamp) && timestamp > completedAt + repeatCompletedGraceMs) return false;
+    return true;
+  });
+}
+
+function queueProcessingFilterFromTask(task) {
+  const signatureMode = task && task.automation_signature && task.automation_signature.mode;
+  if (signatureMode) return normalizeCrmProcessingFilter(signatureMode);
+  const labelMatch = String(task.label || '').match(/processing\s*-\s*([^:]+):/i);
+  const labelFilter = String(labelMatch && labelMatch[1] || '').trim().toLowerCase();
+  return labelFilter.includes('high value') ? 'high_value'
+    : labelFilter.includes('free') ? 'free'
+    : labelFilter.includes('813') ? '813'
+    : labelFilter.includes('all') ? 'all'
+    : labelFilter.includes('rush') ? 'rush'
+    : '';
+}
+
+function queuePersistedRepeatHistory(task) {
+  const queueRows = Array.isArray(task && task.run_history) ? task.run_history : [];
+  if (queueRows.length) return {kind: 'queue', rows: queueRows};
+  if (!task || String(task.queue_mode || '').toLowerCase() !== 'repeat') return {kind: '', rows: []};
+
+  const taskType = String(task.task_type || '').toLowerCase();
+  if (taskType === 'crm.processing') {
+    const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state
+      ? crmProcessingStatusPayload.state
+      : {};
+    const expectedFilter = queueProcessingFilterFromTask(task);
+    const rows = queueRepeatHistoryRowsInWindow(task, state.run_history, 'processing_history_index').filter((row) => (
+      !expectedFilter || normalizeCrmProcessingFilter(row && row.processing_filter) === expectedFilter
+    ));
+    return {kind: 'processing', rows};
+  }
+
+  if (taskType === 'crm.mass_emailer') {
+    const state = crmMassEmailerStatusPayload && crmMassEmailerStatusPayload.state
+      ? crmMassEmailerStatusPayload.state
+      : {};
+    const signature = task.automation_signature && typeof task.automation_signature === 'object'
+      ? task.automation_signature
+      : {};
+    const taskLabel = String(task.label || '').toLowerCase();
+    const expectedAction = String(signature.action || (taskLabel.includes('sheet scan') ? 'scan_sheet' : 'process_queue')).trim();
+    const expectedDryRun = Object.prototype.hasOwnProperty.call(signature, 'dry_run')
+      ? Boolean(signature.dry_run)
+      : (taskLabel.includes('dry run') || taskLabel.includes('sheet scan'));
+    const rows = queueRepeatHistoryRowsInWindow(task, state.run_history, 'scanner_history_index').filter((row) => (
+      (!expectedAction || String(row && row.action || '').trim() === expectedAction)
+      && Boolean(row && row.dry_run) === expectedDryRun
+    ));
+    return {kind: 'scanner', rows};
+  }
+
+  return {kind: '', rows: []};
+}
+
 function queueRunHistoryHtml(task) {
-  const rows = Array.isArray(task && task.run_history) ? task.run_history : [];
+  const persisted = queuePersistedRepeatHistory(task);
+  const rows = persisted.rows;
   if (!rows.length) return "<div class='muted'>No repeat runs recorded yet.</div>";
-  const latestRows = latestHistoryRows(rows, 'started_at');
+  const timestampKey = persisted.kind === 'queue' ? 'started_at' : 'timestamp';
+  const latestRows = latestHistoryRows(rows, timestampKey);
+  const isProcessing = persisted.kind === 'processing';
+  const isScanner = persisted.kind === 'scanner';
+  const progressHeading = isScanner ? '<th>Progress</th>' : '';
+  const reportHeading = isProcessing || isScanner ? '<th>Report</th>' : '';
   return `
     <table>
-      <thead><tr><th>Run</th><th>Started</th><th>Duration</th><th>Status</th><th>Message</th></tr></thead>
-      <tbody>${rows.map((row) => {
+      <thead><tr><th>Run</th><th>Finished</th>${progressHeading}<th>Duration</th><th>Status</th><th>Message</th>${reportHeading}</tr></thead>
+      <tbody>${rows.map((row, rowIndex) => {
         const ok = row && row.success;
-        return `<tr><td>${esc(row.run_number || '-')}</td>${historyWhenCellHtml(fmtDateTime(row.started_at), latestRows.has(row))}<td>${esc(fmtDuration(row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${esc(ok ? 'Success' : 'Failed')}</td><td>${esc(row.message || '')}</td></tr>`;
+        const runNumber = row.run_number || Math.max(1, rows.length - rowIndex);
+        const when = row.completed_at || row.timestamp || row.started_at;
+        const scannerOrderIds = isScanner ? normalizeCrmOrderIds(row && row.order_ids) : [];
+        const scannerOrderCount = isScanner ? Number(row && row.order_count || scannerOrderIds.length || 0) : 0;
+        const scannerFailures = isScanner ? Number(row && row.failure_count || 0) : 0;
+        const scannerSkipped = isScanner ? Number(row && row.skipped_count || 0) : 0;
+        const scannerDetails = isScanner
+          ? JSON.stringify(normalizeCrmOrderDetails(row && row.order_details, scannerOrderIds, {
+              success: Boolean(row && row.success),
+              status: row && row.success ? 'Success' : 'Needs attention',
+              message: row && row.message ? row.message : '',
+            }))
+          : '[]';
+        const progress = isScanner
+          ? `<td>${esc(`Orders ${scannerOrderCount} | Failed ${scannerFailures} | Skipped ${scannerSkipped}`)}</td>`
+          : '';
+        const processingReport = isProcessing
+          ? `<td><button class='secondary tiny' type='button' onclick='event.stopPropagation();openCrmProcessingRunReport(${Number(row.processing_history_index)})'>View Report</button></td>`
+          : '';
+        const scannerReport = isScanner
+          ? `<td>${scannerOrderIds.length
+              ? `<button class='secondary tiny' type='button' data-order-ids="${esc(scannerOrderIds.join(','))}" data-order-details="${esc(scannerDetails)}" data-order-label="${esc(`Sheets Scanner Orders | ${fmtDateTime(when)}`)}" onclick='event.stopPropagation();openCrmOrderIdsDialogFromButton(this)'>View ${esc(String(scannerOrderCount || scannerOrderIds.length))} Order${(scannerOrderCount || scannerOrderIds.length) === 1 ? '' : 's'}</button>`
+              : '-'}</td>`
+          : '';
+        return `<tr><td>${esc(runNumber)}</td>${historyWhenCellHtml(fmtDateTime(when), latestRows.has(row))}${progress}<td>${esc(fmtDuration(row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${esc(ok ? 'Completed' : 'Needs attention')}</td><td>${esc(row.message || '')}</td>${processingReport}${scannerReport}</tr>`;
       }).join('')}</tbody>
     </table>`;
 }
@@ -8090,6 +8188,7 @@ function renderCrmMassEmailerStatus(payload) {
       : 'Add a Sheet Scanner run to the queue.';
   }
   renderCrmMassEmailerHistory(state.run_history || []);
+  if (queueVisible && queuePayload) renderQueue(queuePayload);
   syncCrmMassEmailerPolling();
 }
 

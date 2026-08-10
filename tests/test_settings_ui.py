@@ -165,6 +165,18 @@ class SettingsUiStructureTests(unittest.TestCase):
         self.assertIn("function openCrmProcessingRunReport(", self.html)
         self.assertIn(">View Report</button>", self.html)
 
+    def test_repeat_queue_reuses_existing_main_and_scanner_run_reports(self):
+        self.assertIn("function queuePersistedRepeatHistory(task)", self.html)
+        self.assertIn("function queueRepeatHistoryRowsInWindow(task, history, historyIndexKey)", self.html)
+        self.assertIn("const repeatCompletedGraceMs = Math.max(120000, durationMs + 60000)", self.html)
+        self.assertIn("crmProcessingStatusPayload.state", self.html)
+        self.assertIn("crmMassEmailerStatusPayload.state", self.html)
+        self.assertIn("processing_history_index", self.html)
+        self.assertIn("openCrmProcessingRunReport(${Number(row.processing_history_index)})", self.html)
+        self.assertIn("scanner_history_index", self.html)
+        self.assertIn("openCrmOrderIdsDialogFromButton(this)", self.html)
+        self.assertIn("Orders ${scannerOrderCount} | Failed ${scannerFailures} | Skipped ${scannerSkipped}", self.html)
+
     def test_shipping_issue_history_messages_use_orange_attention_style(self):
         self.assertIn("--vscode-orange:#b45309", self.html)
         self.assertIn("--vscode-orange:#e5a54b", self.html)
