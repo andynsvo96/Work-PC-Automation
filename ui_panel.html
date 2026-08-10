@@ -94,6 +94,24 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .settings-connection-name{display:flex;align-items:center;gap:8px;max-width:100%;font-size:13px;font-weight:750;overflow-wrap:anywhere}
 .settings-connection-mark{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:6px;background:#dbeafe;color:#2563eb;font-size:11px;font-weight:900}
 .settings-connection-action{max-width:100%;margin-top:auto;color:#2563eb;font-size:11px;font-weight:750;overflow-wrap:anywhere}
+.salesforce-worker-panel{margin-top:16px;padding-top:16px;border-top:1px solid #e2e8f0}
+.salesforce-worker-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+.salesforce-worker-heading h3{margin:0 0 4px;font-size:16px}
+.salesforce-worker-heading p{margin:0;color:#64748b;font-size:12px;line-height:1.45}
+.salesforce-worker-heading-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px}
+.salesforce-worker-list{display:grid;gap:8px}
+.salesforce-worker-row{display:grid;grid-template-columns:minmax(110px,.7fr) minmax(150px,1fr) auto;align-items:center;gap:12px;padding:12px 13px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc}
+.salesforce-worker-name{font-size:13px;font-weight:800;color:#0f172a}
+.salesforce-worker-detail{min-width:0;color:#64748b;font-size:11px;line-height:1.4;overflow-wrap:anywhere}
+.salesforce-worker-state{display:inline-flex;align-items:center;gap:6px;width:max-content;max-width:100%;padding:5px 9px;border-radius:999px;background:#e2e8f0;color:#475569;font-size:11px;font-weight:800}
+.salesforce-worker-state::before{content:'';width:8px;height:8px;border-radius:50%;background:#94a3b8}
+.salesforce-worker-state.connected{background:#dcfce7;color:#15803d}
+.salesforce-worker-state.connected::before{background:#22c55e}
+.salesforce-worker-state.login_required{background:#fee2e2;color:#b91c1c}
+.salesforce-worker-state.login_required::before{background:#ef4444}
+.salesforce-worker-state.browser_open{background:#dbeafe;color:#1d4ed8}
+.salesforce-worker-state.browser_open::before{background:#3b82f6}
+.salesforce-worker-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px}
 .settings-task-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .settings-task-card{display:flex;align-items:center;gap:12px;min-height:72px;padding:12px;border:1px solid #dbe3ef;border-radius:10px;background:#f8fafc;color:#0f172a;text-align:left}
 .settings-task-card:hover{background:#eff6ff;border-color:#93c5fd}
@@ -585,12 +603,22 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 :root[data-theme='dark'] .settings-task-icon{background:#37304c;color:#b5a8ff}
 :root[data-theme='dark'] .settings-connection-mark{background:#04395e;color:#4fc1ff}
 :root[data-theme='dark'] .settings-nav-badge{background:#20382b;color:#89d185}
+:root[data-theme='dark'] .salesforce-worker-panel{border-color:#3c3c3c}
+:root[data-theme='dark'] .salesforce-worker-heading p,
+:root[data-theme='dark'] .salesforce-worker-detail{color:#9d9d9d}
+:root[data-theme='dark'] .salesforce-worker-row{background:#2d2d30;border-color:#3c3c3c}
+:root[data-theme='dark'] .salesforce-worker-name{color:#f0f0f0}
+:root[data-theme='dark'] .salesforce-worker-state{background:#3c3c3c;color:#b8b8b8}
+:root[data-theme='dark'] .salesforce-worker-state.connected{background:#20382b;color:#89d185}
+:root[data-theme='dark'] .salesforce-worker-state.login_required{background:#3b2527;color:#f48771}
+:root[data-theme='dark'] .salesforce-worker-state.browser_open{background:#04395e;color:#4fc1ff}
 @media (max-width:980px){.grid,.subgrid,.slack-day-message-panel{grid-template-columns:1fr}}
 @media (max-width:980px){.communications-grid,.processing-run-grid{grid-template-columns:1fr}}
 @media (max-width:980px){.work-plan-days{grid-template-columns:repeat(4,minmax(110px,1fr))}}
 @media (max-width:980px){.settings-shell{grid-template-columns:1fr}.settings-sidebar{border-right:0;border-bottom:1px solid #e2e8f0}.settings-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.settings-health{margin-top:0}.settings-main{padding:24px}}
 @media (max-width:760px){.metrics,.desktop-metrics-grid,.processing-report-metrics,.work-timer-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}.work-plan-days{grid-template-columns:repeat(2,minmax(120px,1fr))}}
 @media (max-width:760px){.settings-page-header{align-items:flex-start;flex-direction:column}.settings-page-actions{width:100%;justify-content:flex-start}.settings-overview-grid,.settings-form-grid{grid-template-columns:1fr}.settings-overview-card.wide{grid-column:auto}.settings-task-grid{grid-template-columns:1fr}.settings-nav{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:760px){.salesforce-worker-row{grid-template-columns:1fr}.salesforce-worker-actions{justify-content:flex-start}.salesforce-worker-heading{flex-direction:column}.salesforce-worker-heading-actions{justify-content:flex-start}}
 @media (max-width:760px){.page-heading,.system-section-heading{align-items:flex-start;flex-direction:column}.latest-run-meta{grid-template-columns:1fr 1fr}.system-overview-grid{grid-template-columns:1fr}.workspace-nav{margin-left:-2px;margin-right:-2px}.tab-bar{flex-wrap:nowrap;overflow-x:auto;padding-bottom:3px}.control-target{margin-left:0;flex:0 0 auto}}
 @media (max-width:520px){.work-hours-title-actions{width:100%;justify-content:flex-end}.work-cap-quick-setting{justify-content:flex-end}.work-timer-grid{grid-template-columns:1fr}.work-plan-days{grid-template-columns:1fr 1fr}.work-timer-value{font-size:30px}}
 @media (max-width:520px){.settings-sidebar,.settings-main{padding:16px}.settings-page-actions button{flex:1}.settings-save-state{width:100%;box-sizing:border-box;justify-content:center}}
@@ -1557,7 +1585,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
               <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('crm', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>C</span>CRM</span><span class='settings-connection-action'>Review setup →</span></button>
               <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('slack', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>Slack</span><span class='settings-connection-action'>Review setup →</span></button>
               <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('sanmar', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>SanMar</span><span class='settings-connection-action'>Review setup →</span></button>
-              <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('salesforce', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>Salesforce</span><span class='settings-connection-action'>Review setup →</span></button>
+              <button class='settings-connection-card' type='button' onclick="showSettingsSection('connections'); loadSalesforceWorkerSetupStatus(true)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>Salesforce workers</span><span class='settings-connection-action'>Manage workers →</span></button>
             </div>
           </div>
 
@@ -1605,7 +1633,16 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
             <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('crm', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>C</span>CRM</span><span class='settings-connection-action'>Open profile setup →</span></button>
             <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('slack', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>Slack</span><span class='settings-connection-action'>Open profile setup →</span></button>
             <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('sanmar', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>SanMar</span><span class='settings-connection-action'>Open profile setup →</span></button>
-            <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('salesforce', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>Salesforce</span><span class='settings-connection-action'>Open profile setup →</span></button>
+          </div>
+          <div class='salesforce-worker-panel'>
+            <div class='salesforce-worker-heading'>
+              <div><h3>Salesforce worker profiles</h3><p>Sheets Scanner uses one saved Salesforce session per worker. Complete setup and test each worker before running parallel orders.</p></div>
+              <div class='salesforce-worker-heading-actions'>
+                <button class='secondary tiny' type='button' onclick='loadSalesforceWorkerSetupStatus(true, this)'>Refresh status</button>
+                <button class='tiny' id='salesforceSetupAllBtn' type='button' onclick='setupAllSalesforceWorkers(this)'>Set up all</button>
+              </div>
+            </div>
+            <div class='salesforce-worker-list' id='salesforceWorkerSetupRows'><div class='muted'>Loading Salesforce workers…</div></div>
           </div>
         </div>
       </section>
@@ -3188,6 +3225,142 @@ async function openChromeProfileSetup(profile, button = null) {
   });
 }
 
+function formatSalesforceWorkerTestTime(value) {
+  if (!value) return '';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
+}
+
+function renderSalesforceWorkerSetup(payload) {
+  const root = document.getElementById('salesforceWorkerSetupRows');
+  if (!root) return;
+  const workers = Array.isArray(payload && payload.workers) ? payload.workers : [];
+  if (workers.length === 0) {
+    root.innerHTML = "<div class='muted'>No Salesforce workers are configured.</div>";
+    return;
+  }
+  root.innerHTML = workers.map((worker) => {
+    const slot = Number(worker.worker || 0);
+    const status = String(worker.status || 'not_tested');
+    const lastTested = formatSalesforceWorkerTestTime(worker.last_tested_at);
+    let detail = String(worker.message || 'Set up this profile, complete 2FA, then test the connection.');
+    if (lastTested) detail += ` Last tested ${lastTested}.`;
+    const setupDisabled = worker.in_use ? ' disabled' : '';
+    const testDisabled = (!worker.initialized || worker.in_use) ? ' disabled' : '';
+    return `<div class='salesforce-worker-row' data-salesforce-worker='${slot}'>`
+      + `<div><div class='salesforce-worker-name'>${esc(worker.label || `Worker ${slot}`)}</div>`
+      + `<span class='salesforce-worker-state ${esc(status)}'>${esc(worker.status_label || 'Not tested')}</span></div>`
+      + `<div class='salesforce-worker-detail'>${esc(detail)}</div>`
+      + `<div class='salesforce-worker-actions'>`
+      + `<button class='secondary tiny' type='button' onclick='setupSalesforceWorker(${slot}, this)'${setupDisabled}>Set up</button>`
+      + `<button class='tiny' type='button' onclick='testSalesforceWorker(${slot}, this)'${testDisabled}>Test connection</button>`
+      + `</div></div>`;
+  }).join('');
+}
+
+async function loadSalesforceWorkerSetupStatus(showFeedback = false, button = null) {
+  const task = async () => {
+    const root = document.getElementById('salesforceWorkerSetupRows');
+    if (root) root.innerHTML = "<div class='muted'>Loading Salesforce workers…</div>";
+    try {
+      const payload = await api('/api/salesforce-worker-setup');
+      renderSalesforceWorkerSetup(payload);
+      if (showFeedback) setStatus(`Loaded ${payload.worker_count || 0} Salesforce worker profile${Number(payload.worker_count) === 1 ? '' : 's'}.`, 'settings');
+      return payload;
+    } catch (error) {
+      if (root) root.innerHTML = `<div class='notice'>Salesforce worker status failed: ${esc(error.message)}</div>`;
+      if (showFeedback) setStatus('Salesforce worker status failed: ' + error.message, 'settings');
+      return null;
+    }
+  };
+  return button ? withButtonBusy(button, 'Refreshing...', task) : task();
+}
+
+async function requestSalesforceWorkerSetup(worker) {
+  return api('/automation/salesforce-worker-setup', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({worker}),
+  });
+}
+
+async function setupSalesforceWorker(worker, button = null) {
+  return withButtonBusy(button, 'Opening...', async () => {
+    setStatus(`Opening Salesforce Worker ${worker} setup…`, 'settings');
+    try {
+      const payload = await requestSalesforceWorkerSetup(worker);
+      setStatus(payload.message || `Salesforce Worker ${worker} setup opened.`, 'settings');
+    } catch (error) {
+      setStatus(`Salesforce Worker ${worker} setup failed: ${error.message}`, 'settings');
+    }
+    await loadSalesforceWorkerSetupStatus(false);
+  });
+}
+
+async function requestSalesforceWorkerTest(worker) {
+  return api('/automation/salesforce-worker-test', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({worker}),
+  });
+}
+
+async function testSalesforceWorker(worker, button = null) {
+  return withButtonBusy(button, 'Testing...', async () => {
+    setStatus(`Testing Salesforce Worker ${worker}…`, 'settings');
+    try {
+      const payload = await requestSalesforceWorkerTest(worker);
+      setStatus(payload.message || `Salesforce Worker ${worker} test finished.`, 'settings');
+      return Boolean(payload.connected);
+    } catch (error) {
+      setStatus(`Salesforce Worker ${worker} test failed: ${error.message}`, 'settings');
+      return false;
+    } finally {
+      await loadSalesforceWorkerSetupStatus(false);
+    }
+  });
+}
+
+async function setupAllSalesforceWorkers(button = null) {
+  return withButtonBusy(button, 'Setting up…', async () => {
+    const status = await loadSalesforceWorkerSetupStatus(false);
+    const workers = Array.isArray(status && status.workers) ? status.workers : [];
+    for (const worker of workers) {
+      const slot = Number(worker.worker || 0);
+      setStatus(`Opening Salesforce Worker ${slot} of ${workers.length}…`, 'settings');
+      try {
+        await requestSalesforceWorkerSetup(slot);
+      } catch (error) {
+        setStatus(`Salesforce Worker ${slot} setup failed: ${error.message}`, 'settings');
+        await loadSalesforceWorkerSetupStatus(false);
+        return;
+      }
+      const ready = window.confirm(
+        `Salesforce Worker ${slot} is open.\n\nComplete login and 2FA, then close that setup browser window. Press OK to test this worker and continue. Press Cancel to stop the setup sequence.`
+      );
+      if (!ready) {
+        setStatus(`Salesforce setup stopped after Worker ${slot} was opened.`, 'settings');
+        await loadSalesforceWorkerSetupStatus(false);
+        return;
+      }
+      try {
+        const test = await requestSalesforceWorkerTest(slot);
+        if (!test.connected) {
+          setStatus(test.message || `Salesforce Worker ${slot} still requires login.`, 'settings');
+          await loadSalesforceWorkerSetupStatus(false);
+          return;
+        }
+      } catch (error) {
+        setStatus(`Salesforce Worker ${slot} test failed: ${error.message}`, 'settings');
+        await loadSalesforceWorkerSetupStatus(false);
+        return;
+      }
+      await loadSalesforceWorkerSetupStatus(false);
+    }
+    setStatus(`All ${workers.length} Salesforce workers are connected.`, 'settings');
+  });
+}
+
 function setButtonBusy(button, busy, busyLabel = 'Automation underway...') {
   if (!button) return;
   if (busy) {
@@ -3931,6 +4104,7 @@ function setActiveTab(tabName) {
   if (isSettings) {
     restoreSettingsSection();
     loadConfig();
+    loadSalesforceWorkerSetupStatus(false);
   }
   if (isSystem) {
     showSystemSection(legacySystemSection || activeSystemSection);
@@ -8820,6 +8994,7 @@ async function reloadSettingsPage(button = null) {
     await loadNodeRuntime(false);
     await loadCrmOrderGoodsStatus(false);
     await loadCrmAddressStatus(false);
+    await loadSalesforceWorkerSetupStatus(false);
     const loaded = await loadConfig();
     if (loaded) setSettingsSaveState('All changes saved');
   });
@@ -8904,6 +9079,7 @@ async function reloadAll() {
   await loadCrmMassEmailerStatus(false);
   await loadCrmAutoSplitterStatus(false);
   await loadCrmAddressStatus(false);
+  await loadSalesforceWorkerSetupStatus(false);
   await loadConfig();
   await loadSlackLunchStatus(false);
   await loadTodaySlackHistory();

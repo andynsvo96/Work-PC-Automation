@@ -103,6 +103,20 @@ class SettingsUiStructureTests(unittest.TestCase):
         self.assertNotIn("setAutomationButtonRunning(runBtn, running || selectedSteps.length === 0);", self.html)
         self.assertNotIn("? 'Running…'", self.html)
 
+    def test_salesforce_worker_setup_is_wired(self):
+        for element_id in ("salesforceWorkerSetupRows", "salesforceSetupAllBtn"):
+            self.assertEqual(len(re.findall(rf"\bid=['\"]{element_id}['\"]", self.html)), 1)
+        for function_name in (
+            "loadSalesforceWorkerSetupStatus",
+            "setupSalesforceWorker",
+            "testSalesforceWorker",
+            "setupAllSalesforceWorkers",
+        ):
+            self.assertIn(f"function {function_name}(", self.html)
+        self.assertIn("/api/salesforce-worker-setup", self.html)
+        self.assertIn("/automation/salesforce-worker-setup", self.html)
+        self.assertIn("/automation/salesforce-worker-test", self.html)
+
     def test_system_sections_are_merged_and_wired(self):
         expected = {"overview", "hardware", "clipboard", "power"}
         sections = set(re.findall(r"data-system-section=['\"]([^'\"]+)", self.html))

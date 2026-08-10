@@ -34,7 +34,14 @@ import pystray
 from PIL import Image, ImageDraw
 
 from automation_audit import AUDIT_LOG_FILE, log_automation_event, log_automation_result
-from automation_runtime import resolve_automation_profile_path
+from automation_runtime import (
+    build_chrome_driver,
+    is_chrome_profile_in_use,
+    resolve_automation_profile_path,
+    resolve_existing_automation_profile_path,
+    safe_driver_quit,
+    safe_get_with_partial_load,
+)
 from app_security import load_app_security
 from clipboard_runtime import (
     ClipboardPeerClient,
@@ -184,6 +191,7 @@ CRM_STATE_FILE = state_file("crm_state.json")
 CRM_ADDRESS_STATE_FILE = state_file("crm_address_validator_state.json")
 CRM_PROCESSING_STATE_FILE = state_file("crm_processing_state.json")
 CRM_MASS_EMAILER_STATE_FILE = state_file("crm_mass_emailer_state.json")
+SALESFORCE_WORKER_SETUP_STATE_FILE = state_file("salesforce_worker_setup_state.json")
 CRM_SHARED_MAX_PARALLEL_WORKERS = 8
 CRM_ORDER_GOODS_MAX_PARALLEL_WORKERS = CRM_SHARED_MAX_PARALLEL_WORKERS
 CRM_ADDRESS_REPORT_MAX_ITEMS = 500
@@ -266,6 +274,7 @@ crm_extension_order_runtime = {
 }
 crm_mass_emailer_state_lock = threading.Lock()
 crm_mass_emailer_runtime_lock = threading.Lock()
+salesforce_worker_setup_state_lock = threading.Lock()
 automation_process_lock = threading.RLock()
 auto_clock_timer = None
 tray_icon_ref = None
@@ -13749,6 +13758,119 @@ def _resolve_chrome_executable():
     return None
 
 
+def _salesforce_worker_count():
+    return _saved_crm_automation_parallel_workers(default=1)
+
+
+def _normalize_salesforce_worker_slot(value):
+    try:
+        slot = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("Choose a valid Salesforce worker.")
+    worker_count = _salesforce_worker_count()
+    if slot < 1 or slot > worker_count:
+        raise ValueError(f"Salesforce worker must be between 1 and {worker_count}.")
+    return slot
+
+
+def _salesforce_worker_profile_path(worker_slot):
+    from runtime_paths import GENERATED_PROFILES_DIR
+
+    return os.path.join(
+        GENERATED_PROFILES_DIR,
+        "chrome_profile_crm_worker_pool",
+        "sheet_scanner_crm",
+        f"worker_{int(worker_slot)}",
+    )
+
+
+def _ensure_salesforce_worker_profile(worker_slot):
+    profile_path = _salesforce_worker_profile_path(worker_slot)
+    if os.path.isdir(profile_path):
+        return profile_path
+    if WORKERS_DIR not in sys.path:
+        sys.path.insert(0, WORKERS_DIR)
+    from crm_validate_address import _clone_profile_for_worker
+
+    base_profile = resolve_existing_automation_profile_path(
+        _resolve_profile_path(getattr(config_module, "CRM_PROFILE_DIR", "chrome_profile_crm"))
+    )
+    _temp_root, profile_path = _clone_profile_for_worker(
+        base_profile,
+        f"sheet_scanner_crm_{worker_slot}",
+        worker_slot=worker_slot,
+        pool_name="sheet_scanner_crm",
+    )
+    return profile_path
+
+
+def _load_salesforce_worker_setup_state():
+    state = {"workers": {}}
+    if not os.path.exists(SALESFORCE_WORKER_SETUP_STATE_FILE):
+        return state
+    try:
+        with open(SALESFORCE_WORKER_SETUP_STATE_FILE, "r", encoding="utf-8-sig") as handle:
+            loaded = json.load(handle)
+        if isinstance(loaded, dict) and isinstance(loaded.get("workers"), dict):
+            state["workers"] = loaded["workers"]
+    except Exception as exc:
+        logger.warning("Could not read %s: %s", SALESFORCE_WORKER_SETUP_STATE_FILE, exc)
+    return state
+
+
+def _update_salesforce_worker_setup_state(worker_slot, **changes):
+    with salesforce_worker_setup_state_lock:
+        state = _load_salesforce_worker_setup_state()
+        key = str(int(worker_slot))
+        row = dict(state["workers"].get(key) or {})
+        row.update(changes)
+        state["workers"][key] = row
+        _write_json_file_atomic(SALESFORCE_WORKER_SETUP_STATE_FILE, state)
+        return dict(row)
+
+
+def _salesforce_worker_setup_payload():
+    worker_count = _salesforce_worker_count()
+    with salesforce_worker_setup_state_lock:
+        state = _load_salesforce_worker_setup_state()
+    workers = []
+    for slot in range(1, worker_count + 1):
+        profile_path = _salesforce_worker_profile_path(slot)
+        saved = dict(state["workers"].get(str(slot)) or {})
+        initialized = os.path.isdir(profile_path)
+        in_use = initialized and is_chrome_profile_in_use(profile_path)
+        last_success = saved.get("last_test_success")
+        if not initialized:
+            status = "not_initialized"
+            status_label = "Not set up"
+        elif in_use:
+            status = "browser_open"
+            status_label = "Browser open"
+        elif last_success is True:
+            status = "connected"
+            status_label = "Connected"
+        elif last_success is False:
+            status = "login_required"
+            status_label = "Login required"
+        else:
+            status = "not_tested"
+            status_label = "Not tested"
+        workers.append(
+            {
+                "worker": slot,
+                "label": f"Worker {slot}",
+                "initialized": initialized,
+                "in_use": bool(in_use),
+                "status": status,
+                "status_label": status_label,
+                "last_test_success": last_success if isinstance(last_success, bool) else None,
+                "last_tested_at": saved.get("last_tested_at"),
+                "message": str(saved.get("message") or ""),
+            }
+        )
+    return {"success": True, "worker_count": worker_count, "workers": workers}
+
+
 def _resolve_profile_path(profile_dir):
     profile_text = str(profile_dir or "").strip()
     if not profile_text:
@@ -13855,6 +13977,146 @@ def automation_chrome_profile_setup():
             "fields_filled": result.fields_filled,
         }
     )
+
+
+@app.route("/api/salesforce-worker-setup", methods=["GET"])
+def api_salesforce_worker_setup():
+    return jsonify(_salesforce_worker_setup_payload())
+
+
+@app.route("/automation/salesforce-worker-setup", methods=["POST"])
+def automation_salesforce_worker_setup():
+    data = request.get_json(silent=True) or {}
+    try:
+        worker_slot = _normalize_salesforce_worker_slot(data.get("worker"))
+        profile_path = _ensure_salesforce_worker_profile(worker_slot)
+        result = open_and_prefill_setup_profile(
+            "salesforce",
+            profile_path,
+            "https://login.salesforce.com/",
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    except ChromeProfileInUseError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 409
+    except Exception:
+        logger.exception("Could not prepare Salesforce Worker %s setup profile", data.get("worker"))
+        return jsonify(
+            {
+                "success": False,
+                "message": "Could not open the Salesforce worker setup profile. Check the local server log.",
+            }
+        ), 500
+
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    _update_salesforce_worker_setup_state(
+        worker_slot,
+        setup_opened_at=now,
+        last_test_success=None,
+        message="Complete Salesforce login and 2FA, then close the setup window and test the connection.",
+    )
+    message = (
+        f"Opened Salesforce Worker {worker_slot} setup. Complete login and 2FA, "
+        "then close that browser window and test the connection."
+    )
+    logger.info("%s Profile path: %s", message, profile_path)
+    return jsonify(
+        {
+            "success": True,
+            "worker": worker_slot,
+            "message": message,
+            "fields_filled": list(result.fields_filled),
+        }
+    )
+
+
+@app.route("/automation/salesforce-worker-test", methods=["POST"])
+def automation_salesforce_worker_test():
+    data = request.get_json(silent=True) or {}
+    try:
+        worker_slot = _normalize_salesforce_worker_slot(data.get("worker"))
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+
+    profile_path = _salesforce_worker_profile_path(worker_slot)
+    if not os.path.isdir(profile_path):
+        return jsonify(
+            {
+                "success": False,
+                "connected": False,
+                "worker": worker_slot,
+                "message": f"Set up Salesforce Worker {worker_slot} before testing it.",
+            }
+        ), 400
+    if is_chrome_profile_in_use(profile_path):
+        return jsonify(
+            {
+                "success": False,
+                "connected": False,
+                "worker": worker_slot,
+                "message": (
+                    f"Salesforce Worker {worker_slot} is still open or in use. "
+                    "Close its setup browser and wait for any Sheets Scanner run to finish, then test again."
+                ),
+            }
+        ), 409
+
+    driver = None
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        if WORKERS_DIR not in sys.path:
+            sys.path.insert(0, WORKERS_DIR)
+        import crm_copyright_cancel as salesforce_worker
+
+        driver = build_chrome_driver(
+            profile_path,
+            headless_mode=True,
+            page_load_strategy="eager",
+            page_load_timeout=max(30, int(getattr(config_module, "PROCESSOR_PAGE_LOAD_TIMEOUT", 30) or 30)),
+            script_timeout=int(getattr(config_module, "PROCESSOR_ACTION_TIMEOUT", 15) or 15),
+        )
+        safe_get_with_partial_load(driver, "https://login.salesforce.com/", f"Salesforce Worker {worker_slot} test")
+        connected = not (
+            salesforce_worker._is_salesforce_login_page(driver)
+            or salesforce_worker._is_salesforce_login_approval_page(driver)
+        )
+        if connected:
+            message = f"Salesforce Worker {worker_slot} is connected."
+        else:
+            message = f"Salesforce Worker {worker_slot} requires login or 2FA."
+        _update_salesforce_worker_setup_state(
+            worker_slot,
+            last_test_success=connected,
+            last_tested_at=now,
+            message=message,
+        )
+        return jsonify(
+            {
+                "success": connected,
+                "connected": connected,
+                "worker": worker_slot,
+                "message": message,
+            }
+        )
+    except Exception as exc:
+        logger.exception("Salesforce Worker %s connection test failed", worker_slot)
+        message = f"Salesforce Worker {worker_slot} test failed: {type(exc).__name__}."
+        _update_salesforce_worker_setup_state(
+            worker_slot,
+            last_test_success=False,
+            last_tested_at=now,
+            message=message,
+        )
+        return jsonify(
+            {
+                "success": False,
+                "connected": False,
+                "worker": worker_slot,
+                "message": message,
+            }
+        ), 500
+    finally:
+        safe_driver_quit(driver, profile_path=profile_path)
 
 
 @app.route("/api/config", methods=["GET"])
