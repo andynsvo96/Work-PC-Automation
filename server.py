@@ -9509,11 +9509,18 @@ def _crm_auto_splitter_recovery_order_ids_from_payload(payload):
     direct_ids = payload.get("new_order_ids") if isinstance(payload.get("new_order_ids"), list) else []
     report = payload.get("report") if isinstance(payload.get("report"), dict) else {}
     split_orders = report.get("split_orders") if isinstance(report.get("split_orders"), list) else []
-    order_ids = list(direct_ids) + [item.get("order_id") for item in split_orders if isinstance(item, dict)]
+    original_order_id = _normalize_crm_single_order_id(
+        payload.get("target_order_id") or payload.get("order_id") or report.get("original_order_id")
+    )
+    order_ids = list(direct_ids) + [
+        item.get("order_id")
+        for item in split_orders
+        if isinstance(item, dict) and not item.get("retained_original")
+    ]
     normalized = []
     for value in order_ids:
         order_id = _normalize_crm_single_order_id(value)
-        if order_id and order_id not in normalized:
+        if order_id and order_id != original_order_id and order_id not in normalized:
             normalized.append(order_id)
     return normalized
 

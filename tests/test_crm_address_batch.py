@@ -4553,6 +4553,249 @@ class CrmAutoSplitterTests(unittest.TestCase):
         self.assertEqual([item["promo_credit"] for item in plan], ["1.67", "1.67", "1.66"])
         self.assertEqual([item["promo_code"] for item in plan], ["BrightShirt34"] * 3)
 
+    def test_retained_original_plan_keeps_first_split_and_preserves_promo_on_original(self):
+        plan = [
+            {"split_index": 1, "promo_credit": "1.67"},
+            {"split_index": 2, "promo_credit": "1.67"},
+            {"split_index": 3, "promo_credit": "1.66"},
+        ]
+
+        retained = crm_auto_splitter._plan_with_original_retained(plan)
+
+        self.assertEqual([item["promo_credit"] for item in retained], ["5.00", "0.00", "0.00"])
+        self.assertEqual([item["retained_original"] for item in retained], [True, False, False])
+        self.assertEqual([item["promo_credit"] for item in plan], ["1.67", "1.67", "1.66"])
+
+    def test_proportional_payment_allocation_handles_partial_payment_and_rounding(self):
+        allocations = crm_auto_splitter._allocate_money_proportionally(
+            crm_auto_splitter.Decimal("100.00"),
+            [crm_auto_splitter.Decimal("132.67"), crm_auto_splitter.Decimal("140.00"), crm_auto_splitter.Decimal("147.16")],
+        )
+
+        self.assertEqual(sum(allocations), crm_auto_splitter.Decimal("100.00"))
+        self.assertEqual(allocations, [
+            crm_auto_splitter.Decimal("31.60"),
+            crm_auto_splitter.Decimal("33.35"),
+            crm_auto_splitter.Decimal("35.05"),
+        ])
+
+    def test_no_stock_routing_requires_explicit_need_to_order_status(self):
+        confirmed = crm_auto_splitter._planned_stock_routing(
+            {
+                "stock_ordered": False,
+                "order_stock_status": {"state": "need_to_order", "stock_status_needs_order": True},
+            },
+            subcontractor="",
+        )
+        unknown = crm_auto_splitter._planned_stock_routing(
+            {"stock_ordered": False, "order_stock_status": {"state": "unknown"}},
+            subcontractor="",
+        )
+
+        self.assertEqual(confirmed["action"], "none")
+        self.assertEqual(confirmed["reason"], "no_stock_ordered")
+        self.assertEqual(unknown["action"], "manual_review")
+        self.assertEqual(unknown["reason"], "stock_status_unknown_or_conflicting")
+
+    def test_original_order_design_removal_uses_controller_action(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = ""
+        with mock.patch.object(crm_auto_splitter, "_order_design_ids", side_effect=[[101, 202], [101]]), \
+             mock.patch.object(crm_auto_splitter, "_order_scope", return_value={"started": True}) as order_scope, \
+             mock.patch.object(crm_auto_splitter, "_find_modal_text", return_value="Delete this design?"), \
+             mock.patch.object(crm_auto_splitter, "_click_modal_choice", return_value=True), \
+             mock.patch.object(crm_auto_splitter, "_visible_crm_error_message", return_value=""), \
+             mock.patch.object(crm_auto_splitter.time, "sleep"):
+            self.assertTrue(crm_auto_splitter._remove_order_design_by_id(driver, 202))
+
+        script = order_scope.call_args.args[1]
+        self.assertIn("s.removeDesign(designs[index], index, r)", script)
+
+    def test_retained_original_is_trimmed_to_first_split_and_verified_after_reload(self):
+        driver = mock.Mock()
+        retained_split = {
+            "split_index": 1,
+            "keep_design_names": ["Design 1"],
+            "keep_design_ids": [101],
+            "delete_design_ids": [202, 303],
+            "shipping_charge": "10.00",
+            "promo_credit": "5.00",
+            "promo_code": "TEST",
+        }
+        with mock.patch.object(crm_auto_splitter, "_order_design_ids", side_effect=[[101, 202, 303], [101]]), \
+             mock.patch.object(crm_auto_splitter, "_remove_order_design_by_id", return_value=True) as remove_design, \
+             mock.patch.object(crm_auto_splitter, "_order_scope", return_value=True) as order_scope, \
+             mock.patch.object(crm_auto_splitter, "_save_order_and_wait", return_value={"id": "4900000"}), \
+             mock.patch.object(crm_auto_splitter, "_open_order_scope_with_reload") as reload_order, \
+             mock.patch.object(
+                 crm_auto_splitter,
+                 "_read_order_totals",
+                 return_value={"grand_total": "100.00", "paid": "0.00", "balance_due": "100.00"},
+             ):
+            result = crm_auto_splitter._configure_retained_original_order(
+                driver,
+                "4900000",
+                "https://crm2.legacy.printfly.com/order/4900000",
+                retained_split,
+            )
+
+        self.assertEqual([call.args[1] for call in remove_design.call_args_list], [303, 202])
+        self.assertEqual(order_scope.call_args.args[-1], "10.00")
+        reload_order.assert_called_once()
+        self.assertTrue(result["retained_original"])
+        self.assertEqual(result["kept_design_ids"], [101])
+
+    def test_no_stock_dry_run_plans_original_as_split_one(self):
+        driver = mock.Mock()
+        scan = {
+            "detected_tab_count": 12,
+            "designs": [
+                {
+                    "tab_number": index,
+                    "design_id": str(100 + index),
+                    "design_name": f"Design {index}",
+                    "stock": {"state": "not_ordered"},
+                }
+                for index in range(1, 13)
+            ],
+            "totals": {
+                "shipping": "12.00",
+                "promo": "6.00",
+                "promo_code": "TEST",
+                "paid": "0.00",
+                "grand_total": "120.00",
+            },
+            "order_stock_status": {"state": "need_to_order", "stock_status_needs_order": True},
+            "stock_summary": {
+                "stock_ordered": False,
+                "order_stock_status": {"state": "need_to_order", "stock_status_needs_order": True},
+            },
+            "subcontractor": "",
+        }
+        with mock.patch.object(crm_auto_splitter, "kill_stale_chrome"), \
+             mock.patch.object(crm_auto_splitter, "_build_splitter_driver", return_value=driver), \
+             mock.patch.object(crm_auto_splitter, "safe_get_with_partial_load"), \
+             mock.patch.object(crm_auto_splitter, "_handle_login_if_needed"), \
+             mock.patch.object(crm_auto_splitter, "_switch_to_crm_app_frame"), \
+             mock.patch.object(crm_auto_splitter, "_scan_original_order", return_value=scan), \
+             mock.patch.object(crm_auto_splitter, "safe_driver_quit"), \
+             mock.patch.object(crm_auto_splitter, "_write_result") as write_result:
+            exit_code = crm_auto_splitter.run_split_order(
+                order_id="4900000",
+                expected_tab_count=12,
+                divisions=2,
+                dry_run=True,
+            )
+
+        self.assertEqual(exit_code, 0)
+        report = write_result.call_args.kwargs["report"]
+        self.assertTrue(report["retain_original"])
+        self.assertEqual(report["original_order_mode"], "retain_as_split_1")
+        self.assertTrue(report["split_plan"][0]["retained_original"])
+        self.assertEqual([item["promo_credit"] for item in report["split_plan"]], ["6.00", "0.00"])
+
+    def test_partial_payment_is_allocated_across_retained_and_new_orders(self):
+        driver = mock.Mock()
+        payment_events = []
+        split_orders = [
+            {"split_index": 1, "order_id": "4900000", "retained_original": True, "totals": {"grand_total": "100.00"}},
+            {"split_index": 2, "order_id": "4900001", "totals": {"grand_total": "200.00"}},
+            {"split_index": 3, "order_id": "4900002", "totals": {"grand_total": "300.00"}},
+        ]
+        retained_result = {
+            "verification": {"passed": True, "grand_total": "100.00", "paid": "50.00", "balance_due": "50.00"},
+            "totals": {"grand_total": "100.00", "paid": "50.00", "balance_due": "50.00"},
+        }
+
+        def record_retained(*_args, **_kwargs):
+            payment_events.append("retained")
+            return retained_result
+
+        def record_new(_driver, order_id, *_args, **_kwargs):
+            payment_events.append(order_id)
+            if order_id == "4900001":
+                return {"passed": True, "grand_total": "200.00", "paid": "100.00", "balance_due": "100.00"}
+            return {"passed": True, "grand_total": "300.00", "paid": "150.00", "balance_due": "150.00"}
+
+        with mock.patch.object(
+                 crm_auto_splitter,
+                 "_record_retained_original_payment_allocation",
+                 side_effect=record_retained,
+             ) as retain_payment, \
+             mock.patch.object(
+                 crm_auto_splitter,
+                 "_record_split_payment_on_order",
+                 side_effect=record_new,
+             ) as split_payment:
+            result = crm_auto_splitter._allocate_retained_split_payments(
+                driver,
+                split_orders,
+                crm_auto_splitter.Decimal("300.00"),
+                "Stripe.com",
+                "pi_test",
+                "transferred to 4900001 and 4900002",
+            )
+
+        retain_payment.assert_called_once_with(
+            driver,
+            "4900000",
+            crm_auto_splitter.Decimal("50.00"),
+            "transferred to 4900001 and 4900002",
+        )
+        self.assertEqual(
+            [call.args[4] for call in split_payment.call_args_list],
+            [crm_auto_splitter.Decimal("100.00"), crm_auto_splitter.Decimal("150.00")],
+        )
+        self.assertEqual(payment_events, ["4900001", "4900002", "retained"])
+        self.assertEqual(result["allocated_total"], "300.00")
+        self.assertEqual([item["payment_allocation"] for item in split_orders], ["50.00", "100.00", "150.00"])
+
+    def test_retained_original_payment_transfer_uses_negative_adjustment_without_full_refund_guard(self):
+        driver = mock.Mock()
+        before = {"grand_total": "100.00", "paid": "300.00", "balance_due": "-200.00"}
+        after = {"grand_total": "100.00", "paid": "50.00", "balance_due": "50.00"}
+        with mock.patch.object(crm_auto_splitter, "_open_order_scope_with_reload"), \
+             mock.patch.object(crm_auto_splitter, "_read_order_totals", side_effect=[before, after]), \
+             mock.patch.object(crm_auto_splitter, "_original_payment_transfer_transaction_is_present", return_value=False), \
+             mock.patch.object(crm_auto_splitter, "_open_record_transaction") as open_transaction, \
+             mock.patch.object(crm_auto_splitter, "_save_transaction_modal_with_amount") as save_transaction, \
+             mock.patch.object(crm_auto_splitter.time, "sleep"):
+            result = crm_auto_splitter._record_retained_original_payment_allocation(
+                driver,
+                "4900000",
+                crm_auto_splitter.Decimal("50.00"),
+                "transferred to 4900001 and 4900002",
+            )
+
+        open_transaction.assert_called_once_with(driver, quote=False)
+        save_transaction.assert_called_once_with(
+            driver,
+            "Refund",
+            "transferred to 4900001 and 4900002",
+            amount=crm_auto_splitter.Decimal("-250.00"),
+            validate_refund=False,
+        )
+        self.assertEqual(result["desired_paid"], "50.00")
+        self.assertEqual(result["transferred_payment"], "250.00")
+
+    def test_retained_payment_retry_reconstructs_original_paid_total(self):
+        transfer_note = "split 1 retained on original 4900000; transferred to 4900001 and 4900002"
+        state = {
+            "amount_paid": "50.00",
+            "transactions": [
+                {"tag": "Stripe Manual CC Entry", "note": "pi_test", "amount": "300.00"},
+                {"tag": "Refund", "note": transfer_note, "amount": "-250.00"},
+                {"tag": "Refund", "note": "unrelated adjustment", "amount": "-5.00"},
+            ],
+        }
+
+        current_paid = crm_auto_splitter._paid_amount_from_state(state)
+        previously_transferred = crm_auto_splitter._retained_payment_transfer_from_state(state, transfer_note)
+
+        self.assertEqual(current_paid, crm_auto_splitter.Decimal("50.00"))
+        self.assertEqual(previously_transferred, crm_auto_splitter.Decimal("250.00"))
+        self.assertEqual(current_paid + previously_transferred, crm_auto_splitter.Decimal("300.00"))
+
     def test_split_total_mismatch_message_names_old_new_and_difference(self):
         message = crm_auto_splitter._split_total_mismatch_message(
             crm_auto_splitter.Decimal("100.00"),
@@ -6204,6 +6447,30 @@ class CrmProductSeparatorTests(unittest.TestCase):
 
         self.assertTrue(server._crm_auto_splitter_recovery_payload_is_usable(payload, "4536106", 12, 2))
         self.assertEqual(server._crm_auto_splitter_recovery_order_ids_from_payload(payload), ["4536164", "4536167"])
+
+    def test_server_recovery_excludes_retained_original_order(self):
+        payload = {
+            "success": False,
+            "dry_run": False,
+            "target_order_id": "4900000",
+            "expected_tab_count": 25,
+            "divisions": 3,
+            "new_order_ids": ["4900000", "4900001"],
+            "report": {
+                "partial": True,
+                "original_order_id": "4900000",
+                "split_orders": [
+                    {"order_id": "4900000", "retained_original": True},
+                    {"order_id": "4900001"},
+                    {"order_id": "4900002"},
+                ],
+            },
+        }
+
+        self.assertEqual(
+            server._crm_auto_splitter_recovery_order_ids_from_payload(payload),
+            ["4900001", "4900002"],
+        )
 
     @mock.patch.object(crm_auto_splitter.time, "sleep", return_value=None)
     @mock.patch.object(crm_auto_splitter.time, "monotonic", side_effect=[0, 1, 2, 3, 4])

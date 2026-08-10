@@ -455,6 +455,13 @@ def _planned_stock_routing(stock_summary, subcontractor):
     is_subcontractor = bool(subcontractor)
     is_mach6 = "mach 6" in subcontractor.lower()
     if not stock_summary.get("stock_ordered"):
+        order_stock_status = stock_summary.get("order_stock_status") or {}
+        if not order_stock_status.get("stock_status_needs_order"):
+            return {
+                "action": "manual_review",
+                "reason": "stock_status_unknown_or_conflicting",
+                "subcontractor": subcontractor,
+            }
         return {"action": "none", "reason": "no_stock_ordered", "subcontractor": subcontractor}
     if stock_summary.get("unknown_ordered_tabs"):
         return {
@@ -573,6 +580,52 @@ def _allocate_money(amount, divisions):
 
 def _allocate_shipping(total_shipping, divisions):
     return _allocate_money(total_shipping, divisions)
+
+
+def _allocate_money_proportionally(amount, weights):
+    """Allocate cents by weight using largest remainders and stable index order."""
+    amount = Decimal(amount or "0.00").quantize(Decimal("0.01"))
+    normalized_weights = [max(Decimal(str(value or "0")), Decimal("0")) for value in (weights or [])]
+    if not normalized_weights:
+        return []
+    if amount == Decimal("0.00"):
+        return [Decimal("0.00") for _ in normalized_weights]
+    total_weight = sum(normalized_weights, Decimal("0"))
+    if total_weight <= Decimal("0"):
+        return _allocate_money(amount, len(normalized_weights))
+
+    sign = Decimal("-1") if amount < 0 else Decimal("1")
+    total_cents = int((amount.copy_abs() * 100).to_integral_value(rounding=ROUND_HALF_UP))
+    raw_cents = [(Decimal(total_cents) * weight / total_weight) for weight in normalized_weights]
+    floor_cents = [int(value) for value in raw_cents]
+    remaining = total_cents - sum(floor_cents)
+    remainder_order = sorted(
+        range(len(raw_cents)),
+        key=lambda index: (raw_cents[index] - Decimal(floor_cents[index]), -index),
+        reverse=True,
+    )
+    for index in remainder_order[:remaining]:
+        floor_cents[index] += 1
+    return [
+        (sign * Decimal(cents) / Decimal(100)).quantize(Decimal("0.01"))
+        for cents in floor_cents
+    ]
+
+
+def _plan_with_original_retained(plan):
+    """Keep split 1 on the original and preserve the original promo there."""
+    retained_plan = [dict(split) for split in (plan or [])]
+    if not retained_plan:
+        return retained_plan
+    promo_total = sum(
+        (Decimal(str(split.get("promo_credit") or "0.00")) for split in retained_plan),
+        Decimal("0.00"),
+    ).quantize(Decimal("0.01"))
+    for index, split in enumerate(retained_plan):
+        split["retained_original"] = index == 0
+        split["promo_credit"] = _money_text(promo_total if index == 0 else Decimal("0.00"))
+        split["promo_retained_on_original"] = bool(promo_total and index == 0)
+    return retained_plan
 
 
 def _build_split_plan(designs, divisions, original_order_id, shipping_amount=Decimal("0.00"), promo_amount=Decimal("0.00"), promo_code=""):
@@ -1412,6 +1465,149 @@ def _remove_quote_design_by_id(driver, design_id):
     raise SplitterError(f"Design ID {design_id} was not removed after confirming delete.")
 
 
+def _order_design_ids(driver):
+    return [
+        int(value)
+        for value in _order_scope(
+            driver,
+            """
+            return (r.designs || []).map((design) => Number(design.designId));
+            """,
+        )
+        if str(value).isdigit() or isinstance(value, (int, float))
+    ]
+
+
+def _remove_order_design_by_id(driver, design_id):
+    """Remove one whole design tab from an editable order and verify it left the model."""
+    design_id = int(design_id)
+    if design_id not in _order_design_ids(driver):
+        return False
+    result = _order_scope(
+        driver,
+        """
+        const designId = Number(arguments[0]);
+        const designs = r.designs || [];
+        const index = designs.findIndex((design) => Number(design.designId) === designId);
+        if (index < 0) return {started: false, missing: true};
+        if (typeof s.removeDesign !== 'function') return {started: false, unsupported: true};
+        runInAngular(s, () => {
+          if (typeof s.editModeOn === 'function') s.editModeOn();
+          s.removeDesign(designs[index], index, r);
+        });
+        return {started: true};
+        """,
+        design_id,
+    )
+    if not (result or {}).get("started"):
+        if (result or {}).get("unsupported"):
+            raise SplitterError("CRM order editor does not expose its design-tab removal action.")
+        return False
+
+    deadline = time.monotonic() + 15
+    accepted = False
+    while time.monotonic() < deadline:
+        time.sleep(0.25)
+        modal_error = _visible_crm_error_message(driver)
+        if modal_error:
+            raise RecoverableCrmError(f"CRM error while removing original design {design_id}: {modal_error}")
+        modal_text = _find_modal_text(driver).lower()
+        if "delete this design" in modal_text or "are you sure" in modal_text:
+            accepted = _click_modal_choice(driver, "yes") or accepted
+            break
+        if design_id not in _order_design_ids(driver):
+            accepted = True
+            break
+    if not accepted:
+        raise SplitterError(f"Delete confirmation did not appear for original design ID {design_id}.")
+
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        time.sleep(0.5)
+        if design_id not in _order_design_ids(driver):
+            return True
+    raise SplitterError(f"Original design ID {design_id} was not removed after confirmation.")
+
+
+def _configure_retained_original_order(driver, original_order_id, original_order_url, retained_split, max_attempts=2):
+    """Trim the original to split 1, set its shipping share, and verify after reload."""
+    keep_ids = sorted(int(value) for value in retained_split.get("keep_design_ids") or [])
+    if not keep_ids:
+        raise SplitterError("The retained original split has no readable design IDs.")
+    expected_source_ids = sorted(
+        set(keep_ids + [int(value) for value in retained_split.get("delete_design_ids") or []])
+    )
+    last_error = None
+    for attempt in range(1, max(1, int(max_attempts or 1)) + 1):
+        if attempt > 1:
+            _open_order_scope_with_reload(
+                driver,
+                original_order_url,
+                order_id=original_order_id,
+                label="retained original order recovery reload",
+            )
+        try:
+            current_ids = sorted(_order_design_ids(driver))
+            if not set(keep_ids).issubset(current_ids):
+                raise SplitterError(
+                    f"Retained original is missing required design IDs. Expected {keep_ids}, found {current_ids}."
+                )
+            unexpected = sorted(set(current_ids) - set(expected_source_ids))
+            if unexpected:
+                raise SplitterError(f"Retained original contains unexpected design IDs: {unexpected}.")
+            for design_id in sorted(set(current_ids) - set(keep_ids), reverse=True):
+                _remove_order_design_by_id(driver, design_id)
+            _order_scope(
+                driver,
+                """
+                const shipping = arguments[0];
+                runInAngular(s, () => {
+                  if (typeof s.editModeOn === 'function') s.editModeOn();
+                  r.shippingCharges = shipping;
+                  if (s.order && typeof s.order.setShippingCharges === 'function') {
+                    s.order.setShippingCharges(shipping);
+                  }
+                });
+                return true;
+                """,
+                _money_text(retained_split.get("shipping_charge") or "0.00"),
+            )
+            save_result = _save_order_and_wait(driver)
+            _open_order_scope_with_reload(
+                driver,
+                original_order_url,
+                order_id=original_order_id,
+                label="retained original order verification reload",
+            )
+            verified_ids = sorted(_order_design_ids(driver))
+            if verified_ids != keep_ids:
+                raise RecoverableCrmError(
+                    f"Retained original design verification failed. Expected {keep_ids}, found {verified_ids}."
+                )
+            totals = _read_order_totals(driver)
+            return {
+                "split_index": int(retained_split.get("split_index") or 1),
+                "order_id": str(original_order_id),
+                "existing_order": True,
+                "retained_original": True,
+                "kept_design_names": retained_split.get("keep_design_names") or [],
+                "kept_design_ids": keep_ids,
+                "deleted_design_ids": retained_split.get("delete_design_ids") or [],
+                "shipping_charge": retained_split.get("shipping_charge", "0.00"),
+                "promo_credit": retained_split.get("promo_credit", "0.00"),
+                "promo_code": retained_split.get("promo_code", ""),
+                "stock_transfer_records": [],
+                "save_result": save_result,
+                "totals": totals,
+            }
+        except RecoverableCrmError as err:
+            last_error = err
+            if attempt >= max_attempts:
+                raise
+            _dismiss_crm_error_modal(driver)
+    raise last_error or SplitterError("Retained original order could not be configured.")
+
+
 def _click_ng_button(driver, ng_click, text=None):
     return bool(
         driver.execute_script(
@@ -1648,8 +1844,8 @@ def _save_transaction_modal(driver, tag, transaction_id):
     return _save_transaction_modal_with_amount(driver, tag, transaction_id, amount=None)
 
 
-def _save_transaction_modal_with_amount(driver, tag, transaction_id, amount=None):
-    if "refund" in _clean_text(tag).lower():
+def _save_transaction_modal_with_amount(driver, tag, transaction_id, amount=None, validate_refund=True):
+    if validate_refund and "refund" in _clean_text(tag).lower():
         totals = _read_order_totals(driver)
         _validate_refund_amounts_match(
             totals.get("paid"),
@@ -1781,42 +1977,63 @@ def _quote_is_safe_for_unpaid_fallback(state, expected_amount, transaction_id):
 
 
 def _verify_paid_split_order_totals(totals):
+    grand_total = _parse_money((totals or {}).get("grand_total"))
+    return _verify_order_payment_allocation(totals, grand_total)
+
+
+def _verify_order_payment_allocation(totals, expected_paid):
     totals = totals if isinstance(totals, dict) else {}
     grand_total = _parse_money(totals.get("grand_total"))
     paid = _parse_money(totals.get("paid"))
     balance_due = _parse_money(totals.get("balance_due"))
-    if (paid - grand_total).copy_abs() > SPLIT_TOTAL_TOLERANCE or balance_due.copy_abs() > SPLIT_TOTAL_TOLERANCE:
+    expected_paid = _parse_money(expected_paid)
+    expected_balance = (grand_total - expected_paid).quantize(Decimal("0.01"))
+    if (
+        (paid - expected_paid).copy_abs() > SPLIT_TOTAL_TOLERANCE
+        or (balance_due - expected_balance).copy_abs() > SPLIT_TOTAL_TOLERANCE
+    ):
         raise SplitterError(
-            "Split order payment verification failed: "
+            "Split order payment verification failed (allocation): "
             f"Grand Total ${_money_text(grand_total)}, Paid ${_money_text(paid)}, "
-            f"Balance Due ${_money_text(balance_due)}."
+            f"Balance Due ${_money_text(balance_due)}; expected Paid ${_money_text(expected_paid)} "
+            f"and Balance Due ${_money_text(expected_balance)}."
         )
     return {
         "passed": True,
         "grand_total": _money_text(grand_total),
         "paid": _money_text(paid),
         "balance_due": _money_text(balance_due),
+        "expected_paid": _money_text(expected_paid),
     }
 
 
-def _record_split_payment_on_order(driver, order_id, tag, transaction_id, amount):
+def _record_split_payment_on_order(driver, order_id, tag, transaction_id, amount, expected_grand_total=None):
     order_url = _order_url(order_id=order_id)
     _open_order_scope_with_reload(driver, order_url, order_id=order_id, label=f"fallback split order {order_id}")
     before = _read_order_totals(driver)
     expected = _parse_money(amount)
-    if (_parse_money(before.get("grand_total")) - expected).copy_abs() > SPLIT_TOTAL_TOLERANCE:
+    expected_total = _parse_money(expected_grand_total if expected_grand_total is not None else expected)
+    if (_parse_money(before.get("grand_total")) - expected_total).copy_abs() > SPLIT_TOTAL_TOLERANCE:
         raise SplitterError(
             "Produce Without Payment fallback created an order with a different total. "
-            f"Expected ${_money_text(expected)}, found ${before.get('grand_total') or '0.00'}."
+            f"Expected ${_money_text(expected_total)}, found ${before.get('grand_total') or '0.00'}."
         )
-    if _parse_money(before.get("paid")).copy_abs() > SPLIT_TOTAL_TOLERANCE:
-        return _verify_paid_split_order_totals(before)
+    current_paid = _parse_money(before.get("paid"))
+    if (current_paid - expected).copy_abs() <= SPLIT_TOTAL_TOLERANCE:
+        return _verify_order_payment_allocation(before, expected)
+    if current_paid.copy_abs() > SPLIT_TOTAL_TOLERANCE:
+        raise SplitterError(
+            f"Split order {order_id} already has ${_money_text(current_paid)} paid; "
+            f"expected ${_money_text(expected)} before recording payment."
+        )
+    if expected == Decimal("0.00"):
+        return _verify_order_payment_allocation(before, expected)
 
     _open_record_transaction(driver, quote=False)
     _save_transaction_modal_with_amount(driver, tag, transaction_id, amount=expected)
     time.sleep(2)
     _open_order_scope_with_reload(driver, order_url, order_id=order_id, label=f"paid fallback split order {order_id}")
-    return _verify_paid_split_order_totals(_read_order_totals(driver))
+    return _verify_order_payment_allocation(_read_order_totals(driver), expected)
 
 
 def _fallback_from_failed_quote_payment(driver, tag, transaction_id, amount, failure):
@@ -2675,6 +2892,162 @@ def _original_refund_transaction_is_present(driver, transfer_note, original_gran
     return False
 
 
+def _paid_amount_from_state(order_state, fallback="0.00"):
+    raw_amount_paid = (order_state or {}).get("amount_paid")
+    if raw_amount_paid not in (None, ""):
+        return _parse_money(raw_amount_paid).quantize(Decimal("0.01"))
+    transaction_total = Decimal("0.00")
+    found = False
+    for transaction in (order_state or {}).get("transactions") or []:
+        amount = _parse_money(transaction.get("amount"))
+        if amount:
+            transaction_total += amount
+            found = True
+    return (transaction_total if found else _parse_money(fallback)).quantize(Decimal("0.01"))
+
+
+def _retained_payment_transfer_from_state(order_state, transfer_note):
+    """Recover payment already moved off the retained original by an earlier attempt."""
+    expected_note = _clean_text(transfer_note).lower()
+    if not expected_note:
+        return Decimal("0.00")
+    transferred = Decimal("0.00")
+    for transaction in (order_state or {}).get("transactions") or []:
+        note = _clean_text(transaction.get("note")).lower()
+        amount = _parse_money(transaction.get("amount"))
+        if expected_note in note and amount < Decimal("0.00"):
+            transferred += amount.copy_abs()
+    return transferred.quantize(Decimal("0.01"))
+
+
+def _original_payment_transfer_transaction_is_present(driver, transfer_note, amount):
+    expected_note = _clean_text(transfer_note).lower()
+    expected_amount = Decimal(str(amount or "0.00")).copy_abs().quantize(Decimal("0.01"))
+    try:
+        for transaction in _get_order_live_state(driver).get("transactions", []):
+            note = _clean_text(transaction.get("note")).lower()
+            transaction_amount = _parse_money(transaction.get("amount"))
+            if expected_note in note and transaction_amount < 0 and transaction_amount.copy_abs() == expected_amount:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _record_retained_original_payment_allocation(
+    driver,
+    original_order_id,
+    desired_paid,
+    transfer_note,
+):
+    """Reduce the original's recorded payment to its proportional retained share."""
+    desired_paid = Decimal(str(desired_paid or "0.00")).quantize(Decimal("0.01"))
+    order_url = _order_url(order_id=original_order_id)
+    _open_order_scope_with_reload(
+        driver,
+        order_url,
+        order_id=original_order_id,
+        label="retained original payment allocation",
+    )
+    before = _read_order_totals(driver)
+    current_paid = _parse_money(before.get("paid"))
+    adjustment = (current_paid - desired_paid).quantize(Decimal("0.01"))
+    if adjustment < Decimal("0.00"):
+        raise SplitterError(
+            "Retained original payment allocation would require adding payment to the original. "
+            f"Current Paid ${_money_text(current_paid)}, desired ${_money_text(desired_paid)}."
+        )
+    if adjustment > Decimal("0.00"):
+        if not _original_payment_transfer_transaction_is_present(driver, transfer_note, adjustment):
+            _open_record_transaction(driver, quote=False)
+            _save_transaction_modal_with_amount(
+                driver,
+                "Refund",
+                transfer_note,
+                amount=-adjustment,
+                validate_refund=False,
+            )
+            time.sleep(2)
+        _open_order_scope_with_reload(
+            driver,
+            order_url,
+            order_id=original_order_id,
+            label="retained original payment verification",
+        )
+    totals = _read_order_totals(driver)
+    verification = _verify_order_payment_allocation(totals, desired_paid)
+    return {
+        "desired_paid": _money_text(desired_paid),
+        "transferred_payment": _money_text(adjustment),
+        "transaction_tag": "Refund" if adjustment > Decimal("0.00") else "",
+        "transaction_note": transfer_note if adjustment > Decimal("0.00") else "",
+        "verification": verification,
+        "totals": totals,
+    }
+
+
+def _allocate_retained_split_payments(driver, split_orders, original_paid, payment_type, transaction_id, transfer_note):
+    """Allocate any full or partial original payment across retained and new orders."""
+    ordered = sorted(split_orders or [], key=lambda item: int(item.get("split_index") or 0))
+    totals = [Decimal(str((item.get("totals") or {}).get("grand_total") or "0.00")) for item in ordered]
+    allocations = _allocate_money_proportionally(original_paid, totals)
+    if sum(allocations, Decimal("0.00")) != Decimal(str(original_paid or "0.00")).quantize(Decimal("0.01")):
+        raise SplitterError("Proportional payment allocation did not reconcile to the original paid amount.")
+    tag = _transaction_tag_for_payment_type(payment_type)
+    results = []
+    allocation_rows = list(zip(ordered, allocations, totals))
+    # Record payments on the already-created new orders first. Reduce the
+    # original only after every new allocation is verified, leaving recovery
+    # possible while the original still has its complete design set.
+    allocation_rows.sort(key=lambda row: bool(row[0].get("retained_original")))
+    for item, allocation, grand_total in allocation_rows:
+        order_id = str(item.get("order_id") or "")
+        if item.get("retained_original"):
+            payment_result = _record_retained_original_payment_allocation(
+                driver,
+                order_id,
+                allocation,
+                transfer_note,
+            )
+        else:
+            payment_result = _record_split_payment_on_order(
+                driver,
+                order_id,
+                tag,
+                transaction_id,
+                allocation,
+                expected_grand_total=grand_total,
+            )
+        item["payment_allocation"] = _money_text(allocation)
+        item["payment_verification"] = payment_result.get("verification", payment_result)
+        if payment_result.get("totals") and not item.get("retained_original"):
+            item["totals"] = payment_result["totals"]
+        elif not item.get("retained_original") and all(
+            key in payment_result for key in ("grand_total", "paid", "balance_due")
+        ):
+            item["totals"] = {
+                **(item.get("totals") or {}),
+                "grand_total": payment_result["grand_total"],
+                "paid": payment_result["paid"],
+                "balance_due": payment_result["balance_due"],
+            }
+        results.append(
+            {
+                "split_index": item.get("split_index"),
+                "order_id": order_id,
+                "retained_original": bool(item.get("retained_original")),
+                "grand_total": _money_text(grand_total),
+                "allocated_payment": _money_text(allocation),
+                "result": payment_result,
+            }
+        )
+    return {
+        "original_paid": _money_text(original_paid),
+        "allocated_total": _money_text(sum(allocations, Decimal("0.00"))),
+        "orders": results,
+    }
+
+
 def _verify_original_finalization_after_reload(
     driver,
     original_order_id,
@@ -3344,9 +3717,17 @@ def run_split_order(
         stock_summary = scan.get("stock_summary") or {}
         subcontractor = _clean_text(scan.get("subcontractor"))
         stock_routing = _planned_stock_routing(stock_summary, subcontractor)
+        retain_original = not bool(stock_summary.get("stock_ordered"))
+        if retain_original:
+            plan = _plan_with_original_retained(plan)
         if stock_routing.get("action") == "slack_mach6_cancelled":
             stock_routing["message"] = f"{target_url} cancelled"
-        original_note_after_split = f"transferred to {_format_order_list(['<split order #>' for _ in range(divisions)])}"
+        original_note_after_split = (
+            f"split 1 retained on original {resolved_order_id}; transferred to "
+            f"{_format_order_list(['<split order #>' for _ in range(max(divisions - 1, 0))])}"
+            if retain_original
+            else f"transferred to {_format_order_list(['<split order #>' for _ in range(divisions)])}"
+        )
         payment_type = scan.get("totals", {}).get("payment_type", "")
         payment_detected = _parse_money(scan.get("totals", {}).get("paid")) > Decimal("0.00")
         report = {
@@ -3363,6 +3744,8 @@ def run_split_order(
             "stock_summary": stock_summary,
             "subcontractor": subcontractor,
             "stock_routing": stock_routing,
+            "original_order_mode": "retain_as_split_1" if retain_original else "cancel_after_split",
+            "retain_original": retain_original,
             "split_plan": plan,
             "promo_allocation_total": _money_text(promo_amount),
             "promo_code": _clean_text(promo_code),
@@ -3375,12 +3758,18 @@ def run_split_order(
             },
             "original_order_final_steps": {
                 "refund_fee_amount": (
-                    scan.get("totals", {}).get("subtotal") or scan.get("totals", {}).get("subtotal_before_tax")
+                    "0.00"
+                    if retain_original
+                    else scan.get("totals", {}).get("subtotal")
+                    or scan.get("totals", {}).get("subtotal_before_tax")
                 ) if payment_detected else "0.00",
-                "cancel_status": "cancel order",
-                "refund_transaction_tag": "Refund" if payment_detected else "",
+                "cancel_status": "retain original order" if retain_original else "cancel order",
+                "refund_transaction_tag": (
+                    "Refund (payment transfer only)" if retain_original else "Refund"
+                ) if payment_detected else "",
                 "refund_transaction_id": original_note_after_split if payment_detected else "",
                 "payment_actions_skipped": not payment_detected,
+                "payment_allocation_mode": "proportional" if retain_original and payment_detected else "",
                 "sales_note": original_note_after_split,
                 "never_click_payment_refund_button": True,
             },
@@ -3402,6 +3791,17 @@ def run_split_order(
                     raise SplitterError("Original payment transaction ID could not be read from the payment view popup.")
 
             split_total = Decimal("0.00")
+            original_paid_amount = _paid_amount_from_state(
+                original_state,
+                fallback=scan.get("totals", {}).get("paid") or "0.00",
+            )
+            original_grand_total = Decimal(
+                _money_text(
+                    original_state.get("grand_total")
+                    or scan.get("totals", {}).get("grand_total")
+                    or "0"
+                )
+            )
             report.update(
                 {
                     "dry_run": False,
@@ -3420,14 +3820,17 @@ def run_split_order(
                     "resume_existing_order_ids": resume_existing_order_ids,
                 }
             )
-            completed_split_indexes = set()
+            retained_original_split = plan[0] if retain_original and plan else None
+            completed_split_indexes = {
+                int(retained_original_split.get("split_index") or 1)
+            } if retained_original_split else set()
             for existing_order_id in resume_existing_order_ids:
                 existing_split = _inspect_existing_split_order(driver, existing_order_id, plan, used_split_indexes=completed_split_indexes)
                 split_orders.append(existing_split)
                 completed_split_indexes.add(int(existing_split["split_index"]))
                 split_total += Decimal(existing_split["totals"]["grand_total"])
                 report["completed_split_count"] = len(split_orders)
-                report["remaining_split_count"] = max(len(plan) - len(split_orders), 0)
+                report["remaining_split_count"] = max(len(plan) - len(split_orders) - (1 if retain_original else 0), 0)
                 report["split_total_so_far"] = _money_text(split_total)
 
             pending_splits = [
@@ -3452,7 +3855,7 @@ def run_split_order(
                         expected_tab_count,
                         original_state,
                         payment_type,
-                        transaction_id,
+                        "" if retain_original else transaction_id,
                         profile_for_split,
                         visible,
                     )
@@ -3482,7 +3885,7 @@ def run_split_order(
                         split_orders.append(split_order)
                         report["split_orders"] = sorted(split_orders, key=lambda item: int(item.get("split_index") or 0))
                         report["completed_split_count"] = len(split_orders)
-                        report["remaining_split_count"] = max(len(plan) - len(split_orders), 0)
+                        report["remaining_split_count"] = max(len(plan) - len(split_orders) - (1 if retain_original else 0), 0)
                         report["split_total_so_far"] = _money_text(split_total)
                         if not worker_errors:
                             _submit_next(executor, profile_for_split)
@@ -3509,7 +3912,11 @@ def run_split_order(
                         split,
                         original_state,
                     )
-                    new_order_id = _finalize_split_quote_and_wait_for_order(driver, payment_type, transaction_id)
+                    new_order_id = _finalize_split_quote_and_wait_for_order(
+                        driver,
+                        payment_type,
+                        "" if retain_original else transaction_id,
+                    )
                     _open_order_scope_with_reload(
                         driver,
                         _order_url(order_id=new_order_id),
@@ -3519,8 +3926,12 @@ def run_split_order(
                     totals = _read_order_totals(driver)
                     payment_verification = (
                         _verify_paid_split_order_totals(totals)
-                        if transaction_id
-                        else {"passed": True, "skipped": True, "reason": "original_order_unpaid"}
+                        if transaction_id and not retain_original
+                        else {
+                            "passed": True,
+                            "skipped": True,
+                            "reason": "deferred_proportional_allocation" if retain_original else "original_order_unpaid",
+                        }
                     )
                     split_total += Decimal(totals["grand_total"])
                     split_orders.append(
@@ -3543,8 +3954,117 @@ def run_split_order(
                         }
                     )
                     report["completed_split_count"] = len(split_orders)
-                    report["remaining_split_count"] = max(len(plan) - len(split_orders), 0)
+                    report["remaining_split_count"] = max(len(plan) - len(split_orders) - (1 if retain_original else 0), 0)
                     report["split_total_so_far"] = _money_text(split_total)
+
+            new_split_order_ids = [
+                str(item.get("order_id"))
+                for item in split_orders
+                if item.get("order_id") and not item.get("retained_original")
+            ]
+            transfer_note = (
+                f"split 1 retained on original {resolved_order_id}; transferred to "
+                f"{_format_order_list(new_split_order_ids)}"
+                if retain_original
+                else f"transferred to {_format_order_list(new_split_order_ids)}"
+            )
+
+            if retain_original:
+                if len(split_orders) != max(len(plan) - 1, 0):
+                    raise SplitterError(
+                        "The original order was not modified because every new split order was not verified first."
+                    )
+                recovered_payment_transfer = _retained_payment_transfer_from_state(
+                    original_state,
+                    transfer_note,
+                )
+                allocation_original_paid = (
+                    original_paid_amount + recovered_payment_transfer
+                ).quantize(Decimal("0.01"))
+                if recovered_payment_transfer:
+                    payment_detected = True
+                    report["recovered_original_payment"] = {
+                        "current_original_paid": _money_text(original_paid_amount),
+                        "previously_transferred": _money_text(recovered_payment_transfer),
+                        "allocation_total": _money_text(allocation_original_paid),
+                    }
+                projected_retained_total = (original_grand_total - split_total).quantize(Decimal("0.01"))
+                if projected_retained_total < Decimal("0.00"):
+                    raise SplitterError(
+                        "The verified new split orders exceed the original order total; "
+                        "the original order was left unchanged for manual review."
+                    )
+                retained_order = {
+                    "split_index": retained_original_split["split_index"],
+                    "order_id": resolved_order_id,
+                    "existing_order": True,
+                    "retained_original": True,
+                    "kept_design_names": retained_original_split["keep_design_names"],
+                    "kept_design_ids": retained_original_split["keep_design_ids"],
+                    "deleted_design_ids": retained_original_split["delete_design_ids"],
+                    "shipping_charge": retained_original_split["shipping_charge"],
+                    "promo_credit": retained_original_split.get("promo_credit", "0.00"),
+                    "promo_code": retained_original_split.get("promo_code", ""),
+                    "stock_transfer_records": retained_original_split.get("stock_transfer_records", []),
+                    "totals": {
+                        "grand_total": _money_text(projected_retained_total),
+                        "paid": _money_text(original_paid_amount),
+                        "balance_due": _money_text(projected_retained_total - original_paid_amount),
+                    },
+                }
+                split_orders.append(retained_order)
+                split_orders.sort(key=lambda item: int(item.get("split_index") or 0))
+
+                # Keep the original complete and recoverable until all fallible
+                # cross-order work has succeeded. Its design trim is the final
+                # mutation in the retained-original workflow.
+                _open_order_scope_with_reload(
+                    driver,
+                    target_url,
+                    order_id=resolved_order_id,
+                    label="retained original order sales note",
+                )
+                if not _original_transfer_note_is_present(driver, transfer_note):
+                    _add_original_transfer_note(driver, transfer_note)
+                payment_allocation = _allocate_retained_split_payments(
+                    driver,
+                    split_orders,
+                    allocation_original_paid,
+                    payment_type,
+                    transaction_id,
+                    transfer_note,
+                )
+                report["proportional_payment_allocation"] = payment_allocation
+
+                _open_order_scope_with_reload(
+                    driver,
+                    target_url,
+                    order_id=resolved_order_id,
+                    label="original CRM order retained as split 1",
+                )
+                configured_retained_order = _configure_retained_original_order(
+                    driver,
+                    resolved_order_id,
+                    target_url,
+                    retained_original_split,
+                )
+                configured_retained_order["payment_allocation"] = retained_order.get("payment_allocation", "0.00")
+                configured_retained_order["payment_verification"] = _verify_order_payment_allocation(
+                    configured_retained_order["totals"],
+                    configured_retained_order["payment_allocation"],
+                )
+                if _original_order_is_cancelled(driver):
+                    raise SplitterError("The retained original order is unexpectedly cancelled.")
+                split_orders = [
+                    configured_retained_order if item.get("retained_original") else item
+                    for item in split_orders
+                ]
+                retained_order = configured_retained_order
+                split_total += Decimal(retained_order["totals"]["grand_total"])
+                report["completed_split_count"] = len(split_orders)
+                report["remaining_split_count"] = 0
+                report["split_orders"] = split_orders
+                report["split_total_so_far"] = _money_text(split_total)
 
             if stock_routing.get("action") == "copy_to_split_orders":
                 stock_transfer_result = _copy_stock_records_to_split_orders(
@@ -3554,7 +4074,6 @@ def run_split_order(
                 )
                 report["stock_transfer"] = stock_transfer_result
 
-            original_grand_total = Decimal(_money_text(original_state.get("grand_total") or scan.get("totals", {}).get("grand_total") or "0"))
             if original_grand_total == Decimal("0.00") and resume_existing_order_ids and split_total > Decimal("0.00"):
                 original_grand_total = split_total.quantize(Decimal("0.01"))
             split_total_delta = (split_total - original_grand_total).quantize(Decimal("0.01"))
@@ -3574,7 +4093,6 @@ def run_split_order(
             elif split_total_delta:
                 report["split_total_rounding_delta"] = _money_text(split_total_delta)
 
-            transfer_note = f"transferred to {_format_order_list([item['order_id'] for item in split_orders])}"
             refund_amount = Decimal(
                 _money_text(
                     scan.get("totals", {}).get("subtotal_before_tax")
@@ -3588,20 +4106,30 @@ def run_split_order(
                 refund_amount = existing_refund_amount
             elif refund_amount == Decimal("0.00") and resume_existing_order_ids:
                 refund_amount = split_total.quantize(Decimal("0.01"))
-            _open_order_scope_with_reload(
-                driver,
-                target_url,
-                order_id=resolved_order_id,
-                label="original CRM order for refund and cancellation",
-            )
-            original_finalization = _finalize_original_order_after_split(
-                driver,
-                payment_detected,
-                refund_amount,
-                original_grand_total,
-                transfer_note,
-                resolved_order_id,
-            )
+            if retain_original:
+                original_finalization = {
+                    "retained_original": True,
+                    "cancelled": False,
+                    "payment_actions_skipped": not payment_detected,
+                    "sales_note": transfer_note,
+                    "final_totals": retained_order.get("totals", {}),
+                    "verification": {"passed": True, "mode": "retain_as_split_1"},
+                }
+            else:
+                _open_order_scope_with_reload(
+                    driver,
+                    target_url,
+                    order_id=resolved_order_id,
+                    label="original CRM order for refund and cancellation",
+                )
+                original_finalization = _finalize_original_order_after_split(
+                    driver,
+                    payment_detected,
+                    refund_amount,
+                    original_grand_total,
+                    transfer_note,
+                    resolved_order_id,
+                )
             if stock_routing.get("action") == "slack_mach6_cancelled":
                 report["stock_cancel_slack"] = _send_mach6_stock_cancel_slack(target_url, dry_run=False)
 
@@ -3629,9 +4157,15 @@ def run_split_order(
                     },
                 }
             )
+            new_order_ids = [
+                item["order_id"] for item in split_orders if not item.get("retained_original")
+            ]
             completion_message = (
-                f"Auto-split complete for order {resolved_order_id}. "
-                f"New split orders: {_format_order_list([item['order_id'] for item in split_orders])}."
+                f"Auto-split complete for order {resolved_order_id}. Original retained as split 1; "
+                f"new split orders: {_format_order_list(new_order_ids)}."
+                if retain_original
+                else f"Auto-split complete for order {resolved_order_id}. "
+                f"New split orders: {_format_order_list(new_order_ids)}."
             )
             if split_total_mismatch_warning:
                 report["total_mismatch_warning"] = split_total_mismatch_warning
@@ -3648,7 +4182,7 @@ def run_split_order(
                 detected_tab_count=scan["detected_tab_count"],
                 expected_tab_count=expected_tab_count,
                 divisions=divisions,
-                new_order_ids=[item["order_id"] for item in split_orders],
+                new_order_ids=new_order_ids,
                 total_mismatch_warning=split_total_mismatch_warning,
                 report=report,
                 duration_seconds=round(time.monotonic() - started, 2),
@@ -3683,7 +4217,11 @@ def run_split_order(
         }
         if report is not None:
             extra["report"] = report
-            extra["new_order_ids"] = [item.get("order_id") for item in split_orders if item.get("order_id")]
+            extra["new_order_ids"] = [
+                item.get("order_id")
+                for item in split_orders
+                if item.get("order_id") and not item.get("retained_original")
+            ]
             extra["completed_split_count"] = len(split_orders)
             extra["remaining_split_count"] = max(len(report.get("split_plan", [])) - len(split_orders), 0)
         _write_result(False, str(err), result_file=result_file, **extra)
@@ -3701,7 +4239,11 @@ def run_split_order(
         }
         if report is not None:
             extra["report"] = report
-            extra["new_order_ids"] = [item.get("order_id") for item in split_orders if item.get("order_id")]
+            extra["new_order_ids"] = [
+                item.get("order_id")
+                for item in split_orders
+                if item.get("order_id") and not item.get("retained_original")
+            ]
             extra["completed_split_count"] = len(split_orders)
             extra["remaining_split_count"] = max(len(report.get("split_plan", [])) - len(split_orders), 0)
         _write_result(False, f"Auto-split failed for order {resolved_order_id or target_url}: {err}", result_file=result_file, **extra)
