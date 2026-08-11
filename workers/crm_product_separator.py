@@ -735,7 +735,7 @@ def _stock_state_from_text(text):
 def _order_stock_status_from_text(text):
     body_text = _clean_text(text)
     match = re.search(
-        r"\bstock\s+status\s*:\s*(?:stock\s+)?(?P<status>ordered|needs?\s+to\s+order|not\s+ordered|unordered)\b",
+        r"\bstock\s+status\s*:\s*(?:stock\s+)?(?P<status>ordered|needs?\s+to\s+order|not\s+ordered|unordered|locked\s+for\s+auto\s+ordering)\b",
         body_text,
         flags=re.IGNORECASE,
     )
@@ -750,7 +750,9 @@ def _order_stock_status_from_text(text):
     normalized = status_text.lower()
     if normalized == "ordered":
         state = "ordered"
-    elif re.fullmatch(r"needs?\s+to\s+order|not\s+ordered|unordered", normalized):
+    # Auto Splitter runs before Unlocker and Order Goods, so CRM's locked
+    # auto-ordering status still means that stock has not been ordered yet.
+    elif re.fullmatch(r"needs?\s+to\s+order|not\s+ordered|unordered|locked\s+for\s+auto\s+ordering", normalized):
         state = "need_to_order"
     else:
         state = "unknown"

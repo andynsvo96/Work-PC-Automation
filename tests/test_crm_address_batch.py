@@ -5704,6 +5704,22 @@ class CrmProductSeparatorTests(unittest.TestCase):
         self.assertFalse(result["stock_status_ordered"])
         self.assertTrue(result["stock_status_needs_order"])
 
+    def test_auto_splitter_routes_locked_for_auto_ordering_as_stock_not_ordered(self):
+        order_status = crm_product_separator._order_stock_status_from_text(
+            "Stock Status: Locked for Auto Ordering"
+        )
+        stock_summary = crm_auto_splitter._summarize_original_stock(
+            [{"tab_number": 1, "stock": {"state": "not_ordered_or_unknown"}}],
+            order_stock_status=order_status,
+        )
+
+        routing = crm_auto_splitter._planned_stock_routing(stock_summary, subcontractor="")
+
+        self.assertEqual(order_status["state"], "need_to_order")
+        self.assertFalse(stock_summary["stock_ordered"])
+        self.assertEqual(routing["action"], "none")
+        self.assertEqual(routing["reason"], "no_stock_ordered")
+
     def test_separator_plan_skips_stock_apply_when_order_status_needs_order(self):
         scan = self._product_separator_mixed_scan()
         scan["order_stock_status"] = crm_product_separator._order_stock_status_from_text(
