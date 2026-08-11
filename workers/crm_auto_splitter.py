@@ -1471,7 +1471,9 @@ def _order_design_ids(driver):
         for value in _order_scope(
             driver,
             """
-            return (r.designs || []).map((design) => Number(design.designId));
+            return (r.designs || [])
+              .filter((design) => String(design.crudAction || '').toLowerCase() !== 'd')
+              .map((design) => Number(design.designId));
             """,
         )
         if str(value).isdigit() or isinstance(value, (int, float))
@@ -1844,8 +1846,75 @@ def _save_transaction_modal(driver, tag, transaction_id):
     return _save_transaction_modal_with_amount(driver, tag, transaction_id, amount=None)
 
 
+def _click_transaction_modal_save_button(driver):
+    """Submit a prepared manual transaction through the modal's visible Save action."""
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            clicked = bool(
+                driver.execute_script(
+                    """
+                    const clean = (value) => (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                    const visible = (el) => {
+                      const rect = el.getBoundingClientRect();
+                      const style = window.getComputedStyle(el);
+                      return rect.width > 0 && rect.height > 0 &&
+                        style.display !== 'none' && style.visibility !== 'hidden';
+                    };
+                    const modals = Array.from(document.querySelectorAll('.modal, .modal-content, [role=dialog]'))
+                      .filter(visible);
+                    const root = modals.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0];
+                    if (!root) return false;
+                    const button = Array.from(root.querySelectorAll('button,a,input,[role=button]')).find((el) => {
+                      const text = clean(`${el.innerText || ''} ${el.value || ''} ${el.getAttribute('aria-label') || ''}`);
+                      return visible(el) && text === 'save' && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+                    });
+                    if (!button) return false;
+                    button.scrollIntoView({block: 'center', inline: 'center'});
+                    button.click();
+                    return true;
+                    """
+                )
+            )
+            if clicked:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    raise SplitterError("Transaction modal Save button was not found.")
+
+
+def _wait_for_transaction_modal_submission(driver, timeout=30):
+    deadline = time.monotonic() + max(1, int(timeout or 30))
+    while time.monotonic() < deadline:
+        error_message = _visible_crm_error_message(driver)
+        if error_message:
+            raise SplitterError(f"CRM rejected the transaction: {error_message}")
+        modal_open = bool(
+            driver.execute_script(
+                """
+                const visible = (el) => {
+                  const rect = el.getBoundingClientRect();
+                  const style = window.getComputedStyle(el);
+                  return rect.width > 0 && rect.height > 0 &&
+                    style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                return Array.from(document.querySelectorAll('.modal, .modal-content, [role=dialog]')).some((modal) => {
+                  if (!visible(modal)) return false;
+                  return !!modal.querySelector('input[name="amount"][ng-model="transaction.amount"]');
+                });
+                """
+            )
+        )
+        if not modal_open:
+            return True
+        time.sleep(0.5)
+    raise SplitterError("CRM did not finish saving the transaction modal.")
+
+
 def _save_transaction_modal_with_amount(driver, tag, transaction_id, amount=None, validate_refund=True):
-    if validate_refund and "refund" in _clean_text(tag).lower():
+    refund_mode = "refund" in _clean_text(tag).lower()
+    if validate_refund and refund_mode:
         totals = _read_order_totals(driver)
         _validate_refund_amounts_match(
             totals.get("paid"),
@@ -1876,14 +1945,18 @@ def _save_transaction_modal_with_amount(driver, tag, transaction_id, amount=None
                   s.transaction.note = arguments[1];
                   if (arguments[2]) s.transaction.amount = arguments[2];
                 });
-                s.save();
+                if (!arguments[3]) s.save();
                 return true;
                 """,
                 tag,
                 transaction_id,
                 _money_text(amount) if amount is not None else "",
+                refund_mode,
             )
             if saved:
+                if refund_mode:
+                    _click_transaction_modal_save_button(driver)
+                    _wait_for_transaction_modal_submission(driver)
                 return True
         except Exception:
             pass
@@ -3020,7 +3093,7 @@ def _allocate_retained_split_payments(driver, split_orders, original_paid, payme
             )
         item["payment_allocation"] = _money_text(allocation)
         item["payment_verification"] = payment_result.get("verification", payment_result)
-        if payment_result.get("totals") and not item.get("retained_original"):
+        if payment_result.get("totals"):
             item["totals"] = payment_result["totals"]
         elif not item.get("retained_original") and all(
             key in payment_result for key in ("grand_total", "paid", "balance_due")
@@ -4015,9 +4088,10 @@ def run_split_order(
                 split_orders.append(retained_order)
                 split_orders.sort(key=lambda item: int(item.get("split_index") or 0))
 
-                # Keep the original complete and recoverable until all fallible
-                # cross-order work has succeeded. Its design trim is the final
-                # mutation in the retained-original workflow.
+                # CRM limits a manual Refund transaction to the order's current
+                # negative balance. Verify every new split first, then trim the
+                # retained original so its overpayment equals the amount that
+                # must be transferred away before recording that transaction.
                 _open_order_scope_with_reload(
                     driver,
                     target_url,
@@ -4026,6 +4100,17 @@ def run_split_order(
                 )
                 if not _original_transfer_note_is_present(driver, transfer_note):
                     _add_original_transfer_note(driver, transfer_note)
+                configured_retained_order = _configure_retained_original_order(
+                    driver,
+                    resolved_order_id,
+                    target_url,
+                    retained_original_split,
+                )
+                split_orders = [
+                    configured_retained_order if item.get("retained_original") else item
+                    for item in split_orders
+                ]
+                retained_order = configured_retained_order
                 payment_allocation = _allocate_retained_split_payments(
                     driver,
                     split_orders,
@@ -4040,15 +4125,15 @@ def run_split_order(
                     driver,
                     target_url,
                     order_id=resolved_order_id,
-                    label="original CRM order retained as split 1",
+                    label="retained original final verification",
                 )
-                configured_retained_order = _configure_retained_original_order(
-                    driver,
-                    resolved_order_id,
-                    target_url,
-                    retained_original_split,
-                )
-                configured_retained_order["payment_allocation"] = retained_order.get("payment_allocation", "0.00")
+                verified_ids = sorted(_order_design_ids(driver))
+                expected_ids = sorted(int(value) for value in retained_original_split.get("keep_design_ids") or [])
+                if verified_ids != expected_ids:
+                    raise SplitterError(
+                        f"Retained original final design verification failed. Expected {expected_ids}, found {verified_ids}."
+                    )
+                configured_retained_order["totals"] = _read_order_totals(driver)
                 configured_retained_order["payment_verification"] = _verify_order_payment_allocation(
                     configured_retained_order["totals"],
                     configured_retained_order["payment_allocation"],

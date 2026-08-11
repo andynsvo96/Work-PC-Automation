@@ -4635,6 +4635,15 @@ class CrmAutoSplitterTests(unittest.TestCase):
         script = order_scope.call_args.args[1]
         self.assertIn("s.removeDesign(designs[index], index, r)", script)
 
+    def test_original_order_design_ids_exclude_pending_deletes(self):
+        driver = mock.Mock()
+        with mock.patch.object(crm_auto_splitter, "_order_scope", return_value=[101]) as order_scope:
+            design_ids = crm_auto_splitter._order_design_ids(driver)
+
+        self.assertEqual(design_ids, [101])
+        self.assertIn("design.crudAction", order_scope.call_args.args[1])
+        self.assertIn("!== 'd'", order_scope.call_args.args[1])
+
     def test_retained_original_is_trimmed_to_first_split_and_verified_after_reload(self):
         driver = mock.Mock()
         retained_split = {
@@ -4801,6 +4810,28 @@ class CrmAutoSplitterTests(unittest.TestCase):
         )
         self.assertEqual(result["desired_paid"], "50.00")
         self.assertEqual(result["transferred_payment"], "250.00")
+
+    def test_manual_refund_transaction_uses_visible_modal_save_action(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = True
+
+        with mock.patch.object(crm_auto_splitter, "_click_transaction_modal_save_button", return_value=True) as click_save, \
+             mock.patch.object(crm_auto_splitter, "_wait_for_transaction_modal_submission", return_value=True) as wait_for_save, \
+             mock.patch.object(crm_auto_splitter.time, "sleep"):
+            saved = crm_auto_splitter._save_transaction_modal_with_amount(
+                driver,
+                "Refund",
+                "split 1 retained on original 4900000; transferred to 4900001",
+                amount=crm_auto_splitter.Decimal("-250.00"),
+                validate_refund=False,
+            )
+
+        self.assertTrue(saved)
+        click_save.assert_called_once_with(driver)
+        wait_for_save.assert_called_once_with(driver)
+        transaction_call = driver.execute_script.call_args_list[0]
+        self.assertIn("if (!arguments[3]) s.save();", transaction_call.args[0])
+        self.assertIs(transaction_call.args[4], True)
 
     def test_retained_payment_retry_reconstructs_original_paid_total(self):
         transfer_note = "split 1 retained on original 4900000; transferred to 4900001 and 4900002"
