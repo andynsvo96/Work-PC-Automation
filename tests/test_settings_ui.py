@@ -118,6 +118,24 @@ class SettingsUiStructureTests(unittest.TestCase):
         self.assertIn("/automation/salesforce-worker-setup", self.html)
         self.assertIn("/automation/salesforce-worker-test", self.html)
 
+    def test_salesforce_verification_popup_is_wired(self):
+        for element_id in (
+            "salesforceVerificationDialog",
+            "salesforceVerificationCodeInput",
+            "salesforceVerificationSubmitBtn",
+            "salesforceVerificationCancelBtn",
+        ):
+            self.assertEqual(len(re.findall(rf"\bid=['\"]{element_id}['\"]", self.html)), 1)
+        for function_name in (
+            "syncSalesforceVerificationPrompt",
+            "pollSalesforceVerification",
+            "submitSalesforceVerificationCode",
+            "cancelSalesforceVerification",
+        ):
+            self.assertIn(f"function {function_name}(", self.html)
+        self.assertIn("/api/salesforce-verification/submit", self.html)
+        self.assertIn("Verify and resume", self.html)
+
     def test_system_sections_are_merged_and_wired(self):
         expected = {"overview", "hardware", "clipboard", "power"}
         sections = set(re.findall(r"data-system-section=['\"]([^'\"]+)", self.html))

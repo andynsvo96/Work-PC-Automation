@@ -71,6 +71,11 @@ from config import (
 )
 import config as _config
 from runtime_paths import STATE_DIR, resolve_runtime_file
+from workers.salesforce_verification import (
+    consume_submitted_code,
+    create_request as create_salesforce_verification_request,
+    finish_request as finish_salesforce_verification_request,
+)
 from credential_store import (
     CRM_CREDENTIAL_TARGET,
     GOOGLE_SHEETS_CREDENTIAL_TARGET,
@@ -1325,7 +1330,8 @@ def _is_salesforce_verification_code_page(driver):
             driver.execute_script(
                 """
                 return !!document.querySelector(
-                  'input[autocomplete="one-time-code"], input[name*="verification" i], '
+                  'input#emc, input[name="emc"], input[autocomplete="one-time-code"], '
+                  + 'input[maxlength="6"], input[name*="verification" i], '
                   + 'input[id*="verification" i], input[name*="otp" i], input[id*="otp" i]'
                 );
                 """
@@ -1356,6 +1362,153 @@ def _is_salesforce_authenticated_page(driver):
     )
 
 
+def _salesforce_interactive_verification_enabled():
+    value = os.environ.get("SALESFORCE_INTERACTIVE_VERIFICATION", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _salesforce_worker_slot():
+    value = str(os.environ.get("SALESFORCE_WORKER_SLOT") or "").strip()
+    return int(value) if value.isdigit() else None
+
+
+def _salesforce_verification_input(driver):
+    selectors = (
+        'input#emc',
+        'input[name="emc"]',
+        'input[autocomplete="one-time-code"]',
+        'input[maxlength="6"]',
+        'input[name*="verification" i]',
+        'input[id*="verification" i]',
+        'input[name*="otp" i]',
+        'input[id*="otp" i]',
+        'input[type="tel"]',
+        'input[type="number"]',
+    )
+    for selector in selectors:
+        try:
+            for element in driver.find_elements(By.CSS_SELECTOR, selector):
+                if element.is_displayed() and element.is_enabled():
+                    return element
+        except Exception:
+            continue
+    return None
+
+
+def _click_salesforce_verify_button(driver):
+    for label in ("Verify", "Submit", "Continue"):
+        if _click_exact_visible_text(driver, label):
+            return True
+    for element in driver.find_elements(By.CSS_SELECTOR, "button,input[type=submit],[role=button]"):
+        try:
+            if not element.is_displayed() or not element.is_enabled():
+                continue
+            label = _clean_text(
+                " ".join(
+                    [
+                        element.text or "",
+                        element.get_attribute("value") or "",
+                        element.get_attribute("aria-label") or "",
+                    ]
+                )
+            ).lower()
+            if any(token in label for token in ("verify", "submit", "continue")):
+                element.click()
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _wait_for_salesforce_verification_code(request_id, timeout=300):
+    deadline = time.monotonic() + max(60, min(600, int(timeout or 300)))
+    while time.monotonic() < deadline:
+        code, status = consume_submitted_code(request_id)
+        if code:
+            return code
+        if status == "canceled":
+            raise CopyrightCancelError("Salesforce verification was canceled in the control panel.")
+        if status in {"expired", "failed", "missing", "invalid"}:
+            raise CopyrightCancelError(f"Salesforce verification request ended before a code was received ({status}).")
+        time.sleep(0.5)
+    raise CopyrightCancelError("Salesforce verification code was not entered within 5 minutes.")
+
+
+def _complete_salesforce_verification_code(driver, *, order_id=None, timeout=300):
+    if not _salesforce_interactive_verification_enabled():
+        raise CopyrightCancelError("Salesforce requires a 6-digit verification code.")
+
+    previous_error = ""
+    for attempt in range(1, 4):
+        request_payload = create_salesforce_verification_request(
+            worker_slot=_salesforce_worker_slot(),
+            order_id=order_id or os.environ.get("SALESFORCE_VERIFICATION_ORDER_ID"),
+            timeout_seconds=timeout,
+            previous_error=previous_error,
+        )
+        request_id = request_payload["request_id"]
+        worker_label = f"Worker {_salesforce_worker_slot()}" if _salesforce_worker_slot() else "Salesforce worker"
+        _publish_status(
+            f"{worker_label} is waiting for a 6-digit Salesforce verification code in the control panel.",
+            stage="salesforce_verification",
+            order_id=order_id,
+        )
+        try:
+            code = _wait_for_salesforce_verification_code(request_id, timeout=timeout)
+            code_input = None
+            input_deadline = time.monotonic() + 15
+            while time.monotonic() < input_deadline and code_input is None:
+                code_input = _salesforce_verification_input(driver)
+                if code_input is None:
+                    time.sleep(0.5)
+            if code_input is None:
+                raise CopyrightCancelError("Salesforce verification code input was not found.")
+            code_input.click()
+            code_input.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
+            code_input.send_keys(code)
+            if not _click_salesforce_verify_button(driver):
+                raise CopyrightCancelError("Salesforce Verify button was not found.")
+
+            verify_deadline = time.monotonic() + 30
+            while time.monotonic() < verify_deadline:
+                time.sleep(0.5)
+                if _is_salesforce_authenticated_page(driver):
+                    finish_salesforce_verification_request(
+                        request_id,
+                        success=True,
+                        message="Salesforce verification completed.",
+                    )
+                    _publish_status(
+                        f"{worker_label} completed Salesforce verification and resumed.",
+                        stage="salesforce_verification_complete",
+                        order_id=order_id,
+                    )
+                    return True
+
+            visible_text = _visible_text(driver).lower()
+            previous_error = (
+                "Salesforce rejected that code. Enter the newest 6-digit code."
+                if any(token in visible_text for token in ("incorrect", "invalid", "expired", "try again"))
+                else "Salesforce did not accept that code. Enter the newest 6-digit code."
+            )
+            finish_salesforce_verification_request(request_id, success=False, message=previous_error)
+        except Exception as exc:
+            finish_salesforce_verification_request(request_id, success=False, message=str(exc))
+            raise
+
+    raise CopyrightCancelError(previous_error or "Salesforce verification failed after three code attempts.")
+
+
+def _complete_salesforce_login_approval(driver, *, timeout=90, order_id=None):
+    if _is_salesforce_verification_code_page(driver):
+        return _complete_salesforce_verification_code(
+            driver,
+            order_id=order_id,
+            timeout=max(300, int(timeout or 90)),
+        )
+    return _wait_for_salesforce_login_approval(driver, timeout=timeout)
+
+
 def _wait_for_salesforce_login_approval(driver, timeout=90):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -1365,12 +1518,16 @@ def _wait_for_salesforce_login_approval(driver, timeout=90):
     raise CopyrightCancelError("Salesforce login approval was not completed before the timeout expired.")
 
 
-def _wait_for_salesforce_login_transition(driver, timeout=15):
+def _wait_for_salesforce_login_transition(driver, timeout=15, order_id=None):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         time.sleep(1)
         if _is_salesforce_login_approval_page(driver):
-            _wait_for_salesforce_login_approval(driver, timeout=max(timeout, 90))
+            _complete_salesforce_login_approval(
+                driver,
+                timeout=max(timeout, 90),
+                order_id=order_id,
+            )
             return True
         if not _is_salesforce_login_page(driver):
             return True
@@ -1779,7 +1936,7 @@ def _click_salesforce_login_with_selenium(driver):
         return False
 
 
-def _attempt_salesforce_login(driver, timeout=45):
+def _attempt_salesforce_login(driver, timeout=45, order_id=None):
     saved_session_required = os.environ.get("SALESFORCE_REQUIRE_SAVED_SESSION", "").strip().lower() in {
         "1", "true", "yes", "on",
     }
@@ -1789,7 +1946,11 @@ def _attempt_salesforce_login(driver, timeout=45):
                 "This Sheets Scanner worker's saved Salesforce session requires verification. "
                 "Use Salesforce worker setup and complete 2FA for this worker."
             )
-        _wait_for_salesforce_login_approval(driver, timeout=max(timeout, 90))
+        _complete_salesforce_login_approval(
+            driver,
+            timeout=max(timeout, 90),
+            order_id=order_id,
+        )
         return True
     if not _is_salesforce_login_page(driver):
         return False
@@ -1804,17 +1965,25 @@ def _attempt_salesforce_login(driver, timeout=45):
         while time.monotonic() < deadline:
             time.sleep(0.5)
             if _is_salesforce_login_approval_page(driver):
-                _wait_for_salesforce_login_approval(driver, timeout=max(timeout, 90))
+                _complete_salesforce_login_approval(
+                    driver,
+                    timeout=max(timeout, 90),
+                    order_id=order_id,
+                )
                 return True
             if not _is_salesforce_login_page(driver):
                 return True
             if any(_salesforce_login_fields(driver)):
                 break
     if not _fill_salesforce_login_with_autofill(driver):
-        if _wait_for_salesforce_login_transition(driver, timeout=15):
+        if _wait_for_salesforce_login_transition(driver, timeout=15, order_id=order_id):
             return True
         if _is_salesforce_login_approval_page(driver):
-            _wait_for_salesforce_login_approval(driver, timeout=max(timeout, 90))
+            _complete_salesforce_login_approval(
+                driver,
+                timeout=max(timeout, 90),
+                order_id=order_id,
+            )
             return True
         if read_windows_credential(SALESFORCE_CREDENTIAL_TARGET, required=False) is None:
             raise CopyrightCancelError(
@@ -1833,7 +2002,11 @@ def _attempt_salesforce_login(driver, timeout=45):
     while time.monotonic() < deadline:
         time.sleep(1)
         if _is_salesforce_login_approval_page(driver):
-            _wait_for_salesforce_login_approval(driver, timeout=max(timeout, 90))
+            _complete_salesforce_login_approval(
+                driver,
+                timeout=max(timeout, 90),
+                order_id=order_id,
+            )
             return True
         if not _is_salesforce_login_page(driver):
             return True
@@ -1878,7 +2051,7 @@ def _open_salesforce_account(driver, crm_handle, expected_email, login_wait_seco
                 raise
 
     sf_handle = open_account_tab()
-    login_happened = _attempt_salesforce_login(driver)
+    login_happened = _attempt_salesforce_login(driver, order_id=order_id)
     if login_happened:
         # CRM's first post-login redirect often lands on the Salesforce default page.
         # Return to CRM and click Salesforce Account/Contact again to reach the customer page.
@@ -1888,11 +2061,16 @@ def _open_salesforce_account(driver, crm_handle, expected_email, login_wait_seco
         except Exception:
             pass
         sf_handle = open_account_tab()
-    _wait_for_salesforce_account_page(driver, expected_email, timeout=max(30, login_wait_seconds))
+    _wait_for_salesforce_account_page(
+        driver,
+        expected_email,
+        timeout=max(30, login_wait_seconds),
+        order_id=order_id,
+    )
     return sf_handle
 
 
-def _wait_for_salesforce_account_page(driver, expected_email, timeout=45):
+def _wait_for_salesforce_account_page(driver, expected_email, timeout=45, order_id=None):
     deadline = time.monotonic() + timeout
     expected = str(expected_email or "").strip().lower()
     while time.monotonic() < deadline:
@@ -1900,8 +2078,8 @@ def _wait_for_salesforce_account_page(driver, expected_email, timeout=45):
         if expected and expected in text.lower():
             time.sleep(2)
             return True
-        if _is_salesforce_login_page(driver):
-            _attempt_salesforce_login(driver)
+        if _is_salesforce_login_page(driver) or _is_salesforce_login_approval_page(driver):
+            _attempt_salesforce_login(driver, order_id=order_id)
         time.sleep(1)
     raise CopyrightCancelError(f"Salesforce account page did not show expected email {expected_email}.")
 
@@ -8990,10 +9168,11 @@ def _sheet_scanner_row_subprocess(row, args, crm_profile, slack_profile):
 
     env = os.environ.copy()
     env["SLACK_PROFILE_DIR"] = slack_profile
-    # These profiles are explicitly authenticated from the control panel. If
-    # one expires, fail with a setup instruction instead of submitting the
-    # password headlessly and generating another 2FA/code notification.
-    env["SALESFORCE_REQUIRE_SAVED_SESSION"] = "1"
+    env["SALESFORCE_INTERACTIVE_VERIFICATION"] = "1"
+    env["SALESFORCE_VERIFICATION_ORDER_ID"] = str(row.order_id or "")
+    worker_match = re.search(r"worker_(\d+)$", os.path.basename(os.path.normpath(crm_profile)), re.IGNORECASE)
+    if worker_match:
+        env["SALESFORCE_WORKER_SLOT"] = worker_match.group(1)
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
     try:
         completed = subprocess.run(

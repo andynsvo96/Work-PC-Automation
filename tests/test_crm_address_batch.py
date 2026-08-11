@@ -175,6 +175,58 @@ class CrmCopyrightCancelTests(unittest.TestCase):
 
         fill_login.assert_not_called()
 
+    def test_salesforce_verification_code_is_filled_and_submitted(self):
+        driver = mock.Mock()
+        code_input = mock.Mock()
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "create_salesforce_verification_request",
+            return_value={"request_id": "request-1234567890"},
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_wait_for_salesforce_verification_code",
+            return_value="123456",
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_salesforce_verification_input",
+            return_value=code_input,
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_click_salesforce_verify_button",
+            return_value=True,
+        ) as click_verify, mock.patch.object(
+            crm_copyright_cancel,
+            "_is_salesforce_authenticated_page",
+            return_value=True,
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "finish_salesforce_verification_request",
+        ) as finish_request, mock.patch.object(
+            crm_copyright_cancel,
+            "_publish_status",
+        ), mock.patch.object(
+            crm_copyright_cancel.time,
+            "sleep",
+        ), mock.patch.dict(
+            os.environ,
+            {"SALESFORCE_INTERACTIVE_VERIFICATION": "1", "SALESFORCE_WORKER_SLOT": "3"},
+            clear=False,
+        ):
+            completed = crm_copyright_cancel._complete_salesforce_verification_code(
+                driver,
+                order_id="4600001",
+            )
+
+        self.assertTrue(completed)
+        code_input.click.assert_called_once_with()
+        self.assertEqual(code_input.send_keys.call_args_list[-1].args, ("123456",))
+        click_verify.assert_called_once_with(driver)
+        finish_request.assert_called_once_with(
+            "request-1234567890",
+            success=True,
+            message="Salesforce verification completed.",
+        )
+
     def test_salesforce_composer_maximize_retries_with_trusted_click(self):
         driver = mock.Mock()
         maximize_control = mock.Mock()
@@ -408,7 +460,12 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertEqual(click.call_count, 2)
         self.assertGreaterEqual(activate.call_count, 3)
         scope.assert_called_once_with(driver, order_id="4845038", timeout=30)
-        account_page.assert_called_once_with(driver, "customer@example.com", timeout=30)
+        account_page.assert_called_once_with(
+            driver,
+            "customer@example.com",
+            timeout=30,
+            order_id="4845038",
+        )
 
     def test_copyright_cancel_sales_note_requires_reason(self):
         self.assertEqual(
@@ -1294,7 +1351,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         worker_run.assert_called_once_with([row], args, 1)
         base_profile_run.assert_not_called()
 
-    def test_sheet_scanner_worker_subprocess_requires_saved_salesforce_session(self):
+    def test_sheet_scanner_worker_subprocess_enables_interactive_salesforce_verification(self):
         row = crm_copyright_cancel.QueueRow(
             2,
             "4600001",
@@ -1330,7 +1387,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
                 payload = crm_copyright_cancel._sheet_scanner_row_subprocess(
                     row,
                     args,
-                    "crm-worker-profile",
+                    os.path.join("profiles", "worker_1"),
                     "slack-worker-profile",
                 )
         finally:
@@ -1338,7 +1395,9 @@ class CrmCopyrightCancelTests(unittest.TestCase):
 
         self.assertTrue(payload["success"])
         child_env = run_process.call_args.kwargs["env"]
-        self.assertEqual(child_env["SALESFORCE_REQUIRE_SAVED_SESSION"], "1")
+        self.assertEqual(child_env["SALESFORCE_INTERACTIVE_VERIFICATION"], "1")
+        self.assertEqual(child_env["SALESFORCE_WORKER_SLOT"], "1")
+        self.assertEqual(child_env["SALESFORCE_VERIFICATION_ORDER_ID"], row.order_id)
         self.assertEqual(child_env["SLACK_PROFILE_DIR"], "slack-worker-profile")
 
     def test_process_single_order_routes_auto_splitter_process(self):

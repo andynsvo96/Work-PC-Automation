@@ -65,6 +65,11 @@ from routes.connectivity_routes import register_connectivity_routes
 from routes.system_routes import register_system_routes
 from routes.work_routes import register_work_routes
 from safe_sync import publish_repository_update
+from workers.salesforce_verification import (
+    cancel_request as cancel_salesforce_verification_request,
+    list_pending_requests as list_pending_salesforce_verification_requests,
+    submit_code as submit_salesforce_verification_code,
+)
 from slack_message_rotation import select_slack_day_message
 from slack_post_history import get_todays_slack_posts
 from version_state import get_git_version_state, refresh_origin_main
@@ -10220,6 +10225,7 @@ def get_crm_mass_emailer_status_payload():
         "running": bool(runtime.get("running")),
         "runtime": runtime,
         "state": state,
+        "salesforce_verification_requests": list_pending_salesforce_verification_requests(),
     }
 
 
@@ -13630,6 +13636,49 @@ def automation_chrome_profile_setup():
 @app.route("/api/salesforce-worker-setup", methods=["GET"])
 def api_salesforce_worker_setup():
     return jsonify(_salesforce_worker_setup_payload())
+
+
+@app.route("/api/salesforce-verification", methods=["GET"])
+def api_salesforce_verification():
+    requests = list_pending_salesforce_verification_requests()
+    return jsonify({"success": True, "requests": requests, "request": requests[0] if requests else None})
+
+
+@app.route("/api/salesforce-verification/submit", methods=["POST"])
+def api_salesforce_verification_submit():
+    data = request.get_json(silent=True) or {}
+    try:
+        verification_request = submit_salesforce_verification_code(
+            data.get("request_id") or data.get("requestId"),
+            data.get("code"),
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    return jsonify(
+        {
+            "success": True,
+            "message": "Salesforce verification code sent to the waiting worker.",
+            "request": verification_request,
+        }
+    )
+
+
+@app.route("/api/salesforce-verification/cancel", methods=["POST"])
+def api_salesforce_verification_cancel():
+    data = request.get_json(silent=True) or {}
+    try:
+        verification_request = cancel_salesforce_verification_request(
+            data.get("request_id") or data.get("requestId")
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    return jsonify(
+        {
+            "success": True,
+            "message": "Salesforce verification was canceled for this worker.",
+            "request": verification_request,
+        }
+    )
 
 
 @app.route("/automation/salesforce-worker-setup", methods=["POST"])

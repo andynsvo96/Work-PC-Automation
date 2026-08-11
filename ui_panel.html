@@ -779,6 +779,24 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
   </div>
 </dialog>
 
+<dialog id='salesforceVerificationDialog' style='max-width:520px;width:min(520px, calc(100vw - 32px));border:none;border-radius:14px;padding:0;'>
+  <form class='card' style='margin:0' onsubmit='submitSalesforceVerificationCode(event)'>
+    <div class='row' style='justify-content:space-between;align-items:center'>
+      <h3 style='margin:0'>Salesforce verification required</h3>
+      <span class='rough-pill blue' id='salesforceVerificationWorkerLabel'>Worker</span>
+    </div>
+    <p id='salesforceVerificationDetail' style='margin:14px 0 8px'>Enter the 6-digit code Salesforce sent you.</p>
+    <div class='notice' id='salesforceVerificationPreviousError' style='display:none;margin-bottom:10px'></div>
+    <label for='salesforceVerificationCodeInput' class='muted'>6-digit verification code</label>
+    <input id='salesforceVerificationCodeInput' type='text' inputmode='numeric' autocomplete='one-time-code' maxlength='6' pattern='[0-9]{6}' placeholder='000000' style='font-size:24px;letter-spacing:8px;text-align:center;width:100%;margin-top:6px' required>
+    <div class='muted' id='salesforceVerificationStatus' style='margin-top:8px'>The affected worker is paused and will resume after verification.</div>
+    <div class='row' style='justify-content:flex-end;margin-top:16px'>
+      <button class='secondary' type='button' id='salesforceVerificationCancelBtn' onclick='cancelSalesforceVerification()'>Cancel worker</button>
+      <button type='submit' id='salesforceVerificationSubmitBtn'>Verify and resume</button>
+    </div>
+  </form>
+</dialog>
+
 <div id='tabAutomation' class='tab-panel active'>
   <div class='page-heading'>
     <div>
@@ -1777,6 +1795,9 @@ let crmAutoSplitterPollTimer = null;
 let crmMassEmailerStatusPayload = null;
 let crmMassEmailerPollTimer = null;
 let crmMassEmailerHistoryExpanded = false;
+let salesforceVerificationCurrentRequest = null;
+let salesforceVerificationSubmitting = false;
+let salesforceVerificationPollTimer = null;
 let crmAddressStatusPayload = null;
 let crmAddressPollTimer = null;
 let crmAddressHistoryPage = 1;
@@ -2463,6 +2484,119 @@ async function api(path, opts = {}) {
   if (!r.ok) throw new Error((d && d.message) || 'Request failed');
   if (d && d.queue_task) setTimeout(() => { loadQueue(false); }, 0);
   return d;
+}
+
+function syncSalesforceVerificationPrompt(payload) {
+  const dialog = document.getElementById('salesforceVerificationDialog');
+  if (!dialog || salesforceVerificationSubmitting) return;
+  const requestRow = payload && payload.request ? payload.request : null;
+  if (!requestRow) {
+    salesforceVerificationCurrentRequest = null;
+    if (dialog.open) dialog.close();
+    return;
+  }
+  const requestId = String(requestRow.request_id || '');
+  if (!requestId) return;
+  if (salesforceVerificationCurrentRequest && salesforceVerificationCurrentRequest.request_id === requestId && dialog.open) return;
+  salesforceVerificationCurrentRequest = requestRow;
+  const workerSlot = Number(requestRow.worker_slot || 0);
+  const orderId = String(requestRow.order_id || '').trim();
+  const workerLabel = document.getElementById('salesforceVerificationWorkerLabel');
+  const detail = document.getElementById('salesforceVerificationDetail');
+  const previousError = document.getElementById('salesforceVerificationPreviousError');
+  const input = document.getElementById('salesforceVerificationCodeInput');
+  const status = document.getElementById('salesforceVerificationStatus');
+  if (workerLabel) workerLabel.textContent = workerSlot ? `Worker ${workerSlot}` : 'Salesforce worker';
+  if (detail) detail.textContent = `Enter the 6-digit Salesforce code${workerSlot ? ` for Worker ${workerSlot}` : ''}${orderId ? ` while processing order ${orderId}` : ''}.`;
+  if (previousError) {
+    previousError.textContent = String(requestRow.previous_error || '');
+    previousError.style.display = requestRow.previous_error ? '' : 'none';
+  }
+  if (input) {
+    input.value = '';
+    input.disabled = false;
+  }
+  if (status) status.textContent = 'The affected worker is paused and will resume after verification.';
+  const submitBtn = document.getElementById('salesforceVerificationSubmitBtn');
+  const cancelBtn = document.getElementById('salesforceVerificationCancelBtn');
+  if (submitBtn) submitBtn.disabled = false;
+  if (cancelBtn) cancelBtn.disabled = false;
+  if (!dialog.open && typeof dialog.showModal === 'function') dialog.showModal();
+  setTimeout(() => { if (input) input.focus(); }, 50);
+}
+
+async function pollSalesforceVerification() {
+  try {
+    const payload = await api('/api/salesforce-verification');
+    syncSalesforceVerificationPrompt(payload);
+  } catch (_) {
+    // The regular app status already reports connection/authentication errors.
+  }
+}
+
+async function submitSalesforceVerificationCode(event) {
+  if (event) event.preventDefault();
+  if (salesforceVerificationSubmitting || !salesforceVerificationCurrentRequest) return;
+  const input = document.getElementById('salesforceVerificationCodeInput');
+  const code = String(input && input.value || '').replace(/\D/g, '');
+  const status = document.getElementById('salesforceVerificationStatus');
+  if (!/^\d{6}$/.test(code)) {
+    if (status) status.textContent = 'Enter all 6 digits from Salesforce.';
+    if (input) input.focus();
+    return;
+  }
+  salesforceVerificationSubmitting = true;
+  const submitBtn = document.getElementById('salesforceVerificationSubmitBtn');
+  const cancelBtn = document.getElementById('salesforceVerificationCancelBtn');
+  if (submitBtn) submitBtn.disabled = true;
+  if (cancelBtn) cancelBtn.disabled = true;
+  if (input) input.disabled = true;
+  if (status) status.textContent = 'Sending code to the waiting Salesforce worker...';
+  try {
+    const payload = await api('/api/salesforce-verification/submit', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({request_id: salesforceVerificationCurrentRequest.request_id, code}),
+    });
+    if (status) status.textContent = payload.message || 'Code sent. The worker is verifying it now.';
+    const dialog = document.getElementById('salesforceVerificationDialog');
+    if (dialog && dialog.open) dialog.close();
+    salesforceVerificationCurrentRequest = null;
+    setStatus(payload.message || 'Salesforce verification code submitted.');
+    setTimeout(pollSalesforceVerification, 500);
+  } catch (error) {
+    if (status) status.textContent = error.message;
+    if (submitBtn) submitBtn.disabled = false;
+    if (cancelBtn) cancelBtn.disabled = false;
+    if (input) {
+      input.disabled = false;
+      input.focus();
+    }
+  } finally {
+    salesforceVerificationSubmitting = false;
+  }
+}
+
+async function cancelSalesforceVerification() {
+  if (salesforceVerificationSubmitting || !salesforceVerificationCurrentRequest) return;
+  salesforceVerificationSubmitting = true;
+  try {
+    const payload = await api('/api/salesforce-verification/cancel', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({request_id: salesforceVerificationCurrentRequest.request_id}),
+    });
+    const dialog = document.getElementById('salesforceVerificationDialog');
+    if (dialog && dialog.open) dialog.close();
+    salesforceVerificationCurrentRequest = null;
+    setStatus(payload.message || 'Salesforce verification canceled.');
+    setTimeout(pollSalesforceVerification, 500);
+  } catch (error) {
+    const status = document.getElementById('salesforceVerificationStatus');
+    if (status) status.textContent = error.message;
+  } finally {
+    salesforceVerificationSubmitting = false;
+  }
 }
 
 function setSettingsHealth(title, detail, isError = false) {
@@ -9093,6 +9227,7 @@ async function reloadAll() {
   await loadCrmAutoSplitterStatus(false);
   await loadCrmAddressStatus(false);
   await loadSalesforceWorkerSetupStatus(false);
+  await pollSalesforceVerification();
   await loadConfig();
   await loadSlackLunchStatus(false);
   await loadTodaySlackHistory();
@@ -9114,6 +9249,7 @@ if (!UI_OPENED_FROM_FILE) {
   setTemperatureUnit(temperatureUnit);
   renderCrmAddressModeControls();
   reloadAll();
+  salesforceVerificationPollTimer = setInterval(pollSalesforceVerification, 1000);
   startWorkHoursTimer();
   startDesktopMetricsTimer();
   setInterval(() => {

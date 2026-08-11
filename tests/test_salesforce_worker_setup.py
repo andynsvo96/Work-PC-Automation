@@ -54,6 +54,49 @@ class SalesforceWorkerSetupTests(unittest.TestCase):
             ["connected", "login_required", "not_initialized"],
         )
 
+    def test_verification_status_returns_the_oldest_pending_request(self):
+        pending = [
+            {"request_id": "request-one", "worker_slot": 2, "order_id": "4600001"},
+            {"request_id": "request-two", "worker_slot": 4, "order_id": "4600002"},
+        ]
+        with mock.patch("server.list_pending_salesforce_verification_requests", return_value=pending):
+            response = self.client.get("/api/salesforce-verification")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["request"], pending[0])
+        self.assertEqual(payload["requests"], pending)
+
+    def test_verification_submit_passes_code_to_waiting_worker_without_echoing_it(self):
+        public_request = {"request_id": "request-one", "status": "submitted", "worker_slot": 2}
+        with mock.patch(
+            "server.submit_salesforce_verification_code",
+            return_value=public_request,
+        ) as submit_code:
+            response = self.client.post(
+                "/api/salesforce-verification/submit",
+                json={"request_id": "request-one", "code": "123456"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        submit_code.assert_called_once_with("request-one", "123456")
+        payload = response.get_json()
+        self.assertTrue(payload["success"])
+        self.assertNotIn("123456", response.get_data(as_text=True))
+
+    def test_verification_submit_reports_invalid_code(self):
+        with mock.patch(
+            "server.submit_salesforce_verification_code",
+            side_effect=ValueError("Enter the 6-digit Salesforce verification code."),
+        ):
+            response = self.client.post(
+                "/api/salesforce-verification/submit",
+                json={"request_id": "request-one", "code": "12345"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.get_json()["success"])
+
     def test_setup_opens_the_selected_persistent_worker_profile(self):
         result = types.SimpleNamespace(fields_filled=("username", "password"))
         with (
