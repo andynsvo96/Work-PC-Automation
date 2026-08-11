@@ -14087,12 +14087,28 @@ def automation_salesforce_worker_test():
         )
         safe_get_with_partial_load(driver, "https://login.salesforce.com/", f"Salesforce Worker {worker_slot} test")
         selected_saved_username = False
+        clicked_login_button = False
         if (
             salesforce_worker._is_salesforce_login_page(driver)
             and not salesforce_worker._is_salesforce_login_approval_page(driver)
         ):
             selected_saved_username = bool(salesforce_worker._click_salesforce_saved_username(driver))
             if selected_saved_username:
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    if salesforce_worker._is_salesforce_login_approval_page(driver):
+                        break
+                    if not salesforce_worker._is_salesforce_login_page(driver):
+                        break
+                    if any(salesforce_worker._salesforce_login_fields(driver)):
+                        break
+                    time.sleep(0.5)
+        if (
+            salesforce_worker._is_salesforce_login_page(driver)
+            and not salesforce_worker._is_salesforce_login_approval_page(driver)
+        ):
+            clicked_login_button = bool(salesforce_worker._click_salesforce_login_with_selenium(driver))
+            if clicked_login_button:
                 deadline = time.monotonic() + 20
                 while time.monotonic() < deadline:
                     if salesforce_worker._is_salesforce_login_approval_page(driver):
@@ -14124,6 +14140,7 @@ def automation_salesforce_worker_test():
                 "connected": connected,
                 "worker": worker_slot,
                 "selected_saved_username": selected_saved_username,
+                "clicked_login_button": clicked_login_button,
                 "message": message,
             }
         )
