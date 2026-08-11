@@ -3003,9 +3003,10 @@ function renderQueue(payload) {
   root.innerHTML = tasks.map((task) => {
     const status = String(task.status || '').toLowerCase();
     const canCancel = status === 'queued' || status === 'running' || status === 'idle';
-    const canDelete = !sharedMode && (status === 'completed' || status === 'failed');
+    const canDelete = !sharedMode && (status === 'completed' || status === 'failed' || status === 'canceled');
     const canRetryFailedSheetsScanner = status === 'failed'
       && String(task.label || '').trim().toLowerCase() === 'sheets scanner';
+    const canRetry = Boolean(task.retryable) || canRetryFailedSheetsScanner;
     const resultContext = task.result_context && typeof task.result_context === 'object' ? task.result_context : {};
     const taskReport = resultContext.report && typeof resultContext.report === 'object' ? resultContext.report : {};
     const taskReportRows = Array.isArray(taskReport.order_details) ? taskReport.order_details : [];
@@ -3048,13 +3049,13 @@ function renderQueue(payload) {
     const targetControl = targetOptions
       ? `<select class='queue-target-select' title='Safely reassign without changing FIFO position' onchange="reassignQueueTask('${esc(task.id || '')}', this.value)">${targetOptions}</select>`
       : '';
-    const retryFailedSheetsScannerControl = canRetryFailedSheetsScanner
-      ? `<button class='secondary tiny' title='Retry spreadsheet ERROR rows in this same queue entry' onclick="retryFailedSheetsScannerSession('${esc(task.id || '')}', this)">Retry</button>`
+    const retryControl = canRetry
+      ? `<button class='secondary tiny' title='Retry this unfinished task; completed CRM actions will be detected and skipped' onclick="retryAutomationQueueTask('${esc(task.id || '')}', this)">Retry</button>`
       : '';
     const deleteControl = canDelete
       ? `<button class='secondary tiny' title='Delete queue entry' onclick="deleteQueueTask('${esc(task.id || '')}')">Delete</button>`
       : '';
-    const finishedControl = `${retryFailedSheetsScannerControl}${deleteControl}` || '<span></span>';
+    const finishedControl = `${retryControl}${deleteControl}` || '<span></span>';
     return `
       <div class='queue-item ${esc(status)}' data-task-id='${esc(task.id || '')}' draggable='${draggable ? 'true' : 'false'}'
         ondragstart='handleQueueDragStart(event)' ondragover='handleQueueDragOver(event)' ondrop='handleQueueDrop(event)' ondragend='handleQueueDragEnd(event)'>
@@ -3156,24 +3157,28 @@ async function cancelQueueTask(taskId) {
   }
 }
 
-async function retryFailedSheetsScannerSession(taskId, button) {
-  const confirmed = window.confirm(
-    'Retry all failed Sheets Scanner rows? Rows with an ERROR message will be included automatically. '
-    + 'The automation checks CRM first and skips cancellations, refunds, refund fees, and sales notes that are already recorded.'
+async function retryAutomationQueueTask(taskId, button) {
+  const tasks = Array.isArray(queuePayload && queuePayload.tasks) ? queuePayload.tasks : [];
+  const task = tasks.find((row) => String(row && row.id || '') === String(taskId || '')) || {};
+  const sheetsScanner = String(task.label || '').trim().toLowerCase() === 'sheets scanner';
+  const confirmed = window.confirm(sheetsScanner
+    ? 'Retry all failed Sheets Scanner rows? Rows with an ERROR message will be included automatically. '
+      + 'The automation checks CRM first and skips cancellations, refunds, refund fees, and sales notes that are already recorded.'
+    : `Retry ${task.label || 'this order task'}? The original task will run again, detect completed CRM actions, and continue with unfinished work.`
   );
   if (!confirmed) return;
   if (button) {
     button.disabled = true;
     button.textContent = 'Queuing Retry...';
   }
-  setStatus('Queuing failed Sheets Scanner rows for retry.');
+  setStatus(sheetsScanner ? 'Queuing failed Sheets Scanner rows for retry.' : 'Queuing the unfinished order task for retry.');
   try {
     const d = await api(`/api/queue/${encodeURIComponent(taskId)}/retry`, {
       method: 'POST',
     });
     const retryInput = document.getElementById('crmMassEmailerRetryErrorsInput');
     if (retryInput) retryInput.checked = true;
-    setStatus(d.message || 'Failed Sheets Scanner rows queued for retry.');
+    setStatus(d.message || 'Unfinished order task queued for retry.');
     await loadQueue(false);
     await loadCrmMassEmailerStatus(false);
   } catch (error) {
@@ -3181,7 +3186,7 @@ async function retryFailedSheetsScannerSession(taskId, button) {
       button.disabled = false;
       button.textContent = 'Retry';
     }
-    setStatus('Sheets Scanner retry failed: ' + error.message);
+    setStatus('Queue retry failed: ' + error.message);
   }
 }
 

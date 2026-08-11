@@ -2324,6 +2324,12 @@ def _merge_sheet_scanner_retry_report(original_report, retry_report):
 def _automation_queue_result_context(task, ok, message):
     existing = dict((task or {}).get("result_context") or {})
     if str((task or {}).get("task_type") or "") != "crm.mass_emailer":
+        if existing.get("retrying"):
+            return {
+                **existing,
+                "retrying": False,
+                "retry_completed": True,
+            }
         return None
     latest_report = _sheet_scanner_queue_report_for_task({**dict(task or {}), "message": message})
     original_report = existing.get("original_report")
@@ -2342,7 +2348,10 @@ def _enrich_automation_queue_reports(payload):
     if not isinstance(payload, dict):
         return payload
     for task in payload.get("tasks") or []:
-        if not isinstance(task, dict) or str(task.get("task_type") or "") != "crm.mass_emailer":
+        if not isinstance(task, dict):
+            continue
+        task["retryable"] = _automation_queue_task_is_retryable_order(task)
+        if str(task.get("task_type") or "") != "crm.mass_emailer":
             continue
         context = dict(task.get("result_context") or {})
         if not isinstance(context.get("report"), dict) or not context.get("report", {}).get("order_details"):
@@ -2351,6 +2360,41 @@ def _enrich_automation_queue_reports(payload):
                 context["report"] = report
         task["result_context"] = context
     return payload
+
+
+_RETRYABLE_SINGLE_ORDER_TASK_TYPES = frozenset(
+    {
+        "crm.address_validator",
+        "crm.auto_splitter",
+        "crm.extension_order",
+        "crm.order_goods",
+        "crm.product_separator",
+        "crm.push_back",
+        "crm.sheet_scanner_order",
+        "crm.shipping_bypasser",
+    }
+)
+_QUEUE_ORDER_LABEL_RE = re.compile(r"\border\s+\d{7}\b", re.IGNORECASE)
+
+
+def _automation_queue_task_is_retryable_order(task):
+    """Limit in-place retry to unfinished, normal-mode single-order CRM work."""
+    if not isinstance(task, dict):
+        return False
+    if str(task.get("status") or "").strip().lower() not in {"failed", "canceled"}:
+        return False
+    if str(task.get("queue_mode") or "normal").strip().lower() != "normal":
+        return False
+    task_type = str(task.get("task_type") or "").strip().lower()
+    if task_type not in _RETRYABLE_SINGLE_ORDER_TASK_TYPES:
+        return False
+    arguments = task.get("task_arguments") or task.get("arguments")
+    if isinstance(arguments, dict):
+        order_id = arguments.get("order_id") or arguments.get("order_target")
+        if re.fullmatch(r"\d{7}", str(order_id or "").strip()):
+            return True
+    searchable = " ".join(str(task.get(key) or "") for key in ("label", "details"))
+    return bool(_QUEUE_ORDER_LABEL_RE.search(searchable))
 
 
 def _automation_queue_task_payload(task):
@@ -2386,6 +2430,7 @@ def _automation_queue_task_payload(task):
         "position": task.get("position"),
         "task_type": task.get("task_type"),
         "result_context": dict(task.get("result_context") or {}),
+        "retryable": _automation_queue_task_is_retryable_order(task),
     }
     if live_status:
         payload["live_status"] = live_status
@@ -2615,7 +2660,9 @@ def _automation_queue_worker_loop():
                 task["result_context"] = _automation_queue_result_context(task, ok, message)
                 _automation_queue_append_run_history(task, ok, message, started_at, completed_at, task.get("duration_seconds"))
                 if canceled:
-                    automation_queue_tasks.remove(task)
+                    task["status"] = "canceled"
+                    task["success"] = False
+                    task["cancel_requested"] = False
                 elif str(task.get("queue_mode") or "").strip().lower() == "repeat":
                     interval_minutes = _normalize_automation_repeat_interval_minutes(
                         task.get("repeat_interval_minutes")
@@ -2819,7 +2866,11 @@ def cancel_automation_queue_task(task_id):
             return False, "Queue task was not found."
         status = task.get("status")
         if status in {"queued", "idle"}:
-            automation_queue_tasks.remove(task)
+            task["status"] = "canceled"
+            task["success"] = False
+            task["cancel_requested"] = False
+            task["completed_at"] = _automation_queue_now_iso()
+            task["message"] = "Canceled before start."
             _automation_queue_trim_history_locked()
             automation_queue_condition.notify_all()
             log_automation_event("automation.queue", "CANCELED", f"{task.get('label')} canceled before start.", source="server.py")
@@ -2836,7 +2887,7 @@ def cancel_automation_queue_task(task_id):
     return False, "Queue task could not be canceled."
 
 
-def retry_failed_automation_queue_task(task_id):
+def retry_automation_queue_task(task_id):
     task_id = str(task_id or "").strip()
     if not task_id:
         return False, "Missing queue task ID."
@@ -2855,13 +2906,58 @@ def retry_failed_automation_queue_task(task_id):
             task = next((row for row in snapshot.get("tasks") or [] if str(row.get("id") or "") == task_id), None)
             if not task:
                 return False, "Queue task was not found."
-            if task.get("status") != "failed" or task.get("task_type") != "crm.mass_emailer" or task.get("label") != "Sheets Scanner":
-                return False, "Only a failed live Sheets Scanner task can be retried in place."
             existing_context = dict(task.get("result_context") or {})
+            retry_count = max(0, int(_safe_float(existing_context.get("retry_count"), 0))) + 1
+            if task.get("status") == "failed" and task.get("task_type") == "crm.mass_emailer" and task.get("label") == "Sheets Scanner":
+                original_report = existing_context.get("report") or _sheet_scanner_queue_report_for_task(task)
+                if not isinstance(original_report, dict) or not original_report.get("order_details"):
+                    return False, "The failed Sheets Scanner report is unavailable; retry was not started."
+                retry_context = {
+                    "retry_count": retry_count,
+                    "retrying": True,
+                    "retry_completed": False,
+                    "original_report": original_report,
+                    "report": original_report,
+                    "retry_requested_at": _automation_queue_now_iso(),
+                }
+                runtime.client.retry_failed(task_id, arguments=retry_arguments, retry_context=retry_context)
+                runtime.wake()
+                return True, f"Retry {retry_count} queued in the original Sheets Scanner entry."
+            if not _automation_queue_task_is_retryable_order(task):
+                return False, "Only canceled or failed single-order CRM tasks can be retried."
+            retry_context = {
+                "retry_count": retry_count,
+                "retrying": True,
+                "retry_completed": False,
+                "previous_result_context": existing_context,
+                "retry_requested_at": _automation_queue_now_iso(),
+            }
+            runtime.client.retry_order(task_id, retry_context=retry_context)
+            runtime.wake()
+            return True, (
+                f"Retry {retry_count} queued for {task.get('label') or 'the order task'}; "
+                "completed CRM work will be detected and skipped."
+            )
+        except Exception as exc:
+            detail = str(exc)
+            if "automation_retry_order_task" in detail:
+                detail = "Shared order retry needs Supabase migration 006_retry_order_tasks.sql."
+            elif "automation_retry_failed_task" in detail:
+                detail = "Shared queue retry needs Supabase migration 004_retry_failed_tasks.sql."
+            return False, detail
+
+    with automation_queue_condition:
+        task = next((row for row in automation_queue_tasks if str(row.get("id") or "") == task_id), None)
+        if not task:
+            return False, "Queue task was not found."
+        existing_context = dict(task.get("result_context") or {})
+        retry_count = max(0, int(_safe_float(existing_context.get("retry_count"), 0))) + 1
+        if task.get("status") == "failed" and task.get("task_type") == "crm.mass_emailer" and task.get("label") == "Sheets Scanner":
             original_report = existing_context.get("report") or _sheet_scanner_queue_report_for_task(task)
             if not isinstance(original_report, dict) or not original_report.get("order_details"):
                 return False, "The failed Sheets Scanner report is unavailable; retry was not started."
-            retry_count = max(0, int(_safe_float(existing_context.get("retry_count"), 0))) + 1
+            task["task_arguments"] = dict(retry_arguments)
+            task["fn"] = lambda: run_crm_mass_emailer_run_queued(**retry_arguments)
             retry_context = {
                 "retry_count": retry_count,
                 "retrying": True,
@@ -2870,28 +2966,23 @@ def retry_failed_automation_queue_task(task_id):
                 "report": original_report,
                 "retry_requested_at": _automation_queue_now_iso(),
             }
-            runtime.client.retry_failed(task_id, arguments=retry_arguments, retry_context=retry_context)
-            runtime.wake()
-            return True, f"Retry {retry_count} queued in the original Sheets Scanner entry."
-        except Exception as exc:
-            detail = str(exc)
-            if "automation_retry_failed_task" in detail or "schema cache" in detail.lower():
-                detail = "Shared queue retry needs Supabase migration 004_retry_failed_tasks.sql."
-            return False, detail
-
-    with automation_queue_condition:
-        task = next((row for row in automation_queue_tasks if str(row.get("id") or "") == task_id), None)
-        if not task:
-            return False, "Queue task was not found."
-        if task.get("status") != "failed" or task.get("task_type") != "crm.mass_emailer" or task.get("label") != "Sheets Scanner":
-            return False, "Only a failed live Sheets Scanner task can be retried in place."
-        existing_context = dict(task.get("result_context") or {})
-        original_report = existing_context.get("report") or _sheet_scanner_queue_report_for_task(task)
-        if not isinstance(original_report, dict) or not original_report.get("order_details"):
-            return False, "The failed Sheets Scanner report is unavailable; retry was not started."
-        retry_count = max(0, int(_safe_float(existing_context.get("retry_count"), 0))) + 1
-        task["task_arguments"] = dict(retry_arguments)
-        task["fn"] = lambda: run_crm_mass_emailer_run_queued(**retry_arguments)
+            success_message = f"Retry {retry_count} queued in the original Sheets Scanner entry."
+        else:
+            if not _automation_queue_task_is_retryable_order(task):
+                return False, "Only canceled or failed single-order CRM tasks can be retried."
+            if not callable(task.get("fn")):
+                return False, "The original order task is no longer available to retry safely."
+            retry_context = {
+                "retry_count": retry_count,
+                "retrying": True,
+                "retry_completed": False,
+                "previous_result_context": existing_context,
+                "retry_requested_at": _automation_queue_now_iso(),
+            }
+            success_message = (
+                f"Retry {retry_count} queued for {task.get('label') or 'the order task'}; "
+                "completed CRM work will be detected and skipped."
+            )
         task["status"] = "queued"
         task["success"] = None
         task["cancel_requested"] = False
@@ -2900,16 +2991,13 @@ def retry_failed_automation_queue_task(task_id):
         task["duration_seconds"] = None
         task["message"] = "Retry waiting in queue."
         task["activated_at"] = _automation_queue_now_iso()
-        task["result_context"] = {
-            "retry_count": retry_count,
-            "retrying": True,
-            "retry_completed": False,
-            "original_report": original_report,
-            "report": original_report,
-            "retry_requested_at": _automation_queue_now_iso(),
-        }
+        task["result_context"] = retry_context
         automation_queue_condition.notify_all()
-    return True, f"Retry {retry_count} queued in the original Sheets Scanner entry."
+    return True, success_message
+
+
+# Backwards-compatible name for callers that imported the original helper.
+retry_failed_automation_queue_task = retry_automation_queue_task
 
 
 def cancel_all_automation_queue_tasks():
@@ -2934,13 +3022,16 @@ def cancel_all_automation_queue_tasks():
         for task in automation_queue_tasks:
             status = task.get("status")
             if status in {"queued", "idle"}:
-                task["cancel_requested"] = True
+                task["status"] = "canceled"
+                task["success"] = False
+                task["cancel_requested"] = False
+                task["completed_at"] = _automation_queue_now_iso()
+                task["message"] = "Canceled before start."
                 canceled_count += 1
             elif status == "running":
                 task["cancel_requested"] = True
                 task["message"] = "Cancel requested by user."
                 running_cancel = True
-        automation_queue_tasks[:] = [task for task in automation_queue_tasks if task.get("status") not in {"queued", "idle"}]
         _automation_queue_trim_history_locked()
         automation_queue_condition.notify_all()
     extra = ""
@@ -13686,7 +13777,7 @@ def api_queue_cancel_task(task_id):
 
 @app.route("/api/queue/<task_id>/retry", methods=["POST"])
 def api_queue_retry_task(task_id):
-    ok, msg = retry_failed_automation_queue_task(task_id)
+    ok, msg = retry_automation_queue_task(task_id)
     payload = get_automation_queue_payload()
     payload.update({"success": ok, "message": msg})
     return jsonify(payload), (200 if ok else 400)

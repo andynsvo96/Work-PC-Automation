@@ -431,6 +431,17 @@ class SupabaseQueueClient:
             },
         )
 
+    def retry_order(self, task_id: str, *, retry_context: Mapping[str, Any]):
+        """Requeue one canceled/failed order while preserving its encrypted arguments."""
+        return self._rpc(
+            "automation_retry_order_task",
+            {
+                "p_workspace_id": self.config.workspace_id,
+                "p_task_id": str(task_id),
+                "p_retry_context": dict(retry_context or {}),
+            },
+        )
+
     def snapshot(self):
         rows = self._rpc("automation_queue_snapshot", {"p_workspace_id": self.config.workspace_id}) or []
         return rows if isinstance(rows, list) else []

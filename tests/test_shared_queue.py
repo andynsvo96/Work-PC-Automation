@@ -161,6 +161,26 @@ class SharedQueueTests(unittest.TestCase):
         )
         self.assertEqual(captured["body"]["p_retry_context"]["retry_count"], 1)
 
+    def test_retry_order_preserves_server_side_encrypted_arguments(self):
+        captured = {}
+
+        def opener(request, timeout):
+            captured["url"] = request.full_url
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _Response({"id": "task-1", "status": "queued"})
+
+        config = make_test_config(node_key="windows-pc")
+        SupabaseQueueClient(config, opener=opener).retry_order(
+            "task-1",
+            retry_context={"retry_count": 2, "retrying": True},
+        )
+
+        self.assertTrue(captured["url"].endswith("/rest/v1/rpc/automation_retry_order_task"))
+        self.assertEqual(captured["body"]["p_workspace_id"], config.workspace_id)
+        self.assertEqual(captured["body"]["p_task_id"], "task-1")
+        self.assertNotIn("p_encrypted_payload", captured["body"])
+        self.assertEqual(captured["body"]["p_retry_context"]["retry_count"], 2)
+
     def test_finish_falls_back_safely_before_retry_migration_is_applied(self):
         client = SupabaseQueueClient(make_test_config(node_key="macbook"))
         missing_signature = SharedQueueUnavailable(

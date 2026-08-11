@@ -32,6 +32,7 @@ class _FakeSharedRuntime:
         self.client.clear_finished = lambda: 3
         self.retry_calls = []
         self.client.retry_failed = self._retry_failed
+        self.client.retry_order = self._retry_order
         self.version_gate = {"required_commit": "old-commit", "required_protocol_version": 1}
         self.client.get_version_gate = lambda: dict(self.version_gate)
         self.client.set_version_gate = self._set_version_gate
@@ -41,6 +42,10 @@ class _FakeSharedRuntime:
         return {"ok": True, "required_commit": str(commit)}
 
     def _retry_failed(self, task_id, **payload):
+        self.retry_calls.append((task_id, payload))
+        return {"id": task_id, "status": "queued", "message": "Retry waiting in queue."}
+
+    def _retry_order(self, task_id, **payload):
         self.retry_calls.append((task_id, payload))
         return {"id": task_id, "status": "queued", "message": "Retry waiting in queue."}
 
@@ -234,6 +239,67 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertTrue(retry["arguments"]["retry_errors"])
         self.assertEqual(retry["retry_context"]["original_report"], report)
         self.assertEqual(self.runtime.enqueued, [])
+
+    def test_canceled_single_order_retry_preserves_original_task_payload(self):
+        canceled_task = {
+            "id": "canceled-order-task",
+            "label": "Oversize EMB to HDD Order 5010526",
+            "details": "Single CRM order 5010526",
+            "task_type": "crm.sheet_scanner_order",
+            "queue_mode": "normal",
+            "status": "canceled",
+            "result_context": {},
+        }
+        self.runtime.snapshot = lambda: {
+            "success": True,
+            "mode": "shared",
+            "tasks": [canceled_task],
+            "history": [canceled_task],
+            "queued": [],
+            "idle": [],
+            "running": None,
+            "queued_count": 0,
+            "running_count": 0,
+            "idle_count": 0,
+        }
+
+        response = self.client.post("/api/queue/canceled-order-task/retry")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.runtime.retry_calls), 1)
+        task_id, retry = self.runtime.retry_calls[0]
+        self.assertEqual(task_id, "canceled-order-task")
+        self.assertNotIn("arguments", retry)
+        self.assertTrue(retry["retry_context"]["retrying"])
+        self.assertIn("completed CRM work", response.get_json()["message"])
+
+    def test_completed_single_order_cannot_be_retried(self):
+        completed_task = {
+            "id": "completed-order-task",
+            "label": "Oversize EMB to HDD Order 5010526",
+            "details": "Single CRM order 5010526",
+            "task_type": "crm.sheet_scanner_order",
+            "queue_mode": "normal",
+            "status": "completed",
+            "result_context": {},
+        }
+        self.runtime.snapshot = lambda: {
+            "success": True,
+            "mode": "shared",
+            "tasks": [completed_task],
+            "history": [completed_task],
+            "queued": [],
+            "idle": [],
+            "running": None,
+            "queued_count": 0,
+            "running_count": 0,
+            "idle_count": 0,
+        }
+
+        response = self.client.post("/api/queue/completed-order-task/retry")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.runtime.retry_calls, [])
 
     def test_registered_executors_cover_route_task_types(self):
         registered = set(server.register_shared_queue_task_executors())
