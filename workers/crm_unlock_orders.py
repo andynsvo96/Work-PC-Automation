@@ -409,8 +409,8 @@ def _click_with_fallback(driver, element):
     driver.execute_script("arguments[0].click();", element)
 
 
-def _extract_first_number(text):
-    match = re.search(r"(\d+)", str(text or ""))
+def _extract_selection_count(text):
+    match = re.search(r"\b(\d+)\s+orders?\s+selected\b", str(text or ""), flags=re.IGNORECASE)
     if match:
         return int(match.group(1))
     return None
@@ -654,7 +654,7 @@ def _wait_for_selection_count(driver, expected_count):
     while time.time() < deadline:
         for element in _visible_elements(driver, SELECTION_TEXT_SELECTORS):
             text = element.text or ""
-            count = _extract_first_number(text)
+            count = _extract_selection_count(text)
             if count is not None and count >= expected_count:
                 return
         if _selected_row_count(driver) >= expected_count:
@@ -664,28 +664,28 @@ def _wait_for_selection_count(driver, expected_count):
 
 
 def _shift_click_row(driver, row):
-    """Perform the CRM range-selection gesture, with a DOM-event fallback."""
+    """Perform the CRM range-selection gesture with an explicit shiftKey."""
     try:
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", row)
     except Exception:
         pass
 
+    # Selenium's native ActionChains can silently drop the Shift modifier in
+    # headless Chrome.  CRM then treats this as an ordinary preview click and
+    # never opens the bulk Order Preview controls.  Dispatching the event with
+    # shiftKey set is the same signal consumed by CRM's row handler.
     try:
-        ActionChains(driver).key_down(Keys.SHIFT).click(row).key_up(Keys.SHIFT).perform()
+        driver.execute_script(
+            "const row = arguments[0];"
+            "row.scrollIntoView({block: 'center'});"
+            "row.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, shiftKey: true, view: window}));",
+            row,
+        )
         return
     except Exception:
-        # Release the modifier in case the native action failed mid-gesture.
-        try:
-            ActionChains(driver).key_up(Keys.SHIFT).perform()
-        except Exception:
-            pass
+        pass
 
-    driver.execute_script(
-        "const row = arguments[0];"
-        "row.scrollIntoView({block: 'center'});"
-        "row.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, shiftKey: true, view: window}));",
-        row,
-    )
+    ActionChains(driver).key_down(Keys.SHIFT).click(row).key_up(Keys.SHIFT).perform()
 
 
 def select_all_orders(driver, rows=None):
@@ -693,35 +693,10 @@ def select_all_orders(driver, rows=None):
     if not rows:
         return 0
 
-    # CRM only creates a range when a normal click establishes the first
-    # selection.  Holding Shift while clicking the top row without that
-    # anchor selects only the top row, so the multi-order controls never
-    # appear.  Mirror the manual gesture: anchor on the bottom order, then
-    # Shift+Click the top order to include every visible order.
+    # CRM's report implements "select all visible" as Shift+Click on the top
+    # order.  Do not establish a normal-click anchor first: that only previews
+    # one order and can cause a later native click to toggle between endpoints.
     first_row = rows[0]
-    last_row = rows[-1]
-    try:
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", last_row)
-    except Exception:
-        pass
-
-    try:
-        ActionChains(driver).click(last_row).perform()
-    except Exception:
-        driver.execute_script(
-            "const row = arguments[0];"
-            "row.scrollIntoView({block: 'center'});"
-            "row.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));",
-            last_row,
-        )
-
-    _wait_for_selection_count(driver, 1)
-
-    # A single targeted order is already selected by the anchor click.  A
-    # Shift+Click on that same row can toggle the selection back off in CRM.
-    if len(rows) == 1:
-        return 1
-
     _shift_click_row(driver, first_row)
 
     _wait_for_selection_count(driver, len(rows))
@@ -830,20 +805,13 @@ def select_all_orders_with_preview(driver, rows=None, list_url=None):
     selected_count = select_all_orders(driver, rows=rows)
 
     # The selection count can update even when the Angular preview pane misses
-    # the first range event.  Give it a brief chance, then mirror the manual
-    # recovery gesture the team uses: hold Shift and click the top order again.
+    # the first range event. Give it a brief chance before safely resetting the
+    # client-side state with a report reload.
     try:
         return selected_count, wait_for_order_preview_panel(driver, timeout=3)
     except TimeoutException:
-        print("Order Preview did not appear after range selection; retrying Shift+Click on the top order...")
-
-    _shift_click_row(driver, rows[0])
-    _wait_for_selection_count(driver, len(rows))
-    try:
-        return selected_count, wait_for_order_preview_panel(driver)
-    except TimeoutException:
         print(
-            "Order Preview still did not appear after reselection; reopening the CRM report "
+            "Order Preview did not appear after range selection; reopening the CRM report "
             "and selecting the current rows again..."
         )
 

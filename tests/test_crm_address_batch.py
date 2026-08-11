@@ -1831,20 +1831,25 @@ class CrmUnlockOrdersTests(unittest.TestCase):
         self.assertIn("id%5Bhigh%5D=4965222", result)
         self.assertIn("_orderIds=4965222", result)
 
-    def test_select_all_orders_does_not_shift_click_single_targeted_row(self):
+    def test_select_all_orders_shift_clicks_top_row_without_plain_click_anchor(self):
         driver = mock.Mock()
-        row = object()
+        rows = [object(), object()]
 
         with mock.patch.object(crm_unlock_orders.ActionChains, "click") as click, mock.patch.object(
             crm_unlock_orders,
             "_wait_for_selection_count",
         ) as wait_for_selection, mock.patch.object(crm_unlock_orders, "_shift_click_row") as shift_click:
-            click.return_value.perform.return_value = None
-            selected_count = crm_unlock_orders.select_all_orders(driver, rows=[row])
+            selected_count = crm_unlock_orders.select_all_orders(driver, rows=rows)
 
-        self.assertEqual(selected_count, 1)
-        wait_for_selection.assert_called_once_with(driver, 1)
-        shift_click.assert_not_called()
+        self.assertEqual(selected_count, 2)
+        click.assert_not_called()
+        shift_click.assert_called_once_with(driver, rows[0])
+        wait_for_selection.assert_called_once_with(driver, 2)
+
+    def test_selection_count_parser_ignores_unrelated_numbers(self):
+        text = "120 122 Quantity 1 to 100 Order Preview 10 orders selected"
+
+        self.assertEqual(crm_unlock_orders._extract_selection_count(text), 10)
 
     def test_unlock_single_order_uses_targeted_report_preview_flow(self):
         driver = mock.Mock()
@@ -1885,7 +1890,7 @@ class CrmUnlockOrdersTests(unittest.TestCase):
         click_apply.assert_called_once_with(driver, preview_panel)
         click_ok.assert_called_once_with(driver)
 
-    def test_unlocker_reopens_report_when_preview_stays_missing_after_reselection(self):
+    def test_unlocker_reopens_report_when_preview_is_missing(self):
         driver = mock.Mock()
         initial_rows = [object(), object()]
         refreshed_rows = [object(), object(), object()]
@@ -1900,13 +1905,9 @@ class CrmUnlockOrdersTests(unittest.TestCase):
             "wait_for_order_preview_panel",
             side_effect=[
                 crm_unlock_orders.TimeoutException("preview absent"),
-                crm_unlock_orders.TimeoutException("preview still absent"),
                 preview_panel,
             ],
-        ), mock.patch.object(crm_unlock_orders, "_shift_click_row") as shift_click, mock.patch.object(
-            crm_unlock_orders,
-            "_wait_for_selection_count",
-        ) as wait_for_selection, mock.patch.object(
+        ), mock.patch.object(
             crm_unlock_orders,
             "_open_locked_report_rows",
             return_value=refreshed_rows,
@@ -1921,8 +1922,6 @@ class CrmUnlockOrdersTests(unittest.TestCase):
         self.assertIs(panel, preview_panel)
         self.assertEqual(select_orders.call_args_list[0].kwargs["rows"], initial_rows)
         self.assertEqual(select_orders.call_args_list[1].kwargs["rows"], refreshed_rows)
-        shift_click.assert_called_once_with(driver, initial_rows[0])
-        wait_for_selection.assert_called_once_with(driver, len(initial_rows))
         reopen_report.assert_called_once_with(driver, list_url="https://crm.example/locked-orders")
 
     def test_blank_locked_report_reloads_once_before_returning_no_orders(self):
