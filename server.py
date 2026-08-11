@@ -27,7 +27,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 from flask import Flask, Response, g, jsonify, redirect, request, session, url_for
 import pystray
@@ -2323,7 +2323,30 @@ def _merge_sheet_scanner_retry_report(original_report, retry_report):
 
 def _automation_queue_result_context(task, ok, message):
     existing = dict((task or {}).get("result_context") or {})
-    if str((task or {}).get("task_type") or "") != "crm.mass_emailer":
+    task_type = str((task or {}).get("task_type") or "")
+    if task_type == "crm.processing":
+        with crm_processing_state_lock:
+            processing_state = load_crm_processing_state()
+        latest_report = {
+            "processing_filter": _normalize_crm_shipping_filter(processing_state.get("last_filter_used")),
+            "selected_steps": list(processing_state.get("last_selected_steps") or []),
+            "step_results": _normalize_crm_processing_step_results(processing_state.get("last_step_results")),
+            "success": bool(processing_state.get("last_run_success")),
+            "message": str(processing_state.get("last_run_message") or message or ""),
+        }
+        arguments = (task or {}).get("arguments") or (task or {}).get("task_arguments")
+        original_arguments = existing.get("original_arguments")
+        if not isinstance(original_arguments, dict) and isinstance(arguments, dict):
+            original_arguments = dict(arguments)
+            original_arguments.pop("retry_plan", None)
+        return {
+            **existing,
+            "retrying": False,
+            "retry_completed": bool(existing.get("retrying")),
+            "original_arguments": dict(original_arguments or {}),
+            "report": latest_report,
+        }
+    if task_type != "crm.mass_emailer":
         if existing.get("retrying"):
             return {
                 **existing,
@@ -2378,7 +2401,7 @@ _QUEUE_ORDER_LABEL_RE = re.compile(r"\border\s+\d{7}\b", re.IGNORECASE)
 
 
 def _automation_queue_task_is_retryable_order(task):
-    """Limit in-place retry to unfinished, normal-mode single-order CRM work."""
+    """Limit in-place retry to unfinished CRM work with an order-level scope."""
     if not isinstance(task, dict):
         return False
     if str(task.get("status") or "").strip().lower() not in {"failed", "canceled"}:
@@ -2386,6 +2409,9 @@ def _automation_queue_task_is_retryable_order(task):
     if str(task.get("queue_mode") or "normal").strip().lower() != "normal":
         return False
     task_type = str(task.get("task_type") or "").strip().lower()
+    if task_type == "crm.processing":
+        context = task.get("result_context") if isinstance(task.get("result_context"), dict) else {}
+        return bool(_crm_processing_retry_plan(context.get("report")))
     if task_type not in _RETRYABLE_SINGLE_ORDER_TASK_TYPES:
         return False
     arguments = task.get("task_arguments") or task.get("arguments")
@@ -2923,8 +2949,36 @@ def retry_automation_queue_task(task_id):
                 runtime.client.retry_failed(task_id, arguments=retry_arguments, retry_context=retry_context)
                 runtime.wake()
                 return True, f"Retry {retry_count} queued in the original Sheets Scanner entry."
+            if task.get("task_type") == "crm.processing":
+                original_report = existing_context.get("report") if isinstance(existing_context.get("report"), dict) else {}
+                main_retry_plan = _crm_processing_retry_plan(original_report)
+                original_arguments = existing_context.get("original_arguments")
+                if not main_retry_plan or not isinstance(original_arguments, dict):
+                    return False, "This Main Automation entry has no failed order details available for a safe targeted retry."
+                main_retry_arguments = {**original_arguments, "retry_plan": main_retry_plan}
+                failed_order_tasks = sum(len(order_ids) for order_ids in main_retry_plan.values())
+                retry_context = {
+                    **existing_context,
+                    "retry_count": retry_count,
+                    "retrying": True,
+                    "retry_completed": False,
+                    "original_report": existing_context.get("original_report") or original_report,
+                    "report": original_report,
+                    "retry_plan": main_retry_plan,
+                    "retry_requested_at": _automation_queue_now_iso(),
+                }
+                runtime.client.retry_order(
+                    task_id,
+                    retry_context=retry_context,
+                    arguments=main_retry_arguments,
+                )
+                runtime.wake()
+                return True, (
+                    f"Retry {retry_count} queued in the same Main Automation entry for "
+                    f"{failed_order_tasks} failed order task(s)."
+                )
             if not _automation_queue_task_is_retryable_order(task):
-                return False, "Only canceled or failed single-order CRM tasks can be retried."
+                return False, "Only canceled or failed CRM tasks with a safe retry scope can be retried."
             retry_context = {
                 "retry_count": retry_count,
                 "retrying": True,
@@ -2967,9 +3021,33 @@ def retry_automation_queue_task(task_id):
                 "retry_requested_at": _automation_queue_now_iso(),
             }
             success_message = f"Retry {retry_count} queued in the original Sheets Scanner entry."
+        elif task.get("task_type") == "crm.processing":
+            original_report = existing_context.get("report") if isinstance(existing_context.get("report"), dict) else {}
+            main_retry_plan = _crm_processing_retry_plan(original_report)
+            original_arguments = existing_context.get("original_arguments") or task.get("task_arguments")
+            if not main_retry_plan or not isinstance(original_arguments, dict):
+                return False, "This Main Automation entry has no failed order details available for a safe targeted retry."
+            main_retry_arguments = {**original_arguments, "retry_plan": main_retry_plan}
+            task["task_arguments"] = main_retry_arguments
+            task["fn"] = lambda: run_crm_processing_run_queued(**main_retry_arguments)
+            failed_order_tasks = sum(len(order_ids) for order_ids in main_retry_plan.values())
+            retry_context = {
+                **existing_context,
+                "retry_count": retry_count,
+                "retrying": True,
+                "retry_completed": False,
+                "original_report": existing_context.get("original_report") or original_report,
+                "report": original_report,
+                "retry_plan": main_retry_plan,
+                "retry_requested_at": _automation_queue_now_iso(),
+            }
+            success_message = (
+                f"Retry {retry_count} queued in the same Main Automation entry for "
+                f"{failed_order_tasks} failed order task(s)."
+            )
         else:
             if not _automation_queue_task_is_retryable_order(task):
-                return False, "Only canceled or failed single-order CRM tasks can be retried."
+                return False, "Only canceled or failed CRM tasks with a safe retry scope can be retried."
             if not callable(task.get("fn")):
                 return False, "The original order task is no longer available to retry safely."
             retry_context = {
@@ -10860,11 +10938,202 @@ def update_crm_processing_preferences(stock_unlocker_enabled=None, mass_emailer_
     return True, f"Automate Processing saved for {_crm_shipping_filter_label(state.get('processing_filter'))}: {selection_text}.", state
 
 
-def _run_crm_processing_step(step_key, processing_filter, processing_state=None):
+def _normalize_crm_processing_retry_plan(value):
+    source = value if isinstance(value, dict) else {}
+    plan = {}
+    allowed_steps = {
+        "address_validator_batch",
+        "product_separator",
+        "auto_splitter",
+        "stock_unlocker",
+        "order_goods",
+        "shipping_bypasser",
+        "push_back",
+    }
+    for step_key, raw_order_ids in source.items():
+        key = str(step_key or "").strip()
+        if key not in allowed_steps:
+            continue
+        order_ids = _extract_crm_order_ids({"order_ids": raw_order_ids if isinstance(raw_order_ids, list) else []})
+        if order_ids:
+            plan[key] = order_ids[:100]
+    return plan
+
+
+def _crm_processing_retry_plan(report):
+    report = report if isinstance(report, dict) else {}
+    plan = {}
+    for result in _normalize_crm_processing_step_results(report.get("step_results")):
+        order_ids = []
+        for error in result.get("errors") if isinstance(result.get("errors"), list) else []:
+            order_id = _normalize_crm_single_order_id(error.get("order_id") if isinstance(error, dict) else None)
+            if order_id and order_id not in order_ids:
+                order_ids.append(order_id)
+        if order_ids:
+            plan[result["key"]] = order_ids
+    return plan
+
+
+def _crm_processing_targeted_list_url(list_url, order_id):
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    if not normalized_order_id or not list_url:
+        return list_url
+    parts = urlsplit(str(list_url))
+    replacements = {
+        "id[low]": normalized_order_id,
+        "id[high]": normalized_order_id,
+        "_orderIds": normalized_order_id,
+    }
+    query_items = []
+    replaced = set()
+    for key, value in parse_qsl(parts.query, keep_blank_values=True):
+        if key in replacements:
+            query_items.append((key, replacements[key]))
+            replaced.add(key)
+        else:
+            query_items.append((key, value))
+    for key, value in replacements.items():
+        if key not in replaced:
+            query_items.append((key, value))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items), parts.fragment))
+
+
+def _run_crm_processing_retry_step(step_key, processing_filter, order_ids, processing_state=None):
+    normalized_order_ids = _extract_crm_order_ids({"order_ids": order_ids})
+    order_results = []
+    split_orders = []
+    started_at = time.monotonic()
+    for order_id in normalized_order_ids:
+        try:
+            result = _run_crm_processing_step(
+                step_key,
+                processing_filter,
+                processing_state=processing_state,
+                target_order_id=order_id,
+            )
+        except Exception as exc:
+            logger.exception("Automate Processing retry failed for %s order %s", step_key, order_id)
+            result = {
+                "success": False,
+                "message": str(exc),
+                "errors": [{"order_id": order_id, "status": "Needs attention", "message": str(exc)}],
+            }
+        errors = result.get("errors") if isinstance(result.get("errors"), list) else []
+        if not result.get("success") and not errors:
+            errors = [{"order_id": order_id, "status": "Needs attention", "message": result.get("message") or "Retry failed."}]
+        normalized_errors = _normalize_crm_processing_error_details(errors)
+        for error in normalized_errors:
+            if not error.get("order_id"):
+                error["order_id"] = order_id
+        order_results.append(
+            {
+                "order_id": order_id,
+                "success": bool(result.get("success")) and not normalized_errors,
+                "message": str(result.get("message") or ""),
+                "errors": normalized_errors,
+            }
+        )
+        split_orders.extend(result.get("split_orders") if isinstance(result.get("split_orders"), list) else [])
+        if _automation_stop_is_blocking():
+            break
+    errors = [error for row in order_results for error in row.get("errors", [])]
+    successful_count = sum(1 for row in order_results if row.get("success"))
+    success = len(order_results) == len(normalized_order_ids) and not errors
+    message = (
+        f"Retry completed {successful_count}/{len(normalized_order_ids)} failed order(s) for "
+        f"{_crm_processing_step_label(step_key)}."
+    )
+    return {
+        "key": step_key,
+        "label": _crm_processing_step_label(step_key),
+        "success": success,
+        "order_count": len(normalized_order_ids),
+        "successful_order_count": successful_count,
+        "error_count": len(errors),
+        "duration_seconds": _normalize_duration_seconds(time.monotonic() - started_at),
+        "message": message,
+        "errors": errors,
+        "split_orders": split_orders,
+        "retry_order_ids": normalized_order_ids,
+    }
+
+
+def _run_crm_processing_auto_splitter_order(order_id):
+    step_key = "auto_splitter"
+    parallel_workers = _saved_crm_automation_parallel_workers(default=1)
+    _start_crm_auto_splitter_runtime(order_id, None, None, minimum_tabs=10, dry_run=False, parallel_workers=parallel_workers)
+    preflight_ok, preflight_message, preflight_payload = _execute_crm_auto_splitter_worker(
+        order_id,
+        None,
+        None,
+        minimum_tabs=10,
+        dry_run=True,
+        parallel_workers=1,
+        show_terminal=False,
+    )
+    preflight_payload = preflight_payload if isinstance(preflight_payload, dict) else {}
+    if not preflight_ok:
+        ok = False
+        message = str(preflight_message)
+        outcome = "preflight_failed"
+        payload = preflight_payload
+    elif _crm_extension_order_split_not_needed(preflight_message, preflight_payload):
+        ok = True
+        message = "Skipped: the order has 10 or fewer tabs or was already split."
+        outcome = "split_not_needed"
+        payload = preflight_payload
+    else:
+        detected_tabs = preflight_payload.get("expected_tab_count") or preflight_payload.get("detected_tab_count")
+        divisions = preflight_payload.get("divisions")
+        ok, message, payload = _execute_crm_auto_splitter_worker(
+            order_id,
+            detected_tabs,
+            divisions,
+            minimum_tabs=10,
+            dry_run=False,
+            parallel_workers=parallel_workers,
+            show_terminal=False,
+        )
+        payload = payload if isinstance(payload, dict) else {}
+        outcome = "split_completed" if ok else "split_failed"
+    payload = {
+        **dict(payload or {}),
+        "success": bool(ok),
+        "message": str(message),
+        "target_order_id": order_id,
+        "order_ids": [order_id],
+        "order_count": 1,
+        "order_results": [
+            {
+                "order_id": order_id,
+                "success": bool(ok),
+                "status": "Completed" if ok else "Needs attention",
+                "outcome": outcome,
+                "message": str(message),
+            }
+        ],
+    }
+    state = _persist_crm_auto_splitter_run_result(ok, message, payload, dry_run=False)
+    payload["state"] = state
+    _finish_crm_auto_splitter_runtime(ok, message, payload, release_lock=False)
+    return {
+        "key": step_key,
+        "label": _crm_processing_step_label(step_key),
+        "success": bool(ok),
+        **_crm_processing_step_metrics(step_key, payload, ok, message),
+        "stage_timings": _normalize_stage_timings(payload.get("stage_timings")),
+        "message": str(message),
+        "errors": _crm_processing_step_error_details(step_key, payload, ok, message),
+        "split_orders": _normalize_crm_auto_split_orders(payload),
+    }
+
+
+def _run_crm_processing_step(step_key, processing_filter, processing_state=None, target_order_id=None):
+    target_order_id = _normalize_crm_single_order_id(target_order_id)
     if step_key == "product_separator":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
         list_url = _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
-        if normalized_filter == "high_value" and not list_url:
+        if normalized_filter == "high_value" and not list_url and not target_order_id:
             message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
             return {
                 "key": step_key,
@@ -10876,8 +11145,9 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
         _start_crm_product_separator_runtime(
             dry_run=False,
             list_mode=normalized_filter,
-            list_url=list_url,
+            list_url=None if target_order_id else list_url,
             parallel_workers=parallel_workers,
+            order_id=target_order_id,
         )
         ok = False
         message = "Product Separator did not run."
@@ -10886,8 +11156,9 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
             ok, message, payload = _execute_crm_product_separator_worker(
                 dry_run=False,
                 list_mode=normalized_filter,
-                list_url=list_url,
+                list_url=None if target_order_id else list_url,
                 parallel_workers=parallel_workers,
+                order_id=target_order_id,
                 visible=False,
                 show_terminal=False,
             )
@@ -10911,6 +11182,8 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
         }
 
     if step_key == "auto_splitter":
+        if target_order_id:
+            return _run_crm_processing_auto_splitter_order(target_order_id)
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
         list_url = _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
         if not list_url:
@@ -10978,7 +11251,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
     if step_key == "order_goods":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
         list_url = _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
-        if normalized_filter in {"813", "high_value", "free", "all"} and not list_url:
+        if normalized_filter in {"813", "high_value", "free", "all"} and not list_url and not target_order_id:
             message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
             return {
                 "key": step_key,
@@ -10991,7 +11264,8 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
             dry_run=False,
             batch_size=None,
             parallel_workers=parallel_workers,
-            list_url=list_url,
+            list_url=None if target_order_id else list_url,
+            order_id=target_order_id,
         )
         ok = False
         message = "Rush Order Goods did not run."
@@ -11001,9 +11275,10 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
                 dry_run=False,
                 batch_size=None,
                 parallel_workers=parallel_workers,
-                list_url=list_url,
+                list_url=None if target_order_id else list_url,
                 visible=False,
                 show_terminal=False,
+                order_id=target_order_id,
             )
         except Exception as e:
             logger.exception("Automate Processing Rush Order Goods step failed unexpectedly")
@@ -11027,7 +11302,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
     if step_key == "shipping_bypasser":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
         list_url = _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
-        if normalized_filter in {"813", "high_value"} and not list_url:
+        if normalized_filter in {"813", "high_value"} and not list_url and not target_order_id:
             message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
             return {
                 "key": step_key,
@@ -11043,7 +11318,8 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
             _start_crm_shipping_bypasser_runtime(
                 dry_run=False,
                 batch_size=None,
-                list_url=list_url,
+                list_url=None if target_order_id else list_url,
+                order_id=target_order_id,
             )
             ok = False
             message = "Shipping Bypasser did not run."
@@ -11052,9 +11328,10 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
                 ok, message, payload = _execute_crm_shipping_bypasser_worker(
                     dry_run=False,
                     batch_size=None,
-                    list_url=list_url,
+                    list_url=None if target_order_id else list_url,
                     visible=False,
                     show_terminal=False,
+                    order_id=target_order_id,
                 )
             except Exception as e:
                 logger.exception("Automate Processing Shipping Bypasser step failed unexpectedly")
@@ -11087,7 +11364,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
                 "success": False,
                 "message": message,
             }
-        if not list_url:
+        if not list_url and not target_order_id:
             config_key = _crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)
             if normalized_filter == "rush":
                 config_key = "CRM_PUSH_BACK_RUSH_URL"
@@ -11108,7 +11385,8 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
                 dry_run=False,
                 batch_size=None,
                 processing_filter=normalized_filter,
-                list_url=list_url,
+                list_url=None if target_order_id else list_url,
+                order_id=target_order_id,
                 parallel_workers=parallel_workers,
             )
             ok = False
@@ -11119,10 +11397,11 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
                     dry_run=False,
                     batch_size=None,
                     processing_filter=normalized_filter,
-                    list_url=list_url,
+                    list_url=None if target_order_id else list_url,
                     visible=False,
                     show_terminal=False,
                     parallel_workers=parallel_workers,
+                    order_id=target_order_id,
                 )
             except Exception as e:
                 logger.exception("Automate Processing Push Back step failed unexpectedly")
@@ -11146,7 +11425,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
     if step_key == "stock_unlocker":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
         list_url = _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
-        if normalized_filter in {"free", "all"} and not list_url:
+        if normalized_filter in {"free", "all"} and not list_url and not target_order_id:
             message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
             return {
                 "key": step_key,
@@ -11159,7 +11438,11 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
         message = "Stock Unlocker did not run."
         payload = {"success": False, "message": message}
         try:
-            ok, message, payload = _run_crm_unlock_with_retry(dry_run=False, list_url=list_url)
+            base_list_url = list_url or getattr(config_module, "CRM_LOCKED_URL", "")
+            if target_order_id and not base_list_url:
+                raise RuntimeError("Stock Unlocker cannot target the failed order because its CRM list URL is empty.")
+            targeted_list_url = _crm_processing_targeted_list_url(base_list_url, target_order_id)
+            ok, message, payload = _run_crm_unlock_with_retry(dry_run=False, list_url=targeted_list_url)
         except Exception as e:
             logger.exception("Automate Processing stock unlocker step failed unexpectedly")
             ok = False
@@ -11184,7 +11467,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
     if batch_size is not None:
         parallel_workers = min(parallel_workers, batch_size)
     list_url = _crm_processing_address_list_url_for_filter(normalized_filter)
-    if normalized_filter in {"813", "high_value"} and not list_url:
+    if normalized_filter in {"813", "high_value"} and not list_url and not target_order_id:
         message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, 'address_validator_batch')} is empty in config.py."
         return {
             "key": step_key,
@@ -11195,11 +11478,11 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
 
     _start_crm_address_runtime(
         dry_run=False,
-        action="validate_batch",
-        target_order_id=None,
+        action="validate_order" if target_order_id else "validate_batch",
+        target_order_id=target_order_id,
         active_filter=normalized_filter,
-        list_url=list_url,
-        batch_size=batch_size,
+        list_url=None if target_order_id else list_url,
+        batch_size=1 if target_order_id else batch_size,
         parallel_workers=parallel_workers,
         last_message=(
             f"Address Validator batch queued {_crm_batch_scope_phrase(batch_size)} from "
@@ -11211,13 +11494,13 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
     payload = {"success": False, "message": message}
     try:
         ok, message, payload = _run_crm_address_with_retry(
-            None,
+            target_order_id,
             normalized_filter,
             dry_run=False,
-            action="validate_batch",
-            batch_size=batch_size,
+            action="validate_order" if target_order_id else "validate_batch",
+            batch_size=1 if target_order_id else batch_size,
             parallel_workers=parallel_workers,
-            list_url=list_url,
+            list_url=None if target_order_id else list_url,
         )
     except Exception as e:
         logger.exception("Automate Processing address validator step failed unexpectedly")
@@ -11228,13 +11511,13 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
         ok,
         message,
         payload,
-        None,
+        target_order_id,
         normalized_filter,
         dry_run=False,
-        action="validate_batch",
-        batch_size=batch_size,
+        action="validate_order" if target_order_id else "validate_batch",
+        batch_size=1 if target_order_id else batch_size,
         parallel_workers=parallel_workers,
-        list_url=list_url,
+        list_url=None if target_order_id else list_url,
     )
     _finish_crm_address_runtime(ok, message, payload, state, release_lock=False)
     return {
@@ -11248,11 +11531,12 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None)
     }
 
 
-def _crm_processing_run_thread(selected_steps, processing_filter):
+def _crm_processing_run_thread(selected_steps, processing_filter, retry_plan=None):
     step_results = []
     overall_success = False
     summary = "Automate Processing did not run."
     normalized_filter = _normalize_crm_shipping_filter(processing_filter)
+    normalized_retry_plan = _normalize_crm_processing_retry_plan(retry_plan)
     try:
         with crm_processing_state_lock:
             processing_state = load_crm_processing_state()
@@ -11274,7 +11558,15 @@ def _crm_processing_run_thread(selected_steps, processing_filter):
                 crm_processing_runtime["currentOrderProgress"] = None
                 crm_processing_runtime["lastMessage"] = f"Running {step_label}."
             step_started_at = time.monotonic()
-            result = _run_crm_processing_step(step_key, normalized_filter, processing_state=processing_state)
+            if normalized_retry_plan:
+                result = _run_crm_processing_retry_step(
+                    step_key,
+                    normalized_filter,
+                    normalized_retry_plan.get(step_key) or [],
+                    processing_state=processing_state,
+                )
+            else:
+                result = _run_crm_processing_step(step_key, normalized_filter, processing_state=processing_state)
             result["duration_seconds"] = _normalize_duration_seconds(time.monotonic() - step_started_at)
             step_results.append(result)
             with crm_processing_runtime_lock:
@@ -11322,6 +11614,7 @@ def start_crm_processing_run(
     push_back_enabled=None,
     processing_filter=None,
     persist_preferences=True,
+    retry_plan=None,
 ):
     ensure_crm_processing_state_file()
     unlock_supplied = _crm_processing_value_supplied(stock_unlocker_enabled)
@@ -11383,7 +11676,11 @@ def start_crm_processing_run(
             save_crm_processing_state(state)
 
     normalized_filter = _normalize_crm_shipping_filter(state.get("processing_filter"))
+    normalized_retry_plan = _normalize_crm_processing_retry_plan(retry_plan)
     selected_steps = _crm_processing_selected_steps_from_state(state)
+    if normalized_retry_plan:
+        selected_steps = [step for step in selected_steps if step in normalized_retry_plan]
+        selected_steps.extend(step for step in normalized_retry_plan if step not in selected_steps)
     if not selected_steps:
         return False, "Select at least one automation in Automate Processing before starting."
     if not crm_lock.acquire(blocking=False):
@@ -11407,8 +11704,15 @@ def start_crm_processing_run(
         crm_processing_runtime["lastMessage"] = "Automate Processing queued."
         crm_processing_runtime["lastSuccess"] = None
 
-    threading.Thread(target=_crm_processing_run_thread, args=(list(selected_steps), normalized_filter), daemon=True).start()
+    threading.Thread(
+        target=_crm_processing_run_thread,
+        args=(list(selected_steps), normalized_filter, normalized_retry_plan),
+        daemon=True,
+    ).start()
     labels = ", ".join(_crm_processing_step_label(step) for step in selected_steps)
+    if normalized_retry_plan:
+        retry_count = sum(len(order_ids) for order_ids in normalized_retry_plan.values())
+        return True, f"Automate Processing retry started for {retry_count} failed order task(s): {labels}."
     return True, f"Automate Processing started for {_crm_shipping_filter_label(normalized_filter)}: {labels}."
 
 
@@ -12907,7 +13211,7 @@ def run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, limit=
     return _wait_for_status_completion(get_crm_mass_emailer_status_payload, msg)
 
 
-def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None):
+def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None, retry_plan=None):
     ok, msg = start_crm_processing_run(
         stock_unlocker_enabled=stock_unlocker_enabled,
         mass_emailer_enabled=mass_emailer_enabled,
@@ -12919,6 +13223,7 @@ def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enab
         push_back_enabled=push_back_enabled,
         processing_filter=processing_filter,
         persist_preferences=False,
+        retry_plan=retry_plan,
     )
     if not ok:
         return ok, msg

@@ -301,6 +301,83 @@ class SharedQueueRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.runtime.retry_calls, [])
 
+    def test_main_retry_reuses_entry_and_targets_only_failed_orders(self):
+        report = {
+            "processing_filter": "rush",
+            "selected_steps": ["address_validator_batch", "product_separator", "order_goods"],
+            "step_results": [
+                {
+                    "key": "address_validator_batch",
+                    "success": False,
+                    "order_count": 2,
+                    "error_count": 1,
+                    "errors": [{"order_id": "5010526", "status": "Needs attention", "message": "Timeout"}],
+                },
+                {
+                    "key": "product_separator",
+                    "success": True,
+                    "order_count": 2,
+                    "error_count": 0,
+                    "errors": [],
+                },
+                {
+                    "key": "order_goods",
+                    "success": False,
+                    "order_count": 3,
+                    "error_count": 2,
+                    "errors": [
+                        {"order_id": "5010527", "status": "Needs attention", "message": "No purchase plan"},
+                        {"order_id": "5010529", "status": "Needs attention", "message": "CRM timeout"},
+                    ],
+                },
+            ],
+        }
+        failed_task = {
+            "id": "main-processing-task",
+            "label": "Processing - Rush: Validator, Separator, Order Goods",
+            "task_type": "crm.processing",
+            "queue_mode": "normal",
+            "status": "failed",
+            "result_context": {
+                "report": report,
+                "original_arguments": {
+                    "processing_filter": "rush",
+                    "address_validator_enabled": True,
+                    "product_separator_enabled": True,
+                    "order_goods_enabled": True,
+                },
+            },
+        }
+        self.runtime.snapshot = lambda: {
+            "success": True,
+            "mode": "shared",
+            "tasks": [failed_task],
+            "history": [failed_task],
+            "queued": [],
+            "idle": [],
+            "running": None,
+            "queued_count": 0,
+            "running_count": 0,
+            "idle_count": 0,
+        }
+
+        response = self.client.post("/api/queue/main-processing-task/retry")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.runtime.retry_calls), 1)
+        task_id, retry = self.runtime.retry_calls[0]
+        self.assertEqual(task_id, "main-processing-task")
+        self.assertEqual(
+            retry["arguments"]["retry_plan"],
+            {
+                "address_validator_batch": ["5010526"],
+                "order_goods": ["5010527", "5010529"],
+            },
+        )
+        self.assertTrue(retry["arguments"]["product_separator_enabled"])
+        self.assertEqual(self.runtime.enqueued, [])
+        self.assertIn("same Main Automation entry", response.get_json()["message"])
+
     def test_registered_executors_cover_route_task_types(self):
         registered = set(server.register_shared_queue_task_executors())
         self.assertIn("communications.paycom_clock", registered)

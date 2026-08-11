@@ -1,11 +1,15 @@
--- Requeue canceled or failed single-order CRM tasks without replacing their
--- encrypted arguments. The CRM workers remain responsible for detecting and
--- skipping actions that were completed before the original run stopped.
+-- Requeue canceled or failed CRM work in the same queue row. Single-order
+-- tasks preserve their encrypted arguments. Main Automation retries replace
+-- the payload in place with a server-generated plan containing only failed
+-- automation/order combinations.
+
+drop function if exists public.automation_retry_order_task(uuid, uuid, jsonb);
 
 create or replace function public.automation_retry_order_task(
     p_workspace_id uuid,
     p_task_id uuid,
-    p_retry_context jsonb default '{}'::jsonb
+    p_retry_context jsonb default '{}'::jsonb,
+    p_encrypted_payload text default null
 )
 returns jsonb
 language plpgsql
@@ -19,6 +23,7 @@ begin
     end if;
 
     update public.automation_queue set
+        encrypted_payload = coalesce(p_encrypted_payload, encrypted_payload),
         status = 'queued',
         available_at = now(),
         claimed_by_node = null,
@@ -35,24 +40,36 @@ begin
       and id = p_task_id
       and status in ('failed', 'canceled')
       and queue_mode = 'normal'
-      and task_type in (
-          'crm.address_validator',
-          'crm.auto_splitter',
-          'crm.extension_order',
-          'crm.order_goods',
-          'crm.product_separator',
-          'crm.push_back',
-          'crm.sheet_scanner_order',
-          'crm.shipping_bypasser'
+      and (
+          (
+              task_type in (
+                  'crm.address_validator',
+                  'crm.auto_splitter',
+                  'crm.extension_order',
+                  'crm.order_goods',
+                  'crm.product_separator',
+                  'crm.push_back',
+                  'crm.sheet_scanner_order',
+                  'crm.shipping_bypasser'
+              )
+              and label ~* 'Order[[:space:]]+[0-9]{7}([^0-9]|$)'
+          )
+          or (
+              task_type = 'crm.processing'
+              and jsonb_typeof(coalesce(p_retry_context, '{}'::jsonb) -> 'retry_plan') = 'object'
+              and coalesce(p_retry_context -> 'retry_plan', '{}'::jsonb) <> '{}'::jsonb
+              and p_encrypted_payload is not null
+          )
       )
-      and label ~* 'Order[[:space:]]+[0-9]{7}([^0-9]|$)'
     returning * into v_task;
 
     if not found then
-        raise exception 'Only canceled or failed single-order CRM tasks can be retried';
+        raise exception 'Only canceled or failed CRM tasks with a safe retry scope can be retried';
     end if;
     return to_jsonb(v_task) - 'encrypted_payload';
 end;
 $$;
 
-grant execute on function public.automation_retry_order_task(uuid, uuid, jsonb) to authenticated;
+grant execute on function public.automation_retry_order_task(uuid, uuid, jsonb, text) to authenticated;
+
+notify pgrst, 'reload schema';

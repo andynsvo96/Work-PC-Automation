@@ -178,8 +178,28 @@ class SharedQueueTests(unittest.TestCase):
         self.assertTrue(captured["url"].endswith("/rest/v1/rpc/automation_retry_order_task"))
         self.assertEqual(captured["body"]["p_workspace_id"], config.workspace_id)
         self.assertEqual(captured["body"]["p_task_id"], "task-1")
-        self.assertNotIn("p_encrypted_payload", captured["body"])
+        self.assertIsNone(captured["body"]["p_encrypted_payload"])
         self.assertEqual(captured["body"]["p_retry_context"]["retry_count"], 2)
+
+    def test_retry_order_can_replace_payload_for_targeted_main_retry(self):
+        captured = {}
+
+        def opener(request, timeout):
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _Response({"id": "main-task", "status": "queued"})
+
+        client = SupabaseQueueClient(make_test_config(node_key="windows-pc"), opener=opener)
+        arguments = {
+            "processing_filter": "rush",
+            "retry_plan": {"order_goods": ["5010529"]},
+        }
+        client.retry_order(
+            "main-task",
+            retry_context={"retrying": True, "retry_plan": arguments["retry_plan"]},
+            arguments=arguments,
+        )
+
+        self.assertEqual(client.cipher.decrypt(captured["body"]["p_encrypted_payload"]), arguments)
 
     def test_finish_falls_back_safely_before_retry_migration_is_applied(self):
         client = SupabaseQueueClient(make_test_config(node_key="macbook"))

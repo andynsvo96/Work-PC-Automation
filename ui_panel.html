@@ -3161,10 +3161,13 @@ async function retryAutomationQueueTask(taskId, button) {
   const tasks = Array.isArray(queuePayload && queuePayload.tasks) ? queuePayload.tasks : [];
   const task = tasks.find((row) => String(row && row.id || '') === String(taskId || '')) || {};
   const sheetsScanner = String(task.label || '').trim().toLowerCase() === 'sheets scanner';
+  const mainAutomation = String(task.task_type || '').trim().toLowerCase() === 'crm.processing';
   const confirmed = window.confirm(sheetsScanner
     ? 'Retry all failed Sheets Scanner rows? Rows with an ERROR message will be included automatically. '
       + 'The automation checks CRM first and skips cancellations, refunds, refund fees, and sales notes that are already recorded.'
-    : `Retry ${task.label || 'this order task'}? The original task will run again, detect completed CRM actions, and continue with unfinished work.`
+    : mainAutomation
+      ? `Retry ${task.label || 'Main Automation'} in this same queue entry? Only the automation/order combinations recorded with errors will run again.`
+      : `Retry ${task.label || 'this order task'}? The original task will run again, detect completed CRM actions, and continue with unfinished work.`
   );
   if (!confirmed) return;
   if (button) {
