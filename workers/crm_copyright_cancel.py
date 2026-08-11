@@ -1307,9 +1307,53 @@ def _is_salesforce_login_page(driver):
     )
 
 
+def _is_salesforce_verification_code_page(driver):
+    """Recognize Salesforce identity challenges that do not show a login form."""
+    text = _visible_text(driver).lower()
+    challenge_markers = (
+        "verification code",
+        "verify your identity",
+        "enter the code",
+        "we sent you a code",
+        "check your email for a code",
+        "one-time code",
+    )
+    if any(marker in text for marker in challenge_markers):
+        return True
+    try:
+        return bool(
+            driver.execute_script(
+                """
+                return !!document.querySelector(
+                  'input[autocomplete="one-time-code"], input[name*="verification" i], '
+                  + 'input[id*="verification" i], input[name*="otp" i], input[id*="otp" i]'
+                );
+                """
+            )
+        )
+    except Exception:
+        return False
+
+
 def _is_salesforce_login_approval_page(driver):
     text = _visible_text(driver).lower()
-    return "login approval required" in text or "salesforce authenticator" in text
+    return (
+        "login approval required" in text
+        or "salesforce authenticator" in text
+        or _is_salesforce_verification_code_page(driver)
+    )
+
+
+def _is_salesforce_authenticated_page(driver):
+    """Return True only after navigation reaches a signed-in Salesforce org."""
+    if _is_salesforce_login_approval_page(driver):
+        return False
+    url = str(getattr(driver, "current_url", "") or "").lower()
+    return (
+        "printfly.lightning.force.com" in url
+        or "printfly.my.salesforce.com" in url
+        or "printfly--" in url and ".vf.force.com" in url
+    )
 
 
 def _wait_for_salesforce_login_approval(driver, timeout=90):
@@ -1736,11 +1780,25 @@ def _click_salesforce_login_with_selenium(driver):
 
 
 def _attempt_salesforce_login(driver, timeout=45):
-    if not _is_salesforce_login_page(driver):
-        return False
+    saved_session_required = os.environ.get("SALESFORCE_REQUIRE_SAVED_SESSION", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
     if _is_salesforce_login_approval_page(driver):
+        if saved_session_required:
+            raise CopyrightCancelError(
+                "This Sheets Scanner worker's saved Salesforce session requires verification. "
+                "Use Salesforce worker setup and complete 2FA for this worker."
+            )
         _wait_for_salesforce_login_approval(driver, timeout=max(timeout, 90))
         return True
+    if not _is_salesforce_login_page(driver):
+        return False
+    if saved_session_required:
+        raise CopyrightCancelError(
+            "This Sheets Scanner worker's saved Salesforce session is no longer authenticated. "
+            "Use Salesforce worker setup and complete 2FA for this worker; automatic login was skipped "
+            "so Salesforce will not send another verification code."
+        )
     if _click_salesforce_saved_username(driver):
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
@@ -8932,6 +8990,10 @@ def _sheet_scanner_row_subprocess(row, args, crm_profile, slack_profile):
 
     env = os.environ.copy()
     env["SLACK_PROFILE_DIR"] = slack_profile
+    # These profiles are explicitly authenticated from the control panel. If
+    # one expires, fail with a setup instruction instead of submitting the
+    # password headlessly and generating another 2FA/code notification.
+    env["SALESFORCE_REQUIRE_SAVED_SESSION"] = "1"
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
     try:
         completed = subprocess.run(
@@ -9089,25 +9151,13 @@ def run_process_queue(args):
         nonlocal launched_workers
         if not rows:
             return
-        if worker_limit <= 1 or len(rows) <= 1:
-            for row in rows:
-                try:
-                    details = _process_sheet_scanner_row_in_process(row, args)
-                    _record_row_result(row, details=details)
-                except Exception as exc:
-                    _record_row_result(row, error=exc)
-            return
         try:
             results, actual_workers = _run_sheet_scanner_parallel_rows(rows, args, worker_limit)
             launched_workers = max(launched_workers, actual_workers)
         except Exception as exc:
-            print(f"Parallel Sheets Scanner profile setup failed; continuing safely with one worker: {exc}")
-            results = []
-            for row in rows:
-                try:
-                    results.append((row, _process_sheet_scanner_row_in_process(row, args), None))
-                except Exception as row_exc:
-                    results.append((row, None, row_exc))
+            # Falling back to the base CRM profile bypasses the Salesforce
+            # worker sessions configured in the UI and can trigger fresh 2FA.
+            results = [(row, None, exc) for row in rows]
         for row, details, error in results:
             _record_row_result(row, details=details, error=error)
 

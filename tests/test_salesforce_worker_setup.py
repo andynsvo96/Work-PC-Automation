@@ -67,7 +67,11 @@ class SalesforceWorkerSetupTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["success"])
         ensure_profile.assert_called_once_with(2)
-        open_setup.assert_called_once_with("salesforce", "worker-profile", "https://login.salesforce.com/")
+        open_setup.assert_called_once_with(
+            "salesforce",
+            "worker-profile",
+            "https://printfly.lightning.force.com/lightning/",
+        )
         self.assertIsNone(update_state.call_args.kwargs["last_test_success"])
 
     def test_connection_test_is_read_only_and_marks_connected(self):
@@ -75,6 +79,8 @@ class SalesforceWorkerSetupTests(unittest.TestCase):
         fake_worker = types.SimpleNamespace(
             _is_salesforce_login_page=mock.Mock(return_value=False),
             _is_salesforce_login_approval_page=mock.Mock(return_value=False),
+            _is_salesforce_verification_code_page=mock.Mock(return_value=False),
+            _is_salesforce_authenticated_page=mock.Mock(return_value=True),
         )
         with (
             mock.patch("server._salesforce_worker_count", return_value=3),
@@ -94,17 +100,24 @@ class SalesforceWorkerSetupTests(unittest.TestCase):
         self.assertTrue(payload["success"])
         self.assertTrue(payload["connected"])
         build_driver.assert_called_once()
-        open_page.assert_called_once_with(driver, "https://login.salesforce.com/", "Salesforce Worker 1 test")
+        open_page.assert_called_once_with(
+            driver,
+            "https://printfly.lightning.force.com/lightning/",
+            "Salesforce Worker 1 test",
+        )
         self.assertTrue(update_state.call_args.kwargs["last_test_success"])
         quit_driver.assert_called_once_with(driver, profile_path="worker-profile")
 
-    def test_connection_test_selects_saved_username_before_verifying(self):
+    def test_connection_test_reports_verification_code_without_submitting_login(self):
         driver = object()
         fake_worker = types.SimpleNamespace(
-            _is_salesforce_login_page=mock.Mock(side_effect=[True, False, False, False]),
-            _is_salesforce_login_approval_page=mock.Mock(return_value=False),
-            _click_salesforce_saved_username=mock.Mock(return_value=True),
-            _click_salesforce_login_with_selenium=mock.Mock(return_value=True),
+            _is_salesforce_login_page=mock.Mock(return_value=False),
+            _is_salesforce_login_approval_page=mock.Mock(return_value=True),
+            _is_salesforce_verification_code_page=mock.Mock(return_value=True),
+            _is_salesforce_authenticated_page=mock.Mock(return_value=False),
+            _click_salesforce_saved_username=mock.Mock(),
+            _fill_salesforce_login_with_autofill=mock.Mock(),
+            _click_salesforce_login_with_selenium=mock.Mock(),
         )
         with (
             mock.patch("server._salesforce_worker_count", return_value=3),
@@ -121,20 +134,22 @@ class SalesforceWorkerSetupTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
-        self.assertTrue(payload["connected"])
-        self.assertTrue(payload["selected_saved_username"])
-        fake_worker._click_salesforce_saved_username.assert_called_once_with(driver)
+        self.assertFalse(payload["connected"])
+        self.assertTrue(payload["verification_code_required"])
+        self.assertIn("6-digit verification code", payload["message"])
+        fake_worker._click_salesforce_saved_username.assert_not_called()
+        fake_worker._fill_salesforce_login_with_autofill.assert_not_called()
         fake_worker._click_salesforce_login_with_selenium.assert_not_called()
 
-    def test_connection_test_clicks_login_button_after_selecting_saved_username(self):
+    def test_connection_test_reports_login_without_submitting_credentials(self):
         driver = object()
         fake_worker = types.SimpleNamespace(
-            _is_salesforce_login_page=mock.Mock(side_effect=[True, True, True, False, False]),
+            _is_salesforce_login_page=mock.Mock(return_value=True),
             _is_salesforce_login_approval_page=mock.Mock(return_value=False),
-            _click_salesforce_saved_username=mock.Mock(return_value=True),
-            _salesforce_login_fields=mock.Mock(return_value=(object(), object())),
-            _fill_salesforce_login_with_autofill=mock.Mock(return_value=True),
-            _click_salesforce_login_with_selenium=mock.Mock(return_value=True),
+            _is_salesforce_verification_code_page=mock.Mock(return_value=False),
+            _is_salesforce_authenticated_page=mock.Mock(return_value=False),
+            _fill_salesforce_login_with_autofill=mock.Mock(),
+            _click_salesforce_login_with_selenium=mock.Mock(),
         )
         with (
             mock.patch("server._salesforce_worker_count", return_value=3),
@@ -145,19 +160,16 @@ class SalesforceWorkerSetupTests(unittest.TestCase):
             mock.patch("server.safe_get_with_partial_load"),
             mock.patch("server.safe_driver_quit"),
             mock.patch("server._update_salesforce_worker_setup_state"),
-            mock.patch("server.time.sleep"),
             mock.patch.dict(sys.modules, {"crm_copyright_cancel": fake_worker}),
         ):
             response = self.client.post("/automation/salesforce-worker-test", json={"worker": 1})
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
-        self.assertTrue(payload["connected"])
-        self.assertTrue(payload["selected_saved_username"])
-        self.assertTrue(payload["filled_login_fields"])
-        self.assertTrue(payload["clicked_login_button"])
-        fake_worker._fill_salesforce_login_with_autofill.assert_called_once_with(driver)
-        fake_worker._click_salesforce_login_with_selenium.assert_called_once_with(driver)
+        self.assertFalse(payload["connected"])
+        self.assertIn("will not submit credentials", payload["message"])
+        fake_worker._fill_salesforce_login_with_autofill.assert_not_called()
+        fake_worker._click_salesforce_login_with_selenium.assert_not_called()
 
     def test_connection_test_refuses_to_interrupt_an_open_profile(self):
         with (

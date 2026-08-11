@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -146,6 +147,33 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             is_login = crm_copyright_cancel._is_salesforce_login_page(driver)
 
         self.assertTrue(is_login)
+
+    def test_salesforce_six_digit_code_page_is_not_authenticated(self):
+        driver = mock.Mock(current_url="https://login.salesforce.com/identity/verification")
+        driver.execute_script.return_value = False
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_visible_text",
+            return_value="Verify Your Identity. Enter the 6-digit verification code we sent to your email.",
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_salesforce_login_fields",
+            return_value=(None, None),
+        ):
+            self.assertTrue(crm_copyright_cancel._is_salesforce_verification_code_page(driver))
+            self.assertTrue(crm_copyright_cancel._is_salesforce_login_approval_page(driver))
+            self.assertFalse(crm_copyright_cancel._is_salesforce_authenticated_page(driver))
+
+    def test_sheet_scanner_saved_session_never_submits_salesforce_login(self):
+        driver = mock.Mock(current_url="https://login.salesforce.com/")
+        with mock.patch.object(crm_copyright_cancel, "_is_salesforce_login_approval_page", return_value=False), \
+             mock.patch.object(crm_copyright_cancel, "_is_salesforce_login_page", return_value=True), \
+             mock.patch.object(crm_copyright_cancel, "_fill_salesforce_login_with_autofill") as fill_login, \
+             mock.patch.dict(os.environ, {"SALESFORCE_REQUIRE_SAVED_SESSION": "1"}):
+            with self.assertRaisesRegex(crm_copyright_cancel.CopyrightCancelError, "automatic login was skipped"):
+                crm_copyright_cancel._attempt_salesforce_login(driver)
+
+        fill_login.assert_not_called()
 
     def test_salesforce_composer_maximize_retries_with_trusted_click(self):
         driver = mock.Mock()
@@ -1211,6 +1239,107 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertEqual(worksheet.batch_clear.call_count, 2)
         self.assertEqual(payload["parallel_workers"], 2)
         self.assertEqual(len(payload["processed"]), 2)
+
+    def test_process_queue_uses_worker_profile_for_one_independent_row(self):
+        headers = [
+            crm_copyright_cancel.GOOGLE_SHEET_ORDER_REFERENCE_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_ISSUE_TYPE_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_REASON_COLUMN,
+            crm_copyright_cancel.GOOGLE_SHEET_ERROR_COLUMN,
+        ]
+        row = crm_copyright_cancel.QueueRow(
+            2,
+            "4600001",
+            "4600001",
+            crm_copyright_cancel.COPYRIGHT_REACHOUT_ISSUE_TYPE,
+            "Reason 1",
+            "copyright_reachout",
+            "",
+        )
+        worksheet = mock.Mock(title="Sheet1")
+        spreadsheet = mock.Mock(title="Queue")
+        args = mock.Mock(
+            retry_errors=False,
+            limit=0,
+            parallel_workers=8,
+            dry_run=False,
+            visible=False,
+            attach_browser=False,
+            debugger_address="127.0.0.1:9222",
+            login_wait_seconds=0,
+            skip_refund_click=False,
+            keep_browser_open=False,
+            keep_browser_open_on_error=False,
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+            args.result_file = handle.name
+        try:
+            with mock.patch.object(
+                crm_copyright_cancel,
+                "_scan_queue_rows",
+                return_value=(spreadsheet, worksheet, headers, [row], []),
+            ), mock.patch.object(
+                crm_copyright_cancel,
+                "_run_sheet_scanner_parallel_rows",
+                return_value=([(row, {"order_id": "4600001", "process": "copyright_reachout"}, None)], 1),
+            ) as worker_run, mock.patch.object(
+                crm_copyright_cancel,
+                "process_single_order",
+            ) as base_profile_run:
+                exit_code = crm_copyright_cancel.run_process_queue(args)
+        finally:
+            Path(args.result_file).unlink(missing_ok=True)
+
+        self.assertEqual(exit_code, 0)
+        worker_run.assert_called_once_with([row], args, 1)
+        base_profile_run.assert_not_called()
+
+    def test_sheet_scanner_worker_subprocess_requires_saved_salesforce_session(self):
+        row = crm_copyright_cancel.QueueRow(
+            2,
+            "4600001",
+            "4600001",
+            crm_copyright_cancel.COPYRIGHT_REACHOUT_ISSUE_TYPE,
+            "Reason 1",
+            "copyright_reachout",
+            "",
+        )
+        args = mock.Mock(
+            dry_run=False,
+            visible=False,
+            login_wait_seconds=0,
+            skip_refund_click=False,
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as result_handle:
+            json.dump({"success": True, "order_id": row.order_id}, result_handle)
+            result_path = result_handle.name
+        fake_result_handle = mock.Mock()
+        fake_result_handle.name = result_path
+        completed = mock.Mock(returncode=0, stdout="", stderr="")
+
+        try:
+            with mock.patch.object(
+                crm_copyright_cancel.tempfile,
+                "NamedTemporaryFile",
+                return_value=fake_result_handle,
+            ), mock.patch.object(
+                crm_copyright_cancel.subprocess,
+                "run",
+                return_value=completed,
+            ) as run_process:
+                payload = crm_copyright_cancel._sheet_scanner_row_subprocess(
+                    row,
+                    args,
+                    "crm-worker-profile",
+                    "slack-worker-profile",
+                )
+        finally:
+            Path(result_path).unlink(missing_ok=True)
+
+        self.assertTrue(payload["success"])
+        child_env = run_process.call_args.kwargs["env"]
+        self.assertEqual(child_env["SALESFORCE_REQUIRE_SAVED_SESSION"], "1")
+        self.assertEqual(child_env["SLACK_PROFILE_DIR"], "slack-worker-profile")
 
     def test_process_single_order_routes_auto_splitter_process(self):
         with mock.patch.object(crm_copyright_cancel, "process_auto_splitter_order", return_value={"order_id": "4785121"}) as mock_auto:

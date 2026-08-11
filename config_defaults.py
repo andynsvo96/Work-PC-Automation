@@ -171,6 +171,10 @@ CRM_SHIPPING_FILTER_DEFAULT = "free"
 CRM_HEADLESS = True
 CRM_ALLOW_VISIBLE_FALLBACK = False
 CRM_PROFILE_DIR = "chrome_profile_crm"
+# Open the actual org instead of the generic Salesforce login page when
+# validating saved worker sessions.  A generic login page can advance to a
+# verification-code challenge without proving that the org is usable.
+SALESFORCE_HOME_URL = "https://printfly.lightning.force.com/lightning/"
 CRM_PAGE_LOAD_TIMEOUT = 30
 CRM_ACTION_TIMEOUT = 15
 CRM_MAX_RETRIES = 1

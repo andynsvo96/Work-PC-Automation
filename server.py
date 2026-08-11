@@ -13400,6 +13400,13 @@ def _salesforce_worker_count():
     return _saved_crm_automation_parallel_workers(default=1)
 
 
+def _salesforce_home_url():
+    return str(
+        getattr(config_module, "SALESFORCE_HOME_URL", "")
+        or "https://printfly.lightning.force.com/lightning/"
+    ).strip()
+
+
 def _normalize_salesforce_worker_slot(value):
     try:
         slot = int(value)
@@ -13557,7 +13564,7 @@ def _chrome_profile_setup_targets():
         "salesforce": {
             "label": "Salesforce",
             "profile_path": _resolve_profile_path(getattr(config_module, "CRM_PROFILE_DIR", "chrome_profile_crm")),
-            "url": "https://login.salesforce.com/",
+            "url": _salesforce_home_url(),
         },
     }
 
@@ -13634,7 +13641,7 @@ def automation_salesforce_worker_setup():
         result = open_and_prefill_setup_profile(
             "salesforce",
             profile_path,
-            "https://login.salesforce.com/",
+            _salesforce_home_url(),
         )
     except ValueError as exc:
         return jsonify({"success": False, "message": str(exc)}), 400
@@ -13716,57 +13723,33 @@ def automation_salesforce_worker_test():
             page_load_timeout=max(30, int(getattr(config_module, "PROCESSOR_PAGE_LOAD_TIMEOUT", 30) or 30)),
             script_timeout=int(getattr(config_module, "PROCESSOR_ACTION_TIMEOUT", 15) or 15),
         )
-        safe_get_with_partial_load(driver, "https://login.salesforce.com/", f"Salesforce Worker {worker_slot} test")
+        safe_get_with_partial_load(driver, _salesforce_home_url(), f"Salesforce Worker {worker_slot} test")
         selected_saved_username = False
         filled_login_fields = False
         clicked_login_button = False
-        if (
-            salesforce_worker._is_salesforce_login_page(driver)
-            and not salesforce_worker._is_salesforce_login_approval_page(driver)
-        ):
-            selected_saved_username = bool(salesforce_worker._click_salesforce_saved_username(driver))
-            if selected_saved_username:
-                deadline = time.monotonic() + 20
-                while time.monotonic() < deadline:
-                    if salesforce_worker._is_salesforce_login_approval_page(driver):
-                        break
-                    if not salesforce_worker._is_salesforce_login_page(driver):
-                        break
-                    if any(salesforce_worker._salesforce_login_fields(driver)):
-                        break
-                    time.sleep(0.5)
-        if (
-            salesforce_worker._is_salesforce_login_page(driver)
-            and not salesforce_worker._is_salesforce_login_approval_page(driver)
-        ):
-            filled_login_fields = bool(salesforce_worker._fill_salesforce_login_with_autofill(driver))
-            clicked_login_button = bool(salesforce_worker._click_salesforce_login_with_selenium(driver))
-            if clicked_login_button:
-                deadline = time.monotonic() + 20
-                while time.monotonic() < deadline:
-                    if salesforce_worker._is_salesforce_login_approval_page(driver):
-                        break
-                    if not salesforce_worker._is_salesforce_login_page(driver):
-                        break
-                    time.sleep(0.5)
+        # A connection test must be read-only. Submitting credentials here can
+        # itself create the 2FA/code notification that this test is meant to
+        # diagnose.
         login_page = bool(salesforce_worker._is_salesforce_login_page(driver))
         approval_required = bool(salesforce_worker._is_salesforce_login_approval_page(driver))
-        connected = not (login_page or approval_required)
+        verification_code_required = bool(salesforce_worker._is_salesforce_verification_code_page(driver))
+        connected = bool(salesforce_worker._is_salesforce_authenticated_page(driver))
         if connected:
+            message = f"Salesforce Worker {worker_slot} is connected to the Printfly Salesforce org."
+        elif verification_code_required:
             message = (
-                f"Salesforce Worker {worker_slot} selected its saved account and is connected."
-                if selected_saved_username
-                else f"Salesforce Worker {worker_slot} is connected."
+                f"Salesforce Worker {worker_slot} requires a 6-digit verification code. "
+                "Open Setup and complete verification for this worker."
             )
         elif approval_required:
             message = f"Salesforce Worker {worker_slot} requires 2FA approval."
-        elif not filled_login_fields:
+        elif login_page:
             message = (
-                f"Salesforce Worker {worker_slot} requires login; its saved password was not available "
-                "to the connection test."
+                f"Salesforce Worker {worker_slot} requires login. Open Setup and complete login and 2FA; "
+                "the connection test will not submit credentials or generate a new code."
             )
         else:
-            message = f"Salesforce Worker {worker_slot} remained on the login page after submitting credentials."
+            message = f"Salesforce Worker {worker_slot} did not reach the Printfly Salesforce org. Open Setup and sign in again."
         _update_salesforce_worker_setup_state(
             worker_slot,
             last_test_success=connected,
@@ -13782,6 +13765,7 @@ def automation_salesforce_worker_test():
                 "filled_login_fields": filled_login_fields,
                 "clicked_login_button": clicked_login_button,
                 "approval_required": approval_required,
+                "verification_code_required": verification_code_required,
                 "message": message,
             }
         )
