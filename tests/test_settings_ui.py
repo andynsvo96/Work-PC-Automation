@@ -104,12 +104,13 @@ class SettingsUiStructureTests(unittest.TestCase):
         self.assertNotIn("? 'Running…'", self.html)
 
     def test_salesforce_worker_setup_is_wired(self):
-        for element_id in ("salesforceWorkerSetupRows", "salesforceSetupAllBtn"):
+        for element_id in ("salesforceWorkerSetupRows", "salesforceTestAllBtn", "salesforceSetupAllBtn"):
             self.assertEqual(len(re.findall(rf"\bid=['\"]{element_id}['\"]", self.html)), 1)
         for function_name in (
             "loadSalesforceWorkerSetupStatus",
             "setupSalesforceWorker",
             "testSalesforceWorker",
+            "testAllSalesforceWorkers",
             "setupAllSalesforceWorkers",
         ):
             self.assertIn(f"function {function_name}(", self.html)

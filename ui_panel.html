@@ -1639,6 +1639,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
               <div><h3>Salesforce worker profiles</h3><p>Sheets Scanner uses one saved Salesforce session per worker. Complete setup and test each worker before running parallel orders.</p></div>
               <div class='salesforce-worker-heading-actions'>
                 <button class='secondary tiny' type='button' onclick='loadSalesforceWorkerSetupStatus(true, this)'>Refresh status</button>
+                <button class='secondary tiny' id='salesforceTestAllBtn' type='button' onclick='testAllSalesforceWorkers(this)'>Test all</button>
                 <button class='tiny' id='salesforceSetupAllBtn' type='button' onclick='setupAllSalesforceWorkers(this)'>Set up all</button>
               </div>
             </div>
@@ -3416,6 +3417,39 @@ async function testSalesforceWorker(worker, button = null) {
     } finally {
       await loadSalesforceWorkerSetupStatus(false);
     }
+  });
+}
+
+async function testAllSalesforceWorkers(button = null) {
+  return withButtonBusy(button, 'Testing all...', async () => {
+    const status = await loadSalesforceWorkerSetupStatus(false);
+    const workers = Array.isArray(status && status.workers) ? status.workers : [];
+    const testable = workers.filter((worker) => worker.initialized && !worker.in_use);
+    const skipped = workers.length - testable.length;
+    if (testable.length === 0) {
+      setStatus('No available Salesforce worker profiles can be tested.', 'settings');
+      return;
+    }
+
+    let connected = 0;
+    const failed = [];
+    for (let index = 0; index < testable.length; index += 1) {
+      const slot = Number(testable[index].worker || 0);
+      setStatus(`Testing Salesforce Worker ${slot} (${index + 1} of ${testable.length})...`, 'settings');
+      try {
+        const result = await requestSalesforceWorkerTest(slot);
+        if (result.connected) connected += 1;
+        else failed.push(`Worker ${slot}`);
+      } catch (error) {
+        failed.push(`Worker ${slot}`);
+      }
+      await loadSalesforceWorkerSetupStatus(false);
+    }
+
+    const parts = [`Tested ${testable.length} Salesforce worker${testable.length === 1 ? '' : 's'}: ${connected} connected`];
+    if (failed.length) parts.push(`${failed.join(', ')} still require attention`);
+    if (skipped) parts.push(`${skipped} unavailable or not set up`);
+    setStatus(parts.join('. ') + '.', 'settings');
   });
 }
 

@@ -1568,6 +1568,9 @@ def _visible_salesforce_login_inputs(driver):
     inputs = []
     for element in driver.find_elements("css selector", "input"):
         try:
+            input_type = (element.get_attribute("type") or "text").strip().lower()
+            if input_type not in {"text", "email", "password"}:
+                continue
             if element.is_displayed() and element.size.get("width", 0) > 30 and element.size.get("height", 0) > 10:
                 inputs.append(element)
         except Exception:

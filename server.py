@@ -14087,6 +14087,7 @@ def automation_salesforce_worker_test():
         )
         safe_get_with_partial_load(driver, "https://login.salesforce.com/", f"Salesforce Worker {worker_slot} test")
         selected_saved_username = False
+        filled_login_fields = False
         clicked_login_button = False
         if (
             salesforce_worker._is_salesforce_login_page(driver)
@@ -14107,6 +14108,7 @@ def automation_salesforce_worker_test():
             salesforce_worker._is_salesforce_login_page(driver)
             and not salesforce_worker._is_salesforce_login_approval_page(driver)
         ):
+            filled_login_fields = bool(salesforce_worker._fill_salesforce_login_with_autofill(driver))
             clicked_login_button = bool(salesforce_worker._click_salesforce_login_with_selenium(driver))
             if clicked_login_button:
                 deadline = time.monotonic() + 20
@@ -14116,18 +14118,24 @@ def automation_salesforce_worker_test():
                     if not salesforce_worker._is_salesforce_login_page(driver):
                         break
                     time.sleep(0.5)
-        connected = not (
-            salesforce_worker._is_salesforce_login_page(driver)
-            or salesforce_worker._is_salesforce_login_approval_page(driver)
-        )
+        login_page = bool(salesforce_worker._is_salesforce_login_page(driver))
+        approval_required = bool(salesforce_worker._is_salesforce_login_approval_page(driver))
+        connected = not (login_page or approval_required)
         if connected:
             message = (
                 f"Salesforce Worker {worker_slot} selected its saved account and is connected."
                 if selected_saved_username
                 else f"Salesforce Worker {worker_slot} is connected."
             )
+        elif approval_required:
+            message = f"Salesforce Worker {worker_slot} requires 2FA approval."
+        elif not filled_login_fields:
+            message = (
+                f"Salesforce Worker {worker_slot} requires login; its saved password was not available "
+                "to the connection test."
+            )
         else:
-            message = f"Salesforce Worker {worker_slot} requires login or 2FA."
+            message = f"Salesforce Worker {worker_slot} remained on the login page after submitting credentials."
         _update_salesforce_worker_setup_state(
             worker_slot,
             last_test_success=connected,
@@ -14140,7 +14148,9 @@ def automation_salesforce_worker_test():
                 "connected": connected,
                 "worker": worker_slot,
                 "selected_saved_username": selected_saved_username,
+                "filled_login_fields": filled_login_fields,
                 "clicked_login_button": clicked_login_button,
+                "approval_required": approval_required,
                 "message": message,
             }
         )

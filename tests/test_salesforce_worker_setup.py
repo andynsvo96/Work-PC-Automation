@@ -133,6 +133,7 @@ class SalesforceWorkerSetupTests(unittest.TestCase):
             _is_salesforce_login_approval_page=mock.Mock(return_value=False),
             _click_salesforce_saved_username=mock.Mock(return_value=True),
             _salesforce_login_fields=mock.Mock(return_value=(object(), object())),
+            _fill_salesforce_login_with_autofill=mock.Mock(return_value=True),
             _click_salesforce_login_with_selenium=mock.Mock(return_value=True),
         )
         with (
@@ -153,7 +154,9 @@ class SalesforceWorkerSetupTests(unittest.TestCase):
         payload = response.get_json()
         self.assertTrue(payload["connected"])
         self.assertTrue(payload["selected_saved_username"])
+        self.assertTrue(payload["filled_login_fields"])
         self.assertTrue(payload["clicked_login_button"])
+        fake_worker._fill_salesforce_login_with_autofill.assert_called_once_with(driver)
         fake_worker._click_salesforce_login_with_selenium.assert_called_once_with(driver)
 
     def test_connection_test_refuses_to_interrupt_an_open_profile(self):

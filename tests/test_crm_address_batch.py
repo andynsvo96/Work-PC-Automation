@@ -207,6 +207,31 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         password.click.assert_called_once_with()
         self.assertEqual(password.send_keys.call_args_list[-1].args, ("secret",))
 
+    def test_salesforce_password_only_stage_excludes_login_submit_from_fields(self):
+        def input_element(input_type, *, name="", element_id=""):
+            element = mock.Mock(size={"width": 320, "height": 48})
+            element.is_displayed.return_value = True
+            attributes = {
+                "type": input_type,
+                "name": name,
+                "id": element_id,
+                "placeholder": "",
+                "autocomplete": "",
+                "aria-label": "",
+            }
+            element.get_attribute.side_effect = attributes.get
+            return element
+
+        password = input_element("password", name="pw", element_id="password")
+        login_button = input_element("submit", name="Login", element_id="Login")
+        driver = mock.Mock()
+        driver.find_elements.return_value = [password, login_button]
+
+        username, detected_password = crm_copyright_cancel._salesforce_login_fields(driver)
+
+        self.assertIsNone(username)
+        self.assertIs(detected_password, password)
+
     def test_salesforce_contact_is_accepted_as_account_link_alias(self):
         contact_driver = mock.Mock()
         contact_driver.execute_script.return_value = {
