@@ -4590,6 +4590,52 @@ class CrmAutoSplitterTests(unittest.TestCase):
         self.assertEqual([item["retained_original"] for item in retained], [True, False, False])
         self.assertEqual([item["promo_credit"] for item in plan], ["1.67", "1.67", "1.66"])
 
+    def test_retained_original_sales_note_links_each_transferred_tab_range(self):
+        plan = crm_auto_splitter._build_split_plan(
+            [
+                {"tab_number": index, "design_id": str(1000 + index), "design_name": f"Design {index}"}
+                for index in range(1, 19)
+            ],
+            2,
+            "5010094",
+        )
+        plan = crm_auto_splitter._plan_with_original_retained(plan)
+
+        note = crm_auto_splitter._retained_original_sales_note(
+            plan,
+            [{"split_index": 2, "order_id": "5010442"}],
+        )
+
+        self.assertEqual(
+            note,
+            "Tabs 10-18 transferred to [**5010442**](https://crm2.legacy.printfly.com/app#/order/5010442)",
+        )
+
+    def test_retained_original_sales_note_uses_one_line_per_new_order(self):
+        plan = crm_auto_splitter._build_split_plan(
+            [
+                {"tab_number": index, "design_id": str(1000 + index), "design_name": f"Design {index}"}
+                for index in range(1, 22)
+            ],
+            3,
+            "5010094",
+        )
+        plan = crm_auto_splitter._plan_with_original_retained(plan)
+
+        note = crm_auto_splitter._retained_original_sales_note(
+            plan,
+            [
+                {"split_index": 3, "order_id": "5010443"},
+                {"split_index": 2, "order_id": "5010442"},
+            ],
+        )
+
+        self.assertEqual(
+            note,
+            "Tabs 8-14 transferred to [**5010442**](https://crm2.legacy.printfly.com/app#/order/5010442)\n"
+            "Tabs 15-21 transferred to [**5010443**](https://crm2.legacy.printfly.com/app#/order/5010443)",
+        )
+
     def test_proportional_payment_allocation_handles_partial_payment_and_rounding(self):
         allocations = crm_auto_splitter._allocate_money_proportionally(
             crm_auto_splitter.Decimal("100.00"),
@@ -4726,6 +4772,7 @@ class CrmAutoSplitterTests(unittest.TestCase):
         self.assertEqual(report["original_order_mode"], "retain_as_split_1")
         self.assertTrue(report["split_plan"][0]["retained_original"])
         self.assertEqual([item["promo_credit"] for item in report["split_plan"]], ["6.00", "0.00"])
+        self.assertEqual(report["original_order_final_steps"]["sales_note"], "Tabs 7-12 transferred to <split order #>")
 
     def test_partial_payment_is_allocated_across_retained_and_new_orders(self):
         driver = mock.Mock()

@@ -296,6 +296,35 @@ def _format_order_list(order_numbers):
     return f"{', '.join(values[:-1])}, and {values[-1]}"
 
 
+def _linked_crm_order_number(order_id):
+    value = str(order_id or "").strip()
+    if not value or not value.isdigit():
+        return value
+    return f"[**{value}**](https://crm2.legacy.printfly.com/app#/order/{value})"
+
+
+def _retained_original_sales_note(plan, split_orders):
+    """Describe which original tab ranges moved to each newly created order."""
+    ranges_by_split = {
+        int(item.get("split_index") or 0): item
+        for item in (plan or [])
+        if int(item.get("split_index") or 0) > 0
+    }
+    lines = []
+    for split_order in sorted(split_orders or [], key=lambda item: int(item.get("split_index") or 0)):
+        if split_order.get("retained_original"):
+            continue
+        split_index = int(split_order.get("split_index") or 0)
+        split_range = ranges_by_split.get(split_index) or {}
+        start_tab = split_range.get("start_tab")
+        end_tab = split_range.get("end_tab")
+        order_number = _linked_crm_order_number(split_order.get("order_id"))
+        if start_tab is None or end_tab is None or not order_number:
+            continue
+        lines.append(f"Tabs {start_tab}-{end_tab} transferred to {order_number}")
+    return "\n".join(lines)
+
+
 def _normalize_design_name(value):
     return _clean_text(value).lower()
 
@@ -3795,11 +3824,21 @@ def run_split_order(
             plan = _plan_with_original_retained(plan)
         if stock_routing.get("action") == "slack_mach6_cancelled":
             stock_routing["message"] = f"{target_url} cancelled"
-        original_note_after_split = (
+        placeholder_split_orders = [
+            {"split_index": split.get("split_index"), "order_id": "<split order #>"}
+            for split in plan
+            if not split.get("retained_original")
+        ]
+        original_transaction_note_after_split = (
             f"split 1 retained on original {resolved_order_id}; transferred to "
             f"{_format_order_list(['<split order #>' for _ in range(max(divisions - 1, 0))])}"
             if retain_original
             else f"transferred to {_format_order_list(['<split order #>' for _ in range(divisions)])}"
+        )
+        original_sales_note_after_split = (
+            _retained_original_sales_note(plan, placeholder_split_orders)
+            if retain_original
+            else original_transaction_note_after_split
         )
         payment_type = scan.get("totals", {}).get("payment_type", "")
         payment_detected = _parse_money(scan.get("totals", {}).get("paid")) > Decimal("0.00")
@@ -3840,10 +3879,10 @@ def run_split_order(
                 "refund_transaction_tag": (
                     "Refund (payment transfer only)" if retain_original else "Refund"
                 ) if payment_detected else "",
-                "refund_transaction_id": original_note_after_split if payment_detected else "",
+                "refund_transaction_id": original_transaction_note_after_split if payment_detected else "",
                 "payment_actions_skipped": not payment_detected,
                 "payment_allocation_mode": "proportional" if retain_original and payment_detected else "",
-                "sales_note": original_note_after_split,
+                "sales_note": original_sales_note_after_split,
                 "never_click_payment_refund_button": True,
             },
         }
@@ -4041,6 +4080,11 @@ def run_split_order(
                 if retain_original
                 else f"transferred to {_format_order_list(new_split_order_ids)}"
             )
+            original_sales_note = (
+                _retained_original_sales_note(plan, split_orders)
+                if retain_original
+                else transfer_note
+            )
 
             if retain_original:
                 if len(split_orders) != max(len(plan) - 1, 0):
@@ -4098,8 +4142,8 @@ def run_split_order(
                     order_id=resolved_order_id,
                     label="retained original order sales note",
                 )
-                if not _original_transfer_note_is_present(driver, transfer_note):
-                    _add_original_transfer_note(driver, transfer_note)
+                if not _original_transfer_note_is_present(driver, original_sales_note):
+                    _add_original_transfer_note(driver, original_sales_note)
                 configured_retained_order = _configure_retained_original_order(
                     driver,
                     resolved_order_id,
@@ -4196,7 +4240,7 @@ def run_split_order(
                     "retained_original": True,
                     "cancelled": False,
                     "payment_actions_skipped": not payment_detected,
-                    "sales_note": transfer_note,
+                    "sales_note": original_sales_note,
                     "final_totals": retained_order.get("totals", {}),
                     "verification": {"passed": True, "mode": "retain_as_split_1"},
                 }
