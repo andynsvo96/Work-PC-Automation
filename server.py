@@ -51,7 +51,6 @@ from clipboard_runtime import (
     create_platform_clipboard_adapter,
 )
 import config as config_module
-from credential_store import SHARED_QUEUE_CREDENTIAL_TARGET, credential_exists
 from node_preferences import load_node_preferences, update_node_preferences
 from platform_runtime import get_platform_snapshot, normalize_os_name, resolve_worker_count
 from profile_setup_autofill import (
@@ -66,11 +65,8 @@ from routes.connectivity_routes import register_connectivity_routes
 from routes.system_routes import register_system_routes
 from routes.work_routes import register_work_routes
 from safe_sync import publish_repository_update
-from shared_queue import SharedQueueBlocked, SharedQueueConfig, SupabaseQueueClient
-from shared_queue_runtime import SharedQueueRuntime
 from slack_message_rotation import select_slack_day_message
 from slack_post_history import get_todays_slack_posts
-from task_registry import TaskRegistry
 from version_state import get_git_version_state, refresh_origin_main
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -211,12 +207,6 @@ HOME_AUTOMATION_TRIGGERS_ENABLED = bool(
     getattr(config_module, "AUTOMATION_HOME_ASSISTANT_ENABLED", True)
 )
 LAN_REST_ACCESS_ENABLED = bool(getattr(config_module, "AUTOMATION_LAN_REST_ENABLED", False))
-_AUTO_SYNC_VERSION_GATE_SETTING = getattr(config_module, "AUTOMATION_AUTO_SYNC_VERSION_GATE", None)
-AUTO_SYNC_VERSION_GATE = (
-    get_platform_snapshot().os_name == "windows"
-    if _AUTO_SYNC_VERSION_GATE_SETTING is None
-    else bool(_AUTO_SYNC_VERSION_GATE_SETTING)
-)
 SERVER_BIND_HOST = (
     "0.0.0.0"
     if REMOTE_ACCESS_MODE != "tailscale" or LAN_REST_ACCESS_ENABLED
@@ -228,10 +218,6 @@ CLIPBOARD_PEER_URL = str(getattr(config_module, "AUTOMATION_CLIPBOARD_PEER_URL",
 SERVER_STARTED_AT = datetime.now()
 SERVER_START_GIT_STATE = get_git_version_state(SCRIPT_DIR)
 SERVER_APP_COMMIT = str(SERVER_START_GIT_STATE.get("commit") or "")
-AUTOMATION_QUEUE_MODE = str(getattr(config_module, "AUTOMATION_QUEUE_MODE", "local") or "local").strip().lower()
-if AUTOMATION_QUEUE_MODE not in {"local", "shared"}:
-    AUTOMATION_QUEUE_MODE = "local"
-
 app = Flask(__name__)
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -465,9 +451,6 @@ automation_queue_condition = threading.Condition(automation_queue_lock)
 automation_queue_tasks = []
 automation_queue_worker_started = False
 automation_queue_current_task_id = None
-automation_task_registry = TaskRegistry()
-shared_queue_runtime = None
-shared_queue_initialization_error = None
 VERSION_CHECK_INTERVAL_SECONDS = max(
     15.0,
     # A 30-second Git check is responsive without continuously spawning Git
@@ -1547,9 +1530,7 @@ def _automation_version_block_reason():
     startup_reason = str(os.environ.get("AUTOMATION_VERSION_BLOCK_REASON") or "").strip()
     if startup_reason:
         return startup_reason
-    if AUTOMATION_QUEUE_MODE != "shared":
-        return ""
-    return str(get_version_monitor_state().get("block_reason") or "").strip()
+    return ""
 
 
 def get_app_update_payload(git_state=None):
@@ -1621,9 +1602,6 @@ def refresh_remote_version_state():
                 "git": git_state,
             }
         )
-    runtime = shared_queue_runtime
-    if runtime is not None:
-        runtime.wake()
     return get_version_monitor_state()
 
 
@@ -1639,145 +1617,16 @@ def _version_monitor_loop():
 
 
 def start_version_monitor():
-    global version_monitor_thread
-    if AUTOMATION_QUEUE_MODE != "shared":
-        return None
-    with version_monitor_lock:
-        if version_monitor_thread and version_monitor_thread.is_alive():
-            return version_monitor_thread
-        version_monitor_stop.clear()
-        version_monitor_thread = threading.Thread(
-            target=_version_monitor_loop,
-            name="automation-version-monitor",
-            daemon=True,
-        )
-        version_monitor_thread.start()
-        return version_monitor_thread
-
-
-def _strict_queue_commit():
-    git_state = get_git_version_state(SCRIPT_DIR)
-    version_block_reason = _automation_version_block_reason()
-    if version_block_reason:
-        raise SharedQueueBlocked(version_block_reason)
-    git_block_reason = _git_update_block_reason(git_state)
-    if git_block_reason:
-        raise SharedQueueBlocked(git_block_reason)
-    if not git_state.get("available"):
-        raise SharedQueueBlocked(str(git_state.get("error") or "Git version is unavailable."))
-    if git_state.get("dirty"):
-        raise SharedQueueBlocked("Strict version gate: commit or discard local code changes before running shared tasks.")
-    if git_state.get("relation") != "current":
-        raise SharedQueueBlocked(
-            f"Strict version gate: this checkout is {git_state.get('relation') or 'not current'} versus origin/main."
-        )
-    return str(git_state.get("commit"))
-
-
-def _can_auto_sync_version_gate(commit):
-    """Only let the Windows owner advance the gate from the latest clean main."""
-    try:
-        git_state = refresh_origin_main(SCRIPT_DIR)
-    except Exception as exc:
-        logger.warning("Could not verify origin/main before repairing the AUTOMATE gate: %s", exc)
-        return False
-    target_commit = str(commit or "").strip()
-    return bool(
-        target_commit
-        and git_state.get("available")
-        and not git_state.get("dirty")
-        and git_state.get("relation") == "current"
-        and str(git_state.get("branch") or "") == "main"
-        and str(git_state.get("commit") or "").strip() == target_commit
-        and str(git_state.get("origin_commit") or "").strip() == target_commit
-    )
-
-
-def _shared_queue_capabilities():
-    return get_platform_snapshot().capabilities
-
-
-def _shared_queue_node_status():
-    snapshot = get_platform_snapshot()
-    status = {
-        "captured_at": datetime.now().isoformat(),
-        "server_started_at": SERVER_STARTED_AT.isoformat(),
-        "platform": snapshot.to_dict(),
-        "power": get_power_countdown_payload(),
-        # Work-clock state is intentionally shared with the same private
-        # workspace heartbeat used by the global queue.  This lets either
-        # dashboard render the timer owned by the computer that most recently
-        # clocked in/out instead of showing its own stale local file.
-        "work": _build_local_work_status_payload(),
-    }
-    if snapshot.capabilities.get("metrics"):
-        status["metrics"] = read_desktop_metrics()
-    else:
-        status["metrics"] = {"success": False, "available": False, "message": "Windows only"}
-    return status
-
-
-def get_shared_node_runtime_status(node_key):
-    runtime = shared_queue_runtime or (initialize_shared_queue_runtime() if AUTOMATION_QUEUE_MODE == "shared" else None)
-    if runtime is None:
-        return None
-    normalized = str(node_key or "").strip().lower()
-    if not normalized:
-        return None
-    try:
-        for node in runtime.client.list_nodes():
-            if str(node.get("node_key") or "").strip().lower() == normalized:
-                try:
-                    seen_at = datetime.fromisoformat(str(node.get("last_seen_at") or "").replace("Z", "+00:00"))
-                    now = datetime.now(seen_at.tzinfo) if seen_at.tzinfo else datetime.now()
-                    node["online"] = (now - seen_at).total_seconds() <= 30 and bool(node.get("enabled", True))
-                except (TypeError, ValueError):
-                    node["online"] = False
-                return node
-    except Exception as exc:
-        logger.warning("Could not load shared node status for %s: %s", normalized, exc)
     return None
 
 
-def initialize_shared_queue_runtime():
-    global shared_queue_runtime, shared_queue_initialization_error
-    if AUTOMATION_QUEUE_MODE != "shared":
-        return None
-    if shared_queue_runtime is not None:
-        return shared_queue_runtime
-    try:
-        config = SharedQueueConfig.from_keychain()
-        runtime = SharedQueueRuntime(
-            SupabaseQueueClient(config),
-            automation_task_registry,
-            commit_provider=_strict_queue_commit,
-            capabilities_provider=_shared_queue_capabilities,
-            node_status_provider=_shared_queue_node_status,
-            auto_sync_version_gate=AUTO_SYNC_VERSION_GATE,
-            version_gate_sync_guard=_can_auto_sync_version_gate,
-            cancel_running_task=force_stop_automation,
-            result_context_provider=_automation_queue_result_context,
-        )
-        runtime.start()
-        shared_queue_runtime = runtime
-        shared_queue_initialization_error = None
-        logger.info("Shared Supabase queue enabled for node %s.", config.node_key)
-        return runtime
-    except Exception as exc:
-        shared_queue_initialization_error = str(exc)
-        logger.error("Shared queue is fail-closed: %s", exc)
-        return None
-
-
-def _shared_queue_state_payload():
-    if shared_queue_runtime is not None:
-        return shared_queue_runtime.state()
+def _local_queue_state_payload():
     return {
-        "mode": AUTOMATION_QUEUE_MODE,
-        "connected": False,
-        "eligible": AUTOMATION_QUEUE_MODE == "local",
-        "block_reason": shared_queue_initialization_error,
-        "configured": credential_exists(SHARED_QUEUE_CREDENTIAL_TARGET),
+        "mode": "local",
+        "connected": True,
+        "eligible": True,
+        "block_reason": None,
+        "configured": True,
     }
 
 
@@ -1809,7 +1658,7 @@ def get_node_runtime_payload():
         "version_monitor": get_version_monitor_state(),
         "app_update": get_app_update_payload(git_state),
         "windows_only_message": "Windows only",
-        "queue": _shared_queue_state_payload(),
+        "queue": _local_queue_state_payload(),
     }
 
 
@@ -1978,72 +1827,6 @@ def _is_home_automation_request():
     return bool(_home_automation_request_source() and _is_home_automation_route())
 
 
-def _home_automation_node_online(node, now=None):
-    if not isinstance(node, dict) or not bool(node.get("enabled", True)):
-        return False
-    try:
-        seen_at = datetime.fromisoformat(str(node.get("last_seen_at") or "").replace("Z", "+00:00"))
-        current = now or (datetime.now(seen_at.tzinfo) if seen_at.tzinfo else datetime.now())
-        if seen_at.tzinfo is not None and current.tzinfo is None:
-            current = current.astimezone()
-        return 0 <= (current - seen_at).total_seconds() <= 30
-    except (TypeError, ValueError):
-        return False
-
-
-def _resolve_home_automation_target(runtime, required_capability=None):
-    """Select a healthy local Windows node first, then live Windows/Mac heartbeats."""
-    if runtime is None:
-        raise SharedQueueBlocked(shared_queue_initialization_error or "The shared queue is unavailable.")
-
-    # When this request reached the Windows app, Windows is demonstrably online.
-    # Prefer its healthy queue runtime even if its database heartbeat is a few
-    # seconds late; otherwise a transient heartbeat delay can incorrectly send
-    # an Alexa/Home Assistant task to Mac.
-    snapshot = get_platform_snapshot()
-    local_node_key = str(getattr(getattr(runtime.client, "config", None), "node_key", "") or "").strip()
-    try:
-        local_state = runtime.state()
-    except Exception:
-        local_state = {}
-    local_has_capability = not required_capability or bool(snapshot.capabilities.get(required_capability))
-    if (
-        snapshot.os_name == "windows"
-        and local_node_key
-        and local_has_capability
-        and bool(local_state.get("connected"))
-        and bool(local_state.get("eligible"))
-    ):
-        return local_node_key
-
-    try:
-        nodes = list(runtime.client.list_nodes() or [])
-    except Exception as exc:
-        raise SharedQueueBlocked(f"Could not check Windows or Mac availability: {exc}") from exc
-    candidates = []
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-        os_name = str(node.get("os_name") or "").strip().lower()
-        if os_name not in {"windows", "macos", "darwin"} or not _home_automation_node_online(node):
-            continue
-        if required_capability and not bool((node.get("capabilities") or {}).get(required_capability)):
-            continue
-        priority = 0 if os_name == "windows" else 1
-        candidates.append((priority, str(node.get("last_seen_at") or ""), node))
-    if not candidates:
-        capability_text = f" with the '{required_capability}' capability" if required_capability else ""
-        raise SharedQueueBlocked(
-            f"No online Windows or Mac automation server{capability_text} is available."
-        )
-    candidates.sort(key=lambda item: item[1], reverse=True)
-    candidates.sort(key=lambda item: item[0])
-    target = str(candidates[0][2].get("node_key") or "").strip()
-    if not target:
-        raise SharedQueueBlocked("The preferred automation server has no registered node key.")
-    return target
-
-
 def _automation_client_visual(os_name):
     normalized = str(os_name or "unknown").lower()
     return {
@@ -2051,83 +1834,6 @@ def _automation_client_visual(os_name):
         "source_icon": {"windows": "windows", "macos": "macos", "android": "android"}.get(normalized, "computer"),
         "source_display_name": {"windows": "Windows", "macos": "Mac", "android": "Android tablet"}.get(normalized, normalized.title()),
     }
-
-
-def _requested_automation_target_node():
-    """Return the target chosen in the control panel, when this is a request."""
-    try:
-        return str(
-            getattr(g, "automation_target_node", None)
-            or request.headers.get("X-Automation-Target-Node")
-            or ""
-        ).strip() or None
-    except RuntimeError:
-        return None
-
-
-def _resolve_automatic_control_target(runtime, requested_target=None, client_os=None, required_capability=None):
-    """Use a selected live node, defaulting new desktop sessions to their OS node."""
-    normalized_os = str(client_os or _automation_request_client_os() or "unknown").strip().lower()
-    requested = str(requested_target or "").strip() or None
-    local_key = str(runtime.client.config.node_key or "").strip()
-    snapshot = get_platform_snapshot()
-
-    # A request arriving at this node proves it is available even when the
-    # heartbeat has not reached Supabase yet.
-    if requested and requested == local_key:
-        try:
-            local_state = runtime.state()
-        except Exception:
-            local_state = {}
-        local_capable = not required_capability or bool(snapshot.capabilities.get(required_capability))
-        if bool(local_state.get("connected")) and bool(local_state.get("eligible")) and local_capable:
-            return local_key
-
-    try:
-        nodes = list(runtime.client.list_nodes() or [])
-    except Exception as exc:
-        raise SharedQueueBlocked(f"Could not check the selected computer's availability: {exc}") from exc
-
-    if requested:
-        selected = next(
-            (node for node in nodes if str(node.get("node_key") or "").strip() == requested),
-            None,
-        )
-        if not selected:
-            raise SharedQueueBlocked("The selected computer is no longer registered.")
-        if not _home_automation_node_online(selected):
-            raise SharedQueueBlocked("The selected computer is offline. Choose an online computer and try again.")
-        if required_capability and not bool((selected.get("capabilities") or {}).get(required_capability)):
-            raise SharedQueueBlocked(f"The selected computer cannot run this {required_capability} task.")
-        return requested
-
-    # Tablet callers may deliberately leave the target open for the shared
-    # queue to claim on any eligible computer.
-    if normalized_os not in {"windows", "macos"}:
-        return None
-
-    if normalized_os == snapshot.os_name and local_key:
-        try:
-            local_state = runtime.state()
-        except Exception:
-            local_state = {}
-        local_capable = not required_capability or bool(snapshot.capabilities.get(required_capability))
-        if bool(local_state.get("connected")) and bool(local_state.get("eligible")) and local_capable:
-            return local_key
-
-    candidates = [
-        node for node in nodes
-        if str(node.get("os_name") or "").strip().lower() == normalized_os
-        and _home_automation_node_online(node)
-        and (not required_capability or bool((node.get("capabilities") or {}).get(required_capability)))
-    ]
-    if candidates:
-        candidates.sort(key=lambda node: str(node.get("last_seen_at") or ""), reverse=True)
-        target = str(candidates[0].get("node_key") or "").strip()
-        if target:
-            return target
-    display_os = "Windows" if normalized_os == "windows" else "Mac"
-    raise SharedQueueBlocked(f"No online {display_os} node is available for the default control target.")
 
 
 def _automation_queue_parse_datetime(value):
@@ -2512,41 +2218,10 @@ def _automation_queue_snapshot_locked():
 
 
 def get_automation_queue_payload():
-    if AUTOMATION_QUEUE_MODE == "shared":
-        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
-        if runtime is None:
-            return {
-                "success": False,
-                "mode": "shared",
-                "message": shared_queue_initialization_error or "Shared queue is not configured.",
-                "running": None,
-                "queued": [],
-                "idle": [],
-                "history": [],
-                "tasks": [],
-                "queued_count": 0,
-                "idle_count": 0,
-                "running_count": 0,
-            }
-        try:
-            return _enrich_automation_queue_reports(runtime.snapshot())
-        except Exception as exc:
-            return {
-                "success": False,
-                "mode": "shared",
-                "message": str(exc),
-                "coordinator": runtime.state(),
-                "running": None,
-                "queued": [],
-                "idle": [],
-                "history": [],
-                "tasks": [],
-                "queued_count": 0,
-                "idle_count": 0,
-                "running_count": 0,
-            }
     with automation_queue_lock:
-        return _enrich_automation_queue_reports(_automation_queue_snapshot_locked())
+        payload = _enrich_automation_queue_reports(_automation_queue_snapshot_locked())
+        payload["mode"] = "local"
+        return payload
 
 
 def _automation_queue_trim_history_locked(max_history=40):
@@ -2735,10 +2410,6 @@ def enqueue_automation(
     advanced_summary=None,
     task_type=None,
     task_arguments=None,
-    target_node=None,
-    preferred_node=None,
-    allow_any_node=False,
-    required_capability=None,
 ):
     startup_block = _automation_version_block_reason()
     if startup_block:
@@ -2754,43 +2425,6 @@ def enqueue_automation(
     scheduled_dt = _automation_queue_parse_datetime(scheduled_for)
     if mode == "scheduled" and scheduled_dt is None:
         return False, "Scheduled queue task needs a valid time.", None
-    if AUTOMATION_QUEUE_MODE == "shared":
-        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
-        if runtime is None:
-            return False, shared_queue_initialization_error or "Shared queue is not configured.", None
-        if not str(task_type or "").strip():
-            return False, "This automation has not been registered for safe cross-device execution.", None
-        if not target_node and not allow_any_node:
-            target_node = _requested_automation_target_node()
-        if required_capability == "system_power" and not target_node and not allow_any_node:
-            target_node = runtime.client.config.node_key
-        try:
-            if not allow_any_node:
-                target_node = _resolve_automatic_control_target(
-                    runtime,
-                    target_node,
-                    required_capability=required_capability,
-                )
-            task = runtime.enqueue(
-                label=str(label or "Automation Task"),
-                category=str(category or "Automation"),
-                task_type=str(task_type),
-                arguments=task_arguments if isinstance(task_arguments, dict) else {},
-                target_node=target_node,
-                preferred_node=preferred_node,
-                required_capability=required_capability,
-                details=str(details or "").strip() or None,
-                queue_mode=mode,
-                available_at=scheduled_dt.astimezone().isoformat() if scheduled_dt else None,
-                repeat_interval_minutes=interval_minutes,
-                requested_client_os=_automation_request_client_os(),
-            )
-        except Exception as exc:
-            return False, str(exc), None
-        position = task.get("sequence") if isinstance(task, dict) else None
-        msg = f"Queued {label} in the shared queue" + (f" as sequence {position}." if position else ".")
-        log_automation_event("automation.queue", "QUEUED", msg, source="server.py")
-        return True, msg, task
     _ensure_automation_queue_worker()
     now_iso = _automation_queue_now_iso()
     status = "queued"
@@ -2852,39 +2486,6 @@ def cancel_automation_queue_task(task_id):
     task_id = str(task_id or "").strip()
     if not task_id:
         return False, "Missing queue task ID."
-    if AUTOMATION_QUEUE_MODE == "shared":
-        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
-        if runtime is None:
-            return False, shared_queue_initialization_error or "Shared queue is not configured."
-        try:
-            task = runtime.client.cancel(task_id)
-            local_node = str(getattr(getattr(runtime.client, "config", None), "node_key", "") or "").strip()
-            claimed_node = str((task or {}).get("claimed_by_node") or "").strip()
-            lease_token = str((task or {}).get("lease_token") or "").strip()
-            lease_expires_at = _automation_queue_parse_datetime((task or {}).get("lease_expires_at"))
-            stale_local_task = bool(
-                isinstance(task, dict)
-                and task.get("status") == "running"
-                and task.get("cancel_requested")
-                and local_node
-                and claimed_node == local_node
-                and lease_token
-                and lease_expires_at is not None
-                and lease_expires_at <= datetime.now()
-            )
-            if stale_local_task:
-                runtime.client.finish(
-                    task_id,
-                    lease_token,
-                    success=False,
-                    message="Canceled after the original worker heartbeat was lost.",
-                )
-                runtime.wake()
-                return True, "Canceled the expired task after its worker heartbeat was lost."
-            runtime.wake()
-            return True, "Cancel request sent to the shared queue."
-        except Exception as exc:
-            return False, str(exc)
     running_cancel = False
     with automation_queue_condition:
         task = next((item for item in automation_queue_tasks if item.get("id") == task_id), None)
@@ -2923,83 +2524,6 @@ def retry_automation_queue_task(task_id):
         "limit": None,
         "retry_errors": True,
     }
-    if AUTOMATION_QUEUE_MODE == "shared":
-        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
-        if runtime is None:
-            return False, shared_queue_initialization_error or "Shared queue is not configured."
-        try:
-            snapshot = _enrich_automation_queue_reports(runtime.snapshot())
-            task = next((row for row in snapshot.get("tasks") or [] if str(row.get("id") or "") == task_id), None)
-            if not task:
-                return False, "Queue task was not found."
-            existing_context = dict(task.get("result_context") or {})
-            retry_count = max(0, int(_safe_float(existing_context.get("retry_count"), 0))) + 1
-            if task.get("status") == "failed" and task.get("task_type") == "crm.mass_emailer" and task.get("label") == "Sheets Scanner":
-                original_report = existing_context.get("report") or _sheet_scanner_queue_report_for_task(task)
-                if not isinstance(original_report, dict) or not original_report.get("order_details"):
-                    return False, "The failed Sheets Scanner report is unavailable; retry was not started."
-                retry_context = {
-                    "retry_count": retry_count,
-                    "retrying": True,
-                    "retry_completed": False,
-                    "original_report": original_report,
-                    "report": original_report,
-                    "retry_requested_at": _automation_queue_now_iso(),
-                }
-                runtime.client.retry_failed(task_id, arguments=retry_arguments, retry_context=retry_context)
-                runtime.wake()
-                return True, f"Retry {retry_count} queued in the original Sheets Scanner entry."
-            if task.get("task_type") == "crm.processing":
-                original_report = existing_context.get("report") if isinstance(existing_context.get("report"), dict) else {}
-                main_retry_plan = _crm_processing_retry_plan(original_report)
-                original_arguments = existing_context.get("original_arguments")
-                if not main_retry_plan or not isinstance(original_arguments, dict):
-                    return False, "This Main Automation entry has no failed order details available for a safe targeted retry."
-                main_retry_arguments = {**original_arguments, "retry_plan": main_retry_plan}
-                failed_order_tasks = sum(len(order_ids) for order_ids in main_retry_plan.values())
-                retry_context = {
-                    **existing_context,
-                    "retry_count": retry_count,
-                    "retrying": True,
-                    "retry_completed": False,
-                    "original_report": existing_context.get("original_report") or original_report,
-                    "report": original_report,
-                    "retry_plan": main_retry_plan,
-                    "retry_requested_at": _automation_queue_now_iso(),
-                }
-                runtime.client.retry_order(
-                    task_id,
-                    retry_context=retry_context,
-                    arguments=main_retry_arguments,
-                )
-                runtime.wake()
-                return True, (
-                    f"Retry {retry_count} queued in the same Main Automation entry for "
-                    f"{failed_order_tasks} failed order task(s)."
-                )
-            if not _automation_queue_task_is_retryable_order(task):
-                return False, "Only canceled or failed CRM tasks with a safe retry scope can be retried."
-            retry_context = {
-                "retry_count": retry_count,
-                "retrying": True,
-                "retry_completed": False,
-                "previous_result_context": existing_context,
-                "retry_requested_at": _automation_queue_now_iso(),
-            }
-            runtime.client.retry_order(task_id, retry_context=retry_context)
-            runtime.wake()
-            return True, (
-                f"Retry {retry_count} queued for {task.get('label') or 'the order task'}; "
-                "completed CRM work will be detected and skipped."
-            )
-        except Exception as exc:
-            detail = str(exc)
-            if "automation_retry_order_task" in detail:
-                detail = "Shared order retry needs Supabase migration 006_retry_order_tasks.sql."
-            elif "automation_retry_failed_task" in detail:
-                detail = "Shared queue retry needs Supabase migration 004_retry_failed_tasks.sql."
-            return False, detail
-
     with automation_queue_condition:
         task = next((row for row in automation_queue_tasks if str(row.get("id") or "") == task_id), None)
         if not task:
@@ -3079,21 +2603,6 @@ retry_failed_automation_queue_task = retry_automation_queue_task
 
 
 def cancel_all_automation_queue_tasks():
-    if AUTOMATION_QUEUE_MODE == "shared":
-        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
-        if runtime is None:
-            return False, shared_queue_initialization_error or "Shared queue is not configured."
-        canceled = 0
-        try:
-            rows = runtime.client.snapshot()
-            for task in rows:
-                if task.get("status") in {"queued", "running"}:
-                    runtime.client.cancel(task.get("id"))
-                    canceled += 1
-            runtime.wake()
-            return True, f"Sent {canceled} shared queue cancel request{'s' if canceled != 1 else ''}."
-        except Exception as exc:
-            return False, str(exc)
     running_cancel = False
     canceled_count = 0
     with automation_queue_condition:
@@ -3127,8 +2636,6 @@ def delete_automation_queue_task(task_id):
     task_id = str(task_id or "").strip()
     if not task_id:
         return False, "Missing queue task ID."
-    if AUTOMATION_QUEUE_MODE == "shared":
-        return False, "Shared queue history is retained as an audit record. Use Clear Finished when archival is configured."
     with automation_queue_condition:
         task = next((item for item in automation_queue_tasks if item.get("id") == task_id), None)
         if not task:
@@ -3141,17 +2648,6 @@ def delete_automation_queue_task(task_id):
 
 
 def clear_finished_automation_queue_tasks():
-    if AUTOMATION_QUEUE_MODE == "shared":
-        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
-        if runtime is None:
-            return False, shared_queue_initialization_error or "Shared queue is not configured."
-        try:
-            result = runtime.client.clear_finished()
-            removed = int(result or 0)
-            runtime.wake()
-            return True, f"Cleared {removed} finished shared queue entr{'y' if removed == 1 else 'ies'}."
-        except Exception as exc:
-            return False, str(exc)
     with automation_queue_condition:
         before = len(automation_queue_tasks)
         automation_queue_tasks[:] = [
@@ -3164,8 +2660,6 @@ def clear_finished_automation_queue_tasks():
 
 
 def reorder_automation_queue(task_ids):
-    if AUTOMATION_QUEUE_MODE == "shared":
-        return False, "Shared queue order is strict FIFO and cannot be reordered.", get_automation_queue_payload()
     desired = [str(value or "").strip() for value in (task_ids if isinstance(task_ids, list) else [])]
     desired = [value for value in desired if value]
     with automation_queue_condition:
@@ -3186,35 +2680,6 @@ def reorder_automation_queue(task_ids):
         payload = _automation_queue_snapshot_locked()
     log_automation_event("automation.queue", "REORDERED", "Queued task order updated.", source="server.py")
     return True, "Queue order updated.", payload
-
-
-def reassign_automation_queue_task(task_id, target_node=None):
-    if AUTOMATION_QUEUE_MODE != "shared":
-        return False, "Safe reassignment is available only in shared queue mode."
-    runtime = shared_queue_runtime or initialize_shared_queue_runtime()
-    if runtime is None:
-        return False, shared_queue_initialization_error or "Shared queue is not configured."
-    try:
-        runtime.client.reassign(str(task_id), target_node)
-        runtime.wake()
-        target_text = str(target_node or "").strip() or "any eligible computer"
-        return True, f"Task safely reassigned to {target_text}; its FIFO position was preserved."
-    except Exception as exc:
-        return False, str(exc)
-
-
-def resume_shared_queue_after_review(review_note):
-    if AUTOMATION_QUEUE_MODE != "shared":
-        return False, "The local queue is not paused by shared leases."
-    runtime = shared_queue_runtime or initialize_shared_queue_runtime()
-    if runtime is None:
-        return False, shared_queue_initialization_error or "Shared queue is not configured."
-    try:
-        runtime.client.resume_after_review(review_note)
-        runtime.wake()
-        return True, "Shared queue resumed after manual review."
-    except Exception as exc:
-        return False, str(exc)
 
 
 def _wait_for_status_completion(status_payload_fn, fallback_message="Queued task started."):
@@ -3999,13 +3464,6 @@ def _auto_clock_out_timer_callback():
     global auto_clock_timer
     with state_lock:
         auto_clock_timer = None
-
-    # Shared mode has already persisted a scheduled queue task.  Do not create
-    # a second, device-pinned task if a leftover local timer fires during a
-    # configuration change or app upgrade.
-    if AUTOMATION_QUEUE_MODE == "shared":
-        return
-
     enqueue_automation(
         "Automatic Work Clock Out",
         "Communications",
@@ -4015,26 +3473,12 @@ def _auto_clock_out_timer_callback():
     )
 
 
-def _run_automatic_work_clock_out_queued(origin_node=None, scheduled_at=None):
+def _run_automatic_work_clock_out_queued():
     if WORK_CLOCK_SYNC_FROM_PAYCOM:
         _sync_paycom_hours_into_work_state("auto-clock-out-precheck", update_total_hours=True)
     with state_lock:
         state = load_work_state()
         active = state.get("active_shift") or {}
-        local_node = ""
-        if shared_queue_runtime is not None:
-            local_node = str(
-                getattr(getattr(getattr(shared_queue_runtime, "client", None), "config", None), "node_key", "") or ""
-            )
-        is_remote_failover = bool(origin_node and local_node and str(origin_node) != local_node)
-        if is_remote_failover and not active:
-            # The fallback computer has its own local work-state file.  Import
-            # the still-open Paycom punch before applying the normal automatic
-            # clock-out safeguards.
-            inferred, _note = _infer_active_shift_from_paycom_rows(state)
-            if inferred:
-                save_work_state(state)
-                active = state.get("active_shift") or {}
         allowed, reason = _auto_clock_out_allowed_for_active_shift(active, state=state)
         if not allowed:
             if not _clear_closed_active_shift_locked(state):
@@ -4050,78 +3494,8 @@ def _run_automatic_work_clock_out_queued(origin_node=None, scheduled_at=None):
     return ok, msg
 
 
-def _ensure_shared_auto_clock_out_task(auto_dt):
-    """Persist a due-time task that prefers its scheduling computer.
-
-    The target is intentionally open so a healthy peer can claim it when the
-    preferred computer has stopped heartbeating.  The shared queue's claim
-    policy prevents a peer from taking it while the preferred computer is
-    online.
-    """
-    runtime = shared_queue_runtime or initialize_shared_queue_runtime()
-    if runtime is None:
-        return False, shared_queue_initialization_error or "Shared queue is not configured."
-    origin_node = str(
-        getattr(getattr(getattr(runtime, "client", None), "config", None), "node_key", "") or ""
-    ).strip()
-    if not origin_node:
-        return False, "Shared queue has no local node identity."
-    auto_iso = auto_dt.isoformat()
-    old_task_id = None
-    with state_lock:
-        state = load_work_state()
-        active = state.get("active_shift") or {}
-        if active.get("auto_clock_out_at") != auto_iso:
-            return False, "Auto clock-out schedule changed before it could be queued."
-        if (
-            active.get("auto_clock_out_queue_task_id")
-            and active.get("auto_clock_out_queue_at") == auto_iso
-            and active.get("auto_clock_out_queue_origin") == origin_node
-        ):
-            return True, "Shared auto clock-out task is already scheduled."
-        old_task_id = str(active.get("auto_clock_out_queue_task_id") or "").strip() or None
-
-    if old_task_id:
-        try:
-            runtime.client.cancel(old_task_id)
-        except Exception as exc:
-            logger.warning("Could not cancel replaced shared auto clock-out task %s: %s", old_task_id, exc)
-
-    ok, msg, task = enqueue_automation(
-        "Automatic Work Clock Out",
-        "Communications",
-        _run_automatic_work_clock_out_queued,
-        queue_mode="scheduled",
-        scheduled_for=auto_dt,
-        task_type="communications.automatic_work_out",
-        task_arguments={"origin_node": origin_node, "scheduled_at": auto_iso},
-        preferred_node=origin_node,
-        allow_any_node=True,
-    )
-    if not ok:
-        return False, msg
-    task_id = str((task or {}).get("id") or "").strip()
-    if not task_id:
-        return False, "Shared auto clock-out task was queued without an ID."
-    with state_lock:
-        state = load_work_state()
-        active = state.get("active_shift") or {}
-        if active.get("auto_clock_out_at") == auto_iso:
-            active["auto_clock_out_queue_task_id"] = task_id
-            active["auto_clock_out_queue_at"] = auto_iso
-            active["auto_clock_out_queue_origin"] = origin_node
-            state["active_shift"] = active
-            save_work_state(state)
-    return True, msg
-
-
 def schedule_auto_clock_out(auto_dt):
     global auto_clock_timer
-    if AUTOMATION_QUEUE_MODE == "shared":
-        ok, msg = _ensure_shared_auto_clock_out_task(auto_dt)
-        if not ok:
-            logger.error("Could not schedule shared auto clock-out: %s", msg)
-        return ok, msg
     delay = max(1.0, (auto_dt - datetime.now()).total_seconds())
     with state_lock:
         _cancel_auto_clock_timer_locked()
@@ -4343,21 +3717,11 @@ def _clear_closed_active_shift_locked(state, now=None):
 
 def clear_auto_clock_out_schedule():
     cancel_auto_clock_out_timer()
-    queue_task_id = None
     with state_lock:
         state = load_work_state()
-        active = state.get("active_shift") or {}
-        queue_task_id = str(active.get("auto_clock_out_queue_task_id") or "").strip() or None
         if _clear_active_auto_clock_out_locked(state):
             save_work_state(state)
         refresh_tray_status_from_state(state)
-    if queue_task_id and AUTOMATION_QUEUE_MODE == "shared":
-        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
-        if runtime is not None:
-            try:
-                runtime.client.cancel(queue_task_id)
-            except Exception as exc:
-                logger.warning("Could not cancel shared auto clock-out task %s: %s", queue_task_id, exc)
     msg = "Auto clock-out timer was canceled."
     _audit_result("work.clear_auto_clock_out_schedule", True, msg)
     return True, msg
@@ -10840,7 +10204,6 @@ def queue_crm_sheet_scanner_retry_order(order_id, process, reason="", sheet_row_
         status_fn=get_crm_mass_emailer_status_payload,
         task_type="crm.sheet_scanner_order",
         task_arguments=task_arguments,
-        required_capability="crm",
     )
 
 
@@ -11260,25 +10623,25 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
                 "message": message,
             }
         parallel_workers = _saved_crm_automation_parallel_workers(default=1)
+        order_goods_kwargs = {
+            "dry_run": False,
+            "batch_size": None,
+            "parallel_workers": parallel_workers,
+            "list_url": None if target_order_id else list_url,
+        }
+        if target_order_id:
+            order_goods_kwargs["order_id"] = target_order_id
         _start_crm_order_goods_runtime(
-            dry_run=False,
-            batch_size=None,
-            parallel_workers=parallel_workers,
-            list_url=None if target_order_id else list_url,
-            order_id=target_order_id,
+            **order_goods_kwargs,
         )
         ok = False
         message = "Rush Order Goods did not run."
         payload = {"success": False, "message": message}
         try:
             ok, message, payload = _execute_crm_order_goods_worker(
-                dry_run=False,
-                batch_size=None,
-                parallel_workers=parallel_workers,
-                list_url=None if target_order_id else list_url,
                 visible=False,
                 show_terminal=False,
-                order_id=target_order_id,
+                **order_goods_kwargs,
             )
         except Exception as e:
             logger.exception("Automate Processing Rush Order Goods step failed unexpectedly")
@@ -12299,7 +11662,6 @@ def queue_crm_extension_order_run(order_id, shipping_too_expensive=False):
             "order_id": normalized_order_id,
             "shipping_too_expensive": bool(shipping_too_expensive),
         },
-        required_capability="crm",
     )
     if not ok:
         with crm_extension_order_runtime_lock:
@@ -12486,7 +11848,6 @@ def queue_crm_extension_manual_order_run(order_id, automation_key, reason=""):
         status_fn=get_crm_extension_order_status_payload,
         task_type=automation["task_type"],
         task_arguments=automation["task_arguments"](normalized_order_id, clean_reason),
-        required_capability="crm",
     )
     if not ok:
         with crm_extension_order_runtime_lock:
@@ -12959,7 +12320,6 @@ def _power_countdown_timer_callback():
         _queued_power_countdown_action,
         task_type="system.power",
         task_arguments={"action": action},
-        required_capability="system_power",
     )
 
 
@@ -13015,38 +12375,16 @@ def cancel_power_countdown(audit=True):
 
 def cancel_scheduled_power_tasks():
     cancel_power_countdown(audit=False)
-    try:
-        target_node = str(request.headers.get("X-Automation-Target-Node") or "").strip()
-    except RuntimeError:
-        target_node = ""
     canceled = 0
-    if AUTOMATION_QUEUE_MODE == "shared":
-        runtime = shared_queue_runtime or initialize_shared_queue_runtime()
-        if runtime is None:
-            return False, shared_queue_initialization_error or "Shared queue is not configured."
-        try:
-            for task in runtime.client.snapshot():
-                if task.get("status") != "queued" or task.get("category") != "System Power":
-                    continue
-                if task.get("queue_mode") != "scheduled":
-                    continue
-                if target_node and str(task.get("target_node") or "") != target_node:
-                    continue
-                runtime.client.cancel(task.get("id"))
-                canceled += 1
-            runtime.wake()
-        except Exception as exc:
-            return False, str(exc)
-    else:
-        with automation_queue_condition:
-            for task in list(automation_queue_tasks):
-                if task.get("status") != "idle" or task.get("category") != "System Power":
-                    continue
-                if task.get("queue_mode") != "scheduled":
-                    continue
-                automation_queue_tasks.remove(task)
-                canceled += 1
-            automation_queue_condition.notify_all()
+    with automation_queue_condition:
+        for task in list(automation_queue_tasks):
+            if task.get("status") != "idle" or task.get("category") != "System Power":
+                continue
+            if task.get("queue_mode") != "scheduled":
+                continue
+            automation_queue_tasks.remove(task)
+            canceled += 1
+        automation_queue_condition.notify_all()
     return True, f"Canceled {canceled} scheduled power task{'s' if canceled != 1 else ''}."
 
 
@@ -13246,36 +12584,6 @@ def _run_system_power_task(action):
         return trigger_pc_restart_explorer()
     time.sleep(1)
     return _dispatch_power_action(action)
-
-
-def register_shared_queue_task_executors():
-    """Register every serializable task supported by this app version."""
-    registrations = {
-        "communications.paycom_clock": run_clock,
-        "communications.slack": run_slack,
-        "communications.slack_lunch": start_slack_lunch_break,
-        "communications.slack_lunch_return": _run_slack_lunch_return_queued,
-        "communications.work": run_work,
-        "communications.work_sync": run_work_sync,
-        "communications.automatic_work_out": _run_automatic_work_clock_out_queued,
-        "development.test_suite": lambda selected_tests=None: run_automation_test_suite(selected_tests)[:2],
-        "crm.stock_unlocker": run_crm_run_queued,
-        "crm.address_validator": run_crm_address_run_queued,
-        "crm.order_goods": run_crm_order_goods_run_queued,
-        "crm.shipping_bypasser": run_crm_shipping_bypasser_run_queued,
-        "crm.push_back": run_crm_push_back_run_queued,
-        "crm.product_separator": run_crm_product_separator_run_queued,
-        "crm.auto_splitter": run_crm_auto_splitter_run_queued,
-        "crm.mass_emailer": run_crm_mass_emailer_run_queued,
-        "crm.sheet_scanner_order": run_crm_sheet_scanner_order_queued,
-        "crm.processing": run_crm_processing_run_queued,
-        "crm.extension_order": run_crm_extension_order_run_queued,
-        "system.power": _run_system_power_task,
-    }
-    for task_type, executor in registrations.items():
-        if not automation_task_registry.has(task_type):
-            automation_task_registry.register(task_type, executor)
-    return tuple(automation_task_registry.task_types())
 
 
 def _load_config_assignment_keys():
@@ -13520,26 +12828,8 @@ def enforce_app_access_security():
                 }
             ), 409
     if home_automation_request:
-        runtime = shared_queue_runtime or (
-            initialize_shared_queue_runtime() if AUTOMATION_QUEUE_MODE == "shared" else None
-        )
-        if AUTOMATION_QUEUE_MODE != "shared":
-            target_node = None
-        else:
-            try:
-                target_node = _resolve_home_automation_target(runtime)
-            except SharedQueueBlocked as exc:
-                return jsonify(
-                    {
-                        "success": False,
-                        "queued": False,
-                        "home_assistant_failure": True,
-                        "message": f"Home Assistant request failed: {exc}",
-                    }
-                ), 503
         g.home_automation_request = True
         g.home_automation_source = _home_automation_request_source()
-        g.automation_target_node = target_node
         # Machine calls keep their existing action URLs. Browser traffic still
         # requires the app PIN and CSRF token below.
         return None
@@ -13838,26 +13128,13 @@ def api_server_runtime():
 def api_node_runtime():
     try:
         payload = get_node_runtime_payload()
-        client_os = _automation_request_client_os()
-        payload["client_os"] = client_os
-        payload["control_target_locked"] = False
-        runtime = shared_queue_runtime or (initialize_shared_queue_runtime() if AUTOMATION_QUEUE_MODE == "shared" else None)
-        payload["automatic_target_node"] = None
-        payload["default_control_target_node"] = None
-        payload["control_target_error"] = None
-        if runtime is not None:
-            try:
-                payload["default_control_target_node"] = _resolve_automatic_control_target(runtime, client_os=client_os)
-            except SharedQueueBlocked as exc:
-                payload["control_target_error"] = str(exc)
+        payload["client_os"] = _automation_request_client_os()
         return jsonify(payload)
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 
 
 def _app_update_safety_block_reason():
-    if AUTOMATION_QUEUE_MODE == "shared" and shared_queue_runtime is None:
-        return "Waiting for the shared queue coordinator to start."
     queue = get_automation_queue_payload()
     if int(queue.get("running_count") or 0) > 0:
         return "Waiting for the running automation to finish before updating."
@@ -13920,27 +13197,6 @@ def _maybe_schedule_automatic_app_update(git_state=None, *, refresh_error=None):
     return scheduled
 
 
-def _sync_automate_version_gate(commit):
-    target_commit = str(commit or "").strip()
-    if AUTOMATION_QUEUE_MODE != "shared" or not target_commit:
-        return {"success": True, "updated": False, "required_commit": target_commit or None}
-    runtime = shared_queue_runtime or initialize_shared_queue_runtime()
-    if runtime is None:
-        raise SharedQueueBlocked(shared_queue_initialization_error or "The shared AUTOMATE queue is unavailable.")
-    current = runtime.client.get_version_gate()
-    if str(current.get("required_commit") or "").strip() == target_commit:
-        return {"success": True, "updated": False, "required_commit": target_commit}
-    result = runtime.client.set_version_gate(target_commit)
-    runtime.wake()
-    logger.info("Updated the shared AUTOMATE version gate to %s.", target_commit[:8])
-    return {
-        "success": True,
-        "updated": True,
-        "required_commit": target_commit,
-        "result": result,
-    }
-
-
 @app.route("/api/app/update", methods=["POST"])
 def api_app_update():
     try:
@@ -13982,15 +13238,12 @@ def api_app_update():
                 })
             update = get_app_update_payload(git_state)
 
-        target_commit = str(update.get("target_commit") or (git_state or {}).get("commit") or "").strip()
-        gate_update = _sync_automate_version_gate(target_commit)
         _schedule_app_update_restart()
         return jsonify({
             "success": True,
             "restarting": True,
-            "message": "Update started. The app and shared AUTOMATE gate are synchronized, and the app will restart automatically.",
+            "message": "Update started. The app will restart automatically.",
             "app_update": update,
-            "automate_version_gate": gate_update,
         }), 202
     except Exception as exc:
         logger.exception("Could not start app update")
@@ -14116,24 +13369,6 @@ def api_queue_clear_finished():
 def api_queue_reorder():
     data = request.get_json(silent=True) or {}
     ok, msg, payload = reorder_automation_queue(data.get("task_ids") or data.get("taskIds") or [])
-    payload.update({"success": ok, "message": msg})
-    return jsonify(payload), (200 if ok else 400)
-
-
-@app.route("/api/queue/<task_id>/reassign", methods=["POST"])
-def api_queue_reassign(task_id):
-    data = request.get_json(silent=True) or {}
-    ok, msg = reassign_automation_queue_task(task_id, data.get("target_node") or data.get("targetNode"))
-    payload = get_automation_queue_payload()
-    payload.update({"success": ok, "message": msg})
-    return jsonify(payload), (200 if ok else 400)
-
-
-@app.route("/api/queue/resume", methods=["POST"])
-def api_queue_resume():
-    data = request.get_json(silent=True) or {}
-    ok, msg = resume_shared_queue_after_review(data.get("review_note") or data.get("reviewNote"))
-    payload = get_automation_queue_payload()
     payload.update({"success": ok, "message": msg})
     return jsonify(payload), (200 if ok else 400)
 
@@ -14590,10 +13825,7 @@ def _build_local_work_status_payload():
     with state_lock:
         state = load_work_state()
     active = state.get("active_shift") or {}
-    shared_auto_task_active = bool(
-        AUTOMATION_QUEUE_MODE == "shared" and active.get("auto_clock_out_queue_task_id")
-    )
-    is_scheduled = bool(active.get("auto_clock_out_at")) and (auto_clock_timer is not None or shared_auto_task_active)
+    is_scheduled = bool(active.get("auto_clock_out_at")) and auto_clock_timer is not None
     auto_clock = _build_auto_clock_payload(state)
     return {
         "success": True,
@@ -14605,108 +13837,15 @@ def _build_local_work_status_payload():
         "paycom_sync_enabled": WORK_CLOCK_SYNC_FROM_PAYCOM,
         "paycom_sync_before_clock_in": WORK_CLOCK_SYNC_BEFORE_CLOCK_IN,
         "paycom_sync_after_clock_out": WORK_CLOCK_SYNC_AFTER_CLOCK_OUT,
-        "auto_timer_active": bool(auto_clock_timer) or shared_auto_task_active,
+        "auto_timer_active": bool(auto_clock_timer),
         "auto_scheduled": is_scheduled,
         "auto_clock": auto_clock,
         "state": state,
     }
 
 
-def _work_status_timestamp(value):
-    text = str(value or "").strip()
-    if not text:
-        return None
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        if parsed.tzinfo is not None:
-            parsed = parsed.astimezone().replace(tzinfo=None)
-        return parsed.timestamp()
-    except (TypeError, ValueError, OSError):
-        return None
-
-
-def _work_state_freshness(state):
-    """Rank real clock events ahead of incidental state-file write times."""
-    if not isinstance(state, dict):
-        return (0, 0.0, 0, 0.0)
-    event_times = []
-    active = state.get("active_shift") if isinstance(state.get("active_shift"), dict) else None
-    if active:
-        stamp = _work_status_timestamp(active.get("clock_in_at"))
-        if stamp is not None:
-            event_times.append(stamp)
-    days = state.get("days") if isinstance(state.get("days"), dict) else {}
-    for entry in days.values():
-        if not isinstance(entry, dict):
-            continue
-        for key in ("clock_in_at", "clock_out_at"):
-            stamp = _work_status_timestamp(entry.get(key))
-            if stamp is not None:
-                event_times.append(stamp)
-    event_stamp = max(event_times) if event_times else 0.0
-    updated_stamp = _work_status_timestamp(state.get("updated_at")) or 0.0
-    return (1 if event_times else 0, event_stamp, 1 if active else 0, updated_stamp)
-
-
-def _shared_node_online(node, now=None):
-    if not isinstance(node, dict) or not bool(node.get("enabled", True)):
-        return False
-    seen = str(node.get("last_seen_at") or "").strip()
-    try:
-        seen_at = datetime.fromisoformat(seen.replace("Z", "+00:00"))
-        current = now or (datetime.now(seen_at.tzinfo) if seen_at.tzinfo else datetime.now())
-        if seen_at.tzinfo is not None and current.tzinfo is None:
-            current = current.astimezone()
-        return (current - seen_at).total_seconds() <= 30
-    except (TypeError, ValueError):
-        return False
-
-
-def _select_shared_work_status(local_payload, nodes, local_node_key=None, now=None):
-    """Choose the cross-device work state containing the newest real punch."""
-    local_state = local_payload.get("state") if isinstance(local_payload, dict) else None
-    week_start = str((local_state or {}).get("week_start") or "")
-    candidates = [(str(local_node_key or "local"), "This computer", local_payload)]
-    for node in nodes or []:
-        if not _shared_node_online(node, now=now):
-            continue
-        node_key = str(node.get("node_key") or "").strip()
-        if local_node_key and node_key.lower() == str(local_node_key).strip().lower():
-            continue
-        runtime_status = node.get("runtime_status") if isinstance(node.get("runtime_status"), dict) else {}
-        payload = runtime_status.get("work")
-        state = payload.get("state") if isinstance(payload, dict) else None
-        if not isinstance(state, dict) or str(state.get("week_start") or "") != week_start:
-            continue
-        candidates.append((node_key, str(node.get("display_name") or node_key or "Other computer"), payload))
-
-    source_key, source_name, selected = max(
-        candidates,
-        key=lambda item: _work_state_freshness((item[2] or {}).get("state")),
-    )
-    result = dict(selected or local_payload)
-    result["shared_state"] = {
-        "enabled": True,
-        "source_node": source_key,
-        "source_name": source_name,
-    }
-    return result
-
-
 def get_work_status_payload():
-    local_payload = _build_local_work_status_payload()
-    if AUTOMATION_QUEUE_MODE != "shared":
-        return local_payload
-    runtime = shared_queue_runtime or initialize_shared_queue_runtime()
-    if runtime is None:
-        return local_payload
-    try:
-        nodes = runtime.client.list_nodes()
-        local_key = str(getattr(runtime.client.config, "node_key", "") or "").strip()
-        return _select_shared_work_status(local_payload, nodes, local_node_key=local_key)
-    except Exception as exc:
-        logger.warning("Could not load shared work-clock state: %s", exc)
-        return local_payload
+    return _build_local_work_status_payload()
 
 register_work_routes(
     app,
@@ -14782,7 +13921,6 @@ register_system_routes(
     resolve_power_schedule_datetime=_resolve_power_schedule_datetime,
     safe_float=_safe_float,
     platform_capabilities=lambda: get_platform_snapshot().capabilities,
-    get_shared_node_status=get_shared_node_runtime_status,
     cancel_scheduled_power_tasks=cancel_scheduled_power_tasks,
 )
 
@@ -14920,8 +14058,6 @@ def on_exit(icon, _item=None):
     cancel_slack_lunch_break(audit=False)
     close_desktop_metrics_runtime()
     clipboard_runtime.stop()
-    if shared_queue_runtime is not None:
-        shared_queue_runtime.stop()
     icon.stop()
     os._exit(0)
 
@@ -15106,9 +14242,7 @@ if __name__ == "__main__":
             maintenance["removed_files"],
             maintenance["removed_bytes"] / (1024 * 1024),
         )
-    register_shared_queue_task_executors()
     start_version_monitor()
-    initialize_shared_queue_runtime()
     initialize_app_security()
     clipboard_runtime.start()
     ensure_crm_state_file()

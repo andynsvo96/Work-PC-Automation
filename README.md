@@ -17,13 +17,13 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - Records automation results in a shared audit log.
 - Keeps local state, result JSON, screenshots, logs, debug output, and cloned browser profiles under ignored runtime folders.
 - Supports hidden startup through a Windows Script Host launcher.
-- Supports Safe Sync & Start on both operating systems, a macOS LaunchAgent, a Supabase-backed global FIFO queue, and a PIN-protected Android control board over Tailscale.
+- Supports Safe Sync & Start on both operating systems, a macOS LaunchAgent, independent local queues, and a PIN-protected Android control board over Tailscale.
 - Supports authenticated manual and opt-in automatic text/PNG clipboard transfer between Windows and macOS without persisting clipboard contents.
 - Checks GitHub before every supported startup and fast-forwards a clean checkout before loading the app.
 - Automatically runs Safe Sync & Start when a clean checkout falls behind, waiting for active automation or timers before restarting. The Update button can also save tracked local edits, synchronize `main`, publish them, and restart without discarding work.
-- Defaults the control target to the current Windows or Mac device, while allowing any online eligible device to be selected for a queued task.
-- Routes Home Assistant/Alexa HTTP triggers to an online Windows node first, falls back to an online Mac node, and returns HTTP 503 with `home_assistant_failure: true` when no eligible server is available.
-- Shows vector OS icons and can clear finished shared queue history without touching running or waiting tasks.
+- Runs every queued task on the computer serving the current dashboard; use only one OS at a time when adding work.
+- Runs Home Assistant/Alexa HTTP triggers on the computer whose private URL receives the request.
+- Can clear finished local queue history without touching running or waiting tasks.
 
 ## Project Layout
 
@@ -38,8 +38,7 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - `automation_audit.py` - audit log helpers.
 - `credential_store.py` / `manage_credentials.py` - Windows Credential Manager and macOS Keychain integration.
 - `service_health.py` - read-only live authentication checks that never print secret values.
-- `shared_queue.py` / `shared_queue_runtime.py` - encrypted Supabase queue and node lease coordination.
-- `safe_sync.py` - non-destructive Git fetch/fast-forward/version gate startup.
+- `safe_sync.py` - non-destructive Git fetch/fast-forward startup.
 - `slack_message_rotation.py` - alternating Slack message state logic.
 - `config.example.py` - safe template for local runtime settings.
 - `docs/` - fuller system guide and CRM automation notes.

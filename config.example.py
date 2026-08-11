@@ -10,7 +10,6 @@ from config_defaults import *  # noqa: F403,F401
 
 
 # Add machine-specific overrides below. Common examples:
-# AUTOMATION_QUEUE_MODE = "shared"
 # AUTOMATION_REMOTE_ACCESS_MODE = "tailscale"
 # AUTOMATION_APP_PIN_REQUIRED = True
 # AUTOMATION_USE_LEGACY_PROFILES = True

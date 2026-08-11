@@ -28,10 +28,7 @@ class LocalQueueRetryTests(unittest.TestCase):
     def test_canceled_order_retries_in_same_queue_entry(self):
         task = self._order_task()
         tasks = [task]
-        with (
-            mock.patch.object(server, "AUTOMATION_QUEUE_MODE", "local"),
-            mock.patch.object(server, "automation_queue_tasks", tasks),
-        ):
+        with mock.patch.object(server, "automation_queue_tasks", tasks):
             ok, message = server.retry_automation_queue_task(task["id"])
 
         self.assertTrue(ok)
@@ -44,10 +41,7 @@ class LocalQueueRetryTests(unittest.TestCase):
 
     def test_completed_order_is_never_retryable(self):
         task = self._order_task(status="completed")
-        with (
-            mock.patch.object(server, "AUTOMATION_QUEUE_MODE", "local"),
-            mock.patch.object(server, "automation_queue_tasks", [task]),
-        ):
+        with mock.patch.object(server, "automation_queue_tasks", [task]):
             ok, message = server.retry_automation_queue_task(task["id"])
 
         self.assertFalse(ok)
@@ -58,7 +52,6 @@ class LocalQueueRetryTests(unittest.TestCase):
         task = self._order_task(status="queued")
         tasks = [task]
         with (
-            mock.patch.object(server, "AUTOMATION_QUEUE_MODE", "local"),
             mock.patch.object(server, "automation_queue_tasks", tasks),
             mock.patch.object(server, "log_automation_event"),
         ):

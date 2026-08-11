@@ -82,11 +82,9 @@ def register_work_routes(
         queue_options=None,
         task_type=None,
         task_arguments=None,
-        required_capability=None,
-        target_node=None,
     ):
         queue_options = queue_options if isinstance(queue_options, dict) else {}
-        shared_defaults = {
+        task_defaults = {
             "Paycom Clock In": ("communications.paycom_clock", {"action": "in", "dry_run": False}),
             "Paycom Clock Out": ("communications.paycom_clock", {"action": "out", "dry_run": False}),
             "Paycom Clock In Dry Run": ("communications.paycom_clock", {"action": "in", "dry_run": True}),
@@ -101,15 +99,9 @@ def register_work_routes(
             "Stock Unlocker": ("crm.stock_unlocker", {"dry_run": False}),
             "Stock Unlocker Dry Run": ("crm.stock_unlocker", {"dry_run": True}),
         }
-        default_descriptor = shared_defaults.get(label)
+        default_descriptor = task_defaults.get(label)
         if default_descriptor and not task_type:
             task_type, task_arguments = default_descriptor
-        if required_capability is None and str(task_type or "").startswith("crm."):
-            required_capability = "crm"
-        if target_node is None:
-            automatic_target = str(getattr(g, "automation_target_node", "") or "").strip()
-            requested_target = automatic_target or str(request.headers.get("X-Automation-Target-Node") or "").strip()
-            target_node = requested_target if requested_target and requested_target.lower() != "any" else None
         ok, msg, task = enqueue_automation(
             label,
             category,
@@ -118,15 +110,12 @@ def register_work_routes(
             status_fn=status_payload_fn if callable(status_payload_fn) else None,
             task_type=task_type,
             task_arguments=task_arguments if isinstance(task_arguments, dict) else {},
-            required_capability=required_capability,
-            target_node=target_node,
             **queue_options,
         )
         payload = status_payload_fn() if callable(status_payload_fn) else {"success": True}
         payload.update({"success": ok, "message": msg, "queued": ok, "queue_task": task})
         if getattr(g, "home_automation_request", False):
             payload["home_assistant_failure"] = not ok
-            payload["target_node"] = target_node
         failure_status = 503 if getattr(g, "home_automation_request", False) else 500
         return jsonify(payload), (202 if ok else failure_status)
 

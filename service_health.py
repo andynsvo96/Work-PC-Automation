@@ -34,14 +34,6 @@ def check_google_sheets():
     return "Google Sheets OAuth is valid."
 
 
-def check_shared_queue():
-    from shared_queue import SharedQueueConfig, SupabaseQueueClient
-
-    client = SupabaseQueueClient(SharedQueueConfig.from_keychain())
-    nodes = client.list_nodes()
-    return f"Shared queue authentication is valid; {len(nodes)} node(s) are visible."
-
-
 def check_sanmar():
     import crm_shipping_bypasser as worker
 
@@ -97,7 +89,6 @@ def check_salesforce():
 
 CHECKS = {
     "google_sheets": check_google_sheets,
-    "shared_queue": check_shared_queue,
     "sanmar": check_sanmar,
     "salesforce": check_salesforce,
 }

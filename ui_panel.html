@@ -280,9 +280,6 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .tab-btn.platform-disabled{background:#f1f5f9;border-color:#cbd5e1;color:#94a3b8}
 .platform-capability-notice{display:none;margin:-4px 0 10px;border-color:#f59e0b;background:#fffbeb;color:#92400e;font-weight:700}
 .platform-capability-notice.active{display:block}
-.control-target{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:12px;font-weight:700;color:#334155}
-.control-target select{max-width:210px;padding:6px;font-size:12px}
-.control-target select:disabled{background:#f1f5f9;color:#334155;opacity:1;cursor:default}
 .os-icon{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;vertical-align:-3px;margin:0 2px;color:#475569}
 .os-icon svg{display:block;width:100%;height:100%}
 .os-icon.windows{color:#0078d4}.os-icon.macos{color:#334155}.os-icon.android{color:#3ddc84}
@@ -313,7 +310,6 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .queue-status.failed,.queue-status.canceled{color:#b91c1c}
 .queue-cancel-btn{width:30px;height:30px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:999px}
 .queue-actions{display:flex;align-items:center;gap:6px;justify-content:flex-end;flex-wrap:wrap}
-.queue-target-select{max-width:190px;font-size:12px;padding:5px}
 .queue-runs{grid-column:2 / -1;border-top:1px solid #e2e8f0;margin-top:4px;padding-top:6px;font-size:12px;color:#334155}
 .queue-runs table{width:100%;border-collapse:collapse}
 .queue-runs td,.queue-runs th{padding:4px 6px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}
@@ -502,7 +498,6 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 :root[data-theme='dark'] .auto-split-review-list a:hover{background:#084d78}
 :root[data-theme='dark'] .auto-split-review-run{color:#9d9d9d}
 :root[data-theme='dark'] .crm-link-category-title,
-:root[data-theme='dark'] .control-target,
 :root[data-theme='dark'] .work-timer-label,
 :root[data-theme='dark'] .work-day-toggle{color:#c8c8c8}
 :root[data-theme='dark'] .crm-link-btn,
@@ -643,8 +638,6 @@ button.icon-btn{min-height:34px;padding:7px 12px;border-radius:8px;background:va
 .tab-btn.active{background:var(--rough-blue-soft);border-color:var(--rough-blue);color:#4fc1ff;box-shadow:inset 0 0 0 1px var(--rough-blue)}
 :root:not([data-theme='dark']) .tab-btn.active{color:#1d4ed8}
 .tab-symbol{font-size:15px}
-.control-target{gap:8px;color:var(--rough-muted);font-size:11px;font-weight:500}
-.control-target select{max-width:190px;padding:4px 18px 4px 4px;border:0;background:transparent;color:var(--rough-text);font-size:11px;font-weight:700}
 .page-heading{margin:0 0 20px;align-items:flex-end}
 .page-heading h2{margin:0 0 5px;font-size:29px;letter-spacing:-.02em}
 .page-heading p{font-size:13px;color:var(--rough-muted)}
@@ -724,11 +717,9 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
   <button class='tab-btn' id='tabBtnProcessing' onclick="setActiveTab('processing')"><span class='tab-symbol'>▤</span>Processing</button>
   <button class='tab-btn' id='tabBtnSystem' onclick="setActiveTab('system')"><span class='tab-symbol'>▦</span>System</button>
   <button class='tab-btn' id='tabBtnConsole' onclick="setActiveTab('console')"><span class='tab-symbol'>›_</span>Console</button>
-  <label class='control-target'><span class='connectivity-dot online' aria-hidden='true'></span><span id='controlTargetLabel'>Controlling</span><select id='controlTargetSelect' onchange='changeControlTarget(this.value)'><option value=''>Any available computer</option></select></label>
 </div>
 <div id='platformCapabilityNotice' class='notice platform-capability-notice'>Windows only</div>
 <div id='versionGateNotice' class='notice version-gate-notice'></div>
-<div id='queueGateNotice' class='notice queue-gate-notice' role='alert'></div>
 <div id='actionFeedback' class='action-feedback' role='status' aria-live='polite'></div>
 <div id='appUpdateModal' class='modal-backdrop' role='presentation'>
   <div class='modal app-update-modal' role='dialog' aria-modal='true' aria-labelledby='appUpdateTitle'>
@@ -766,7 +757,6 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
       <span class='muted' id='queueSummaryText'>Queue loading...</span>
       <button class='secondary tiny' onclick='loadQueue(true)'>Refresh Queue</button>
       <button class='secondary tiny' id='queueClearFinishedBtn' onclick='clearFinishedQueueTasks()'>Clear All</button>
-      <button class='secondary tiny' id='queueResumeBtn' style='display:none' onclick='resumeSharedQueue()'>Resume After Review</button>
       <button class='danger tiny' onclick='cancelAllQueueTasks()'>Cancel All Tasks</button>
     </div>
   </div>
@@ -2429,22 +2419,14 @@ function renderHeadlessMode(enabled) {
 async function toggleHeadlessMode() {
   const button = document.getElementById('headlessToggleBtn');
   const next = !Boolean(nodeRuntimePayload && nodeRuntimePayload.headless);
-  // Headless mode belongs to the computer hosting this control panel. Keep a
-  // selected remote runner intact while this local preference is updated.
-  const selectedControlTarget = String(localStorage.getItem('automationControlTargetNode') || '').trim();
   if (button) button.disabled = true;
   try {
     const payload = await api('/api/headless-mode', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({headless: next}),
-      localOnly: true,
     });
     renderNodeRuntime(payload);
-    if (selectedControlTarget) {
-      localStorage.setItem('automationControlTargetNode', selectedControlTarget);
-      if (queuePayload) renderControlTargetNodes(Array.isArray(queuePayload.nodes) ? queuePayload.nodes : []);
-    }
     setStatus(payload.message || `Headless mode ${next ? 'enabled' : 'disabled'}.`);
   } catch (error) {
     setStatus('Could not update Headless mode: ' + error.message);
@@ -2467,12 +2449,8 @@ async function ensureAppCsrfToken() {
 
 async function api(path, opts = {}) {
   const requestOptions = {...opts};
-  const localOnly = Boolean(requestOptions.localOnly);
-  delete requestOptions.localOnly;
   const method = String(requestOptions.method || 'GET').toUpperCase();
-  const controlTarget = effectiveControlTargetNode();
   requestOptions.headers = {...(requestOptions.headers || {})};
-  if (controlTarget && !localOnly) requestOptions.headers['X-Automation-Target-Node'] = controlTarget;
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
     const token = await ensureAppCsrfToken();
     if (token) requestOptions.headers['X-CSRF-Token'] = token;
@@ -2935,18 +2913,6 @@ function platformIconHtml(osName, label = '') {
   return `<span class='os-icon ${kind}' title='${accessible}' aria-label='${accessible}'><svg viewBox='0 0 24 24' role='img'>${drawings[kind]}</svg></span>`;
 }
 
-function controlTargetIsLocked() {
-  return Boolean(nodeRuntimePayload && nodeRuntimePayload.control_target_locked);
-}
-
-function effectiveControlTargetNode() {
-  return String(
-    localStorage.getItem('automationControlTargetNode')
-    || (nodeRuntimePayload && nodeRuntimePayload.default_control_target_node)
-    || ''
-  ).trim();
-}
-
 function renderQueue(payload) {
   queuePayload = payload || {};
   const panel = document.getElementById('queuePanel');
@@ -2963,21 +2929,7 @@ function renderQueue(payload) {
   }
 
   const summary = document.getElementById('queueSummaryText');
-  const sharedMode = String(queuePayload.mode || '').toLowerCase() === 'shared';
-  const coordinator = queuePayload.coordinator || {};
-  const queueNotice = document.getElementById('queueGateNotice');
-  const queueBlocked = sharedMode && coordinator.eligible === false && Boolean(coordinator.block_reason);
-  if (queueNotice) {
-    queueNotice.style.display = queueBlocked ? 'block' : 'none';
-    queueNotice.textContent = queueBlocked
-      ? `Automation queue is locked: ${coordinator.block_reason || 'This computer is not eligible to run tasks.'} Open Queue for details or review controls.`
-      : '';
-  }
-  renderControlTargetNodes(Array.isArray(queuePayload.nodes) ? queuePayload.nodes : []);
   applyPlatformCapabilities();
-  const resumeButton = document.getElementById('queueResumeBtn');
-  const resumeNeeded = sharedMode && !coordinator.eligible && /pause|manual review|interrupted/i.test(String(coordinator.block_reason || ''));
-  if (resumeButton) resumeButton.style.display = resumeNeeded ? '' : 'none';
   if (summary) {
     const queuedCount = Number(queuePayload.queued_count || 0);
     const idleCount = Number(queuePayload.idle_count || 0);
@@ -2986,9 +2938,7 @@ function renderQueue(payload) {
     const runningProgress = runningIsProcessing ? '' : queueTaskProgressLabel(running);
     const runningMessage = running && running.message ? String(running.message) : '';
     const runningDetail = [runningProgress, runningMessage].filter(Boolean).join(' | ');
-    summary.textContent = coordinator.block_reason && !coordinator.eligible
-      ? `Queue locked: ${coordinator.block_reason}`
-      : running
+    summary.textContent = running
       ? `Running: ${running.label || 'Automation'}${runningDetail ? ` | ${runningDetail}` : ''} | ${queuedCount} waiting | ${idleCount} idle`
       : (queuedCount || idleCount ? `${queuedCount} waiting | ${idleCount} idle` : 'No waiting tasks');
   }
@@ -3003,7 +2953,7 @@ function renderQueue(payload) {
   root.innerHTML = tasks.map((task) => {
     const status = String(task.status || '').toLowerCase();
     const canCancel = status === 'queued' || status === 'running' || status === 'idle';
-    const canDelete = !sharedMode && (status === 'completed' || status === 'failed' || status === 'canceled');
+    const canDelete = status === 'completed' || status === 'failed' || status === 'canceled';
     const canRetryFailedSheetsScanner = status === 'failed'
       && String(task.label || '').trim().toLowerCase() === 'sheets scanner';
     const canRetry = Boolean(task.retryable) || canRetryFailedSheetsScanner;
@@ -3014,7 +2964,7 @@ function renderQueue(payload) {
     const viewReportControl = status === 'failed' || (taskReportRows.length > 0 && resultContext.retry_completed)
       ? `<button class='secondary tiny' style='margin-left:8px' onclick="event.stopPropagation();openQueueTaskReport('${esc(task.id || '')}')">${esc(viewReportLabel)}</button>`
       : '';
-    const draggable = !sharedMode && status === 'queued';
+    const draggable = status === 'queued';
     const dragGlyph = draggable ? '&#8942;&#8942;' : '';
     const pos = status === 'queued' && task.position ? `#${task.position} ` : '';
     const details = task.details ? ` | ${task.details}` : '';
@@ -3036,19 +2986,6 @@ function renderQueue(payload) {
     const msg = messageText ? ` | ${messageText}` : '';
     const canExpand = task.queue_mode === 'repeat';
     const expanded = canExpand && queueExpandedTaskId === task.id;
-    const targetOptions = sharedMode && status === 'queued'
-      ? [
-          `<option value='' ${task.target_node ? '' : 'selected'}>Any eligible computer</option>`,
-          ...(Array.isArray(queuePayload.nodes) ? queuePayload.nodes.map((node) => {
-            const selected = String(task.target_node || '') === String(node.node_key || '') ? 'selected' : '';
-            const state = node.online ? 'online' : 'offline';
-            return `<option value='${esc(node.node_key || '')}' ${selected}>${esc(platformDisplayName(node.os_name))} ? ${esc(node.display_name || node.node_key || 'Computer')} (${state})</option>`;
-          }) : []),
-        ].join('')
-      : '';
-    const targetControl = targetOptions
-      ? `<select class='queue-target-select' title='Safely reassign without changing FIFO position' onchange="reassignQueueTask('${esc(task.id || '')}', this.value)">${targetOptions}</select>`
-      : '';
     const retryControl = canRetry
       ? `<button class='secondary tiny' title='Retry this unfinished task; completed CRM actions will be detected and skipped' onclick="retryAutomationQueueTask('${esc(task.id || '')}', this)">Retry</button>`
       : '';
@@ -3065,66 +3002,10 @@ function renderQueue(payload) {
           <div class='queue-meta'>${esc(task.category || 'Automation')}${esc(details)}${esc(advanced)}${sourceVisual}${runnerVisual} | ${esc(queueTimeText(task))}${esc(progressText)}${esc(msg)}</div>
         </div>
         <div class='queue-status ${esc(status)}'>${esc(queueStatusLabel(status))}</div>
-        <div class='queue-actions'>${targetControl}${canCancel ? `<button class='danger queue-cancel-btn' title='Cancel task' aria-label='Cancel task' onclick="cancelQueueTask('${esc(task.id || '')}')">X</button>` : finishedControl}</div>
+        <div class='queue-actions'>${canCancel ? `<button class='danger queue-cancel-btn' title='Cancel task' aria-label='Cancel task' onclick="cancelQueueTask('${esc(task.id || '')}')">X</button>` : finishedControl}</div>
         ${expanded ? `<div class='queue-runs'>${queueRunHistoryHtml(task)}</div>` : ''}
       </div>`;
   }).join('');
-}
-
-function renderControlTargetNodes(nodes) {
-  const select = document.getElementById('controlTargetSelect');
-  if (!select) return;
-  const label = document.getElementById('controlTargetLabel');
-  nodes = (Array.isArray(nodes) ? nodes : []).map((node) => ({...node, os_icon: platformDisplayName(node.os_name)}));
-  select.disabled = false;
-  select.title = 'Choose an online computer to run new tasks. This device is selected by default.';
-  if (label) label.textContent = 'Control target';
-  const saved = String(localStorage.getItem('automationControlTargetNode') || '').trim();
-  const defaultTarget = String(nodeRuntimePayload && nodeRuntimePayload.default_control_target_node || '').trim();
-  const savedNode = nodes.find((node) => String(node.node_key || '') === saved);
-  const selectedKey = savedNode && savedNode.online ? saved : defaultTarget;
-  if (saved && (!savedNode || !savedNode.online)) localStorage.removeItem('automationControlTargetNode');
-  select.innerHTML = `<option value=''>Any available computer</option>` + nodes.map((node) => {
-    const online = node.online ? 'online' : 'offline';
-    const selected = selectedKey === String(node.node_key || '') ? 'selected' : '';
-    const disabled = node.online ? '' : 'disabled';
-    return `<option value='${esc(node.node_key || '')}' ${selected} ${disabled}>${esc(node.os_icon || 'Computer')} ${esc(node.display_name || node.node_key || 'Computer')} (${online})</option>`;
-  }).join('');
-}
-
-async function changeControlTarget(nodeKey) {
-  const value = String(nodeKey || '').trim();
-  if (value) localStorage.setItem('automationControlTargetNode', value);
-  else localStorage.removeItem('automationControlTargetNode');
-  applyPlatformCapabilities();
-  await reloadAll();
-}
-
-async function reassignQueueTask(taskId, targetNode) {
-  try {
-    const d = await api(`/api/queue/${encodeURIComponent(taskId)}/reassign`, {
-      method: 'POST',
-      body: JSON.stringify({target_node: targetNode || null}),
-    });
-    renderQueue(d);
-  } catch (e) {
-    alert('Safe reassignment failed: ' + e.message);
-    await loadQueue(false);
-  }
-}
-
-async function resumeSharedQueue() {
-  const note = window.prompt('Describe what you checked in the CRM before resuming the queue:');
-  if (!note) return;
-  try {
-    const d = await api('/api/queue/resume', {
-      method: 'POST',
-      body: JSON.stringify({review_note: note}),
-    });
-    renderQueue(d);
-  } catch (e) {
-    alert('Queue resume failed: ' + e.message);
-  }
 }
 
 async function loadQueue(showBusy = false) {
@@ -3661,11 +3542,6 @@ function setCrmAutoSplitterLocalMessage(headline, detail = '') {
 function setCrmAddressStatusText(msg) { const el = document.getElementById('crmAddressStatusText'); if (el) el.textContent = msg; }
 
 function localPlatformCapabilities() {
-  const targetNode = effectiveControlTargetNode();
-  if (targetNode && queuePayload && Array.isArray(queuePayload.nodes)) {
-    const selected = queuePayload.nodes.find((node) => String(node.node_key || '') === targetNode);
-    if (selected && selected.capabilities) return selected.capabilities;
-  }
   const platform = nodeRuntimePayload && nodeRuntimePayload.platform ? nodeRuntimePayload.platform : {};
   return platform && platform.capabilities ? platform.capabilities : {};
 }
@@ -3679,15 +3555,7 @@ function windowsControlsAvailable() {
   const platform = nodeRuntimePayload && nodeRuntimePayload.platform ? nodeRuntimePayload.platform : {};
   const localOs = String(platform.os_name || platform.platform || '').toLowerCase().replace('darwin', 'macos');
   if (localOs === 'windows') return true;
-  if (localOs !== 'macos') return platformFeatureAvailable('system_power') || platformFeatureAvailable('metrics');
-  const nodes = queuePayload && Array.isArray(queuePayload.nodes) ? queuePayload.nodes : [];
-  const isWindowsNode = (node) => /^win/.test(String(node && node.os_name || '').toLowerCase());
-  const savedTarget = String(localStorage.getItem('automationControlTargetNode') || '').trim();
-  if (savedTarget) {
-    const selected = nodes.find((node) => String(node && node.node_key || '') === savedTarget);
-    return Boolean(selected && selected.online && isWindowsNode(selected));
-  }
-  return nodes.some((node) => node && node.online && isWindowsNode(node));
+  return localOs !== 'macos' && (platformFeatureAvailable('system_power') || platformFeatureAvailable('metrics'));
 }
 
 function applyPlatformCapabilities() {
@@ -3805,7 +3673,6 @@ function renderNodeRuntime(payload) {
     const commitText = git.short_commit ? ` Git ${git.short_commit}${git.dirty ? ' (local changes)' : ''}.` : '';
     note.textContent = `Recommended ${recommendation.recommended_workers || settings.effective_workers || 1} worker(s); effective ${settings.effective_workers || 1}. CPU cap ${recommendation.cpu_cap || '-'}, total-RAM cap ${recommendation.total_memory_cap || '-'}, available-RAM cap ${recommendation.available_memory_cap || '-'}.${commitText}`;
   }
-  if (queuePayload) renderControlTargetNodes(Array.isArray(queuePayload.nodes) ? queuePayload.nodes : []);
   applyPlatformCapabilities();
   syncWorkerModeControls();
   updateSettingsOverview();

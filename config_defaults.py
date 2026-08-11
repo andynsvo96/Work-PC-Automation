@@ -10,13 +10,6 @@ application update introduces a new setting.
 
 # Copy this file to config.py and fill in local values before running.
 
-# Queue mode. Keep "local" until Supabase setup is complete on every computer,
-# then change this to "shared" on both Windows and macOS. Shared mode never
-# falls back to local execution when Supabase is unavailable. Shared mode also
-# lets a scheduled auto clock-out prefer its originating computer and fail over
-# to the other healthy desktop if the origin is offline at the due time.
-AUTOMATION_QUEUE_MODE = "local"
-
 # Remote control board access. With "tailscale", Flask listens only on
 # localhost and Tailscale Serve provides HTTPS to the tailnet. The app PIN is
 # required and must be installed with setup_app_security.py on both computers.
@@ -31,10 +24,8 @@ AUTOMATION_USE_LEGACY_PROFILES = False
 AUTOMATION_APP_TRUSTED_DEVICE_DAYS = 365
 
 # Home Assistant/Alexa HTTP actions keep using the existing /clock, /slack,
-# /work, /crm, /pc, and /automation URLs. Requests identified by the
-# Home Assistant/Alexa User-Agent (or X-Automation-Source header) are routed to
-# an online Windows node first, then an online Mac node. Browser PIN/CSRF
-# protection remains enabled for normal control-panel traffic.
+# /work, /crm, /pc, and /automation URLs on the computer receiving the request.
+# Browser PIN/CSRF protection remains enabled for control-panel traffic.
 AUTOMATION_HOME_ASSISTANT_ENABLED = True
 
 # Optional compatibility listener for a Home Assistant instance that calls a
@@ -42,11 +33,6 @@ AUTOMATION_HOME_ASSISTANT_ENABLED = True
 # False when Home Assistant uses the shared Tailscale HTTPS service. Enabling
 # this exposes the PIN-protected server to the trusted local network.
 AUTOMATION_LAN_REST_ENABLED = False
-
-# The Windows owner node repairs the shared AUTOMATE/Supabase required-commit
-# gate after a successful app update. Leave enabled on Windows; Mac operators
-# simply wait for the owner node to advance the gate.
-AUTOMATION_AUTO_SYNC_VERSION_GATE = None  # None = enabled on Windows only
 
 # Cross-system clipboard. Each computer points to the other computer's
 # device-specific Tailscale Serve URL (configured on HTTPS port 8443).

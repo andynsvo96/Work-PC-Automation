@@ -20,7 +20,6 @@ _SAFE_UNTRACKED_SOURCE_ROOTS = (
     "routes/",
     "static/",
     "docs/",
-    "supabase/",
     "crm-order-dark-mode-extension/",
 )
 _SAFE_UNTRACKED_SOURCE_EXTENSIONS = {
@@ -34,7 +33,6 @@ _SAFE_UNTRACKED_SOURCE_EXTENSIONS = {
     ".ps1",
     ".py",
     ".sh",
-    ".sql",
     ".toml",
     ".ts",
     ".txt",

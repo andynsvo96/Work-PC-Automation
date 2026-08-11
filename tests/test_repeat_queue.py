@@ -17,7 +17,6 @@ class RepeatQueueIntervalTests(unittest.TestCase):
     def test_local_repeat_task_keeps_zero_interval(self):
         tasks = []
         with (
-            mock.patch.object(server, "AUTOMATION_QUEUE_MODE", "local"),
             mock.patch.object(server, "automation_queue_tasks", tasks),
             mock.patch.object(server, "_automation_version_block_reason", return_value=""),
             mock.patch.object(server, "_ensure_automation_queue_worker"),
@@ -39,7 +38,6 @@ class RepeatQueueIntervalTests(unittest.TestCase):
         tasks = []
         with (
             mock.patch.object(server, "APP_PIN_REQUIRED", False),
-            mock.patch.object(server, "AUTOMATION_QUEUE_MODE", "local"),
             mock.patch.object(server, "automation_queue_tasks", tasks),
             mock.patch.object(server, "_automation_version_block_reason", return_value=""),
             mock.patch.object(server, "_ensure_automation_queue_worker"),

@@ -24,26 +24,10 @@ def register_system_routes(
     resolve_power_schedule_datetime,
     safe_float,
     platform_capabilities,
-    get_shared_node_status,
     cancel_scheduled_power_tasks,
 ):
-    def _requested_target_node():
-        return str(
-            getattr(g, "automation_target_node", None)
-            or request.headers.get("X-Automation-Target-Node")
-            or request.args.get("target_node")
-            or ""
-        ).strip()
-
-    def _requested_target_record():
-        node_key = _requested_target_node()
-        return get_shared_node_status(node_key) if node_key else None
-
     def _capability_available(name):
         try:
-            target = _requested_target_record()
-            if target is not None:
-                return bool((target.get("capabilities") or {}).get(name))
             capabilities = platform_capabilities()
             return bool(capabilities.get(name))
         except Exception:
@@ -72,39 +56,23 @@ def register_system_routes(
             "Restart Explorer": "restart_explorer",
         }
         action = action_by_label.get(label)
-        requested_target = _requested_target_node()
         ok, msg, task = enqueue_automation(
             label,
             "System Power",
             fn,
             task_type=task_type,
             task_arguments=task_arguments if isinstance(task_arguments, dict) else ({"action": action} if action else {}),
-            target_node=requested_target if requested_target and requested_target.lower() != "any" else None,
-            required_capability="system_power",
             **(queue_options if isinstance(queue_options, dict) else {}),
         )
         payload = get_power_countdown_payload()
         payload.update({"success": ok, "message": msg, "queued": ok, "queue_task": task})
         if getattr(g, "home_automation_request", False):
             payload["home_assistant_failure"] = not ok
-            payload["target_node"] = requested_target or None
         failure_status = 503 if getattr(g, "home_automation_request", False) else 500
         return jsonify(payload), (202 if ok else failure_status)
 
     @app.route("/api/metrics", methods=["GET"])
     def api_metrics():
-        target = _requested_target_record()
-        if target is not None:
-            if not target.get("online"):
-                return jsonify({"success": False, "available": False, "message": "Selected computer is offline."}), 503
-            if not bool((target.get("capabilities") or {}).get("metrics")):
-                return _windows_only_response()
-            payload = (target.get("runtime_status") or {}).get("metrics") or {
-                "success": False,
-                "available": False,
-                "message": "Metrics have not been reported by that computer yet.",
-            }
-            return jsonify(payload), (200 if payload.get("available") else 503)
         if not _capability_available("metrics"):
             return _windows_only_response()
         payload = read_desktop_metrics()
@@ -204,18 +172,6 @@ def register_system_routes(
 
     @app.route("/pc/status", methods=["GET"])
     def pc_status():
-        target = _requested_target_record()
-        if target is not None:
-            if not target.get("online"):
-                return jsonify({"success": False, "available": False, "message": "Selected computer is offline."}), 503
-            if not bool((target.get("capabilities") or {}).get("system_power")):
-                return _windows_only_response()
-            payload = (target.get("runtime_status") or {}).get("power") or {
-                "success": True,
-                "active": False,
-                "status_text": "No active local countdown. Check the global queue for scheduled power tasks.",
-            }
-            return jsonify(payload), 200
         if not _capability_available("system_power"):
             return _windows_only_response()
         payload = get_power_countdown_payload()

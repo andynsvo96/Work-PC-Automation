@@ -69,4 +69,4 @@ launchctl bootstrap "gui/$UID" "$PLIST_PATH"
 launchctl enable "gui/$UID/com.workautomation.server"
 
 print "macOS setup complete. The app now uses Safe Sync & Start at login."
-print "Next: configure credentials, Supabase, app PIN, and Tailscale using docs/MAC_AND_TABLET_SETUP.md."
+print "Next: configure credentials, app PIN, and Tailscale using docs/MAC_AND_TABLET_SETUP.md."

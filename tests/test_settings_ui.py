@@ -205,9 +205,11 @@ class SettingsUiStructureTests(unittest.TestCase):
         self.assertIn("function showActionFeedback(", self.html)
         self.assertIn("showActionFeedback(msg);", self.html)
 
-    def test_shared_queue_lock_is_shown_outside_the_queue_drawer(self):
-        self.assertIn("id='queueGateNotice'", self.html)
-        self.assertIn("Automation queue is locked:", self.html)
+    def test_control_target_and_cloud_queue_controls_are_removed(self):
+        self.assertNotIn("controlTargetSelect", self.html)
+        self.assertNotIn("X-Automation-Target-Node", self.html)
+        self.assertNotIn("queueResumeBtn", self.html)
+        self.assertNotIn("reassignQueueTask", self.html)
 
 
 if __name__ == "__main__":
