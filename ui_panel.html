@@ -688,7 +688,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
 .platform-unavailable{position:relative;opacity:.45;filter:grayscale(1);pointer-events:none;user-select:none}.platform-unavailable::after{content:attr(data-unavailable-label);position:absolute;inset:0;display:grid;place-items:center;padding:14px;border:1px dashed var(--rough-border);border-radius:inherit;background:rgba(244,246,248,.72);color:#475569;font-size:12px;font-weight:800;text-align:center;z-index:5}:root[data-theme='dark'] .platform-unavailable::after{background:rgba(30,30,30,.78);color:#c8c8c8}.system-legacy-section{display:none!important}
 @media (max-width:980px){.rough-two,.rough-half{grid-template-columns:1fr}.rough-system-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-week{grid-template-columns:repeat(4,minmax(0,1fr))}.rough-day:nth-child(4){border-right:0}.rough-day:nth-child(n+5){border-top:1px solid var(--rough-border)}.weekly-calculator .work-plan-days{grid-template-columns:repeat(4,minmax(0,1fr))}.rough-history-panel{width:calc(100vw - 48px)}}
 @media (max-width:700px){.wrap{padding:0 16px 28px}.app-header{height:auto;min-height:72px;margin:0 -16px;padding:12px 16px;align-items:flex-start;flex-direction:column}.app-header-actions{justify-content:flex-start;width:100%}.tab-bar{height:auto;min-height:60px;margin:0 -16px 22px;padding:10px 16px;flex-wrap:wrap;overflow:visible}.control-target{width:100%;margin-left:0}.control-target select{flex:1;min-width:0;max-width:none}.page-heading{align-items:flex-start;flex-direction:column}.page-heading-actions{justify-content:flex-start}.rough-metric-row{grid-template-columns:1fr}.rough-week{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-day:nth-child(2n){border-right:0}.rough-day:nth-child(n+3){border-top:1px solid var(--rough-border)}.weekly-calculator .work-plan-days{grid-template-columns:repeat(2,minmax(0,1fr))}.slack-history-row{grid-template-columns:1fr auto}.slack-history-message{grid-column:1/-1}.rough-latest-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-action-split{grid-template-columns:1fr}.rough-action-separator{display:none}.rough-action-row{grid-template-columns:1fr}.rough-action-row>button{width:100%}.rough-power-actions{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-schedule{grid-template-columns:1fr}.rough-sync-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-history-panel{position:fixed;inset:70px 12px auto;width:auto;max-height:75vh}.workspace-nav{width:100%}.workspace-nav-btn{flex:1}.compact-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.compact-tools button{width:100%}}
-@media (max-width:560px){.app-brand-sub{display:none}.app-header-actions{gap:6px}.app-header-actions button{padding:7px 9px}.tab-bar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:auto}.tab-btn{min-width:0;padding:8px 4px;justify-content:center;font-size:11px}.control-target{grid-column:1/-1}.workspace-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));box-sizing:border-box}.workspace-nav-btn{min-width:0;white-space:normal}.rough-system-metrics{grid-template-columns:1fr}.rough-card{padding:15px}.rough-card-head{flex-wrap:wrap}.rough-week{grid-template-columns:1fr 1fr}.rough-big-time{font-size:25px}.rough-actions>*{max-width:100%}.rough-power-actions{grid-template-columns:1fr}.rough-history-panel{inset:54px 8px auto}.processing-history-card .rough-card-head button,.processing-tool-health-card .rough-card-head button{width:100%}}
+@media (max-width:560px){.app-brand-sub{display:none}.app-header-actions{gap:6px}.app-header-actions button{padding:7px 9px}.tab-bar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:auto}.tab-btn{min-width:0;padding:8px 4px;justify-content:center;font-size:11px}.control-target{grid-column:1/-1}.workspace-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));box-sizing:border-box}.workspace-nav-btn{min-width:0;white-space:normal}.rough-system-metrics{grid-template-columns:1fr}.rough-card{padding:15px}.rough-card-head{flex-wrap:wrap}.rough-week{grid-template-columns:1fr 1fr}.rough-big-time{font-size:25px}.rough-actions>*{max-width:100%}.rough-power-actions{grid-template-columns:1fr}.rough-history-panel{inset:54px 8px auto}.processing-tool-health-card .rough-card-head button{width:100%}}
 </style>
 </head>
 <body>
@@ -994,11 +994,6 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
   </aside>
   </div>
 
-  <section class='card rough-card processing-history-card'>
-    <div class='rough-card-head'><div><h2>Previous main automation runs</h2><p class='rough-card-sub'>Completed before the latest run shown above.</p></div><button class='secondary tiny' onclick="showProcessingSection('reports')">View full main-run history</button></div>
-    <div class='tbl-wrap'><table class='tbl rough-table'><thead><tr><th>When</th><th>Run ID</th><th>Mode</th><th>Tools</th><th>Orders</th><th>Errors</th><th>Duration</th><th>Status</th><th>Report</th></tr></thead><tbody id='crmProcessingMainHistoryRows'><tr><td colspan='9' class='muted'>No previous main automation runs yet.</td></tr></tbody></table></div>
-  </section>
-
   <section class='card rough-card processing-tool-health-card'>
     <div class='rough-card-head'><div><h2>Automation tool health</h2><p class='rough-card-sub'>Compact per-tool status; detailed reports stay under Tool Details.</p></div><button class='secondary tiny' onclick="showProcessingSection('tools')">Manage tool details</button></div>
     <div class='tbl-wrap'><table class='tbl rough-table'><thead><tr><th>Tool</th><th>Status</th><th>Latest tool run</th><th>Orders</th><th>Errors</th><th>Action</th></tr></thead><tbody id='crmProcessingToolHealthRows'><tr><td colspan='6' class='muted'>Tool health loading...</td></tr></tbody></table></div>
@@ -1006,6 +1001,18 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
   </section>
 
   <section class='workspace-section' data-processing-section='reports'>
+    <section class='card rough-card processing-history-card'>
+      <div class='rough-card-head'>
+        <div><h2>Main automation runs</h2><p class='rough-card-sub'>Completed main automation runs, newest first.</p></div>
+        <div class='history-pager' id='crmProcessingMainHistoryPager' style='display:none'>
+          <button class='secondary tiny' id='crmProcessingMainHistoryPrevPageBtn' type='button' onclick='changeCrmProcessingHistoryPage(-1)'>Previous</button>
+          <span class='muted history-page-text' id='crmProcessingMainHistoryPageText'>Page 1 of 1</span>
+          <button class='secondary tiny' id='crmProcessingMainHistoryNextPageBtn' type='button' onclick='changeCrmProcessingHistoryPage(1)'>Next</button>
+        </div>
+      </div>
+      <div class='muted' id='crmProcessingMainHistoryMetaText'>Showing up to 8 completed runs per page.</div>
+      <div class='tbl-wrap'><table class='tbl rough-table'><thead><tr><th>When</th><th>Run ID</th><th>Mode</th><th>Tools</th><th>Orders</th><th>Errors</th><th>Duration</th><th>Status</th><th>Report</th></tr></thead><tbody id='crmProcessingMainHistoryRows'><tr><td colspan='9' class='muted'>No main automation runs yet.</td></tr></tbody></table></div>
+    </section>
     <div class='card processing-report-card'>
     <div class='processing-report'>
       <div class='processing-report-header'>
@@ -1774,6 +1781,8 @@ let crmProcessingPollTimer = null;
 let crmProcessingPollIntervalMs = 0;
 let crmProcessingReportPeriod = 'daily';
 let crmProcessingReportFilter = 'all_reports';
+const CRM_PROCESSING_HISTORY_PAGE_SIZE = 8;
+let crmProcessingHistoryPage = 1;
 const crmAutoSplitReviewAcknowledged = new Set();
 const CRM_AUTO_SPLIT_REVIEW_STORAGE_PREFIX = 'automation.crmAutoSplitReview.ack.';
 let crmStatusPayload = null;
@@ -6582,7 +6591,6 @@ function renderCrmProcessingMainRunViews(payload) {
         step_results: state.last_step_results,
         duration_seconds: state.last_run_duration_seconds,
       } : null));
-  const previous = running ? history : history.slice(1);
   const latestRunNumber = running ? totalRuns + 1 : totalRuns;
   const stateEl = document.getElementById('crmProcessingLatestState');
   const runIdEl = document.getElementById('crmProcessingLatestRunId');
@@ -6630,17 +6638,34 @@ function renderCrmProcessingMainRunViews(payload) {
 
   const rowsEl = document.getElementById('crmProcessingMainHistoryRows');
   if (rowsEl) {
-    rowsEl.innerHTML = previous.length
-      ? previous.map((row, index) => {
-          const runNumber = Math.max(1, totalRuns - (running ? index : index + 1));
+    const pageInfo = getHistoryPage(history, crmProcessingHistoryPage, CRM_PROCESSING_HISTORY_PAGE_SIZE);
+    crmProcessingHistoryPage = pageInfo.page;
+    renderHistoryPager({
+      pagerId: 'crmProcessingMainHistoryPager',
+      prevId: 'crmProcessingMainHistoryPrevPageBtn',
+      nextId: 'crmProcessingMainHistoryNextPageBtn',
+      textId: 'crmProcessingMainHistoryPageText',
+      pageInfo,
+      totalItems: history.length,
+      pageSize: CRM_PROCESSING_HISTORY_PAGE_SIZE,
+    });
+    const metaEl = document.getElementById('crmProcessingMainHistoryMetaText');
+    if (metaEl) {
+      metaEl.textContent = history.length
+        ? `Showing ${pageInfo.startIndex + 1}-${pageInfo.endIndex} of ${history.length} completed run${history.length === 1 ? '' : 's'}.`
+        : 'No completed main automation runs yet.';
+    }
+    rowsEl.innerHTML = pageInfo.items.length
+      ? pageInfo.items.map((row, pageIndex) => {
+          const historyIndex = pageInfo.startIndex + pageIndex;
+          const runNumber = Math.max(1, totalRuns - historyIndex);
           const steps = normalizeCrmProcessingStepList(row && row.selected_steps, {...state, processing_filter: row && row.processing_filter});
           const stepText = steps.length ? String(steps.length) : '-';
           const rowTotals = crmProcessingRunTotals(row);
           const ok = Boolean(row && row.success);
-          const historyIndex = running ? index : index + 1;
           return `<tr><td>${esc(fmtDateTime(row && row.timestamp))}</td><td>${esc(crmProcessingRunId(row && row.timestamp, runNumber))}</td><td>${esc(formatCrmAddressFilterLabel(row && row.processing_filter))}</td><td>${esc(stepText)}</td><td>${esc(String(rowTotals.orders))}</td><td class='${rowTotals.errors ? 'bad' : ''}'>${esc(String(rowTotals.errors))}</td><td>${esc(fmtDuration(row && row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${ok ? 'Completed' : 'Needs attention'}</td><td><button class='secondary tiny' type='button' onclick='openCrmProcessingRunReport(${historyIndex})'>View Report</button></td></tr>`;
         }).join('')
-      : "<tr><td colspan='9' class='muted'>No previous main automation runs yet.</td></tr>";
+      : "<tr><td colspan='9' class='muted'>No main automation runs yet.</td></tr>";
   }
 
   const healthRows = document.getElementById('crmProcessingToolHealthRows');
@@ -6651,6 +6676,14 @@ function renderCrmProcessingMainRunViews(payload) {
       return `<tr><td><strong>${esc(row.label || formatCrmProcessingStepLabelForState(row.key, state))}</strong></td><td class='${ok ? 'ok' : 'bad'}'>${ok ? 'Healthy' : 'Needs attention'}</td><td>${esc(state.last_run_timestamp ? fmtDateTime(state.last_run_timestamp) : '-')}</td><td>${esc(String(Math.max(0, Number(row.order_count) || 0)))}</td><td class='${Number(row.error_count) > 0 ? 'bad' : ''}'>${esc(String(Math.max(0, Number(row.error_count) || 0)))}</td><td><button class='secondary tiny' type='button' onclick="showProcessingSection('tools')">View report</button></td></tr>`;
     }).join('') : "<tr><td colspan='6' class='muted'>No tool runs are available yet.</td></tr>";
   }
+}
+
+function changeCrmProcessingHistoryPage(delta) {
+  const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
+  const history = Array.isArray(state.run_history) ? state.run_history : [];
+  const requestedPage = crmProcessingHistoryPage + (Number(delta) || 0);
+  crmProcessingHistoryPage = getHistoryPage(history, requestedPage, CRM_PROCESSING_HISTORY_PAGE_SIZE).page;
+  renderCrmProcessingMainRunViews(crmProcessingStatusPayload);
 }
 
 function renderCrmProcessingStatus(payload) {
@@ -7308,12 +7341,12 @@ function getHistoryPage(items, requestedPage, pageSize = CRM_HISTORY_PAGE_SIZE) 
   };
 }
 
-function renderHistoryPager({ pagerId, prevId, nextId, textId, pageInfo, totalItems }) {
+function renderHistoryPager({ pagerId, prevId, nextId, textId, pageInfo, totalItems, pageSize = CRM_HISTORY_PAGE_SIZE }) {
   const pager = document.getElementById(pagerId);
   const prevBtn = document.getElementById(prevId);
   const nextBtn = document.getElementById(nextId);
   const text = document.getElementById(textId);
-  const hasPages = totalItems > CRM_HISTORY_PAGE_SIZE;
+  const hasPages = totalItems > pageSize;
   if (pager) pager.style.display = hasPages ? '' : 'none';
   if (prevBtn) prevBtn.disabled = !hasPages || pageInfo.page <= 1;
   if (nextBtn) nextBtn.disabled = !hasPages || pageInfo.page >= pageInfo.totalPages;

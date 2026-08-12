@@ -184,6 +184,34 @@ class SettingsUiStructureTests(unittest.TestCase):
         self.assertIn("function openCrmProcessingRunReport(", self.html)
         self.assertIn(">View Report</button>", self.html)
 
+    def test_main_run_history_is_paged_inside_history_section(self):
+        reports_section = re.search(
+            r"<section class='workspace-section' data-processing-section='reports'>(.*?)"
+            r"<section class='workspace-section' data-processing-section='tools'>",
+            self.html,
+            re.S,
+        )
+        run_section = re.search(
+            r"<section class='workspace-section active' data-processing-section='run'>(.*?)"
+            r"<section class='workspace-section' data-processing-section='reports'>",
+            self.html,
+            re.S,
+        )
+        self.assertIsNotNone(reports_section)
+        self.assertIsNotNone(run_section)
+        self.assertIn("id='crmProcessingMainHistoryRows'", reports_section.group(1))
+        self.assertNotIn("id='crmProcessingMainHistoryRows'", run_section.group(1))
+        self.assertIn("const CRM_PROCESSING_HISTORY_PAGE_SIZE = 8;", self.html)
+        self.assertIn("function changeCrmProcessingHistoryPage(", self.html)
+        for element_id in (
+            "crmProcessingMainHistoryPager",
+            "crmProcessingMainHistoryPrevPageBtn",
+            "crmProcessingMainHistoryNextPageBtn",
+            "crmProcessingMainHistoryPageText",
+            "crmProcessingMainHistoryMetaText",
+        ):
+            self.assertEqual(len(re.findall(rf"\bid=['\"]{element_id}['\"]", self.html)), 1)
+
     def test_repeat_queue_reuses_existing_main_and_scanner_run_reports(self):
         self.assertIn("function queuePersistedRepeatHistory(task)", self.html)
         self.assertIn("function queueRepeatHistoryRowsInWindow(task, history, historyIndexKey)", self.html)
