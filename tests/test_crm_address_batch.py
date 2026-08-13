@@ -3863,6 +3863,43 @@ class ShippingBypasserTests(unittest.TestCase):
 
         self.assertEqual(warehouse, "Robbinsville, NJ")
 
+    def test_shipping_bypasser_late_eta_message_explains_stock_buffer_fallback(self):
+        quantities = {"XS": 1, "S": 2, "M": 3, "L": 3, "XL": 1}
+        low_stock = {"XS": 10, "S": 11, "M": 12, "L": 12, "XL": 10}
+        buffered_stock = {"XS": 11, "S": 12, "M": 13, "L": 13, "XL": 11}
+        product_lines = [
+            {
+                "quantities": quantities,
+                "inventory": [
+                    {"warehouse": "Robbinsville, NJ", "stock": low_stock},
+                    {"warehouse": "Richmond, VA", "stock": low_stock},
+                    {"warehouse": "Cincinnati, OH", "stock": low_stock},
+                    {"warehouse": "Jacksonville, FL", "stock": buffered_stock},
+                ],
+            }
+        ]
+        order = {
+            "order_type": "inhouse",
+            "due_date": crm_shipping_bypasser.datetime(2026, 8, 17).date(),
+        }
+
+        message = crm_shipping_bypasser._late_eta_failure_message(
+            order,
+            product_lines,
+            ["Jacksonville, FL"],
+            crm_shipping_bypasser.datetime(2026, 8, 17).date(),
+            crm_shipping_bypasser.datetime(2026, 8, 17).date(),
+        )
+
+        self.assertIn("10-piece order", message)
+        self.assertIn("forced", message)
+        self.assertIn("Jacksonville, FL", message)
+        self.assertIn("Robbinsville, NJ; Richmond, VA; Cincinnati, OH", message)
+        self.assertIn("10-piece per-size safety buffer", message)
+        self.assertIn("UPS ETA is 2026-08-17", message)
+        self.assertIn("CRM due date 2026-08-17", message)
+        self.assertIn("No SanMar stock was ordered", message)
+
     def test_failed_order_cleanup_attaches_cleared_cart_message(self):
         report = [
             crm_shipping_bypasser._result(
@@ -3885,59 +3922,6 @@ class ShippingBypasserTests(unittest.TestCase):
         clear_cart.assert_called_once()
         self.assertEqual(report[0]["sanmar_cart_cleanup"], cleanup)
         self.assertIn("SanMar cart was cleared", report[0]["message"])
-
-    def test_shipping_bypasser_cart_redirect_uses_header_checkout(self):
-        driver = mock.Mock()
-        driver.current_url = "https://www.sanmar.com/"
-
-        def open_checkout(_driver, pattern, timeout=12):
-            self.assertEqual(pattern, r"^Checkout$")
-            driver.current_url = "https://www.sanmar.com/cart"
-
-        with mock.patch.object(crm_shipping_bypasser, "safe_get_with_partial_load"), \
-             mock.patch.object(crm_shipping_bypasser, "_sanmar_cart_has_items", return_value={"hasItems": True}), \
-             mock.patch.object(crm_shipping_bypasser, "_click_sanmar_text_control", side_effect=open_checkout) as click_checkout:
-            url = crm_shipping_bypasser._open_sanmar_cart_page(driver)
-
-        self.assertEqual(url, "https://www.sanmar.com/cart")
-        click_checkout.assert_called_once()
-
-    def test_shipping_bypasser_shipping_address_waits_before_selecting_saved_address(self):
-        events = []
-
-        with mock.patch.object(
-            crm_shipping_bypasser,
-            "_click_radio_near_text",
-            side_effect=lambda _driver, text, **kwargs: events.append(f"radio:{text}"),
-        ), mock.patch.object(
-            crm_shipping_bypasser,
-            "_wait_for_text",
-            side_effect=lambda _driver, text, **kwargs: events.append(f"wait:{text}"),
-        ), mock.patch.object(crm_shipping_bypasser, "_click_sanmar_button"), \
-             mock.patch.object(crm_shipping_bypasser.time, "sleep"):
-            result = crm_shipping_bypasser._select_shipping_destination(
-                mock.Mock(),
-                "inhouse",
-                warehouse="Jacksonville, FL",
-            )
-
-        self.assertEqual(
-            events,
-            ["radio:Ship to an address", "wait:123\\ EZ\\ TEES\\ INC", "radio:123 EZ TEES INC"],
-        )
-        self.assertEqual(result["address"], "123 EZ TEES INC")
-
-    def test_shipping_bypasser_radio_lookup_retries_until_address_is_rendered(self):
-        driver = mock.Mock()
-        radio = mock.Mock()
-        driver.execute_script.side_effect = [None, radio]
-
-        with mock.patch.object(crm_shipping_bypasser, "_click_with_fallback") as click, \
-             mock.patch.object(crm_shipping_bypasser.time, "sleep"):
-            crm_shipping_bypasser._click_radio_near_text(driver, "123 EZ TEES INC", timeout=1)
-
-        self.assertEqual(driver.execute_script.call_count, 2)
-        click.assert_called_once_with(driver, radio)
 
     def test_preexisting_sanmar_cart_stop_does_not_clear_cart(self):
         report = [
@@ -11273,35 +11257,6 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertEqual([item["stock_tab_index"] for item in results], [1, 2])
         self.assertEqual([item["stock_tab_count"] for item in results], [2, 2])
         self.assertIn("H-TabTwo", results[1]["stock_tab_label"])
-
-    def test_shipping_bypasser_single_tab_exception_cleans_sanmar_cart(self):
-        crm_driver = mock.Mock()
-        sanmar_driver = mock.Mock()
-        tabs = [{"label": "H-OneTab 1 - QTY : 10 Design Previews"}]
-        cleanup = {
-            "attempted": True,
-            "success": True,
-            "message": "SanMar cart was cleared after failed order 4636204.",
-        }
-
-        with mock.patch.object(crm_shipping_bypasser, "_open_target_order"), \
-             mock.patch.object(crm_shipping_bypasser, "_wait_for_order_goods_page_ready"), \
-             mock.patch.object(crm_shipping_bypasser, "_find_stock_tabs", return_value=tabs), \
-             mock.patch.object(crm_shipping_bypasser, "_process_open_order", side_effect=RuntimeError("Checkout failed")), \
-             mock.patch.object(crm_shipping_bypasser, "_clear_sanmar_cart", return_value=cleanup) as clear_cart, \
-             mock.patch.object(crm_shipping_bypasser, "safe_take_screenshot"):
-            results = crm_shipping_bypasser._run_order_with_drivers(
-                crm_driver,
-                sanmar_driver,
-                "4636204",
-                dry_run=False,
-            )
-
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["outcome"], "worker_exception")
-        self.assertEqual(results[0]["stock_tab_index"], 1)
-        self.assertEqual(results[0]["sanmar_cart_cleanup"], cleanup)
-        clear_cart.assert_called_once_with(sanmar_driver, order_id="4636204")
 
     def test_shipping_bypasser_keeps_successful_tabs_when_later_reload_fails(self):
         crm_driver = mock.Mock()

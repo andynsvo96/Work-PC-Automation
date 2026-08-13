@@ -1800,24 +1800,6 @@ return { hasItems: Boolean(checkout && (amount || badge)), text: normalized.slic
     return state if isinstance(state, dict) else {"hasItems": False}
 
 
-def _open_sanmar_cart_page(driver, label="SanMar cart"):
-    """Open the real cart page even when SanMar redirects a direct /cart request home."""
-    safe_get_with_partial_load(driver, SANMAR_CART_URL, label=label)
-    current_url = str(getattr(driver, "current_url", "") or "")
-    if re.search(r"/cart(?:[/?#]|$)", current_url, flags=re.I):
-        return current_url
-    if not _sanmar_cart_has_items(driver).get("hasItems"):
-        return current_url
-    _click_sanmar_text_control(driver, r"^Checkout$", timeout=12)
-    deadline = time.time() + 12
-    while time.time() < deadline:
-        current_url = str(getattr(driver, "current_url", "") or "")
-        if re.search(r"/cart(?:[/?#]|$)", current_url, flags=re.I):
-            return current_url
-        time.sleep(0.25)
-    raise RuntimeError("SanMar Checkout did not open the shopping box page.")
-
-
 def _accept_sanmar_alert_if_present(driver):
     try:
         driver.switch_to.alert.accept()
@@ -1902,7 +1884,7 @@ return { clicked: false, action: 'none', label: '' };
 def _clear_sanmar_cart(driver, order_id=None):
     label = f" after failed order {order_id}" if order_id else ""
     try:
-        _open_sanmar_cart_page(driver, label="SanMar cart cleanup")
+        safe_get_with_partial_load(driver, SANMAR_CART_URL, label="SanMar cart cleanup")
         time.sleep(0.8)
         if not _sanmar_cart_has_items(driver).get("hasItems"):
             return {"attempted": True, "success": True, "message": f"SanMar cart was already empty{label}."}
@@ -2825,6 +2807,63 @@ def _choose_warehouse_plan(product_lines, order_type):
     if warehouse:
         return warehouse, _single_warehouse_plan(product_lines, warehouse)
     return None, _choose_multi_warehouse_plan(product_lines, order_type)
+
+
+def _late_eta_stock_context(product_lines, order_type, selected_warehouses):
+    lines = product_lines if isinstance(product_lines, list) else []
+    selected = [str(item or "").strip() for item in (selected_warehouses or []) if str(item or "").strip()]
+    pieces = sum(
+        sum(_stock_qty(qty) for qty in ((line or {}).get("quantities") or {}).values())
+        for line in lines
+        if isinstance(line, dict)
+    )
+    piece_label = f"this {pieces}-piece order" if pieces else "this order"
+    if len(selected) > 1:
+        return (
+            f"Stock availability required splitting {piece_label} across {', '.join(selected)} while retaining "
+            f"the required {SANMAR_WAREHOUSE_STOCK_BUFFER}-piece per-size safety buffer."
+        )
+    if not selected:
+        return ""
+
+    chosen = selected[0]
+    priority = _warehouse_priority(order_type)
+    try:
+        chosen_index = priority.index(chosen)
+    except ValueError:
+        chosen_index = 0
+    unavailable_closer = []
+    for candidate in priority[:chosen_index]:
+        can_fulfill = True
+        for line in lines:
+            inventory = _inventory_by_warehouse(line.get("inventory"))
+            stock = ((inventory.get(candidate) or {}).get("stock") or {})
+            required = line.get("quantities") if isinstance(line.get("quantities"), dict) else {}
+            if not all(_stock_qty_can_cover_order(stock.get(size, 0), qty) for size, qty in required.items()):
+                can_fulfill = False
+                break
+        if not can_fulfill:
+            unavailable_closer.append(candidate)
+    if unavailable_closer:
+        closer_label = "warehouse" if len(unavailable_closer) == 1 else "warehouses"
+        return (
+            f"Stock availability forced {piece_label} to {chosen}: closer preferred {closer_label} "
+            f"{'; '.join(unavailable_closer)} could not fulfill every requested size while retaining the required "
+            f"{SANMAR_WAREHOUSE_STOCK_BUFFER}-piece per-size safety buffer."
+        )
+    return (
+        f"Stock for {piece_label} was allocated to {chosen} while retaining the required "
+        f"{SANMAR_WAREHOUSE_STOCK_BUFFER}-piece per-size safety buffer."
+    )
+
+
+def _late_eta_failure_message(order, product_lines, selected_warehouses, eta, production_target):
+    context = _late_eta_stock_context(product_lines, order.get("order_type"), selected_warehouses)
+    timing = (
+        f"Its UPS ETA is {eta.isoformat()}, which would move production to {production_target.isoformat()}; "
+        f"that is not before the CRM due date {order['due_date'].isoformat()}."
+    )
+    return " ".join(part for part in (context, timing, "No SanMar stock was ordered.") if part)
 
 
 def _single_warehouse_from_plan(warehouse, plan):
@@ -3934,8 +3973,8 @@ def _select_shipping_destination(driver, order_type, warehouse=None, multi_wareh
     if multi_warehouse:
         _click_radio_near_text(driver, "Ship to an address")
         target = "Mach 6 Manufacturing" if order_type == "mach6" else "123 EZ TEES INC"
-        _wait_for_text(driver, re.escape(target), timeout=12)
-        _click_radio_near_text(driver, target, timeout=12)
+        _click_radio_near_text(driver, target)
+        _wait_for_text(driver, re.escape(target), timeout=5)
         _click_sanmar_button(driver, r"Confirm\s+Address")
         time.sleep(2.0)
         return {"ship_mode": "ship", "address": target}
@@ -3946,14 +3985,14 @@ def _select_shipping_destination(driver, order_type, warehouse=None, multi_wareh
         return {"ship_mode": "pickup", "address": "Robbinsville, NJ"}
     _click_radio_near_text(driver, "Ship to an address")
     target = "Mach 6 Manufacturing" if order_type == "mach6" else "123 EZ TEES INC"
-    _wait_for_text(driver, re.escape(target), timeout=12)
-    _click_radio_near_text(driver, target, timeout=12)
+    _click_radio_near_text(driver, target)
+    _wait_for_text(driver, re.escape(target), timeout=5)
     _click_sanmar_button(driver, r"Confirm\s+Address")
     time.sleep(2.0)
     return {"ship_mode": "ship", "address": target}
 
 
-def _click_radio_near_text(driver, text, timeout=10):
+def _click_radio_near_text(driver, text):
     script = r"""
 const wanted = String(arguments[0] || '').toLowerCase();
 const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
@@ -3983,15 +4022,9 @@ for (const radio of radios) {
 }
 return best ? best.radio : null;
 """
-    deadline = time.time() + max(0.1, float(timeout or 0))
-    radio = None
-    while time.time() < deadline:
-        radio = driver.execute_script(script, text)
-        if radio is not None:
-            break
-        time.sleep(0.25)
+    radio = driver.execute_script(script, text)
     if radio is None:
-        raise RuntimeError(f"Radio option not found after {timeout}s: {text}")
+        raise RuntimeError(f"Radio option not found: {text}")
     _click_with_fallback(driver, radio)
     time.sleep(0.5)
 
@@ -5579,7 +5612,7 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
     _publish_status(f"Checking SanMar cart before order {order_id}.", stage="checking_sanmar_cart", order_id=order_id)
     cart = _sanmar_cart_has_items(sanmar_driver)
     if cart.get("hasItems"):
-        _open_sanmar_cart_page(sanmar_driver, label="SanMar cart")
+        safe_get_with_partial_load(sanmar_driver, SANMAR_CART_URL, label="SanMar cart")
         return done(_result(order_id, False, "sanmar_cart_not_empty", "SanMar shopping box already has items. Use Open SanMar Cart for review.", order=order, stop_run=True))
 
     products = order.get("products") if isinstance(order.get("products"), list) else []
@@ -5670,7 +5703,7 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
         _add_current_product_to_box(sanmar_driver)
 
     _publish_status(f"Validating SanMar cart for order {order_id}.", stage="validating_sanmar_cart", order_id=order_id)
-    _open_sanmar_cart_page(sanmar_driver, label="SanMar cart")
+    safe_get_with_partial_load(sanmar_driver, SANMAR_CART_URL, label="SanMar cart")
     cart_lines = _wait_for_sanmar_cart_lines(sanmar_driver, timeout=20)
     cart_validation = _validate_sanmar_cart_contents(
         sanmar_driver,
@@ -5756,13 +5789,23 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
                     _change_crm_due_date(crm_driver, order_id, due_target)
                     order["due_date"] = due_target
                 else:
-                    return done(_result(order_id, False, "eta_after_due_date", f"SanMar ETA {eta.isoformat()} is after due date {order['due_date'].isoformat()}.", order=order, warehouse=warehouse, warehouses=selected_warehouses, eta=str(eta), eta_by_warehouse=eta_by_warehouse))
+                    return done(_result(
+                        order_id,
+                        False,
+                        "eta_after_due_date",
+                        _late_eta_failure_message(order, product_lines, selected_warehouses, eta, production_target),
+                        order=order,
+                        warehouse=warehouse,
+                        warehouses=selected_warehouses,
+                        eta=str(eta),
+                        eta_by_warehouse=eta_by_warehouse,
+                    ))
             if production_target >= order["due_date"]:
                 return done(_result(
                     order_id,
                     False,
                     "eta_after_due_date",
-                    f"SanMar ETA {eta.isoformat()} pushes production date to {production_target.isoformat()}, which is not before due date {order['due_date'].isoformat()}.",
+                    _late_eta_failure_message(order, product_lines, selected_warehouses, eta, production_target),
                     order=order,
                     warehouse=warehouse,
                     warehouses=selected_warehouses,
@@ -5924,36 +5967,19 @@ def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False):
         ]
     if tab_count <= 1:
         tab_label = _stock_tab_summary_label((tabs[0] or {}).get("label")) if tabs else ""
-        try:
-            result = _process_open_order(
-                crm_driver,
-                sanmar_driver,
-                normalized_order_id,
-                dry_run=dry_run,
-                stock_tab_index=1,
-                stock_tab_count=max(1, tab_count),
-                stock_tab_label=tab_label,
-                stock_tab_context=tabs[0] if tabs else None,
-            )
-        except Exception as exc:
-            safe_take_screenshot(crm_driver, "crm_shipping_bypass_tab_error")
-            safe_take_screenshot(sanmar_driver, f"sanmar_shipping_bypass_{normalized_order_id}_error")
-            result = _result(
-                normalized_order_id,
-                False,
-                "worker_exception",
-                str(exc),
-                manual_review_required=True,
-                retryable=_is_retryable_exception(exc),
-                error_type=type(exc).__name__,
-            )
-        result = _attach_stock_tab_context(result, 1, max(1, tab_count), tab_label)
+        result = _process_open_order(
+            crm_driver,
+            sanmar_driver,
+            normalized_order_id,
+            dry_run=dry_run,
+            stock_tab_index=1,
+            stock_tab_count=max(1, tab_count),
+            stock_tab_label=tab_label,
+            stock_tab_context=tabs[0] if tabs else None,
+        )
         if dry_run and result.get("success") and str(result.get("outcome") or "") == "shipping_bypass_ready":
             result["sanmar_cart_cleanup"] = _clear_sanmar_cart(sanmar_driver, order_id=normalized_order_id)
-        results = [result]
-        if not result.get("success") and not result.get("stop_run"):
-            _cleanup_after_failed_order(sanmar_driver, normalized_order_id, results)
-        return results
+        return [result]
 
     results = []
     skipped_tabs = []
