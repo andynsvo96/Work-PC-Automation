@@ -1,4 +1,5 @@
 import json
+import inspect
 import os
 import sys
 import tempfile
@@ -9826,6 +9827,87 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertFalse(crm_order_goods._text_indicates_stock_already_ordered("Stock Auto Ordering Queued"))
         self.assertTrue(crm_order_goods._text_indicates_stock_already_ordered("Stock Status: Ordered"))
         self.assertTrue(crm_order_goods._text_indicates_stock_already_ordered("Stock : Ordered"))
+        self.assertTrue(
+            crm_order_goods._text_indicates_stock_already_ordered(
+                "Stock Status: Ordered Stock : Ordered Status History Stock Auto Ordering Queued"
+            )
+        )
+
+    @mock.patch.object(crm_order_goods, "_publish_status")
+    @mock.patch.object(crm_order_goods, "safe_driver_quit")
+    @mock.patch.object(crm_order_goods, "_run_order_with_driver")
+    @mock.patch.object(crm_order_goods, "_build_crm_session_driver")
+    def test_order_goods_batch_worker_waits_for_definitive_auto_order_feedback(
+        self,
+        mock_build_driver,
+        mock_run_order,
+        _mock_quit,
+        _mock_publish_status,
+    ):
+        mock_build_driver.return_value = mock.Mock()
+        mock_run_order.return_value = [
+            {
+                "order_id": "4418860",
+                "success": True,
+                "outcome": "auto_order_succeeded",
+                "message": "Goods have been ordered successfully.",
+                "manual_review_required": False,
+            }
+        ]
+
+        payload = crm_order_goods._order_goods_worker_payload(
+            "4418860",
+            headless_mode=True,
+            dry_run=False,
+            profile_path=str(ROOT),
+        )
+
+        self.assertTrue(payload["success"])
+        mock_run_order.assert_called_once_with(
+            mock.ANY,
+            "4418860",
+            dry_run=False,
+            wait_for_auto_order_result=True,
+        )
+
+    def test_sanmar_quantity_fill_uses_native_input_setter(self):
+        self.assertIn(
+            "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')",
+            inspect.getsource(crm_shipping_bypasser._fill_sanmar_quantities),
+        )
+
+    @mock.patch.object(crm_shipping_bypasser.time, "sleep")
+    @mock.patch.object(crm_shipping_bypasser, "_sanmar_cart_has_items")
+    @mock.patch.object(crm_shipping_bypasser, "_click_sanmar_button")
+    def test_add_to_sanmar_box_waits_for_positive_cart_state(
+        self,
+        mock_click,
+        mock_cart_state,
+        _mock_sleep,
+    ):
+        mock_cart_state.side_effect = [{"hasItems": False}, {"hasItems": True}]
+
+        crm_shipping_bypasser._add_current_product_to_box(mock.Mock())
+
+        mock_click.assert_called_once_with(mock.ANY, r"Add\s+to\s+shopping\s+box")
+        self.assertEqual(mock_cart_state.call_count, 2)
+
+    def test_shipping_bypasser_excludes_live_closed_warehouse_banner(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = (
+            "Update (8/12) - Due to wildfires in the area, our Reno warehouse "
+            "remains closed today. Please select an alternate DC."
+        )
+        inventory = [
+            {"warehouse": "Reno, NV", "stock": {"3XL": 518}},
+            {"warehouse": "Richmond, VA", "stock": {"3XL": 2412}},
+        ]
+
+        closed = crm_shipping_bypasser._sanmar_closed_warehouses(driver)
+        filtered = crm_shipping_bypasser._exclude_closed_sanmar_warehouses(inventory, closed)
+
+        self.assertEqual(closed, {"Reno, NV"})
+        self.assertEqual([row["warehouse"] for row in filtered], ["Richmond, VA"])
 
     @mock.patch.object(crm_order_goods, "_page_indicates_stock_already_ordered", return_value=False)
     @mock.patch.object(crm_order_goods, "_refresh_order_after_stock_unlock", return_value="locked")

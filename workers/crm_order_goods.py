@@ -476,8 +476,6 @@ def _text_indicates_stock_already_ordered(text):
     normalized = " ".join(str(text or "").lower().split())
     if not normalized:
         return False
-    if "stock auto ordering queued" in normalized:
-        return False
     false_value = r"(?:false|no|not\s+ordered|unordered|0)"
     true_value = r"(?:ordered|true|yes|1)"
     if re.search(rf"\bstock\s+ordered\s*[:=]\s*{false_value}\b", normalized):
@@ -2424,7 +2422,16 @@ def _order_goods_worker_payload(order_id, headless_mode, dry_run=False, profile_
             profile_label=f"CRM order goods worker {order_id}",
             skip_stale_chrome_check=skip_stale_chrome_check,
         )
-        report_items = _run_order_with_driver(driver, order_id, dry_run=dry_run)
+        # A click only queues CRM's asynchronous Auto Ordering job.  Batch
+        # runs must wait for the same definitive CRM feedback as single-order
+        # and Push Back runs; otherwise a rejected order is recorded as a
+        # success after the button disappears.
+        report_items = _run_order_with_driver(
+            driver,
+            order_id,
+            dry_run=dry_run,
+            wait_for_auto_order_result=not dry_run,
+        )
         duration = _elapsed_seconds(started_at)
         for item in report_items:
             if isinstance(item, dict):

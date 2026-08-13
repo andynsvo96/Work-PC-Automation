@@ -2618,6 +2618,44 @@ def _inventory_by_warehouse(inventory):
     return by_name
 
 
+def _sanmar_closed_warehouses(driver):
+    """Return distribution centers SanMar's live banner explicitly marks closed."""
+    try:
+        text = _normalize_text(
+            driver.execute_script(
+                "return String(document.body && (document.body.innerText || document.body.textContent) || '');"
+            )
+        )
+    except Exception:
+        text = ""
+    closed = set()
+    for alias, canonical in WAREHOUSE_ALIASES.items():
+        if re.search(
+            rf"\b{re.escape(alias)}\s+warehouse\s+(?:remains?|is|will\s+be)\s+closed\b",
+            text,
+            flags=re.I,
+        ):
+            closed.add(canonical)
+    return closed
+
+
+def _exclude_closed_sanmar_warehouses(inventory, closed_warehouses):
+    closed = {str(item or "").strip().casefold() for item in (closed_warehouses or [])}
+    if not closed:
+        return list(inventory or [])
+    filtered = []
+    for row in inventory if isinstance(inventory, list) else []:
+        raw_name = _normalize_text((row or {}).get("warehouse")) if isinstance(row, dict) else ""
+        canonical = next(
+            (name for alias, name in WAREHOUSE_ALIASES.items() if alias in raw_name.lower()),
+            raw_name,
+        )
+        if str(canonical or "").strip().casefold() in closed:
+            continue
+        filtered.append(row)
+    return filtered
+
+
 def _stock_qty(value):
     try:
         return int(value or 0)
@@ -3365,7 +3403,13 @@ for (const size of Object.keys(required)) {
   const input = match.input;
   const value = String(required[size]);
   input.focus();
-  input.value = value;
+  // SanMar's quantity grid is reactive. Assigning input.value directly can
+  // change the visible field without updating the application's model, which
+  // makes Add to Shopping Box submit a zero quantity. Use the native setter
+  // before dispatching the events observed by the page framework.
+  const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  if (valueSetter && valueSetter.set) valueSetter.set.call(input, value);
+  else input.value = value;
   dispatch(input, 'input');
   dispatch(input, 'change');
   dispatch(input, 'blur');
@@ -3404,8 +3448,16 @@ def _click_sanmar_button(driver, text_pattern, timeout=12):
 
 def _add_current_product_to_box(driver):
     _click_sanmar_button(driver, r"Add\s+to\s+shopping\s+box")
-    _wait_for_text(driver, r"Shopping\s+Box|Saved\s+Shopping\s+Box|Checkout|Proceed\s+to\s+checkout", timeout=15)
-    time.sleep(0.8)
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        if _sanmar_cart_has_items(driver).get("hasItems"):
+            time.sleep(0.8)
+            return
+        time.sleep(0.3)
+    raise RuntimeError(
+        "SanMar did not confirm an item in the shopping box after Add to Shopping Box. "
+        "The quantity may not have been accepted by the product page."
+    )
 
 
 def _expand_sanmar_cart_rows(driver):
@@ -3766,8 +3818,21 @@ def _cart_color_matches(color, expected_color, product=None):
     return any(_sanmar_color_keys_match(color, key) for key in wanted_keys)
 
 
-def _validate_sanmar_cart_contents(driver, product_lines, warehouse=None):
-    cart_lines = _read_sanmar_cart_lines(driver)
+def _wait_for_sanmar_cart_lines(driver, timeout=20):
+    deadline = time.time() + max(1, int(timeout or 1))
+    last_lines = []
+    while time.time() < deadline:
+        last_lines = _read_sanmar_cart_lines(driver)
+        if last_lines:
+            return last_lines
+        time.sleep(0.4)
+    return last_lines
+
+
+def _validate_sanmar_cart_contents(driver, product_lines, warehouse=None, cart_lines=None):
+    if cart_lines is None:
+        cart_lines = _read_sanmar_cart_lines(driver)
+    cart_lines = cart_lines if isinstance(cart_lines, list) else []
     expected_lines = []
     for line in product_lines if isinstance(product_lines, list) else []:
         product = line.get("product") if isinstance(line, dict) else {}
@@ -5538,6 +5603,8 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
         inventory = _wait_for_sanmar_inventory(sanmar_driver, search_id)
         if not inventory:
             return done(_result(order_id, False, "sanmar_inventory_missing", f"SanMar inventory table was not found for {search_id}.", order=order, product=product))
+        closed_warehouses = _sanmar_closed_warehouses(sanmar_driver)
+        inventory = _exclude_closed_sanmar_warehouses(inventory, closed_warehouses)
         product_lines.append(
             {
                 "product": product,
@@ -5547,6 +5614,7 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
                 "click_inventory_button": bool(search_options.get("click_inventory_button")),
                 "expected_style_keys": search_options.get("expected_style_keys") or [],
                 "inventory": inventory,
+                "closed_warehouses": sorted(closed_warehouses),
             }
         )
 
@@ -5579,9 +5647,15 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
 
     _publish_status(f"Validating SanMar cart for order {order_id}.", stage="validating_sanmar_cart", order_id=order_id)
     safe_get_with_partial_load(sanmar_driver, SANMAR_CART_URL, label="SanMar cart")
-    _wait_for_text(sanmar_driver, r"Continue\s+Checkout|Warehouse", timeout=20)
-    cart_validation = _validate_sanmar_cart_contents(sanmar_driver, cart_product_lines, warehouse=None if multi_warehouse else warehouse)
+    cart_lines = _wait_for_sanmar_cart_lines(sanmar_driver, timeout=20)
+    cart_validation = _validate_sanmar_cart_contents(
+        sanmar_driver,
+        cart_product_lines,
+        warehouse=None if multi_warehouse else warehouse,
+        cart_lines=cart_lines,
+    )
     if not cart_validation.get("success"):
+        safe_take_screenshot(sanmar_driver, f"sanmar_cart_mismatch_{order_id}")
         issues = cart_validation.get("issues") or ["SanMar cart did not match the CRM products."]
         return done(_result(
             order_id,
