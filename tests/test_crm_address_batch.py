@@ -165,6 +165,19 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             self.assertTrue(crm_copyright_cancel._is_salesforce_login_approval_page(driver))
             self.assertFalse(crm_copyright_cancel._is_salesforce_authenticated_page(driver))
 
+    def test_salesforce_mydomain_login_page_is_not_authenticated(self):
+        driver = mock.Mock(current_url="https://printfly.my.salesforce.com/?ec=302")
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_is_salesforce_login_approval_page",
+            return_value=False,
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_is_salesforce_login_page",
+            return_value=True,
+        ):
+            self.assertFalse(crm_copyright_cancel._is_salesforce_authenticated_page(driver))
+
     def test_sheet_scanner_saved_session_never_submits_salesforce_login(self):
         driver = mock.Mock(current_url="https://login.salesforce.com/")
         with mock.patch.object(crm_copyright_cancel, "_is_salesforce_login_approval_page", return_value=False), \
@@ -312,6 +325,78 @@ class CrmCopyrightCancelTests(unittest.TestCase):
 
         self.assertIsNone(username)
         self.assertIs(detected_password, password)
+
+    def test_salesforce_login_advances_from_username_to_password_stage(self):
+        driver = mock.Mock(current_url="https://printfly.my.salesforce.com/")
+        stages = iter(["username", "username", "password", "password"])
+        login_states = iter([True, True, True, True, True, False])
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_is_salesforce_login_approval_page",
+            return_value=False,
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_is_salesforce_login_page",
+            side_effect=lambda _driver: next(login_states),
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_click_salesforce_saved_username",
+            return_value=False,
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_salesforce_login_stage",
+            side_effect=lambda _driver: next(stages),
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_fill_salesforce_login_with_autofill",
+            return_value=True,
+        ) as fill, mock.patch.object(
+            crm_copyright_cancel,
+            "_click_salesforce_login_with_selenium",
+            return_value=True,
+        ) as click, mock.patch.object(crm_copyright_cancel.time, "sleep"):
+            completed = crm_copyright_cancel._attempt_salesforce_login(driver, timeout=45)
+
+        self.assertTrue(completed)
+        self.assertEqual(fill.call_count, 2)
+        self.assertEqual(click.call_count, 2)
+
+    def test_copyright_cancel_uses_verified_local_template_when_picker_menu_is_hidden(self):
+        driver = mock.Mock()
+        state = {
+            "subject": "NINJA Print House Order #5021194 - A Refund Has Been Issued to Your Account",
+            "body": (
+                "While reviewing your order we noticed protected artwork. "
+                "Our team has gone ahead and processed a refund back to your account."
+            ),
+        }
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_insert_cancel_template",
+            side_effect=crm_copyright_cancel.CopyrightCancelError(
+                "Insert a template was not found in Salesforce template menu."
+            ),
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_render_email_template",
+            return_value={"subject": state["subject"], "body": state["body"]},
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_fill_salesforce_email_from_local_template",
+        ) as fill_local, mock.patch.object(
+            crm_copyright_cancel,
+            "_read_salesforce_email_state",
+            return_value=state,
+        ):
+            result = crm_copyright_cancel._fill_salesforce_email_from_salesforce_template(
+                driver,
+                order_id="5021194",
+                process=crm_copyright_cancel.COPYRIGHT_CANCEL_PROCESS,
+                reason="Philadelphia Eagles",
+            )
+
+        self.assertEqual(result["source"], "local_template_fallback")
+        fill_local.assert_called_once_with(driver, state["subject"], state["body"])
 
     def test_salesforce_contact_is_accepted_as_account_link_alias(self):
         contact_driver = mock.Mock()

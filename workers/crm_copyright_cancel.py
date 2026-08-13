@@ -1354,6 +1354,8 @@ def _is_salesforce_authenticated_page(driver):
     """Return True only after navigation reaches a signed-in Salesforce org."""
     if _is_salesforce_login_approval_page(driver):
         return False
+    if _is_salesforce_login_page(driver):
+        return False
     url = str(getattr(driver, "current_url", "") or "").lower()
     return (
         "printfly.lightning.force.com" in url
@@ -1808,6 +1810,18 @@ def _salesforce_login_fields(driver):
     return username_input, password_input
 
 
+def _salesforce_login_stage(driver):
+    """Describe the currently visible Salesforce credential step."""
+    username_input, password_input = _salesforce_login_fields(driver)
+    if username_input is not None and password_input is not None:
+        return "username_password"
+    if password_input is not None:
+        return "password"
+    if username_input is not None:
+        return "username"
+    return "none"
+
+
 def _click_salesforce_saved_username(driver):
     """Select the matching account from Salesforce's saved-username chooser."""
     credential = read_windows_credential(SALESFORCE_CREDENTIAL_TARGET, required=False)
@@ -1904,6 +1918,20 @@ def _fill_salesforce_login_with_autofill(driver):
 
 
 def _click_salesforce_login_with_selenium(driver):
+    # Salesforce's current staged login keeps the stable #Login submit ID on
+    # both the username-only and password-only forms. Prefer it over broad text
+    # matching so promotional/sidebar elements labeled "Login" are ignored.
+    for selector in ("input#Login", "button#Login", "input[name=Login]", "button[name=Login]"):
+        try:
+            for element in driver.find_elements("css selector", selector):
+                if not element.is_displayed() or not element.is_enabled():
+                    continue
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center', inline: 'center'});", element)
+                element.click()
+                return True
+        except Exception:
+            continue
+
     candidates = []
     for element in driver.find_elements("css selector", "button,input[type=submit],a,[role=button],div,span"):
         try:
@@ -1975,32 +2003,15 @@ def _attempt_salesforce_login(driver, timeout=45, order_id=None):
                 return True
             if any(_salesforce_login_fields(driver)):
                 break
-    if not _fill_salesforce_login_with_autofill(driver):
-        if _wait_for_salesforce_login_transition(driver, timeout=15, order_id=order_id):
-            return True
-        if _is_salesforce_login_approval_page(driver):
-            _complete_salesforce_login_approval(
-                driver,
-                timeout=max(timeout, 90),
-                order_id=order_id,
-            )
-            return True
-        if read_windows_credential(SALESFORCE_CREDENTIAL_TARGET, required=False) is None:
-            raise CopyrightCancelError(
-                f"Salesforce credential '{SALESFORCE_CREDENTIAL_TARGET}' is missing from Windows "
-                "Credential Manager and Chrome autofill did not populate the login form."
-            )
-        raise CopyrightCancelError("Salesforce login fields could not be filled from Windows Credential Manager.")
-    clicked = _click_salesforce_login_with_selenium(driver)
-    if not clicked:
-        clicked = _click_exact_visible_text(driver, "Log In")
-    if not clicked:
-        clicked = _click_exact_visible_text(driver, "Login")
-    if not clicked:
-        raise CopyrightCancelError("Salesforce login page appeared, but the Log In button was not found.")
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        time.sleep(1)
+
+    # Salesforce can now alternate between username-only and password-only
+    # forms. Submit each distinct step once, stopping after the password has
+    # been attempted twice at most so a bad saved credential cannot loop into
+    # an account lockout.
+    deadline = time.monotonic() + max(15, int(timeout or 45))
+    submitted_stages = []
+    password_submissions = 0
+    while time.monotonic() < deadline and len(submitted_stages) < 4:
         if _is_salesforce_login_approval_page(driver):
             _complete_salesforce_login_approval(
                 driver,
@@ -2010,7 +2021,55 @@ def _attempt_salesforce_login(driver, timeout=45, order_id=None):
             return True
         if not _is_salesforce_login_page(driver):
             return True
-    raise CopyrightCancelError("Salesforce login did not complete after clicking Log In.")
+
+        stage = _salesforce_login_stage(driver)
+        if stage == "none":
+            time.sleep(0.5)
+            continue
+        if stage == "password":
+            password_submissions += 1
+            if password_submissions > 2:
+                break
+
+        if not _fill_salesforce_login_with_autofill(driver):
+            if read_windows_credential(SALESFORCE_CREDENTIAL_TARGET, required=False) is None:
+                raise CopyrightCancelError(
+                    f"Salesforce credential '{SALESFORCE_CREDENTIAL_TARGET}' is missing from Windows "
+                    "Credential Manager and Chrome autofill did not populate the login form."
+                )
+            raise CopyrightCancelError("Salesforce login fields could not be filled from Windows Credential Manager.")
+
+        clicked = _click_salesforce_login_with_selenium(driver)
+        if not clicked:
+            clicked = _click_exact_visible_text(driver, "Log In")
+        if not clicked:
+            clicked = _click_exact_visible_text(driver, "Login")
+        if not clicked:
+            raise CopyrightCancelError("Salesforce login page appeared, but the Log In button was not found.")
+        submitted_stages.append(stage)
+
+        transition_deadline = min(deadline, time.monotonic() + 20)
+        while time.monotonic() < transition_deadline:
+            time.sleep(0.5)
+            if _is_salesforce_login_approval_page(driver):
+                _complete_salesforce_login_approval(
+                    driver,
+                    timeout=max(timeout, 90),
+                    order_id=order_id,
+                )
+                return True
+            if not _is_salesforce_login_page(driver):
+                return True
+            next_stage = _salesforce_login_stage(driver)
+            if next_stage not in {"none", stage}:
+                break
+        else:
+            break
+
+    stage_summary = " -> ".join(submitted_stages) or "no credential step"
+    raise CopyrightCancelError(
+        f"Salesforce login did not complete after staged login ({stage_summary})."
+    )
 
 
 def _open_salesforce_account(driver, crm_handle, expected_email, login_wait_seconds=0, order_id=None):
@@ -4093,8 +4152,22 @@ def _open_full_template_picker_from_menu(driver):
         return bool(
             driver.execute_script(
                 """
-                const text = document.body ? document.body.innerText || '' : '';
-                return text.includes('Insert Email Template') && text.includes('Template Folders');
+                function walk(root, out = []) {
+                  if (!root || !root.querySelectorAll) return out;
+                  for (const el of Array.from(root.querySelectorAll('*'))) {
+                    out.push(el);
+                    if (el.shadowRoot) walk(el.shadowRoot, out);
+                  }
+                  return out;
+                }
+                const text = walk(document)
+                  .map((el) => el.innerText || el.textContent || '')
+                  .join('\\n')
+                  .toLowerCase();
+                return text.includes('template folders')
+                  && (text.includes('insert email template')
+                    || text.includes('select email template')
+                    || text.includes('email templates'));
                 """
             )
         )
@@ -4114,13 +4187,23 @@ def _open_full_template_picker_from_menu(driver):
               return rect.width > 0 && rect.height > 0
                 && style.display !== 'none' && style.visibility !== 'hidden'
                 && rect.bottom > 0 && rect.top < window.innerHeight
-                && rect.right > 0 && rect.left < window.innerWidth;
+                  && rect.right > 0 && rect.left < window.innerWidth;
             }
-            const matches = Array.from(document.querySelectorAll('a,[role=menuitem],li,button,span,div'))
+            function walk(root, out = []) {
+              if (!root || !root.querySelectorAll) return out;
+              for (const el of Array.from(root.querySelectorAll('*'))) {
+                out.push(el);
+                if (el.shadowRoot) walk(el.shadowRoot, out);
+              }
+              return out;
+            }
+            const matches = walk(document)
+              .filter((el) => /^(a|li|button|span|div)$/i.test(el.tagName) || (el.getAttribute('role') || '').toLowerCase() === 'menuitem')
               .filter((el) => {
                 if (!visible(el)) return false;
                 const text = clean(el.innerText || el.textContent || el.value || '');
-                if (text !== 'insert a template...') return false;
+                const label = text.replace(/[.\u2026]+$/g, '').trim();
+                if (!['insert a template', 'insert template', 'insert email template'].includes(label)) return false;
                 const rect = el.getBoundingClientRect();
                 return rect.width > 80 && rect.height > 14 && rect.height < 60;
               })
@@ -5332,7 +5415,43 @@ def _fill_salesforce_email_from_salesforce_template(
     process=COPYRIGHT_CANCEL_PROCESS,
     reason="",
 ):
-    _insert_cancel_template(driver, process)
+    try:
+        _insert_cancel_template(driver, process)
+    except CopyrightCancelError as exc:
+        # Salesforce occasionally hides the template menu behind a UI surface
+        # that Selenium cannot inspect. Copyright Cancel has a checked-in local
+        # equivalent and an existing rich-text filler; use it only for this
+        # exact picker failure and keep the same downstream content checks.
+        if process.key != COPYRIGHT_CANCEL_PROCESS.key or "template menu" not in str(exc).lower():
+            raise
+        rendered = _render_email_template(
+            COPYRIGHT_CANCEL_PROCESS.key,
+            order_number=str(order_id),
+            reason=str(reason or ""),
+        )
+        _fill_salesforce_email_from_local_template(
+            driver,
+            rendered["subject"],
+            rendered["body"],
+        )
+        state = _read_salesforce_email_state(driver)
+        subject_text = _clean_text(state.get("subject", ""))
+        body_text = _clean_text(state.get("body", ""))
+        missing = _missing_body_markers(body_text.lower(), process)
+        if str(order_id) not in subject_text:
+            raise CopyrightCancelError(
+                f"Local Salesforce template subject does not contain order {order_id}. "
+                f"Current subject: {subject_text or 'blank'}"
+            )
+        if missing:
+            raise CopyrightCancelError(f"Local Salesforce template body is missing expected text: {', '.join(missing)}")
+        return {
+            "source": "local_template_fallback",
+            "template": process.key,
+            "process": process.key,
+            "state": state,
+            "body_placeholder_replacement": None,
+        }
     deadline = time.monotonic() + 20
     template_text = ""
     subject_text = ""
@@ -5732,7 +5851,7 @@ def _click_salesforce_send_button(driver):
             const cr = composer === document
               ? {left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight}
               : composer.getBoundingClientRect();
-            const candidates = Array.from(composer.querySelectorAll('button,a,input,[role=button],span,div'))
+            const scopedCandidates = Array.from(composer.querySelectorAll('button,a,input,[role=button],span,div'))
               .filter((el) => {
                 if (!visible(el)) return false;
                 const text = clean(`${el.innerText || ''} ${el.value || ''} ${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''}`);
@@ -5740,7 +5859,16 @@ def _click_salesforce_send_button(driver):
                 return text === 'send'
                   && rect.left >= cr.left && rect.right <= cr.right
                   && rect.top >= cr.top && rect.bottom <= cr.bottom;
-              })
+              });
+            const candidates = (scopedCandidates.length ? scopedCandidates : Array.from(document.querySelectorAll('button,a,input,[role=button],span,div'))
+              .filter((el) => {
+                if (!visible(el)) return false;
+                const text = clean(`${el.innerText || ''} ${el.value || ''} ${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''}`);
+                const rect = el.getBoundingClientRect();
+                return text === 'send'
+                  && rect.top > window.innerHeight * 0.5
+                  && rect.left > window.innerWidth * 0.5;
+              }))
               .sort((a, b) => {
                 const ar = a.getBoundingClientRect();
                 const br = b.getBoundingClientRect();
