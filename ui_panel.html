@@ -1643,10 +1643,6 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
         </div>
         <div class='settings-panel-card'>
           <p class='settings-connections-note'>Choose a service to open its setup window. You can review the filled username, password, and Paycom PIN before continuing.</p>
-          <div class='settings-panel-title'>
-            <div><h3>Paycom credential</h3><p>Replace the saved username, password, and PIN through the existing Windows credential command.</p></div>
-            <button class='tiny' id='paycomCredentialConfigureBtn' type='button' onclick='configurePaycomCredential(this)'>Reconfigure Paycom Credential</button>
-          </div>
           <div class='settings-connection-grid'>
             <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('paycom', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>P</span>Paycom</span><span class='settings-connection-action'>Open profile setup →</span></button>
             <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('crm', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>C</span>CRM</span><span class='settings-connection-action'>Open profile setup →</span></button>
@@ -3356,18 +3352,6 @@ async function openChromeProfileSetup(profile, button = null) {
       setStatus(d.message || 'Chrome profile setup window opened.', 'settings');
     } catch (e) {
       setStatus('Chrome profile setup failed: ' + e.message, 'settings');
-    }
-  });
-}
-
-async function configurePaycomCredential(button = null) {
-  return withButtonBusy(button, 'OPENING...', async () => {
-    setStatus('Opening Windows credential configuration on this computer...', 'settings');
-    try {
-      const d = await api('/automation/paycom-credential-configure', {method: 'POST'});
-      setStatus(d.message || 'Windows credential configuration opened.', 'settings');
-    } catch (e) {
-      setStatus('Could not open Paycom credential configuration: ' + e.message, 'settings');
     }
   });
 }

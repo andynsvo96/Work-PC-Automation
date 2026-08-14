@@ -37,10 +37,7 @@ from automation_runtime import (
     build_chrome_driver,
     configure_console_utf8,
     find_visible,
-    is_chrome_profile_in_use,
-    is_repo_managed_automation_profile,
     kill_stale_chrome,
-    resolve_paycom_profile_path,
     safe_driver_quit,
     safe_get_with_partial_load,
     take_screenshot,
@@ -56,7 +53,6 @@ from config import (
 from paycom_login import (
     find_paycom_login_fields,
     is_paycom_login_page,
-    paycom_trusted_session_required,
     submit_paycom_login,
 )
 from platform_runtime import normalize_os_name
@@ -1142,19 +1138,13 @@ def _build_driver(profile_path, headless_mode):
 
 def _run_once(headless_mode):
     driver = None
-    profile_path = resolve_paycom_profile_path()
-    managed_profile = is_repo_managed_automation_profile(profile_path)
+    profile_path = os.path.join(SCRIPT_DIR, "chrome_profile")
     try:
         start_time = time.time()
         mode_label = "headless" if headless_mode else "visible"
         print(f"Starting Paycom weekly-hours sync ({mode_label} mode)...")
 
-        if managed_profile:
-            kill_stale_chrome(profile_path, profile_label="Paycom-hours automation")
-        elif is_chrome_profile_in_use(profile_path):
-            raise RuntimeError(
-                "Regular Chrome is open. Close every Chrome window before running Paycom hours sync."
-            )
+        kill_stale_chrome(profile_path, profile_label="Paycom-hours automation")
 
         driver = _build_driver(profile_path, headless_mode)
 
@@ -1174,7 +1164,6 @@ def _run_once(headless_mode):
             driver,
             (username_field, password_field, pin_field),
             context=f"hours sync in {mode_label} mode",
-            allow_credential_submission=not paycom_trusted_session_required(),
         )
 
         # Give the page a moment to hydrate numbers.
@@ -1290,7 +1279,7 @@ def _run_once(headless_mode):
         return False, error_msg, None, "", []
     finally:
         if driver:
-            safe_driver_quit(driver, profile_path=profile_path if managed_profile else None)
+            safe_driver_quit(driver, profile_path=profile_path)
 
 
 def run():

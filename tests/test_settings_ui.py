@@ -118,15 +118,6 @@ class SettingsUiStructureTests(unittest.TestCase):
         self.assertIn("/automation/salesforce-worker-setup", self.html)
         self.assertIn("/automation/salesforce-worker-test", self.html)
 
-    def test_paycom_credential_configuration_is_wired(self):
-        self.assertEqual(
-            len(re.findall(r"\bid=['\"]paycomCredentialConfigureBtn['\"]", self.html)),
-            1,
-        )
-        self.assertIn("function configurePaycomCredential(", self.html)
-        self.assertIn("/automation/paycom-credential-configure", self.html)
-        self.assertIn("Reconfigure Paycom Credential", self.html)
-
     def test_salesforce_verification_popup_is_wired(self):
         for element_id in (
             "salesforceVerificationDialog",

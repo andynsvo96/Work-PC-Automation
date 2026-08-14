@@ -602,42 +602,6 @@ def resolve_existing_automation_profile_path(profile_path, *, system_name=None, 
     return resolved_path
 
 
-def resolve_paycom_profile_path(config_module=None):
-    """Return the configured Paycom Chrome user-data directory.
-
-    A machine may point Paycom at its normal trusted Chrome profile while all
-    other browser automations retain isolated repository profiles. Relative
-    paths remain rooted in this project for backward compatibility.
-    """
-    configured = str(os.getenv("PAYCOM_PROFILE_DIR") or "").strip()
-    if not configured:
-        if config_module is None:
-            try:
-                import config as config_module
-            except Exception:
-                config_module = None
-        configured = str(getattr(config_module, "PAYCOM_PROFILE_DIR", "") or "").strip()
-    if configured:
-        configured = os.path.expandvars(os.path.expanduser(configured))
-        if not os.path.isabs(configured):
-            configured = os.path.join(SCRIPT_DIR, configured)
-        return resolve_automation_profile_path(os.path.normpath(configured))
-    return resolve_automation_profile_path(os.path.join(SCRIPT_DIR, "chrome_profile"))
-
-
-def is_repo_managed_automation_profile(profile_path):
-    """Return whether forced stale-process cleanup is safe for this profile."""
-    normalized = _normalize_profile_path_for_match(profile_path)
-    try:
-        relative = os.path.relpath(normalized, SCRIPT_DIR)
-    except ValueError:
-        return False
-    if relative.startswith("..") or os.path.isabs(relative):
-        return False
-    top_level = relative.split(os.sep, 1)[0].lower()
-    return top_level == "slack_chrome_profile" or top_level.startswith("chrome_profile")
-
-
 def _chrome_cmdline_profile_path(cmdline):
     text = str(cmdline or "")
     match = re.search(r"--user-data-dir(?:=|\s+)(\"[^\"]+\"|'[^']+'|[^\s]+)", text, flags=re.IGNORECASE)
@@ -646,37 +610,10 @@ def _chrome_cmdline_profile_path(cmdline):
     return _normalize_profile_path_for_match(match.group(1))
 
 
-def _default_chrome_user_data_dir(system_name=None):
-    platform_name = _platform_profile_name(system_name)
-    if platform_name == "windows":
-        local_app_data = str(os.getenv("LOCALAPPDATA") or "").strip()
-        return _normalize_profile_path_for_match(
-            os.path.join(local_app_data, "Google", "Chrome", "User Data")
-        ) if local_app_data else ""
-    if platform_name == "macos":
-        return _normalize_profile_path_for_match(
-            os.path.expanduser("~/Library/Application Support/Google/Chrome")
-        )
-    if platform_name == "linux":
-        return _normalize_profile_path_for_match(os.path.expanduser("~/.config/google-chrome"))
-    return ""
-
-
 def _chrome_cmdline_uses_profile(cmdline, profile_path):
     expected = _normalize_profile_path_for_match(profile_path)
     actual = _chrome_cmdline_profile_path(cmdline)
-    if expected and actual:
-        return actual == expected
-    # Chrome omits --user-data-dir from its browser process when using the
-    # platform default. Renderer/utility children also omit it, so only infer
-    # ownership from the top-level browser command (which has no --type=).
-    text = str(cmdline or "").lower()
-    return bool(
-        expected
-        and expected == _default_chrome_user_data_dir()
-        and "--type=" not in text
-        and "chrome" in text
-    )
+    return bool(expected and actual and actual == expected)
 
 
 def is_chrome_profile_in_use(profile_path):

@@ -39,7 +39,6 @@ from automation_runtime import (
     is_chrome_profile_in_use,
     resolve_automation_profile_path,
     resolve_existing_automation_profile_path,
-    resolve_paycom_profile_path,
     safe_driver_quit,
     safe_get_with_partial_load,
 )
@@ -112,7 +111,6 @@ def configure_server_logging():
 CLOCK_SCRIPT = os.path.join(WORKERS_DIR, "paycom_clock.py")
 SLACK_SCRIPT = os.path.join(WORKERS_DIR, "slack_team.py")
 PAYCOM_HOURS_SCRIPT = os.path.join(WORKERS_DIR, "paycom_hours.py")
-WINDOWS_CREDENTIAL_MANAGER_SCRIPT = os.path.join(SCRIPT_DIR, "manage_windows_credentials.py")
 CRM_SCRIPT = os.path.join(WORKERS_DIR, "crm_unlock_orders.py")
 CRM_ADDRESS_VALIDATOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_validate_address.py")
 CRM_PRODUCT_SEPARATOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_product_separator.py")
@@ -219,10 +217,7 @@ SERVER_BIND_HOST = (
     if REMOTE_ACCESS_MODE != "tailscale" or LAN_REST_ACCESS_ENABLED
     else "127.0.0.1"
 )
-try:
-    SERVER_PORT = int(str(os.environ.get("AUTOMATION_SERVER_PORT") or "5123").strip())
-except (TypeError, ValueError):
-    SERVER_PORT = 5123
+SERVER_PORT = 5123
 CHROME_EXTENSION_BRIDGE_PROTOCOL = "automation.chrome-extension.bridge/v2"
 CLIPBOARD_PEER_URL = str(getattr(config_module, "AUTOMATION_CLIPBOARD_PEER_URL", "") or "").strip()
 SERVER_STARTED_AT = datetime.now()
@@ -13554,7 +13549,7 @@ def _chrome_profile_setup_targets():
     return {
         "paycom": {
             "label": "Paycom",
-            "profile_path": resolve_paycom_profile_path(config_module),
+            "profile_path": _resolve_profile_path("chrome_profile"),
             "url": str(getattr(config_module, "PAYCOM_URL", "") or "https://www.paycomonline.net/"),
         },
         "crm": {
@@ -13596,46 +13591,6 @@ def open_sanmar_cart_browser():
         return False, "Could not prepare SanMar setup profile. Check the local server log.", {}
 
 
-def _launch_paycom_credential_configuration():
-    """Open the existing Windows credential CLI in its own visible console."""
-    if normalize_os_name() != "windows":
-        raise RuntimeError("Paycom credential configuration is available on Windows only.")
-    if not os.path.isfile(WINDOWS_CREDENTIAL_MANAGER_SCRIPT):
-        raise RuntimeError("The Windows credential manager script is missing.")
-    subprocess.Popen(
-        [
-            _resolve_console_python(),
-            WINDOWS_CREDENTIAL_MANAGER_SCRIPT,
-            "set",
-            "paycom",
-        ],
-        cwd=SCRIPT_DIR,
-        creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
-    )
-
-
-@app.route("/automation/paycom-credential-configure", methods=["POST"])
-def automation_paycom_credential_configure():
-    if normalize_os_name() != "windows":
-        return jsonify(
-            {
-                "success": False,
-                "message": "Paycom credential configuration is available on Windows only.",
-            }
-        ), 409
-    try:
-        _launch_paycom_credential_configuration()
-    except Exception as exc:
-        logger.exception("Could not launch Paycom Windows credential configuration")
-        return jsonify({"success": False, "message": str(exc)}), 500
-    message = (
-        "Windows credential configuration opened. Complete the prompts in that window. "
-        "No Paycom login or hours sync was attempted."
-    )
-    log_automation_result("paycom.credentials.configure", True, message, source="server.py")
-    return jsonify({"success": True, "message": message})
-
-
 @app.route("/automation/chrome-profile-setup", methods=["POST"])
 def automation_chrome_profile_setup():
     data = request.get_json(silent=True) or {}
@@ -13648,14 +13603,14 @@ def automation_chrome_profile_setup():
     profile_path = target["profile_path"]
     os.makedirs(profile_path, exist_ok=True)
     try:
-        if profile_key == "paycom" and normalize_os_name() in {"macos", "windows"}:
+        if profile_key == "paycom" and normalize_os_name() == "macos":
             chrome_exe = _resolve_chrome_executable()
             if not chrome_exe:
                 raise RuntimeError("Google Chrome is not installed.")
             result = open_native_setup_profile(profile_key, profile_path, target["url"], chrome_exe)
             msg = (
-                "Opened Paycom in native Chrome. Complete login normally, then close every "
-                "Chrome window before running Paycom automation."
+                "Opened native Paycom setup. Complete login, select Remember this device, "
+                "and solve verification manually."
             )
         else:
             result = open_and_prefill_setup_profile(profile_key, profile_path, target["url"])
@@ -14055,16 +14010,10 @@ def _restart_server_process():
         create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         hidden_launcher = os.path.join(SCRIPT_DIR, "start_server_hidden.vbs")
         if os.name == "nt" and os.path.exists(hidden_launcher):
-            restart_env = os.environ.copy()
-            # Let the old server release its listener before the replacement
-            # inspects the port. Without this handoff delay, the child can
-            # taskkill its still-running parent and strand Windows sockets.
-            restart_env["AUTOMATION_RESTART_DELAY_SECONDS"] = "2"
             subprocess.Popen(
                 ["wscript.exe", hidden_launcher],
                 cwd=SCRIPT_DIR,
                 creationflags=create_no_window,
-                env=restart_env,
             )
             return True, "Server restart requested (hidden launcher)."
 
@@ -14236,13 +14185,7 @@ def kill_existing_server(port=SERVER_PORT):
         for pid in candidate_pids:
             if pid == os.getpid():
                 continue
-            try:
-                process = psutil.Process(pid)
-            except psutil.NoSuchProcess:
-                # The listener can disappear between net_connections() and
-                # Process(). That means the previous server is already gone,
-                # which is the successful outcome this cleanup is waiting for.
-                continue
+            process = psutil.Process(pid)
             if not _process_runs_this_server(process):
                 logger.error("Port %s is occupied by an unrelated process %s; it was not stopped.", port, pid)
                 continue

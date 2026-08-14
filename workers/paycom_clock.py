@@ -24,10 +24,7 @@ from automation_runtime import (
     build_chrome_driver,
     configure_console_utf8,
     find_visible,
-    is_chrome_profile_in_use,
-    is_repo_managed_automation_profile,
     kill_stale_chrome,
-    resolve_paycom_profile_path,
     safe_driver_quit,
     safe_get_with_partial_load,
     safe_take_screenshot,
@@ -40,7 +37,6 @@ from config import (
 from paycom_login import (
     find_paycom_login_fields,
     is_paycom_login_page,
-    paycom_trusted_session_required,
     submit_paycom_login,
 )
 
@@ -204,17 +200,11 @@ def _is_retryable_exception(err):
 
 def _run_once(action, effective_dry_run, profile_path, headless_mode):
     driver = None
-    managed_profile = is_repo_managed_automation_profile(profile_path)
     start_time = time.time()
     mode_name = "headless" if headless_mode else "visible"
     try:
         print(f"Launching Chrome ({mode_name})...")
-        if managed_profile:
-            kill_stale_chrome(profile_path, profile_label="Paycom automation")
-        elif is_chrome_profile_in_use(profile_path):
-            raise RuntimeError(
-                "Regular Chrome is open. Close every Chrome window before running Paycom automation."
-            )
+        kill_stale_chrome(profile_path, profile_label="Paycom automation")
         driver = build_chrome_driver(
             profile_path,
             headless_mode=headless_mode,
@@ -240,7 +230,6 @@ def _run_once(action, effective_dry_run, profile_path, headless_mode):
             driver,
             (username_field, password_field, pin_field),
             context=f"clock-{action} in {mode_name} mode",
-            allow_credential_submission=not paycom_trusted_session_required(),
         )
 
         # Step 3: Navigate to the time clock page (only if not already there).
@@ -261,7 +250,6 @@ def _run_once(action, effective_dry_run, profile_path, headless_mode):
             driver,
             (username_field, password_field, pin_field),
             context=f"clock-{action} time-clock route in {mode_name} mode",
-            allow_credential_submission=not paycom_trusted_session_required(),
         )
         if route_login_submitted and "timeclock" not in (driver.current_url or "").lower():
             safe_get_with_partial_load(driver, PAYCOM_URL, "Paycom web time clock after login")
@@ -386,7 +374,7 @@ def _run_once(action, effective_dry_run, profile_path, headless_mode):
         return False, error_msg, bool(headless_mode and _is_retryable_exception(err))
     finally:
         if driver:
-            safe_driver_quit(driver, profile_path=profile_path if managed_profile else None)
+            safe_driver_quit(driver, profile_path=profile_path)
 
 
 def run(action, dry_run=None):
@@ -404,7 +392,7 @@ def run(action, dry_run=None):
         write_result(False, "Invalid action argument.")
         sys.exit(1)
 
-    profile_path = resolve_paycom_profile_path()
+    profile_path = os.path.join(SCRIPT_DIR, "chrome_profile")
     effective_dry_run = bool(CONFIG_PAYCOM_DRY_RUN) if dry_run is None else bool(dry_run)
     print(f"Starting Paycom clock-{action} automation...")
     if effective_dry_run:

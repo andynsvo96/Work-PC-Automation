@@ -6,7 +6,6 @@ import argparse
 import os
 import subprocess
 import sys
-import time
 
 from version_state import get_git_version_state
 
@@ -66,18 +65,6 @@ def _write_status(message):
         print(message, file=stream)
     except (AttributeError, OSError):
         pass
-
-
-def _wait_for_restart_handoff():
-    """Consume the one-shot delay used by an in-app Windows restart."""
-    raw_delay = str(os.environ.pop("AUTOMATION_RESTART_DELAY_SECONDS", "") or "").strip()
-    if not raw_delay:
-        return
-    try:
-        delay = float(raw_delay)
-    except (TypeError, ValueError):
-        return
-    time.sleep(max(0.0, min(delay, 30.0)))
 
 
 def _run(repo_dir, *args, timeout=120):
@@ -338,8 +325,6 @@ def main(argv=None):
     parser.add_argument("--no-fetch", action="store_true")
     options = parser.parse_args(argv)
     repo_dir = os.path.abspath(options.repo)
-    if options.action == "start":
-        _wait_for_restart_handoff()
     if options.action == "status":
         _write_status(get_git_version_state(repo_dir))
         return 0

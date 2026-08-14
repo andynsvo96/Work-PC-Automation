@@ -153,5 +153,6 @@ class CredentialStoreTests(unittest.TestCase):
         self.assertEqual(value.password, "new-password")
         self.assertEqual(value.pin, "0123")
 
+
 if __name__ == "__main__":
     unittest.main()
