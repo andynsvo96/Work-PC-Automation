@@ -53,8 +53,9 @@ class ChromeProfileInUseError(RuntimeError):
 def open_native_setup_profile(service, profile_path, url, chrome_executable):
     """Open a real Chrome profile without any WebDriver/testing identity.
 
-    Paycom's initial macOS trust enrollment must be completed in native Chrome
-    because its invisible hCaptcha can reject WebDriver-controlled sessions.
+    Paycom's initial device-trust enrollment must be completed in native Chrome
+    because its invisible hCaptcha can reject WebDriver-controlled sessions,
+    including otherwise-correct six-digit MFA codes.
     This function does not automate or bypass login, MFA, or CAPTCHA.
     """
     service = str(service or "").strip().lower()

@@ -13603,14 +13603,14 @@ def automation_chrome_profile_setup():
     profile_path = target["profile_path"]
     os.makedirs(profile_path, exist_ok=True)
     try:
-        if profile_key == "paycom" and normalize_os_name() == "macos":
+        if profile_key == "paycom":
             chrome_exe = _resolve_chrome_executable()
             if not chrome_exe:
                 raise RuntimeError("Google Chrome is not installed.")
             result = open_native_setup_profile(profile_key, profile_path, target["url"], chrome_exe)
             msg = (
-                "Opened native Paycom setup. Complete login, select Remember this device, "
-                "and solve verification manually."
+                "Opened the dedicated Paycom profile in native Chrome. Complete login, select "
+                "Remember this device, and solve verification manually."
             )
         else:
             result = open_and_prefill_setup_profile(profile_key, profile_path, target["url"])

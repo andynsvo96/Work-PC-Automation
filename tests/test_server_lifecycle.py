@@ -7,6 +7,33 @@ import server
 
 
 class ServerLifecycleTests(unittest.TestCase):
+    def test_windows_paycom_setup_uses_native_dedicated_profile(self):
+        target = {
+            "label": "Paycom",
+            "profile_path": r"C:\Automation\chrome_profile",
+            "url": "https://example.test/paycom",
+        }
+        result = types.SimpleNamespace(fields_filled=())
+        with (
+            server.app.test_request_context(json={"profile": "paycom"}),
+            mock.patch.object(server, "_chrome_profile_setup_targets", return_value={"paycom": target}),
+            mock.patch.object(server.os, "makedirs"),
+            mock.patch.object(server, "_resolve_chrome_executable", return_value=r"C:\Chrome\chrome.exe"),
+            mock.patch.object(server, "open_native_setup_profile", return_value=result) as native,
+            mock.patch.object(server, "open_and_prefill_setup_profile") as webdriver_setup,
+        ):
+            response = server.automation_chrome_profile_setup()
+
+        payload = response.get_json()
+        self.assertTrue(payload["success"])
+        native.assert_called_once_with(
+            "paycom",
+            target["profile_path"],
+            target["url"],
+            r"C:\Chrome\chrome.exe",
+        )
+        webdriver_setup.assert_not_called()
+
     def test_windows_existing_server_termination_preserves_replacement_descendants(self):
         connection = types.SimpleNamespace(
             pid=123,

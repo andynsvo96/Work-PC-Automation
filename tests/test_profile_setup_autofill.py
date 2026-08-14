@@ -153,6 +153,24 @@ class ProfileSetupAutofillTests(unittest.TestCase):
         self.assertFalse(any("mock-keychain" in arg.lower() for arg in args))
         self.assertFalse(result.credential_available)
 
+    def test_windows_native_setup_keeps_paycom_in_dedicated_profile(self):
+        with mock.patch.object(setup, "is_chrome_profile_in_use", return_value=False), mock.patch.object(
+            setup.subprocess, "Popen"
+        ) as popen, mock.patch.object(setup.os, "makedirs"), mock.patch.object(setup.sys, "platform", "win32"):
+            setup.open_native_setup_profile(
+                "paycom",
+                r"C:\Automation\chrome_profile",
+                "https://example.test/login",
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            )
+
+        args = popen.call_args.args[0]
+        self.assertEqual(args[0], r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+        self.assertIn(r"--user-data-dir=C:\Automation\chrome_profile", args)
+        self.assertIn("--profile-directory=Default", args)
+        self.assertFalse(any("webdriver" in arg.lower() for arg in args))
+        self.assertFalse(any("remote-debugging" in arg.lower() for arg in args))
+
 
 if __name__ == "__main__":
     unittest.main()
