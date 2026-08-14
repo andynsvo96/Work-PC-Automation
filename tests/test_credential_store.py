@@ -153,6 +153,52 @@ class CredentialStoreTests(unittest.TestCase):
         self.assertEqual(value.password, "new-password")
         self.assertEqual(value.pin, "0123")
 
+    def test_paycom_repair_source_reuses_legacy_username_and_password(self):
+        legacy = credential_store.StoredCredential(
+            credential_store.PAYCOM_CREDENTIAL_TARGET,
+            "paycom-user",
+            "legacy-password",
+        )
+        with mock.patch.object(credential_store, "read_credential", return_value=legacy):
+            source = credential_store.read_paycom_repair_source()
+        self.assertEqual(source.username, "paycom-user")
+        self.assertEqual(source.password, "legacy-password")
+
+    def test_paycom_repair_adds_pin_writes_structured_secret_and_verifies(self):
+        legacy = credential_store.StoredCredential(
+            credential_store.PAYCOM_CREDENTIAL_TARGET,
+            "paycom-user",
+            "legacy-password",
+        )
+        complete = credential_store.StoredCredential(
+            credential_store.PAYCOM_CREDENTIAL_TARGET,
+            "paycom-user",
+            credential_store.build_paycom_secret("legacy-password", "0123"),
+        )
+        with mock.patch.object(
+            credential_store, "read_credential", side_effect=[legacy, complete]
+        ), mock.patch.object(credential_store, "write_credential") as write:
+            repaired = credential_store.repair_paycom_credential("0123")
+
+        target, username, secret = write.call_args.args
+        self.assertEqual(target, credential_store.PAYCOM_CREDENTIAL_TARGET)
+        self.assertEqual(username, "paycom-user")
+        self.assertEqual(json.loads(secret), {"password": "legacy-password", "pin": "0123"})
+        self.assertEqual(repaired.pin, "0123")
+
+    def test_paycom_repair_rejects_invalid_pin_without_writing(self):
+        legacy = credential_store.StoredCredential(
+            credential_store.PAYCOM_CREDENTIAL_TARGET,
+            "paycom-user",
+            "legacy-password",
+        )
+        with mock.patch.object(credential_store, "read_credential", return_value=legacy), mock.patch.object(
+            credential_store, "write_credential"
+        ) as write:
+            with self.assertRaises(credential_store.CredentialStoreError):
+                credential_store.repair_paycom_credential("12")
+        write.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

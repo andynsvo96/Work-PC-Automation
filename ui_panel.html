@@ -1639,10 +1639,14 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
       <section class='settings-section' data-settings-section='connections'>
         <div class='settings-section-heading'>
           <div><h2>Connections</h2><p>Review the browser profiles used by each connected service.</p></div>
-          <details class='section-note'><summary>How setup works</summary><div class='section-note-body'><p>Setup opens the visible login profile and fills credentials stored in the system credential manager. It does not submit the form.</p></div></details>
+          <details class='section-note'><summary>How setup works</summary><div class='section-note-body'><p>Profile setup opens the visible login profile and fills credentials already stored in the system credential manager. A manual browser login refreshes the Chrome session but does not replace an incomplete Windows credential. Use Repair Paycom Login for that.</p></div></details>
         </div>
         <div class='settings-panel-card'>
           <p class='settings-connections-note'>Choose a service to open its setup window. You can review the filled username, password, and Paycom PIN before continuing.</p>
+          <div class='settings-panel-title'>
+            <div><h3>Paycom credential</h3><p>Reuse the saved username and password, add the missing PIN, and test hours sync.</p></div>
+            <button class='tiny' id='paycomCredentialRepairBtn' type='button' onclick='repairPaycomCredential(this)'>Repair Paycom Login</button>
+          </div>
           <div class='settings-connection-grid'>
             <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('paycom', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>P</span>Paycom</span><span class='settings-connection-action'>Open profile setup →</span></button>
             <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('crm', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>C</span>CRM</span><span class='settings-connection-action'>Open profile setup →</span></button>
@@ -3352,6 +3356,21 @@ async function openChromeProfileSetup(profile, button = null) {
       setStatus(d.message || 'Chrome profile setup window opened.', 'settings');
     } catch (e) {
       setStatus('Chrome profile setup failed: ' + e.message, 'settings');
+    }
+  });
+}
+
+async function repairPaycomCredential(button = null) {
+  return withButtonBusy(button, 'WAITING FOR PIN...', async () => {
+    setStatus('Opening a secure Paycom PIN window on the Windows computer...', 'settings');
+    try {
+      const d = await api('/automation/paycom-credential-repair', {method: 'POST'});
+      setStatus(d.message || 'Paycom credential repair finished.', 'settings');
+      if (d.sync_success) {
+        await loadStatus(false);
+      }
+    } catch (e) {
+      setStatus('Paycom credential repair failed: ' + e.message, 'settings');
     }
   });
 }

@@ -65,6 +65,14 @@ class PaycomCredential:
     pin: str
 
 
+@dataclass(frozen=True)
+class PaycomRepairSource:
+    """Reusable legacy Paycom login fields that are safe to migrate locally."""
+
+    username: str
+    password: str
+
+
 def _is_macos():
     return sys.platform == "darwin"
 
@@ -404,14 +412,14 @@ def _parse_paycom_credential(credential):
     if credential.username == "PIN":
         raise CredentialStoreError(
             "The saved Paycom credential contains only a legacy PIN. "
-            "Run 'python manage_windows_credentials.py set paycom' to save the username, password, and PIN."
+            "Use Repair Paycom Login in Settings to save the complete login."
         )
     try:
         payload = json.loads(credential.secret)
     except json.JSONDecodeError as exc:
         raise CredentialStoreError(
             "The saved Paycom credential is incomplete. "
-            "Run 'python manage_windows_credentials.py set paycom' to replace it."
+            "Use Repair Paycom Login in Settings to replace it."
         ) from exc
     username = str(credential.username or "").strip()
     password = str(payload.get("password") or "") if isinstance(payload, dict) else ""
@@ -419,9 +427,72 @@ def _parse_paycom_credential(credential):
     if not username or not password or not pin.isdigit() or len(pin) != 4:
         raise CredentialStoreError(
             "The saved Paycom credential must include a username, password, and four-digit PIN. "
-            "Run 'python manage_windows_credentials.py set paycom' to replace it."
+            "Use Repair Paycom Login in Settings to replace it."
         )
     return PaycomCredential(username=username, password=password, pin=pin)
+
+
+def read_paycom_repair_source():
+    """Recover a username/password pair from the current Paycom entry.
+
+    The July 2026 Windows entry stored the Paycom username in ``UserName`` and
+    the password as an unstructured secret.  It omitted the four-digit PIN.
+    This helper deliberately returns only the two reusable fields and never
+    logs or serializes either value.
+    """
+    credential = read_credential(PAYCOM_CREDENTIAL_TARGET)
+    try:
+        complete = _parse_paycom_credential(credential)
+    except CredentialStoreError:
+        complete = None
+    if complete is not None:
+        return PaycomRepairSource(username=complete.username, password=complete.password)
+
+    username = str(credential.username or "").strip()
+    password = str(credential.secret or "")
+    if not username or username == "PIN" or not password:
+        raise CredentialStoreError(
+            "The existing Paycom entry does not contain a reusable username and password."
+        )
+
+    # Older keyring-backed releases could wrap the native values once more.
+    # Unwrap that known portable shape when present; otherwise the legacy
+    # secret itself is the password that needs the missing PIN added.
+    try:
+        portable = json.loads(password)
+    except json.JSONDecodeError:
+        portable = None
+    if isinstance(portable, dict) and portable.get("username") and portable.get("secret"):
+        nested = StoredCredential(
+            target=PAYCOM_CREDENTIAL_TARGET,
+            username=str(portable["username"]),
+            secret=str(portable["secret"]),
+        )
+        try:
+            complete = _parse_paycom_credential(nested)
+        except CredentialStoreError:
+            username = str(nested.username or "").strip()
+            password = str(nested.secret or "")
+        else:
+            username = complete.username
+            password = complete.password
+
+    if not username or username == "PIN" or not password:
+        raise CredentialStoreError(
+            "The existing Paycom entry does not contain a reusable username and password."
+        )
+    return PaycomRepairSource(username=username, password=password)
+
+
+def repair_paycom_credential(pin):
+    """Add the missing PIN to a reusable legacy Paycom entry and verify it."""
+    source = read_paycom_repair_source()
+    secret = build_paycom_secret(source.password, pin)
+    write_credential(PAYCOM_CREDENTIAL_TARGET, source.username, secret)
+    repaired = read_paycom_credential()
+    if repaired.username != source.username or repaired.password != source.password:
+        raise CredentialStoreError("The repaired Paycom credential could not be verified.")
+    return repaired
 
 
 def read_paycom_credential():

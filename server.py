@@ -111,6 +111,7 @@ def configure_server_logging():
 CLOCK_SCRIPT = os.path.join(WORKERS_DIR, "paycom_clock.py")
 SLACK_SCRIPT = os.path.join(WORKERS_DIR, "slack_team.py")
 PAYCOM_HOURS_SCRIPT = os.path.join(WORKERS_DIR, "paycom_hours.py")
+PAYCOM_CREDENTIAL_REPAIR_SCRIPT = os.path.join(SCRIPT_DIR, "paycom_credential_repair.py")
 CRM_SCRIPT = os.path.join(WORKERS_DIR, "crm_unlock_orders.py")
 CRM_ADDRESS_VALIDATOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_validate_address.py")
 CRM_PRODUCT_SEPARATOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_product_separator.py")
@@ -236,6 +237,7 @@ app_security_initialization_error = None
 app_login_attempts = {}
 app_login_lock = threading.RLock()
 clock_lock = threading.Lock()
+paycom_credential_repair_lock = threading.Lock()
 state_lock = threading.Lock()
 config_lock = threading.Lock()
 crm_lock = threading.Lock()
@@ -13589,6 +13591,105 @@ def open_sanmar_cart_browser():
     except Exception:
         logger.exception("Could not prepare SanMar cart setup profile")
         return False, "Could not prepare SanMar setup profile. Check the local server log.", {}
+
+
+def _run_paycom_credential_repair_dialog(timeout=300):
+    """Run the native repair prompt without placing secrets on the command line."""
+    if normalize_os_name() != "windows":
+        return "unsupported", "Paycom credential repair is currently available on Windows only."
+    if not os.path.isfile(PAYCOM_CREDENTIAL_REPAIR_SCRIPT):
+        return "error", "The Paycom credential repair helper is missing."
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    try:
+        completed = subprocess.run(
+            [_resolve_console_python(), PAYCOM_CREDENTIAL_REPAIR_SCRIPT],
+            cwd=SCRIPT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=max(30, int(timeout or 300)),
+            creationflags=creationflags,
+        )
+    except subprocess.TimeoutExpired:
+        return "error", "The Paycom repair window timed out before it was completed."
+    except Exception:
+        logger.exception("Could not launch the Paycom credential repair window")
+        return "error", "Could not open the Paycom credential repair window."
+
+    output = str(completed.stdout or "")
+    if completed.returncode == 0 and "PAYCOM_REPAIR_SAVED" in output:
+        return "saved", "Paycom credential saved."
+    if completed.returncode == 2 or "PAYCOM_REPAIR_CANCELLED" in output:
+        return "cancelled", "Paycom credential repair was canceled."
+    logger.warning("Paycom credential repair helper exited with code %s.", completed.returncode)
+    return "error", "Paycom credential repair could not save the updated login."
+
+
+@app.route("/automation/paycom-credential-repair", methods=["POST"])
+def automation_paycom_credential_repair():
+    if normalize_os_name() != "windows":
+        return jsonify(
+            {
+                "success": False,
+                "message": "Paycom credential repair is currently available on Windows only.",
+            }
+        ), 409
+    if not paycom_credential_repair_lock.acquire(blocking=False):
+        return jsonify(
+            {
+                "success": False,
+                "message": "The Paycom credential repair window is already open on Windows.",
+            }
+        ), 409
+
+    try:
+        log_automation_event(
+            "paycom.credentials.repair",
+            "STARTED",
+            "Native Paycom credential repair requested.",
+            source="server.py",
+        )
+        status, message = _run_paycom_credential_repair_dialog()
+        if status == "cancelled":
+            log_automation_event(
+                "paycom.credentials.repair", "CANCELED", message, source="server.py"
+            )
+            return jsonify({"success": False, "cancelled": True, "message": message})
+        if status != "saved":
+            log_automation_result(
+                "paycom.credentials.repair", False, message, source="server.py"
+            )
+            return jsonify({"success": False, "message": message}), 500
+
+        sync_ok, sync_message, hours, merged_days, _pto_days = _sync_paycom_hours_into_work_state(
+            "credential-repair",
+            update_total_hours=True,
+        )
+        if sync_ok:
+            final_message = (
+                f"Paycom login repaired and read-only hours sync passed: "
+                f"{hours:.2f} hours across {merged_days} day row(s)."
+            )
+        else:
+            final_message = (
+                "Paycom credential was saved, but the read-only hours sync still needs attention: "
+                f"{sync_message}"
+            )
+        log_automation_result(
+            "paycom.credentials.repair", sync_ok, final_message, source="server.py"
+        )
+        return jsonify(
+            {
+                "success": bool(sync_ok),
+                "credential_saved": True,
+                "sync_success": bool(sync_ok),
+                "week_hours": hours if sync_ok else None,
+                "day_rows_merged": merged_days if sync_ok else 0,
+                "message": final_message,
+            }
+        )
+    finally:
+        paycom_credential_repair_lock.release()
 
 
 @app.route("/automation/chrome-profile-setup", methods=["POST"])
