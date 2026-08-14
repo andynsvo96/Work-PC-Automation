@@ -218,7 +218,10 @@ SERVER_BIND_HOST = (
     if REMOTE_ACCESS_MODE != "tailscale" or LAN_REST_ACCESS_ENABLED
     else "127.0.0.1"
 )
-SERVER_PORT = 5123
+try:
+    SERVER_PORT = int(str(os.environ.get("AUTOMATION_SERVER_PORT") or "5123").strip())
+except (TypeError, ValueError):
+    SERVER_PORT = 5123
 CHROME_EXTENSION_BRIDGE_PROTOCOL = "automation.chrome-extension.bridge/v2"
 CLIPBOARD_PEER_URL = str(getattr(config_module, "AUTOMATION_CLIPBOARD_PEER_URL", "") or "").strip()
 SERVER_STARTED_AT = datetime.now()
@@ -14099,10 +14102,16 @@ def _restart_server_process():
         create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         hidden_launcher = os.path.join(SCRIPT_DIR, "start_server_hidden.vbs")
         if os.name == "nt" and os.path.exists(hidden_launcher):
+            restart_env = os.environ.copy()
+            # Let the old server release its listener before the replacement
+            # inspects the port. Without this handoff delay, the child can
+            # taskkill its still-running parent and strand Windows sockets.
+            restart_env["AUTOMATION_RESTART_DELAY_SECONDS"] = "2"
             subprocess.Popen(
                 ["wscript.exe", hidden_launcher],
                 cwd=SCRIPT_DIR,
                 creationflags=create_no_window,
+                env=restart_env,
             )
             return True, "Server restart requested (hidden launcher)."
 
@@ -14274,7 +14283,13 @@ def kill_existing_server(port=SERVER_PORT):
         for pid in candidate_pids:
             if pid == os.getpid():
                 continue
-            process = psutil.Process(pid)
+            try:
+                process = psutil.Process(pid)
+            except psutil.NoSuchProcess:
+                # The listener can disappear between net_connections() and
+                # Process(). That means the previous server is already gone,
+                # which is the successful outcome this cleanup is waiting for.
+                continue
             if not _process_runs_this_server(process):
                 logger.error("Port %s is occupied by an unrelated process %s; it was not stopped.", port, pid)
                 continue

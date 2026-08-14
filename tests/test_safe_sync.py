@@ -1,3 +1,4 @@
+import os
 import subprocess
 import unittest
 from unittest import mock
@@ -6,6 +7,16 @@ import safe_sync
 
 
 class SafeSyncTests(unittest.TestCase):
+    def test_restart_handoff_delay_is_consumed_once(self):
+        with (
+            mock.patch.dict(os.environ, {"AUTOMATION_RESTART_DELAY_SECONDS": "1.5"}),
+            mock.patch.object(safe_sync.time, "sleep") as sleep,
+        ):
+            safe_sync._wait_for_restart_handoff()
+            self.assertNotIn("AUTOMATION_RESTART_DELAY_SECONDS", os.environ)
+
+        sleep.assert_called_once_with(1.5)
+
     def test_status_output_is_safe_without_a_console(self):
         with mock.patch.object(safe_sync.sys, "stdout", None):
             safe_sync._write_status("hidden launcher")

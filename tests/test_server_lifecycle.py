@@ -7,6 +7,45 @@ import server
 
 
 class ServerLifecycleTests(unittest.TestCase):
+    def test_windows_restart_delays_replacement_handoff(self):
+        with (
+            mock.patch.object(server.os, "name", "nt"),
+            mock.patch.object(server.os.path, "exists", return_value=True),
+            mock.patch.object(server.subprocess, "Popen") as popen,
+        ):
+            ok, _message = server._restart_server_process()
+
+        self.assertTrue(ok)
+        self.assertEqual(
+            popen.call_args.kwargs["env"]["AUTOMATION_RESTART_DELAY_SECONDS"],
+            "2",
+        )
+
+    def test_vanished_listener_during_startup_is_already_stopped(self):
+        connection = types.SimpleNamespace(
+            pid=123,
+            status="LISTEN",
+            laddr=types.SimpleNamespace(port=5123),
+        )
+
+        class NoSuchProcess(Exception):
+            pass
+
+        fake_psutil = types.SimpleNamespace(
+            CONN_LISTEN="LISTEN",
+            NoSuchProcess=NoSuchProcess,
+            net_connections=mock.Mock(side_effect=[[connection], []]),
+            Process=mock.Mock(side_effect=NoSuchProcess(123)),
+        )
+
+        with (
+            mock.patch.object(server.os, "getpid", return_value=999),
+            mock.patch.dict(server.sys.modules, {"psutil": fake_psutil}),
+        ):
+            stopped = server.kill_existing_server(5123)
+
+        self.assertTrue(stopped)
+
     def test_windows_existing_server_termination_preserves_replacement_descendants(self):
         connection = types.SimpleNamespace(
             pid=123,
