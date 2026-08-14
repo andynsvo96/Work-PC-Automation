@@ -111,7 +111,7 @@ def configure_server_logging():
 CLOCK_SCRIPT = os.path.join(WORKERS_DIR, "paycom_clock.py")
 SLACK_SCRIPT = os.path.join(WORKERS_DIR, "slack_team.py")
 PAYCOM_HOURS_SCRIPT = os.path.join(WORKERS_DIR, "paycom_hours.py")
-PAYCOM_CREDENTIAL_REPAIR_SCRIPT = os.path.join(SCRIPT_DIR, "paycom_credential_repair.py")
+WINDOWS_CREDENTIAL_MANAGER_SCRIPT = os.path.join(SCRIPT_DIR, "manage_windows_credentials.py")
 CRM_SCRIPT = os.path.join(WORKERS_DIR, "crm_unlock_orders.py")
 CRM_ADDRESS_VALIDATOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_validate_address.py")
 CRM_PRODUCT_SEPARATOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_product_separator.py")
@@ -240,7 +240,6 @@ app_security_initialization_error = None
 app_login_attempts = {}
 app_login_lock = threading.RLock()
 clock_lock = threading.Lock()
-paycom_credential_repair_lock = threading.Lock()
 state_lock = threading.Lock()
 config_lock = threading.Lock()
 crm_lock = threading.Lock()
@@ -13596,91 +13595,44 @@ def open_sanmar_cart_browser():
         return False, "Could not prepare SanMar setup profile. Check the local server log.", {}
 
 
-def _run_paycom_credential_repair_dialog(timeout=300):
-    """Run the native repair prompt without placing secrets on the command line."""
+def _launch_paycom_credential_configuration():
+    """Open the existing Windows credential CLI in its own visible console."""
     if normalize_os_name() != "windows":
-        return "unsupported", "Paycom credential repair is currently available on Windows only."
-    if not os.path.isfile(PAYCOM_CREDENTIAL_REPAIR_SCRIPT):
-        return "error", "The Paycom credential repair helper is missing."
-
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-    try:
-        completed = subprocess.run(
-            [_resolve_console_python(), PAYCOM_CREDENTIAL_REPAIR_SCRIPT],
-            cwd=SCRIPT_DIR,
-            capture_output=True,
-            text=True,
-            timeout=max(30, int(timeout or 300)),
-            creationflags=creationflags,
-        )
-    except subprocess.TimeoutExpired:
-        return "error", "The Paycom repair window timed out before it was completed."
-    except Exception:
-        logger.exception("Could not launch the Paycom credential repair window")
-        return "error", "Could not open the Paycom credential repair window."
-
-    output = str(completed.stdout or "")
-    if completed.returncode == 0 and "PAYCOM_REPAIR_SAVED" in output:
-        return "saved", "Paycom credential saved."
-    if completed.returncode == 2 or "PAYCOM_REPAIR_CANCELLED" in output:
-        return "cancelled", "Paycom credential repair was canceled."
-    logger.warning("Paycom credential repair helper exited with code %s.", completed.returncode)
-    return "error", "Paycom credential repair could not save the updated login."
+        raise RuntimeError("Paycom credential configuration is available on Windows only.")
+    if not os.path.isfile(WINDOWS_CREDENTIAL_MANAGER_SCRIPT):
+        raise RuntimeError("The Windows credential manager script is missing.")
+    subprocess.Popen(
+        [
+            _resolve_console_python(),
+            WINDOWS_CREDENTIAL_MANAGER_SCRIPT,
+            "set",
+            "paycom",
+        ],
+        cwd=SCRIPT_DIR,
+        creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+    )
 
 
-@app.route("/automation/paycom-credential-repair", methods=["POST"])
-def automation_paycom_credential_repair():
+@app.route("/automation/paycom-credential-configure", methods=["POST"])
+def automation_paycom_credential_configure():
     if normalize_os_name() != "windows":
         return jsonify(
             {
                 "success": False,
-                "message": "Paycom credential repair is currently available on Windows only.",
+                "message": "Paycom credential configuration is available on Windows only.",
             }
         ), 409
-    if not paycom_credential_repair_lock.acquire(blocking=False):
-        return jsonify(
-            {
-                "success": False,
-                "message": "The Paycom credential repair window is already open on Windows.",
-            }
-        ), 409
-
     try:
-        log_automation_event(
-            "paycom.credentials.repair",
-            "STARTED",
-            "Native Paycom credential repair requested.",
-            source="server.py",
-        )
-        status, message = _run_paycom_credential_repair_dialog()
-        if status == "cancelled":
-            log_automation_event(
-                "paycom.credentials.repair", "CANCELED", message, source="server.py"
-            )
-            return jsonify({"success": False, "cancelled": True, "message": message})
-        if status != "saved":
-            log_automation_result(
-                "paycom.credentials.repair", False, message, source="server.py"
-            )
-            return jsonify({"success": False, "message": message}), 500
-
-        final_message = (
-            "Paycom credential repaired and verified locally. "
-            "No Paycom login or hours sync was attempted."
-        )
-        log_automation_result(
-            "paycom.credentials.repair", True, final_message, source="server.py"
-        )
-        return jsonify(
-            {
-                "success": True,
-                "credential_saved": True,
-                "sync_attempted": False,
-                "message": final_message,
-            }
-        )
-    finally:
-        paycom_credential_repair_lock.release()
+        _launch_paycom_credential_configuration()
+    except Exception as exc:
+        logger.exception("Could not launch Paycom Windows credential configuration")
+        return jsonify({"success": False, "message": str(exc)}), 500
+    message = (
+        "Windows credential configuration opened. Complete the prompts in that window. "
+        "No Paycom login or hours sync was attempted."
+    )
+    log_automation_result("paycom.credentials.configure", True, message, source="server.py")
+    return jsonify({"success": True, "message": message})
 
 
 @app.route("/automation/chrome-profile-setup", methods=["POST"])
