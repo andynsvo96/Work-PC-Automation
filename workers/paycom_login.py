@@ -1,5 +1,6 @@
 """Shared Paycom login form handling for hours and punch automations."""
 
+import os
 import time
 
 from selenium.common.exceptions import TimeoutException
@@ -9,6 +10,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from automation_runtime import find_visible
 from credential_store import read_paycom_credential
+import config as config_module
 
 
 PAYCOM_USERNAME_SELECTORS = [
@@ -43,6 +45,19 @@ PAYCOM_LOGIN_BUTTON_SELECTORS = [
     "button[type='submit']",
     "input[type='submit']",
 ]
+
+
+class PaycomTrustedSessionRequiredError(RuntimeError):
+    """Raised before WebDriver can create a new Paycom authentication attempt."""
+
+
+def paycom_trusted_session_required():
+    value = os.getenv("PAYCOM_REQUIRE_TRUSTED_SESSION")
+    if value is None:
+        value = getattr(config_module, "PAYCOM_REQUIRE_TRUSTED_SESSION", False)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def _normalize_text(text):
@@ -108,7 +123,13 @@ def _wait_for_browser_autofill(fields, timeout=2.0):
         time.sleep(0.1)
 
 
-def submit_paycom_login(driver, fields, *, context="Paycom"):
+def submit_paycom_login(
+    driver,
+    fields,
+    *,
+    context="Paycom",
+    allow_credential_submission=True,
+):
     """Submit a detected login form, preferring Chrome autofill before OS secrets.
 
     Returns True only when a login form was submitted. When there are no fields,
@@ -117,6 +138,12 @@ def submit_paycom_login(driver, fields, *, context="Paycom"):
     username_field, password_field, pin_field = fields
     if not any(fields):
         return False
+
+    if not allow_credential_submission:
+        raise PaycomTrustedSessionRequiredError(
+            "Paycom needs a native Chrome login. Open Paycom in regular Chrome, finish login, "
+            "then close Chrome before retrying. Automation did not submit credentials."
+        )
 
     _wait_for_browser_autofill(fields)
     missing_fields = [

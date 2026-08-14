@@ -1,5 +1,6 @@
 import os
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -14,6 +15,22 @@ import paycom_hours
 
 
 class BrowserProfileRuntimeTests(unittest.TestCase):
+    def test_paycom_can_use_an_explicit_external_trusted_profile(self):
+        configured = types.SimpleNamespace(PAYCOM_PROFILE_DIR=r"C:\Users\Test\Chrome\User Data")
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PAYCOM_PROFILE_DIR", None)
+            resolved = automation_runtime.resolve_paycom_profile_path(configured)
+
+        self.assertEqual(
+            resolved,
+            automation_runtime._normalize_profile_path_for_match(configured.PAYCOM_PROFILE_DIR),
+        )
+        self.assertFalse(automation_runtime.is_repo_managed_automation_profile(resolved))
+
+    def test_repository_paycom_profile_remains_safe_for_stale_cleanup(self):
+        profile = os.path.join(automation_runtime.SCRIPT_DIR, "chrome_profile")
+        self.assertTrue(automation_runtime.is_repo_managed_automation_profile(profile))
+
     def test_profile_in_use_matches_only_the_exact_chrome_profile(self):
         profile = "/tmp/profile-in-use"
         with mock.patch.object(
@@ -25,6 +42,31 @@ class BrowserProfileRuntimeTests(unittest.TestCase):
             ],
         ):
             self.assertTrue(automation_runtime.is_chrome_profile_in_use(profile))
+
+    def test_default_chrome_profile_is_detected_without_user_data_switch(self):
+        default_profile = automation_runtime._default_chrome_user_data_dir()
+        self.assertTrue(default_profile)
+        with mock.patch.object(
+            automation_runtime,
+            "_collect_chrome_process_entries_with_psutil",
+            return_value=[
+                ("101", r'"C:\Program Files\Google\Chrome\Application\chrome.exe"'),
+                ("102", r'chrome.exe --type=renderer'),
+            ],
+        ):
+            self.assertTrue(automation_runtime.is_chrome_profile_in_use(default_profile))
+
+    def test_custom_profile_children_do_not_look_like_default_chrome(self):
+        default_profile = automation_runtime._default_chrome_user_data_dir()
+        with mock.patch.object(
+            automation_runtime,
+            "_collect_chrome_process_entries_with_psutil",
+            return_value=[
+                ("101", r'chrome.exe --user-data-dir=C:\Automation\chrome_profile'),
+                ("102", r'chrome.exe --type=renderer'),
+            ],
+        ):
+            self.assertFalse(automation_runtime.is_chrome_profile_in_use(default_profile))
 
     def test_persistent_profile_is_isolated_by_operating_system(self):
         profile = os.path.join(automation_runtime.SCRIPT_DIR, "slack_chrome_profile")

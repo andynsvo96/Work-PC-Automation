@@ -39,6 +39,7 @@ from automation_runtime import (
     is_chrome_profile_in_use,
     resolve_automation_profile_path,
     resolve_existing_automation_profile_path,
+    resolve_paycom_profile_path,
     safe_driver_quit,
     safe_get_with_partial_load,
 )
@@ -13553,7 +13554,7 @@ def _chrome_profile_setup_targets():
     return {
         "paycom": {
             "label": "Paycom",
-            "profile_path": _resolve_profile_path("chrome_profile"),
+            "profile_path": resolve_paycom_profile_path(config_module),
             "url": str(getattr(config_module, "PAYCOM_URL", "") or "https://www.paycomonline.net/"),
         },
         "crm": {
@@ -13647,14 +13648,14 @@ def automation_chrome_profile_setup():
     profile_path = target["profile_path"]
     os.makedirs(profile_path, exist_ok=True)
     try:
-        if profile_key == "paycom" and normalize_os_name() == "macos":
+        if profile_key == "paycom" and normalize_os_name() in {"macos", "windows"}:
             chrome_exe = _resolve_chrome_executable()
             if not chrome_exe:
                 raise RuntimeError("Google Chrome is not installed.")
             result = open_native_setup_profile(profile_key, profile_path, target["url"], chrome_exe)
             msg = (
-                "Opened native Paycom setup. Complete login, select Remember this device, "
-                "and solve verification manually."
+                "Opened Paycom in native Chrome. Complete login normally, then close every "
+                "Chrome window before running Paycom automation."
             )
         else:
             result = open_and_prefill_setup_profile(profile_key, profile_path, target["url"])

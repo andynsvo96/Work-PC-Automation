@@ -44,6 +44,13 @@ AUTOMATION_CLIPBOARD_PEER_URL = ""
 PAYCOM_URL = "https://www.paycomonline.net/v4/ee/web.php/timeclock/WEB04"
 PAYCOM_HOURS_URL = "https://www.paycomonline.net/v4/ee/web.php/timecard/WEB02#!timecard-view"
 PAYCOM_DRY_RUN = True
+# Optional Chrome user-data directory for Paycom only. Leave blank to use the
+# dedicated repository profile. A trusted native profile can be selected on a
+# machine where WebDriver credential submission causes repeated verification.
+PAYCOM_PROFILE_DIR = ""
+# When True, automation never submits a fresh Paycom login. It only reuses an
+# already-authenticated native Chrome session and fails safely when login is needed.
+PAYCOM_REQUIRE_TRUSTED_SESSION = False
 
 # Slack Automation Configuration
 SLACK_CHANNEL_URL_PROD = ""

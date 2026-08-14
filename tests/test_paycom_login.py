@@ -42,6 +42,21 @@ class PaycomLoginTests(unittest.TestCase):
         self.assertFalse(submitted)
         find_visible.assert_not_called()
 
+    def test_trusted_session_mode_never_submits_login(self):
+        fields = (_Field("saved-user"), _Field("saved-password"), _Field("1234"))
+        with mock.patch.object(paycom_login, "find_visible") as find_visible, mock.patch.object(
+            paycom_login, "read_paycom_credential"
+        ) as read_credential:
+            with self.assertRaises(paycom_login.PaycomTrustedSessionRequiredError):
+                paycom_login.submit_paycom_login(
+                    mock.Mock(),
+                    fields,
+                    allow_credential_submission=False,
+                )
+
+        find_visible.assert_not_called()
+        read_credential.assert_not_called()
+
     def test_browser_autofill_is_used_without_reading_os_credential(self):
         fields = (_Field("saved-user"), _Field("saved-password"), _Field("1234"))
         button = _Button()
