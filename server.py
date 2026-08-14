@@ -13661,30 +13661,18 @@ def automation_paycom_credential_repair():
             )
             return jsonify({"success": False, "message": message}), 500
 
-        sync_ok, sync_message, hours, merged_days, _pto_days = _sync_paycom_hours_into_work_state(
-            "credential-repair",
-            update_total_hours=True,
+        final_message = (
+            "Paycom credential repaired and verified locally. "
+            "No Paycom login or hours sync was attempted."
         )
-        if sync_ok:
-            final_message = (
-                f"Paycom login repaired and read-only hours sync passed: "
-                f"{hours:.2f} hours across {merged_days} day row(s)."
-            )
-        else:
-            final_message = (
-                "Paycom credential was saved, but the read-only hours sync still needs attention: "
-                f"{sync_message}"
-            )
         log_automation_result(
-            "paycom.credentials.repair", sync_ok, final_message, source="server.py"
+            "paycom.credentials.repair", True, final_message, source="server.py"
         )
         return jsonify(
             {
-                "success": bool(sync_ok),
+                "success": True,
                 "credential_saved": True,
-                "sync_success": bool(sync_ok),
-                "week_hours": hours if sync_ok else None,
-                "day_rows_merged": merged_days if sync_ok else 0,
+                "sync_attempted": False,
                 "message": final_message,
             }
         )

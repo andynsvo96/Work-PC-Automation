@@ -67,7 +67,7 @@ def show_repair_dialog():
         root.destroy()
 
     ttk.Button(button_row, text="Cancel", command=cancel).grid(row=0, column=0, padx=(0, 8))
-    ttk.Button(button_row, text="Save and Test", command=save).grid(row=0, column=1)
+    ttk.Button(button_row, text="Save", command=save).grid(row=0, column=1)
     root.protocol("WM_DELETE_WINDOW", cancel)
     root.bind("<Escape>", lambda _event: cancel())
     root.bind("<Return>", lambda _event: save())
