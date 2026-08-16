@@ -231,6 +231,19 @@ SANMAR_PRODUCT_COLOR_ALIASES = {
     ("LST402", "PNKRASPBERRYHTHR"): ["Pink Raspberry Heather"],
     ("LST402", "PONDBLUEHTHR"): ["Pond Blue Heather"],
     ("LST402", "PONDBLUHTHR"): ["Pond Blue Heather"],
+    # CRM truncates ST404's SanMar color label to "Black Triad So".
+    ("ST404", "BLACKTRIADSO"): ["Black Triad Solid"],
+    ("ST404", "BLACKTRIADSLD"): ["Black Triad Solid"],
+    ("ST404", "BLACKTRIADSOLID"): ["Black Triad Solid"],
+    # CRM omits SanMar's slash spacing and truncates some STC13 labels.
+    ("STC13", "BLACKWHITE"): ["Black/ White"],
+    ("STC13", "TROYALWHITE"): ["True Royal/ White"],
+    ("STC13", "TRUEROYALWHITE"): ["True Royal/ White"],
+    ("STC13", "TRUENAVYGOLD"): ["True Navy/ Gold"],
+    ("STC13", "TRUENAVYWHIT"): ["True Navy/ White"],
+    ("STC13", "TRUENAVYWHITE"): ["True Navy/ White"],
+    ("STC13", "TRUEREDWHITE"): ["True Red/ White"],
+    ("STC13", "WHITEBLACK"): ["White/ Black"],
     ("K700", "RIVERBLNV"): ["River Blue Navy"],
 }
 SANMAR_KNOWN_COLOR_NAMES = (

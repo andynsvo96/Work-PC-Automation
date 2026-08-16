@@ -3015,7 +3015,10 @@ function queueRunHistoryHtml(task) {
               ? `<button class='secondary tiny' type='button' data-order-ids="${esc(scannerOrderIds.join(','))}" data-order-details="${esc(scannerDetails)}" data-order-label="${esc(`Sheets Scanner Orders | ${fmtDateTime(when)}`)}" onclick='event.stopPropagation();openCrmOrderIdsDialogFromButton(this)'>View ${esc(String(scannerOrderCount || scannerOrderIds.length))} Order${(scannerOrderCount || scannerOrderIds.length) === 1 ? '' : 's'}</button>`
               : '-'}</td>`
           : '';
-        return `<tr><td>${esc(runNumber)}</td>${historyWhenCellHtml(fmtDateTime(when), latestRows.has(row))}${progress}<td>${esc(fmtDuration(row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${esc(ok ? 'Completed' : 'Needs attention')}</td><td>${esc(row.message || '')}</td>${processingReport}${scannerReport}</tr>`;
+        const historyMessage = ok
+          ? (row.message || '')
+          : conciseAutomationFailureMessage(row.message || '', {}, task.label);
+        return `<tr><td>${esc(runNumber)}</td>${historyWhenCellHtml(fmtDateTime(when), latestRows.has(row))}${progress}<td>${esc(fmtDuration(row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${esc(ok ? 'Completed' : 'Needs attention')}</td><td>${esc(historyMessage)}</td>${processingReport}${scannerReport}</tr>`;
       }).join('')}</tbody>
     </table>`;
 }
@@ -3121,9 +3124,12 @@ function renderQueue(payload) {
     const advanced = task.advanced_summary ? ` | ${task.advanced_summary}` : '';
     const isProcessingTask = String(task.label || '').toLowerCase().includes('processing');
     const orderProgressLabel = isProcessingTask ? currentCrmProcessingOrderProgressLabel() : '';
-    const messageText = isProcessingTask
+    const rawMessageText = isProcessingTask
       ? stripDuplicateCrmProcessingProgress(status === 'idle' ? '' : (task.message || ''), orderProgressLabel)
       : (task.waiting_reason || (status === 'idle' ? '' : (task.message || '')));
+    const messageText = status === 'failed'
+      ? conciseAutomationFailureMessage(rawMessageText, resultContext, task.label)
+      : rawMessageText;
     const progressLabel = isProcessingTask ? '' : queueTaskProgressLabel(task);
     const progressText = progressLabel && !String(messageText).includes(progressLabel) ? ` | ${progressLabel}` : '';
     const msg = messageText ? ` | ${messageText}` : '';
@@ -3610,6 +3616,46 @@ function toggleConsoleAutoScroll() {
 }
 function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function conciseAutomationFailureMessage(message, payload = {}, automationLabel = 'Automation') {
+  const runtime = payload && payload.runtime && typeof payload.runtime === 'object' ? payload.runtime : {};
+  const resultPayload = runtime.payload && typeof runtime.payload === 'object' ? runtime.payload : payload;
+  const contextReport = resultPayload && resultPayload.report && !Array.isArray(resultPayload.report) ? resultPayload.report : {};
+  const baseRows = [
+    ...(Array.isArray(resultPayload && resultPayload.report) ? resultPayload.report : []),
+    ...(Array.isArray(resultPayload && resultPayload.order_results) ? resultPayload.order_results : []),
+    ...(Array.isArray(resultPayload && resultPayload.order_details) ? resultPayload.order_details : []),
+    ...(Array.isArray(resultPayload && resultPayload.step_results) ? resultPayload.step_results : []),
+    ...(Array.isArray(contextReport.order_details) ? contextReport.order_details : []),
+  ];
+  const rows = baseRows.concat(baseRows.flatMap((row) => Array.isArray(row && row.errors) ? row.errors : []));
+  const evidence = [String(message || '')];
+  rows.filter((row) => row && !Boolean(row.success)).forEach((row) => {
+    evidence.push(String(row.outcome || ''), String(row.message || ''), String(row.status || ''));
+  });
+  const text = evidence.join(' ').toLowerCase();
+  const mappings = [
+    [['sanmar_color_not_found', 'color could not be selected', 'color mismatch', 'selected color'], 'Stock color mismatch detected.'],
+    [['sanmar_product_not_found', 'product could not be found'], 'Stock product not found.'],
+    [['no_single_warehouse', 'no available inventory', 'insufficient stock', 'out of stock'], 'Required stock is unavailable.'],
+    [['sanmar_cart_not_empty', 'shopping box already has items'], 'SanMar cart needs review.'],
+    [['sanmar_inventory_missing', 'inventory table was not found'], 'SanMar inventory could not be read.'],
+    [['eta_after_due_date', 'not before the crm due date'], 'Stock would arrive too late.'],
+    [['crm_data_missing', 'crm_product_data_missing', 'crm_quantities_missing'], 'CRM order data is incomplete.'],
+    [['address', 'postal code', 'zip code'], 'Address validation failed.'],
+    [['separator', 'separation'], 'Product separation failed.'],
+    [['split', 'division'], 'Order split failed.'],
+    [['email verification', 'login', 'authentication', 'challenge'], 'Login verification is required.'],
+    [['manual order', 'recording_crm'], 'CRM stock recording failed.'],
+    [['shipping is too expensive', 'shipment cost', 'shipping cost'], 'Shipping cost exceeds the limit.'],
+    [['timed out', 'timeout'], 'Automation timed out.'],
+    [['browser session', 'webdriver', 'chrome failed'], 'Browser session failed.'],
+  ];
+  for (const [needles, concise] of mappings) {
+    if (needles.some((needle) => text.includes(needle))) return concise;
+  }
+  const label = String(automationLabel || 'Automation').replace(/\s+Order\s+\d{7}.*$/i, '').trim();
+  return `${label || 'Automation'} needs attention.`;
 }
 function fmtHours(v) { const n = Number(v); return Number.isFinite(n) ? n.toFixed(2) : '-'; }
 function fmtDateTime(v) {
@@ -6720,9 +6766,12 @@ function renderCrmProcessingStatus(payload) {
   const runningSelectionText = runningSteps.length > 0
     ? `${formatCrmAddressFilterLabel(runningFilter)} | ${runningSteps.map((step) => formatCrmProcessingStepLabelForState(step, state)).join(' + ')}.`
     : `${formatCrmAddressFilterLabel(runningFilter)} | none selected.`;
-  const runtimeText = running
+  const rawRuntimeText = running
     ? `${runningSelectionText} ${runtime.lastMessage || ''}`.trim()
     : (state.last_run_message || 'No automated processing runs yet.');
+  const runtimeText = !running && lastSuccess === false
+    ? conciseAutomationFailureMessage(rawRuntimeText, {step_results: state.last_step_results || []}, 'Automate Processing')
+    : rawRuntimeText;
   const processingTimingText = processingStepTimingsText(state.last_step_results, 4);
   const runtimeTextWithTiming = processingTimingText && !running
     ? `${runtimeText} Timing: ${processingTimingText}`
@@ -7425,8 +7474,11 @@ function renderCrmHistory(rows) {
   root.innerHTML = items.map((row) => {
     const status = row && row.success ? 'Success' : 'Failed';
     const mode = row && row.dry_run ? 'Dry Run' : 'Live';
-    const message = row && row.message ? row.message : '';
     const automation = row && row.automation_label ? row.automation_label : 'Stock Unlocker';
+    const rawMessage = row && row.message ? row.message : '';
+    const message = row && row.success === false
+      ? conciseAutomationFailureMessage(rawMessage, {report: {order_details: row.order_results || []}}, automation)
+      : rawMessage;
     const orders = row && row.order_count != null ? String(row.order_count) : '0';
     const when = row && row.timestamp ? fmtDateTime(row.timestamp) : '-';
     const duration = fmtDuration(row && row.duration_seconds);
@@ -7568,7 +7620,10 @@ function crmStockAutomationSingleTestDetails(source, payload) {
   } else if (runtime.lastSuccess === false) {
     headline = `Last ${tool} test needs attention.`;
   }
-  const message = runtime.lastMessage || resultPayload.message || 'No single-order test result yet.';
+  const rawMessage = runtime.lastMessage || resultPayload.message || 'No single-order test result yet.';
+  const message = !running && runtime.lastSuccess === false
+    ? conciseAutomationFailureMessage(rawMessage, resultPayload, tool)
+    : rawMessage;
   const details = targetOrderId ? `Order ${targetOrderId} | ${message}` : message;
   return { headline, details, running };
 }
@@ -8944,11 +8999,14 @@ function renderCrmAddressStatus(payload) {
   else if (lastSuccess === false) headline = 'Last Address Validator run needs attention.';
 
   const filterScopeText = activeListUrl ? `Custom List URL (${formatCrmAddressFilterLabel(crmAddressActiveFilter)})` : formatCrmAddressFilterLabel(crmAddressActiveFilter);
-  const runtimeText = running
+  const rawRuntimeText = running
     ? (crmAddressMode === 'batch'
       ? `${formatCrmAddressModeLabel(crmAddressMode)} | ${filterScopeText} | Batch Size ${batchSizeLabel} | Workers ${parallelWorkers} | Processed ${orderCount} | Refresh Passes ${refreshPasses} | Attempt ${runtime.attempt || 0} of ${runtime.attemptsPlanned || 0}. ${runtime.lastMessage || ''}`.trim()
       : `${formatCrmAddressModeLabel(crmAddressMode)} | ${filterScopeText} | Order ${targetOrderId || '-'} | Attempt ${runtime.attempt || 0} of ${runtime.attemptsPlanned || 0}. ${runtime.lastMessage || ''}`.trim())
     : `${formatCrmAddressModeLabel(crmAddressMode)} | ${filterScopeText} | ${state.last_run_message || 'No Address Validator runs yet.'}`;
+  const runtimeText = !running && lastSuccess === false
+    ? conciseAutomationFailureMessage(rawRuntimeText, {report: state.last_report || []}, 'Address Validator')
+    : rawRuntimeText;
   const lastReport = normalizeCrmAddressReport(state.last_report, state.last_order_id || '');
   const lastReportItem = lastReport.length > 0 ? lastReport[0] : null;
   const lastSummary = !state.last_run_timestamp ? 'No Address Validator report yet.' : (lastReportItem ? `${lastReportItem.success ? 'Success' : 'Needs attention'}: ${lastReportItem.outcome || 'Report captured'}${lastReportItem.manual_review_required ? ' | Manual review required.' : ''}` : 'No Address Validator report captured for the last run.');

@@ -3536,6 +3536,51 @@ class ShippingBypasserTests(unittest.TestCase):
             "Pond Blue Heather",
         )
 
+    def test_sanmar_st404_truncated_black_triad_color_matches_sanmar(self):
+        product = {
+            "product_id": "ST404",
+            "product_name": "Sport-Tek PosiCharge Tri-Blend Wicking Short Sleeve Hoodie",
+        }
+
+        aliases = crm_shipping_bypasser._sanmar_color_alias_labels("Black Triad So", product=product)
+
+        self.assertIn("Black Triad Solid", aliases)
+        self.assertTrue(
+            crm_shipping_bypasser._cart_color_matches(
+                "Black Triad Solid",
+                "Black Triad So",
+                product=product,
+            )
+        )
+
+    def test_sanmar_stc13_crm_color_variants_match_sanmar(self):
+        product = {
+            "product_id": "STC13",
+            "product_name": "Sport-Tek Dry Zone Colorblock Visor",
+        }
+        cases = [
+            ("Black/ White", "Black/White"),
+            ("True Royal/ White", "T.Royal/White"),
+            ("True Navy/ Gold", "True Navy/Gold"),
+            ("True Navy/ White", "True Navy/Whit"),
+            ("True Red/ White", "True Red/White"),
+            ("White/ Black", "White/Black"),
+        ]
+
+        for sanmar_color, crm_color in cases:
+            with self.subTest(crm_color=crm_color):
+                self.assertIn(
+                    sanmar_color,
+                    crm_shipping_bypasser._sanmar_color_alias_labels(crm_color, product=product),
+                )
+                self.assertTrue(
+                    crm_shipping_bypasser._cart_color_matches(
+                        sanmar_color,
+                        crm_color,
+                        product=product,
+                    )
+                )
+
     def test_sanmar_a4_slash_color_alias_confirms_sanmar_spacing(self):
         product = {"product_id": "NF1270", "product_name": "A4 Reversible Mesh Tank", "is_a4": True}
 

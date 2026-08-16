@@ -2064,7 +2064,39 @@ def _automation_queue_result_context(task, ok, message):
                 "retrying": False,
                 "retry_completed": True,
             }
-        return None
+        status_fn = (task or {}).get("status_fn")
+        try:
+            status_payload = status_fn() if callable(status_fn) else {}
+        except Exception:
+            status_payload = {}
+        runtime = status_payload.get("runtime") if isinstance(status_payload, dict) else {}
+        runtime = runtime if isinstance(runtime, dict) else {}
+        result_payload = runtime.get("payload") if isinstance(runtime.get("payload"), dict) else {}
+        if not result_payload and isinstance(status_payload, dict):
+            result_payload = status_payload
+        order_details = []
+        if task_type == "crm.shipping_bypasser":
+            order_details = _build_crm_shipping_bypasser_order_results(result_payload)
+        elif task_type == "crm.order_goods":
+            order_details = _build_crm_order_goods_order_results(result_payload)
+        elif task_type == "crm.product_separator":
+            order_details = _build_crm_product_separator_order_results(result_payload)
+        elif task_type == "crm.push_back":
+            order_details = _build_crm_push_back_order_results(result_payload)
+        elif task_type == "crm.address_validator":
+            order_details = _extract_crm_address_report(result_payload)
+        elif task_type == "crm.auto_splitter":
+            order_details = result_payload.get("order_results") if isinstance(result_payload.get("order_results"), list) else []
+        if result_payload or order_details:
+            return {
+                **existing,
+                "report": {
+                    "success": bool(ok),
+                    "message": str(message or result_payload.get("message") or ""),
+                    "order_details": [dict(row) for row in order_details if isinstance(row, dict)],
+                },
+            }
+        return existing or None
     latest_report = _sheet_scanner_queue_report_for_task({**dict(task or {}), "message": message})
     original_report = existing.get("original_report")
     if isinstance(original_report, dict):
@@ -2094,6 +2126,79 @@ def _enrich_automation_queue_reports(payload):
                 context["report"] = report
         task["result_context"] = context
     return payload
+
+
+def _concise_automation_failure_message(task, message=""):
+    """Return a short causal queue message while detailed errors stay in View Errors."""
+    context = (task or {}).get("result_context") if isinstance((task or {}).get("result_context"), dict) else {}
+    report = context.get("report") if isinstance(context.get("report"), dict) else {}
+    details = report.get("order_details") if isinstance(report.get("order_details"), list) else []
+    evidence = [str(message or "")]
+    for row in details:
+        if not isinstance(row, dict) or bool(row.get("success")):
+            continue
+        evidence.extend((str(row.get("outcome") or ""), str(row.get("message") or ""), str(row.get("status") or "")))
+    text = " ".join(evidence).lower()
+    causal_messages = (
+        (("sanmar_color_not_found", "color could not be selected", "color mismatch", "selected color"), "Stock color mismatch detected."),
+        (("sanmar_product_not_found", "product could not be found"), "Stock product not found."),
+        (("no_single_warehouse", "no available inventory", "insufficient stock", "out of stock"), "Required stock is unavailable."),
+        (("sanmar_cart_not_empty", "shopping box already has items"), "SanMar cart needs review."),
+        (("sanmar_inventory_missing", "inventory table was not found"), "SanMar inventory could not be read."),
+        (("eta_after_due_date", "not before the crm due date"), "Stock would arrive too late."),
+        (("crm_data_missing", "crm_product_data_missing", "crm_quantities_missing"), "CRM order data is incomplete."),
+        (("address", "postal code", "zip code"), "Address validation failed."),
+        (("separator", "separation"), "Product separation failed."),
+        (("split", "division"), "Order split failed."),
+        (("email verification", "login", "authentication", "challenge"), "Login verification is required."),
+        (("manual order", "recording_crm"), "CRM stock recording failed."),
+        (("shipping is too expensive", "shipment cost", "shipping cost"), "Shipping cost exceeds the limit."),
+        (("timed out", "timeout"), "Automation timed out."),
+        (("browser session", "webdriver", "chrome failed"), "Browser session failed."),
+    )
+    for needles, concise in causal_messages:
+        if any(needle in text for needle in needles):
+            return concise
+    task_type = str((task or {}).get("task_type") or "").strip().lower()
+    defaults = {
+        "crm.address_validator": "Address validation needs attention.",
+        "crm.auto_splitter": "Order split needs attention.",
+        "crm.extension_order": "Order processing needs attention.",
+        "crm.mass_emailer": "Sheets Scanner needs attention.",
+        "crm.order_goods": "Stock ordering needs attention.",
+        "crm.product_separator": "Product separation needs attention.",
+        "crm.push_back": "Push Back needs attention.",
+        "crm.sheet_scanner_order": "CRM order action needs attention.",
+        "crm.shipping_bypasser": "Shipping Bypasser needs attention.",
+    }
+    return defaults.get(task_type, "Automation needs attention.")
+
+
+def _automation_runtime_display_message(task_type, ok, message, payload=None):
+    if ok:
+        return str(message)
+    payload = payload if isinstance(payload, dict) else {}
+    if task_type == "crm.shipping_bypasser":
+        details = _build_crm_shipping_bypasser_order_results(payload)
+    elif task_type == "crm.order_goods":
+        details = _build_crm_order_goods_order_results(payload)
+    elif task_type == "crm.product_separator":
+        details = _build_crm_product_separator_order_results(payload)
+    elif task_type == "crm.push_back":
+        details = _build_crm_push_back_order_results(payload)
+    elif task_type == "crm.address_validator":
+        details = _extract_crm_address_report(payload)
+    elif task_type == "crm.auto_splitter":
+        details = payload.get("order_results") if isinstance(payload.get("order_results"), list) else []
+    else:
+        details = payload.get("order_details") if isinstance(payload.get("order_details"), list) else []
+    return _concise_automation_failure_message(
+        {
+            "task_type": task_type,
+            "result_context": {"report": {"order_details": details}},
+        },
+        message,
+    )
 
 
 _RETRYABLE_SINGLE_ORDER_TASK_TYPES = frozenset(
@@ -2141,6 +2246,8 @@ def _automation_queue_task_payload(task):
     message = task.get("message")
     if live_status and live_status.get("message"):
         message = live_status.get("message")
+    if str(task.get("status") or "").strip().lower() == "failed":
+        message = _concise_automation_failure_message(task, message)
     payload = {
         "id": task.get("id"),
         "label": task.get("label"),
@@ -6375,7 +6482,7 @@ def _finish_crm_address_runtime(ok, message, payload, state, release_lock=True):
     with crm_address_runtime_lock:
         crm_address_runtime["running"] = False
         crm_address_runtime["completedAt"] = datetime.now().isoformat()
-        crm_address_runtime["lastMessage"] = str(message)
+        crm_address_runtime["lastMessage"] = _automation_runtime_display_message("crm.address_validator", ok, message, payload)
         crm_address_runtime["lastSuccess"] = bool(ok)
         crm_address_runtime["orderCount"] = _extract_crm_order_count(payload if isinstance(payload, dict) else {})
         crm_address_runtime["refreshPasses"] = max(0, int(_safe_float(payload.get("refresh_passes") if isinstance(payload, dict) else 0, 0)))
@@ -7926,7 +8033,7 @@ def _finish_crm_product_separator_runtime(ok, message, payload, release_lock=Tru
     with crm_product_separator_runtime_lock:
         crm_product_separator_runtime["running"] = False
         crm_product_separator_runtime["completedAt"] = datetime.now().isoformat()
-        crm_product_separator_runtime["lastMessage"] = str(message)
+        crm_product_separator_runtime["lastMessage"] = _automation_runtime_display_message("crm.product_separator", ok, message, payload)
         crm_product_separator_runtime["lastSuccess"] = bool(ok)
         crm_product_separator_runtime["targetOrderId"] = _normalize_crm_single_order_id(payload.get("target_order_id"))
         crm_product_separator_runtime["orderCount"] = len(_product_separator_payload_order_ids(payload))
@@ -8151,7 +8258,7 @@ def _finish_crm_order_goods_runtime(ok, message, payload, release_lock=True):
     with crm_order_goods_runtime_lock:
         crm_order_goods_runtime["running"] = False
         crm_order_goods_runtime["completedAt"] = datetime.now().isoformat()
-        crm_order_goods_runtime["lastMessage"] = str(message)
+        crm_order_goods_runtime["lastMessage"] = _automation_runtime_display_message("crm.order_goods", ok, message, payload)
         crm_order_goods_runtime["lastSuccess"] = bool(ok)
         crm_order_goods_runtime["targetOrderId"] = _normalize_crm_single_order_id(payload.get("target_order_id"))
         crm_order_goods_runtime["orderCount"] = _extract_crm_order_count(payload)
@@ -8386,15 +8493,17 @@ def _shipping_bypasser_problem_details(payload):
 def _notify_shipping_bypasser_problem_orders(payload, message=None):
     if not isinstance(payload, dict) or bool(payload.get("success")):
         return
-    details = _shipping_bypasser_problem_details(payload)
-    if details:
-        notify_user("Shipping Bypasser Needs Attention", f"Skipped/failed stock tab(s): {', '.join(details[:10])}.")
-        return
-    order_ids = _shipping_bypasser_failed_order_ids(payload)
-    if order_ids:
-        notify_user("Shipping Bypasser Needs Attention", f"Order(s) need attention: {', '.join(order_ids)}.")
-        return
-    text = str(message or payload.get("message") or "Shipping Bypasser needs attention.").strip()
+    text = _concise_automation_failure_message(
+        {
+            "task_type": "crm.shipping_bypasser",
+            "result_context": {
+                "report": {
+                    "order_details": payload.get("report") if isinstance(payload.get("report"), list) else [],
+                }
+            },
+        },
+        message or payload.get("message"),
+    )
     notify_user("Shipping Bypasser Needs Attention", text)
 
 
@@ -8434,7 +8543,7 @@ def _finish_crm_shipping_bypasser_runtime(ok, message, payload, release_lock=Tru
     with crm_shipping_bypasser_runtime_lock:
         crm_shipping_bypasser_runtime["running"] = False
         crm_shipping_bypasser_runtime["completedAt"] = datetime.now().isoformat()
-        crm_shipping_bypasser_runtime["lastMessage"] = str(message)
+        crm_shipping_bypasser_runtime["lastMessage"] = _automation_runtime_display_message("crm.shipping_bypasser", ok, message, payload)
         crm_shipping_bypasser_runtime["lastSuccess"] = bool(ok)
         crm_shipping_bypasser_runtime["targetOrderId"] = _normalize_crm_single_order_id(payload.get("target_order_id"))
         crm_shipping_bypasser_runtime["orderCount"] = _extract_crm_order_count(payload)
@@ -8753,7 +8862,7 @@ def _finish_crm_push_back_runtime(ok, message, payload, release_lock=True):
     with crm_push_back_runtime_lock:
         crm_push_back_runtime["running"] = False
         crm_push_back_runtime["completedAt"] = datetime.now().isoformat()
-        crm_push_back_runtime["lastMessage"] = str(message)
+        crm_push_back_runtime["lastMessage"] = _automation_runtime_display_message("crm.push_back", ok, message, payload)
         crm_push_back_runtime["lastSuccess"] = bool(ok)
         crm_push_back_runtime["targetOrderId"] = _normalize_crm_single_order_id(payload.get("target_order_id"))
         crm_push_back_runtime["orderCount"] = _extract_crm_order_count(payload)
@@ -8993,7 +9102,7 @@ def _finish_crm_auto_splitter_runtime(ok, message, payload, release_lock=True):
     with crm_auto_splitter_runtime_lock:
         crm_auto_splitter_runtime["running"] = False
         crm_auto_splitter_runtime["completedAt"] = datetime.now().isoformat()
-        crm_auto_splitter_runtime["lastMessage"] = str(message)
+        crm_auto_splitter_runtime["lastMessage"] = _automation_runtime_display_message("crm.auto_splitter", ok, message, payload)
         crm_auto_splitter_runtime["lastSuccess"] = bool(ok)
         crm_auto_splitter_runtime["targetOrderId"] = _normalize_crm_single_order_id(payload.get("target_order_id"))
         crm_auto_splitter_runtime["orderUrl"] = str(payload.get("order_url") or crm_auto_splitter_runtime.get("orderUrl") or "").strip() or None
@@ -9926,7 +10035,7 @@ def _finish_crm_mass_emailer_runtime(ok, message, payload, release_lock=True):
     with crm_mass_emailer_runtime_lock:
         crm_mass_emailer_runtime["running"] = False
         crm_mass_emailer_runtime["completedAt"] = datetime.now().isoformat()
-        crm_mass_emailer_runtime["lastMessage"] = str(message)
+        crm_mass_emailer_runtime["lastMessage"] = _automation_runtime_display_message("crm.mass_emailer", ok, message, payload)
         crm_mass_emailer_runtime["lastSuccess"] = bool(ok)
         crm_mass_emailer_runtime["lastAction"] = _normalize_crm_mass_emailer_action(payload.get("action") or crm_mass_emailer_runtime.get("lastAction"))
         crm_mass_emailer_runtime["orderCount"] = counts["order_count"]

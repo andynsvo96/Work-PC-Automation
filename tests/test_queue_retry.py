@@ -145,6 +145,60 @@ class LocalQueueRetryTests(unittest.TestCase):
             {"address_validator_batch": ["5010526"]},
         )
 
+    def test_failed_shipping_queue_uses_concise_color_message_and_keeps_details(self):
+        detailed_message = (
+            "SanMar color could not be selected for ST404 / Black Triad So: "
+            "SanMar color 'Black Triad So' was not found."
+        )
+        task = {
+            "id": "shipping-task-1",
+            "label": "Shipping Bypasser Order 5036695",
+            "status": "failed",
+            "queue_mode": "normal",
+            "task_type": "crm.shipping_bypasser",
+            "message": "Shipping Bypasser processed 1 order(s). 1 order(s) need attention.",
+            "result_context": {
+                "report": {
+                    "order_details": [{
+                        "order_id": "5036695",
+                        "success": False,
+                        "outcome": "sanmar_color_not_found",
+                        "message": detailed_message,
+                    }],
+                },
+            },
+        }
+
+        payload = server._automation_queue_task_payload(task)
+
+        self.assertEqual(payload["message"], "Stock color mismatch detected.")
+        self.assertEqual(
+            payload["result_context"]["report"]["order_details"][0]["message"],
+            detailed_message,
+        )
+
+    def test_shipping_result_context_captures_worker_details_for_view_errors(self):
+        detailed_payload = {
+            "success": False,
+            "message": "One order needs attention.",
+            "order_ids": ["5036695"],
+            "report": [{
+                "order_id": "5036695",
+                "success": False,
+                "outcome": "sanmar_color_not_found",
+                "message": "SanMar color was not found.",
+            }],
+        }
+        task = {
+            "task_type": "crm.shipping_bypasser",
+            "status_fn": lambda: {"runtime": {"payload": detailed_payload}},
+            "result_context": {},
+        }
+
+        context = server._automation_queue_result_context(task, False, detailed_payload["message"])
+
+        self.assertEqual(context["report"]["order_details"][0]["outcome"], "sanmar_color_not_found")
+
     def test_order_goods_targeted_retry_never_uses_the_full_list(self):
         payload = {
             "success": True,
