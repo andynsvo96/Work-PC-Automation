@@ -13712,7 +13712,11 @@ def automation_chrome_profile_setup():
     profile_path = target["profile_path"]
     os.makedirs(profile_path, exist_ok=True)
     try:
-        if profile_key == "paycom":
+        # macOS must use a completely native Chrome launch for Paycom device
+        # verification. On Windows, use the detached WebDriver setup path so
+        # credentials can be read locally from Windows Credential Manager and
+        # filled without ever crossing the dashboard HTTP response.
+        if profile_key == "paycom" and normalize_os_name() == "macos":
             chrome_exe = _resolve_chrome_executable()
             if not chrome_exe:
                 raise RuntimeError("Google Chrome is not installed.")

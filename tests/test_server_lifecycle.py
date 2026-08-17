@@ -7,10 +7,40 @@ import server
 
 
 class ServerLifecycleTests(unittest.TestCase):
-    def test_windows_paycom_setup_uses_native_dedicated_profile(self):
+    def test_windows_paycom_setup_prefills_from_windows_credential_manager(self):
         target = {
             "label": "Paycom",
             "profile_path": r"C:\Automation\chrome_profile",
+            "url": "https://example.test/paycom",
+        }
+        result = types.SimpleNamespace(
+            fields_filled=("username", "password", "PIN"),
+            message="Opened Paycom setup profile and filled: username, password, PIN.",
+        )
+        with (
+            server.app.test_request_context(json={"profile": "paycom"}),
+            mock.patch.object(server, "_chrome_profile_setup_targets", return_value={"paycom": target}),
+            mock.patch.object(server.os, "makedirs"),
+            mock.patch.object(server, "normalize_os_name", return_value="windows"),
+            mock.patch.object(server, "open_native_setup_profile") as native,
+            mock.patch.object(server, "open_and_prefill_setup_profile", return_value=result) as webdriver_setup,
+        ):
+            response = server.automation_chrome_profile_setup()
+
+        payload = response.get_json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["fields_filled"], ["username", "password", "PIN"])
+        webdriver_setup.assert_called_once_with(
+            "paycom",
+            target["profile_path"],
+            target["url"],
+        )
+        native.assert_not_called()
+
+    def test_macos_paycom_setup_keeps_native_chrome_for_device_verification(self):
+        target = {
+            "label": "Paycom",
+            "profile_path": "/tmp/paycom-profile",
             "url": "https://example.test/paycom",
         }
         result = types.SimpleNamespace(fields_filled=())
@@ -18,19 +48,19 @@ class ServerLifecycleTests(unittest.TestCase):
             server.app.test_request_context(json={"profile": "paycom"}),
             mock.patch.object(server, "_chrome_profile_setup_targets", return_value={"paycom": target}),
             mock.patch.object(server.os, "makedirs"),
-            mock.patch.object(server, "_resolve_chrome_executable", return_value=r"C:\Chrome\chrome.exe"),
+            mock.patch.object(server, "normalize_os_name", return_value="macos"),
+            mock.patch.object(server, "_resolve_chrome_executable", return_value="/Applications/Google Chrome"),
             mock.patch.object(server, "open_native_setup_profile", return_value=result) as native,
             mock.patch.object(server, "open_and_prefill_setup_profile") as webdriver_setup,
         ):
             response = server.automation_chrome_profile_setup()
 
-        payload = response.get_json()
-        self.assertTrue(payload["success"])
+        self.assertTrue(response.get_json()["success"])
         native.assert_called_once_with(
             "paycom",
             target["profile_path"],
             target["url"],
-            r"C:\Chrome\chrome.exe",
+            "/Applications/Google Chrome",
         )
         webdriver_setup.assert_not_called()
 

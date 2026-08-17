@@ -6,6 +6,7 @@ login and any two-factor or CAPTCHA challenge in the detached browser.
 
 from __future__ import annotations
 
+import json
 import time
 import os
 import subprocess
@@ -22,6 +23,7 @@ from automation_runtime import (
 )
 from credential_store import (
     CRM_CREDENTIAL_TARGET,
+    PAYCOM_CREDENTIAL_TARGET,
     SANMAR_CREDENTIAL_TARGET,
     SALESFORCE_CREDENTIAL_TARGET,
     SLACK_CREDENTIAL_TARGET,
@@ -153,8 +155,29 @@ def _expected_fields(service):
 def _credential_values(service):
     service = str(service or "").strip().lower()
     if service == "paycom":
-        credential = read_paycom_credential()
-        return credential.username, credential.password, credential.pin
+        try:
+            credential = read_paycom_credential()
+            return credential.username, credential.password, credential.pin
+        except CredentialStoreError as complete_error:
+            # Paycom credentials created before July 23, 2026 stored the
+            # username and password but had no PIN field. Setup should still
+            # prefill those recoverable values instead of silently opening an
+            # entirely blank form. The normal clock/hour workers continue to
+            # require the complete credential and therefore remain fail-safe.
+            legacy = read_credential(PAYCOM_CREDENTIAL_TARGET)
+            username = str(legacy.username or "").strip()
+            password = str(legacy.secret or "")
+            if username == "PIN":
+                raise complete_error
+            try:
+                payload = json.loads(password)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict):
+                password = str(payload.get("password") or "")
+            if username and password:
+                return username, password, ""
+            raise complete_error
     targets = {
         "crm": CRM_CREDENTIAL_TARGET,
         "sanmar": SANMAR_CREDENTIAL_TARGET,

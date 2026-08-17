@@ -2,9 +2,10 @@ import unittest
 from unittest import mock
 
 import profile_setup_autofill as setup
-from credential_store import CredentialNotFoundError, PaycomCredential, StoredCredential
+from credential_store import CredentialNotFoundError, CredentialStoreError, PaycomCredential, StoredCredential
 from windows_credentials import (
     CRM_CREDENTIAL_TARGET,
+    PAYCOM_CREDENTIAL_TARGET,
     SALESFORCE_CREDENTIAL_TARGET,
     SANMAR_CREDENTIAL_TARGET,
     SLACK_CREDENTIAL_TARGET,
@@ -40,6 +41,18 @@ class ProfileSetupAutofillTests(unittest.TestCase):
         value = PaycomCredential(username="paycom-user", password="secret", pin="0123")
         with mock.patch.object(setup, "read_paycom_credential", return_value=value):
             self.assertEqual(setup._credential_values("paycom"), ("paycom-user", "secret", "0123"))
+
+    def test_legacy_paycom_setup_recovers_username_and_password_without_pin(self):
+        legacy = StoredCredential(PAYCOM_CREDENTIAL_TARGET, "paycom-user", "legacy-password")
+        with mock.patch.object(
+            setup,
+            "read_paycom_credential",
+            side_effect=CredentialStoreError("missing PIN"),
+        ), mock.patch.object(setup, "read_credential", return_value=legacy):
+            self.assertEqual(
+                setup._credential_values("paycom"),
+                ("paycom-user", "legacy-password", ""),
+            )
 
     def test_slack_uses_dedicated_platform_credential(self):
         credential = StoredCredential(SLACK_CREDENTIAL_TARGET, "slack@example.test", "secret")
