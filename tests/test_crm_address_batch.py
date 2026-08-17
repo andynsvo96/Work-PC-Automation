@@ -3272,6 +3272,16 @@ class ShippingBypasserTests(unittest.TestCase):
                 self.assertIn(crm_style, options["expected_style_keys"])
                 self.assertIn(sanmar_style, options["expected_style_keys"])
 
+    def test_gildan_g500vl_uses_irregular_sanmar_5v00l_style(self):
+        options = crm_shipping_bypasser._sanmar_search_options_for_product(
+            {"product_id": "G500VL", "product_name": "Gildan Heavy Cotton Women's V-Neck T-Shirt"}
+        )
+
+        self.assertEqual(options["search_id"], "5V00L")
+        self.assertFalse(options["click_inventory_button"])
+        self.assertEqual(options["handler"], "Gildan")
+        self.assertEqual(options["expected_style_keys"], ["5V00L"])
+
     def test_gildan_search_keeps_exact_sanmar_g_styles(self):
         options = crm_shipping_bypasser._sanmar_search_options_for_product(
             {"product_id": "G2400", "product_name": "Gildan Ultra Cotton Long Sleeve T-Shirt"}
@@ -3437,6 +3447,25 @@ class ShippingBypasserTests(unittest.TestCase):
             crm_shipping_bypasser._cart_color_matches(
                 "Dress Blue Navy",
                 "DsBlNavy",
+                product=product,
+            )
+        )
+
+    def test_sanmar_jst60_graph_grey_black_matches_graphite_black(self):
+        product = {
+            "product_id": "JST60",
+            "product_name": "Sport-Tek Colorblock Raglan Jacket",
+        }
+        aliases = crm_shipping_bypasser._sanmar_color_alias_labels(
+            "Graph Grey/Blk",
+            product=product,
+        )
+
+        self.assertIn("Graphite/ Black", aliases)
+        self.assertTrue(
+            crm_shipping_bypasser._cart_color_matches(
+                "Graphite/ Black",
+                "Graph Grey/Blk",
                 product=product,
             )
         )
@@ -10004,7 +10033,7 @@ class CrmAddressServerTests(unittest.TestCase):
     @mock.patch.object(crm_order_goods, "safe_driver_quit")
     @mock.patch.object(crm_order_goods, "_run_order_with_driver")
     @mock.patch.object(crm_order_goods, "_build_crm_session_driver")
-    def test_order_goods_batch_worker_waits_for_definitive_auto_order_feedback(
+    def test_order_goods_batch_worker_clicks_without_waiting_for_auto_order_feedback(
         self,
         mock_build_driver,
         mock_run_order,
@@ -10034,7 +10063,42 @@ class CrmAddressServerTests(unittest.TestCase):
             mock.ANY,
             "4418860",
             dry_run=False,
-            wait_for_auto_order_result=True,
+            wait_for_auto_order_result=False,
+        )
+
+    @mock.patch.object(crm_order_goods, "_publish_status")
+    @mock.patch.object(crm_order_goods, "safe_driver_quit")
+    @mock.patch.object(crm_order_goods, "_run_order_with_driver")
+    @mock.patch.object(crm_order_goods, "_build_crm_session_driver")
+    def test_order_goods_single_clicks_without_waiting_for_auto_order_feedback(
+        self,
+        mock_build_driver,
+        mock_run_order,
+        _mock_quit,
+        _mock_publish_status,
+    ):
+        mock_build_driver.return_value = mock.Mock()
+        mock_run_order.return_value = [{
+            "order_id": "4418860",
+            "success": True,
+            "outcome": "order_goods_clicked",
+            "message": "Clicked Sanmar / S&S Activewear order goods.",
+            "manual_review_required": False,
+        }]
+
+        payload = crm_order_goods._run_single_with_mode(
+            True,
+            "4418860",
+            dry_run=False,
+            profile_path=str(ROOT),
+        )
+
+        self.assertTrue(payload["success"])
+        mock_run_order.assert_called_once_with(
+            mock.ANY,
+            "4418860",
+            dry_run=False,
+            wait_for_auto_order_result=False,
         )
 
     def test_sanmar_quantity_fill_uses_native_input_setter(self):

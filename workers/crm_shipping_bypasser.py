@@ -135,6 +135,13 @@ SANMAR_PRODUCT_SEARCH_OVERRIDES = {
     # Bella+Canvas product info pages can require the blue inventory button.
     # CRM 3001C maps to SanMar BC3001; searching 3001 lands on the correct result family.
     "3001C": {"search_id": "3001", "click_inventory_button": True, "expected_style_keys": ["BC3001"]},
+    # Gildan's women's Heavy Cotton V-neck uses an irregular SanMar style ID.
+    "G500VL": {
+        "search_id": "5V00L",
+        "click_inventory_button": False,
+        "expected_style_keys": ["5V00L"],
+        "handler": "Gildan",
+    },
 }
 SANMAR_BELLA_CANVAS_STYLE_IDS = {
     "BC100B", "BC1010", "BC1012", "BC1019", "BC108", "BC1080",
@@ -220,6 +227,8 @@ SANMAR_PRODUCT_COLOR_ALIASES = {
     ("J325", "BATTLESHIPGREY"): ["Battleship Grey"],
     ("J325", "DSBLNAVY"): ["Dress Blue Navy"],
     ("J325", "DRESSBLUENAVY"): ["Dress Blue Navy"],
+    # CRM shortens both components of SanMar's JST60 label.
+    ("JST60", "GRAPHGREYBLK"): ["Graphite/ Black"],
     ("LST402", "BLACKTRIADSOLID"): ["Black Triad Solid"],
     ("LST402", "BLACKTRIADSLD"): ["Black Triad Solid"],
     ("LST402", "DARKGREYHTHR"): ["Dark Grey Heather"],
@@ -3180,7 +3189,7 @@ def _sanmar_search_options_for_product(product):
         return {
             "search_id": resolved_search_id,
             "click_inventory_button": bool(override.get("click_inventory_button")),
-            "handler": search_id,
+            "handler": str(override.get("handler") or search_id),
             "expected_style_keys": override.get("expected_style_keys") or _sanmar_expected_style_keys(product, resolved_search_id),
         }
     if (product or {}).get("is_a4"):
