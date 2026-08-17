@@ -4005,7 +4005,7 @@ def _select_shipping_destination(driver, order_type, warehouse=None, multi_wareh
     return {"ship_mode": "ship", "address": target}
 
 
-def _click_radio_near_text(driver, text):
+def _click_radio_near_text(driver, text, timeout=15, poll_interval=0.25):
     script = r"""
 const wanted = String(arguments[0] || '').toLowerCase();
 const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
@@ -4035,9 +4035,15 @@ for (const radio of radios) {
 }
 return best ? best.radio : null;
 """
-    radio = driver.execute_script(script, text)
-    if radio is None:
-        raise RuntimeError(f"Radio option not found: {text}")
+    deadline = time.monotonic() + max(0, float(timeout or 0))
+    radio = None
+    while True:
+        radio = driver.execute_script(script, text)
+        if radio is not None:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"Radio option not found after {int(timeout)} seconds: {text}")
+        time.sleep(max(0.05, float(poll_interval or 0.25)))
     _click_with_fallback(driver, radio)
     time.sleep(0.5)
 
@@ -6338,12 +6344,26 @@ def _run_single_with_mode(headless_mode, order_id, dry_run=False, profile_path=N
             order_id=normalized_order_id,
         )
         sanmar_driver = _build_sanmar_driver(visible=sanmar_visible or dry_run)
-        report_items = _run_order_with_drivers(crm_driver, sanmar_driver, normalized_order_id, dry_run=dry_run)
-        if _post_submit_crm_record_recovery_needed(report_items):
-            safe_driver_quit(crm_driver, profile_path=resolved_profile_path)
-            time.sleep(1)
-            crm_driver = _launch_crm_driver()
-            report_items = _recover_post_submit_crm_record_failures(crm_driver, report_items, dry_run=dry_run)
+        try:
+            report_items = _run_order_with_drivers(crm_driver, sanmar_driver, normalized_order_id, dry_run=dry_run)
+            if _post_submit_crm_record_recovery_needed(report_items):
+                safe_driver_quit(crm_driver, profile_path=resolved_profile_path)
+                time.sleep(1)
+                crm_driver = _launch_crm_driver()
+                report_items = _recover_post_submit_crm_record_failures(crm_driver, report_items, dry_run=dry_run)
+        except Exception as exc:
+            safe_take_screenshot(sanmar_driver, f"sanmar_shipping_bypass_error_{normalized_order_id}")
+            report_items = [
+                _result(
+                    normalized_order_id,
+                    False,
+                    "worker_exception",
+                    str(exc),
+                    retryable=_is_retryable_exception(exc),
+                    error_type=type(exc).__name__,
+                    duration_seconds=_elapsed_seconds(started_at),
+                )
+            ]
         if not any(isinstance(item, dict) and item.get("stop_run") for item in report_items):
             _cleanup_after_failed_order(sanmar_driver, normalized_order_id, report_items)
         _publish_status(
