@@ -1,6 +1,6 @@
 # CRM Order Assistant
 
-Private Manifest V3 extension for the Automation project's CRM order pages. It provides local dark mode and a queued, single-order processing control. It never processes CRM report lists from the extension.
+Private Manifest V3 extension for the Automation project's CRM order pages. It provides local dark mode, a queued single-order processing control, and reliable Salesforce tab reuse. It never processes CRM report lists from the extension.
 
 ## Install locally
 
@@ -10,6 +10,12 @@ Private Manifest V3 extension for the Automation project's CRM order pages. It p
 4. Pin **CRM Order Assistant**, open a CRM order, and use **Enable dark mode** in its toolbar popup. The order page also provides single-order Auto-Process, Manual Process, Cancel, and Reachout controls.
 
 The preference is stored locally in that Chrome profile. Removing or reloading the extension keeps the preference unless Chrome extension data is cleared.
+
+## Salesforce tab reuse
+
+Clicking a Salesforce link in CRM navigates an existing Salesforce tab instead of opening a duplicate. The search includes every normal Chrome window in the current browser profile; if the reused tab is in another window, that window and tab are focused. If no Salesforce tab is open, the link opens normally in a new tab.
+
+The extension also catches Salesforce links that create a new tab or window through browser navigation and folds them into the existing Salesforce tab. Chrome extensions cannot reuse tabs from another Chrome profile, an incognito session where the extension is disabled, or a separate browser application.
 
 ## Supported pages
 

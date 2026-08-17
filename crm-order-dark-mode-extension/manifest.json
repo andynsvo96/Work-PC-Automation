@@ -1,11 +1,14 @@
 {
   "manifest_version": 3,
   "name": "CRM Order Assistant",
-  "version": "1.2.5",
-  "description": "Dark mode and queued, single-order processing controls for Printfly CRM order pages.",
-  "permissions": ["storage", "tabs"],
+  "version": "1.3.0",
+  "description": "CRM order tools with reliable reuse of one Salesforce tab across browser windows.",
+  "permissions": ["storage", "tabs", "webNavigation"],
   "host_permissions": [
     "https://crm2.legacy.printfly.com/*",
+    "*://*.salesforce.com/*",
+    "*://*.force.com/*",
+    "*://*.visualforce.com/*",
     "http://127.0.0.1/*"
   ],
   "background": {
