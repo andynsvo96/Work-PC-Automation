@@ -504,7 +504,8 @@ def _prepare_and_send_salesforce_email(
         time.sleep(0.5)
     else:
         raise StockIssueExtensionError(
-            f"Salesforce template {SALESFORCE_TEMPLATE} did not load with required {STOCK_PLACEHOLDER} and {DAYS_PLACEHOLDER} placeholders."
+            f"Salesforce template {SALESFORCE_TEMPLATE} loaded without the required {STOCK_PLACEHOLDER} and "
+            f"{DAYS_PLACEHOLDER} placeholders. Update the live Salesforce template before retrying."
         )
     if not shared._subject_has_order_placeholder(subject) and str(order_id) not in subject:
         raise StockIssueExtensionError(f"Salesforce template subject does not contain {ORDER_NUMBER_PLACEHOLDER}.")
@@ -724,6 +725,7 @@ def process_stock_issue_extension_order(
         result["error"] = str(exc)
         result["stages"].append({"key": stage, "success": False, "message": str(exc)})
         recovery = (
+            f"sales_note_saved={activity['sales_note_saved']}, "
             f"email_sent={activity['email_sent']}, email_send_attempted={activity['email_send_attempted']}, "
             f"slack_sent={activity['slack_sent']}, slack_send_attempted={activity['slack_send_attempted']}, "
             f"status_applied={activity['status_applied']}"

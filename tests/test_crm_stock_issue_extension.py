@@ -126,6 +126,7 @@ class StockIssueExtensionWorkflowTests(unittest.TestCase):
         apply_status.assert_not_called()
         self.assertEqual(raised.exception.result["failed_stage"], "slack")
         self.assertFalse(raised.exception.result["activity"]["status_applied"])
+        self.assertIn("sales_note_saved=True", str(raised.exception))
         self.assertIs(driver, driver)
 
     def test_success_order_is_note_email_slack_then_status(self):

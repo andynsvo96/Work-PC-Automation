@@ -199,6 +199,110 @@ class LocalQueueRetryTests(unittest.TestCase):
 
         self.assertEqual(context["report"]["order_details"][0]["outcome"], "sanmar_color_not_found")
 
+    def test_stock_extension_failure_names_stage_cause_and_completed_actions(self):
+        result = {
+            "order_id": "4705293",
+            "failed_stage": "salesforce_email",
+            "error": "Salesforce recipient verification failed immediately before Send.",
+            "activity": {
+                "sales_note_saved": True,
+                "email_send_attempted": False,
+                "email_sent": False,
+                "slack_send_attempted": False,
+                "slack_sent": False,
+                "status_applied": False,
+            },
+        }
+
+        message = server._stock_issue_extension_failure_message(result)
+
+        self.assertIn("Salesforce email failed", message)
+        self.assertIn("recipient verification failed", message)
+        self.assertIn("Sales Note saved", message)
+        self.assertIn("email not sent", message)
+        self.assertIn("Slack not sent", message)
+        self.assertIn("Issue - Stock not applied", message)
+        self.assertNotIn("needs attention", message)
+
+    def test_stock_extension_partial_send_warns_before_retry(self):
+        result = {
+            "failed_stage": "slack",
+            "error": "Required Slack notification failed.",
+            "activity": {
+                "sales_note_saved": True,
+                "email_send_attempted": True,
+                "email_sent": True,
+                "slack_send_attempted": True,
+                "slack_sent": False,
+                "status_applied": False,
+            },
+        }
+
+        message = server._stock_issue_extension_failure_message(result)
+
+        self.assertIn("Slack notification failed", message)
+        self.assertIn("email sent", message)
+        self.assertIn("Slack send attempted but not confirmed", message)
+        self.assertIn("Check the attempted send before retrying", message)
+
+    def test_stock_extension_legacy_failure_message_recovers_diagnostics(self):
+        original = (
+            "Stock Extension stopped at salesforce_email: Salesforce template [AUTO] STOCK - Extension "
+            "did not load with required [STOCK] and [DAYS] placeholders.. Recovery state: "
+            "email_sent=False, email_send_attempted=False, slack_sent=False, "
+            "slack_send_attempted=False, status_applied=False."
+        )
+
+        message = server._stock_issue_extension_failure_message({}, original)
+
+        self.assertIn("Salesforce email failed", message)
+        self.assertIn("required [STOCK] and [DAYS] placeholders", message)
+        self.assertIn("Sales Note saved", message)
+        self.assertIn("email not sent", message)
+        self.assertIn("Slack not sent", message)
+        self.assertIn("Issue - Stock not applied", message)
+
+    def test_stock_extension_result_context_populates_queue_and_view_errors(self):
+        detailed_payload = {
+            "success": False,
+            "order_id": "4705293",
+            "failed_stage": "crm_status",
+            "error": "Issue - Stock could not be confirmed in CRM.",
+            "activity": {
+                "sales_note_saved": True,
+                "email_send_attempted": True,
+                "email_sent": True,
+                "slack_send_attempted": True,
+                "slack_sent": True,
+                "status_applied": False,
+            },
+        }
+        task = {
+            "id": "stock-extension-task-1",
+            "label": "Stock Issue - Extension Required Order 4705293",
+            "status": "failed",
+            "queue_mode": "normal",
+            "task_type": "crm.stock_issue_extension",
+            "task_arguments": {"order_id": "4705293"},
+            "status_fn": lambda: {"runtime": {"payload": detailed_payload}},
+            "message": "Stock Issue - Extension Required needs attention.",
+            "result_context": {},
+        }
+
+        context = server._automation_queue_result_context(task, False, task["message"])
+        task["result_context"] = context
+        queue_payload = server._automation_queue_task_payload(task)
+        error_row = queue_payload["result_context"]["report"]["order_details"][0]
+
+        self.assertEqual(context["stock_issue_extension"], detailed_payload)
+        self.assertEqual(error_row["order_id"], "4705293")
+        self.assertEqual(error_row["outcome"], "crm_status")
+        self.assertIn("Issue - Stock status update failed", error_row["message"])
+        self.assertIn("email sent", queue_payload["message"])
+        self.assertIn("Slack sent", queue_payload["message"])
+        self.assertIn("Issue - Stock not applied", queue_payload["message"])
+        self.assertNotIn("needs attention", queue_payload["message"])
+
     def test_order_goods_targeted_retry_never_uses_the_full_list(self):
         payload = {
             "success": True,

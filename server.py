@@ -2034,6 +2034,87 @@ def _merge_sheet_scanner_retry_report(original_report, retry_report):
     }
 
 
+_STOCK_ISSUE_EXTENSION_STAGE_LABELS = {
+    "browser_start": "CRM/browser startup and order verification",
+    "crm_order_verification": "CRM order and customer verification",
+    "sales_note": "CRM Sales Note",
+    "salesforce_email": "Salesforce email",
+    "slack": "Slack notification",
+    "crm_status": "Issue - Stock status update",
+    "input_validation": "Stock Extension request validation",
+}
+
+
+def _stock_issue_extension_failure_message(result_payload, fallback=""):
+    """Explain the failure and whether any customer-facing actions already occurred."""
+    payload = result_payload if isinstance(result_payload, dict) else {}
+    stage = str(payload.get("failed_stage") or "").strip()
+    cause = str(payload.get("error") or "").strip()
+    fallback_text = str(fallback or "").strip()
+    fallback_match = None
+    if fallback_text:
+        fallback_match = re.search(
+            r"Stock Extension stopped at ([^:]+):\s*(.*?)(?:\.\s*Recovery state:|$)",
+            fallback_text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+    if not stage and fallback_match:
+        stage = fallback_match.group(1).strip()
+    if not cause and fallback_text:
+        cause = (fallback_match.group(2) if fallback_match else fallback_text).strip()
+    stage_label = _STOCK_ISSUE_EXTENSION_STAGE_LABELS.get(stage, stage.replace("_", " ").title())
+    if not stage_label:
+        stage_label = "Stock Issue - Extension Required"
+    cause = cause.rstrip(".")
+    summary = f"{stage_label} failed"
+    if cause:
+        summary += f": {cause}"
+    summary += "."
+
+    activity = dict(payload.get("activity")) if isinstance(payload.get("activity"), dict) else {}
+    if not activity and fallback_text:
+        activity = {
+            key: value.casefold() == "true"
+            for key, value in re.findall(
+                r"\b(sales_note_saved|email_sent|email_send_attempted|slack_sent|slack_send_attempted|status_applied)=(True|False)\b",
+                fallback_text,
+                flags=re.IGNORECASE,
+            )
+        }
+        if "sales_note_saved" not in activity and stage in {"salesforce_email", "slack", "crm_status"}:
+            activity["sales_note_saved"] = True
+    if not activity:
+        return summary
+
+    email_attempted = bool(activity.get("email_send_attempted"))
+    email_sent = bool(activity.get("email_sent"))
+    slack_attempted = bool(activity.get("slack_send_attempted"))
+    slack_sent = bool(activity.get("slack_sent"))
+    status_applied = bool(activity.get("status_applied"))
+
+    states = ["Sales Note saved" if activity.get("sales_note_saved") else "Sales Note not saved"]
+    if email_sent:
+        states.append("email sent")
+    elif email_attempted:
+        states.append("email send attempted but not confirmed")
+    else:
+        states.append("email not sent")
+    if slack_sent:
+        states.append("Slack sent")
+    elif slack_attempted:
+        states.append("Slack send attempted but not confirmed")
+    else:
+        states.append("Slack not sent")
+    states.append("Issue - Stock applied" if status_applied else "Issue - Stock not applied")
+    summary += f" Completed-state check: {', '.join(states)}."
+
+    if (email_attempted and not email_sent) or (slack_attempted and not slack_sent):
+        summary += " Check the attempted send before retrying."
+    elif email_sent or slack_sent or status_applied:
+        summary += " Some actions already completed; review them before retrying the full workflow."
+    return summary
+
+
 def _automation_queue_result_context(task, ok, message):
     existing = dict((task or {}).get("result_context") or {})
     task_type = str((task or {}).get("task_type") or "")
@@ -2076,6 +2157,42 @@ def _automation_queue_result_context(task, ok, message):
         result_payload = runtime.get("payload") if isinstance(runtime.get("payload"), dict) else {}
         if not result_payload and isinstance(status_payload, dict):
             result_payload = status_payload
+        if task_type == "crm.stock_issue_extension" and result_payload:
+            failure_message = _stock_issue_extension_failure_message(result_payload, message)
+            task_arguments = (task or {}).get("task_arguments") or (task or {}).get("arguments") or {}
+            task_arguments = task_arguments if isinstance(task_arguments, dict) else {}
+            order_id = str(
+                result_payload.get("order_id")
+                or task_arguments.get("order_id")
+                or ""
+            ).strip()
+            failed_stage = str(result_payload.get("failed_stage") or "").strip()
+            order_details = []
+            if not ok:
+                order_details.append(
+                    {
+                        "order_id": order_id,
+                        "success": False,
+                        "status": "Failed",
+                        "process": "stock_issue_extension",
+                        "outcome": failed_stage or "failed",
+                        "function_label": _STOCK_ISSUE_EXTENSION_STAGE_LABELS.get(
+                            failed_stage, failed_stage.replace("_", " ").title()
+                        )
+                        or "Stock Issue - Extension Required",
+                        "message": failure_message,
+                        "activity": dict(result_payload.get("activity") or {}),
+                    }
+                )
+            return {
+                **existing,
+                "stock_issue_extension": dict(result_payload),
+                "report": {
+                    "success": bool(ok),
+                    "message": str(message or result_payload.get("message") or "") if ok else failure_message,
+                    "order_details": order_details,
+                },
+            }
         order_details = []
         if task_type == "crm.shipping_bypasser":
             order_details = _build_crm_shipping_bypasser_order_results(result_payload)
@@ -2135,6 +2252,15 @@ def _concise_automation_failure_message(task, message=""):
     context = (task or {}).get("result_context") if isinstance((task or {}).get("result_context"), dict) else {}
     report = context.get("report") if isinstance(context.get("report"), dict) else {}
     details = report.get("order_details") if isinstance(report.get("order_details"), list) else []
+    task_type = str((task or {}).get("task_type") or "").strip().lower()
+    if task_type == "crm.stock_issue_extension":
+        stock_payload = context.get("stock_issue_extension")
+        if isinstance(stock_payload, dict) and stock_payload:
+            return _stock_issue_extension_failure_message(stock_payload, message)
+        for row in details:
+            if isinstance(row, dict) and not bool(row.get("success")) and str(row.get("message") or "").strip():
+                return str(row.get("message")).strip()
+        return _stock_issue_extension_failure_message({}, message)
     evidence = [str(message or "")]
     for row in details:
         if not isinstance(row, dict) or bool(row.get("success")):
@@ -2161,7 +2287,6 @@ def _concise_automation_failure_message(task, message=""):
     for needles, concise in causal_messages:
         if any(needle in text for needle in needles):
             return concise
-    task_type = str((task or {}).get("task_type") or "").strip().lower()
     defaults = {
         "crm.address_validator": "Address validation needs attention.",
         "crm.auto_splitter": "Order split needs attention.",
@@ -2172,6 +2297,7 @@ def _concise_automation_failure_message(task, message=""):
         "crm.push_back": "Push Back needs attention.",
         "crm.sheet_scanner_order": "CRM order action needs attention.",
         "crm.shipping_bypasser": "Shipping Bypasser needs attention.",
+        "crm.stock_issue_extension": "Stock Issue - Extension Required failed. Open View Errors for details.",
     }
     return defaults.get(task_type, "Automation needs attention.")
 

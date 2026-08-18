@@ -3629,6 +3629,14 @@ function conciseAutomationFailureMessage(message, payload = {}, automationLabel 
     ...(Array.isArray(contextReport.order_details) ? contextReport.order_details : []),
   ];
   const rows = baseRows.concat(baseRows.flatMap((row) => Array.isArray(row && row.errors) ? row.errors : []));
+  const isStockIssueExtension = /stock issue\s*-\s*extension required/i.test(String(automationLabel || ''))
+    || Boolean(resultPayload && resultPayload.stock_issue_extension);
+  if (isStockIssueExtension) {
+    const detailedRow = rows.find((row) => row && !Boolean(row.success) && String(row.message || '').trim());
+    if (detailedRow) return String(detailedRow.message).trim();
+    const directMessage = String(message || '').trim();
+    if (directMessage && !/needs attention\.?$/i.test(directMessage)) return directMessage;
+  }
   const evidence = [String(message || '')];
   rows.filter((row) => row && !Boolean(row.success)).forEach((row) => {
     evidence.push(String(row.outcome || ''), String(row.message || ''), String(row.status || ''));
