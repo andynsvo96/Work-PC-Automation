@@ -290,6 +290,51 @@ class StockIssueExtensionWorkflowTests(unittest.TestCase):
             with self.assertRaises(stock_extension.StockIssueExtensionError):
                 stock_extension._verify_final_recipients(driver, "customer@example.com")
 
+    def test_final_recipient_check_accepts_one_name_only_to_token_after_account_reverification(self):
+        driver = mock.Mock()
+        token_state = {
+            "to": [],
+            "cc": [],
+            "bcc": [],
+            "to_tokens": ["Andy Vo"],
+            "cc_tokens": [],
+            "bcc_tokens": [],
+        }
+        with (
+            mock.patch.object(stock_extension, "_read_recipient_state", return_value=token_state),
+            mock.patch.object(stock_extension.shared, "_verify_salesforce_email", return_value=True) as verify_account,
+            mock.patch.object(
+                stock_extension.shared,
+                "_read_salesforce_email_state",
+                return_value={"from": f"Orders <{stock_extension.shared.SALESFORCE_COPYRIGHT_CANCEL_FROM_EMAIL}>"},
+            ),
+        ):
+            verified = stock_extension._verify_final_recipients(driver, "a.vo@rushordertees.com")
+
+        verify_account.assert_called_once_with(driver, "a.vo@rushordertees.com")
+        self.assertEqual(verified["to"], ["a.vo@rushordertees.com"])
+        self.assertEqual(verified["to_tokens"], ["Andy Vo"])
+        self.assertEqual(verified["recipient_source"], "single_to_token_on_verified_account")
+
+    def test_final_recipient_check_rejects_name_only_cc_or_multiple_to_tokens(self):
+        driver = mock.Mock()
+        invalid_states = [
+            {
+                "to": [], "cc": [], "bcc": [],
+                "to_tokens": ["Andy Vo"], "cc_tokens": ["Other Person"], "bcc_tokens": [],
+            },
+            {
+                "to": [], "cc": [], "bcc": [],
+                "to_tokens": ["Andy Vo", "Other Person"], "cc_tokens": [], "bcc_tokens": [],
+            },
+        ]
+        for state in invalid_states:
+            with self.subTest(state=state), mock.patch.object(
+                stock_extension, "_read_recipient_state", return_value=state
+            ):
+                with self.assertRaises(stock_extension.StockIssueExtensionError):
+                    stock_extension._verify_final_recipients(driver, "a.vo@rushordertees.com")
+
 
 class StockIssueExtensionSourceContractTests(unittest.TestCase):
     def test_extension_contains_stock_control_all_tab_scan_and_structured_bridge(self):

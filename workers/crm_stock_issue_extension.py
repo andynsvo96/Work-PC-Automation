@@ -509,9 +509,68 @@ def _read_recipient_state(driver):
           }
           return Array.from(new Set(found));
         }
-        return {to: read('To'), cc: read('Cc'), bcc: read('Bcc')};
+        function readTokens(label) {
+          const lower = label.toLowerCase();
+          const labels = Array.from(document.querySelectorAll('label,span,div,td,th'))
+            .filter((el) => visible(el) && clean(el.innerText || el.textContent).replace(/:$/, '').toLowerCase() === lower);
+          const pills = Array.from(document.querySelectorAll('.pillText, .uiPill .pillText, [class*="pillText"]'))
+            .filter(visible);
+          const nearby = [];
+          for (const marker of labels) {
+            const markerRect = marker.getBoundingClientRect();
+            const markerY = markerRect.top + markerRect.height / 2;
+            for (const pill of pills) {
+              const pillRect = pill.getBoundingClientRect();
+              const pillY = pillRect.top + pillRect.height / 2;
+              if (Math.abs(pillY - markerY) > 65 || pillRect.left < markerRect.left - 10) continue;
+              nearby.push({text: clean(pill.innerText || pill.textContent), distance: Math.abs(pillY - markerY)});
+            }
+          }
+          if (nearby.length) {
+            nearby.sort((left, right) => left.distance - right.distance);
+            return Array.from(new Set(nearby.map((item) => item.text).filter(Boolean)));
+          }
+          if (lower === 'to') {
+            const subjectMarkers = Array.from(document.querySelectorAll('label,span,div,td,th'))
+              .filter((el) => visible(el) && clean(el.innerText || el.textContent).replace(/:$/, '').toLowerCase() === 'subject')
+              .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+            for (const subjectMarker of subjectMarkers) {
+              const subjectY = subjectMarker.getBoundingClientRect().top;
+              const recipientPills = pills
+                .filter((pill) => {
+                  const rect = pill.getBoundingClientRect();
+                  return rect.top < subjectY && rect.top > subjectY - 180;
+                })
+                .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)
+                .map((pill) => clean(pill.innerText || pill.textContent))
+                .filter(Boolean);
+              if (recipientPills.length) return Array.from(new Set(recipientPills));
+            }
+          }
+          for (const marker of labels) {
+            let row = marker.parentElement;
+            for (let depth = 0; row && depth < 6; depth += 1, row = row.parentElement) {
+              const text = clean(row.innerText || row.textContent || '');
+              if (/\bRelated To\b/i.test(text) || text.length > 700) continue;
+              const tokens = Array.from(row.querySelectorAll('.pillText, .uiPill .pillText, [class*="pillText"]'))
+                .filter(visible)
+                .map((el) => clean(el.innerText || el.textContent))
+                .filter(Boolean);
+              if (tokens.length) return Array.from(new Set(tokens));
+            }
+          }
+          return [];
+        }
+        return {
+          to: read('To'),
+          cc: read('Cc'),
+          bcc: read('Bcc'),
+          to_tokens: readTokens('To'),
+          cc_tokens: readTokens('Cc'),
+          bcc_tokens: readTokens('Bcc'),
+        };
         """
-    ) or {"to": [], "cc": [], "bcc": []}
+    ) or {"to": [], "cc": [], "bcc": [], "to_tokens": [], "cc_tokens": [], "bcc_tokens": []}
 
 
 def _verify_final_recipients(driver, expected_email):
@@ -520,10 +579,22 @@ def _verify_final_recipients(driver, expected_email):
     to = [str(value).strip().casefold() for value in state.get("to") or [] if str(value).strip()]
     cc = [str(value).strip().casefold() for value in state.get("cc") or [] if str(value).strip()]
     bcc = [str(value).strip().casefold() for value in state.get("bcc") or [] if str(value).strip()]
-    if to != [expected] or cc or bcc:
+    to_tokens = [str(value).strip() for value in state.get("to_tokens") or [] if str(value).strip()]
+    cc_tokens = [str(value).strip() for value in state.get("cc_tokens") or [] if str(value).strip()]
+    bcc_tokens = [str(value).strip() for value in state.get("bcc_tokens") or [] if str(value).strip()]
+    recipient_source = "explicit_email"
+    if not to and len(to_tokens) == 1 and not cc and not bcc and not cc_tokens and not bcc_tokens:
+        # Salesforce renders a selected Person Account as a name-only To pill. Reconfirm
+        # the exact account email immediately before Send, then treat that sole pill as
+        # the recipient selected from the already-verified account page.
+        shared._verify_salesforce_email(driver, expected_email)
+        to = [expected]
+        recipient_source = "single_to_token_on_verified_account"
+    if to != [expected] or cc or bcc or cc_tokens or bcc_tokens or len(to_tokens) > 1:
         raise StockIssueExtensionError(
             "Salesforce recipient verification failed immediately before Send. "
-            f"Expected To {expected}; found To {to or ['blank']}, Cc {cc or []}, Bcc {bcc or []}."
+            f"Expected To {expected}; found To {to or ['blank']} (tokens: {to_tokens or []}), "
+            f"Cc {cc or []} (tokens: {cc_tokens or []}), Bcc {bcc or []} (tokens: {bcc_tokens or []})."
         )
     composer_state = shared._read_salesforce_email_state(driver) or {}
     from_text = shared._clean_text(composer_state.get("from"))
@@ -532,7 +603,16 @@ def _verify_final_recipients(driver, expected_email):
         raise StockIssueExtensionError(
             f"Salesforce From is not Orders immediately before Send. Current From: {from_text or 'blank'}."
         )
-    return {"to": to, "cc": cc, "bcc": bcc, "from": from_text}
+    return {
+        "to": to,
+        "cc": cc,
+        "bcc": bcc,
+        "to_tokens": to_tokens,
+        "cc_tokens": cc_tokens,
+        "bcc_tokens": bcc_tokens,
+        "from": from_text,
+        "recipient_source": recipient_source,
+    }
 
 
 def _wait_for_send_confirmation(driver, timeout=20):
