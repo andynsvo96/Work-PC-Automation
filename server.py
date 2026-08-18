@@ -119,6 +119,7 @@ CRM_SHIPPING_BYPASSER_SCRIPT = os.path.join(WORKERS_DIR, "crm_shipping_bypasser.
 CRM_PUSH_BACK_SCRIPT = os.path.join(WORKERS_DIR, "crm_push_back.py")
 CRM_AUTO_SPLITTER_SCRIPT = os.path.join(WORKERS_DIR, "crm_auto_splitter.py")
 CRM_MASS_EMAILER_SCRIPT = os.path.join(WORKERS_DIR, "crm_copyright_cancel.py")
+CRM_STOCK_ISSUE_EXTENSION_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_extension.py")
 SLACK_SCRIPT_TIMEOUT_SECONDS = 150
 BROWSER_WORKER_FILENAMES = frozenset(
     {
@@ -133,6 +134,7 @@ BROWSER_WORKER_FILENAMES = frozenset(
         os.path.basename(CRM_PUSH_BACK_SCRIPT),
         os.path.basename(CRM_AUTO_SPLITTER_SCRIPT),
         os.path.basename(CRM_MASS_EMAILER_SCRIPT),
+        os.path.basename(CRM_STOCK_ISSUE_EXTENSION_SCRIPT),
     }
 )
 CRM_VISIBLE_FLAG_WORKER_FILENAMES = BROWSER_WORKER_FILENAMES - {
@@ -11865,6 +11867,56 @@ CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS = {
     },
 }
 
+
+def _normalize_stock_issue_extension_request(data):
+    from workers.crm_stock_issue_extension import normalize_request
+
+    payload = data if isinstance(data, dict) else {}
+    return normalize_request(payload.get("days"), payload.get("products"))
+
+
+def run_crm_stock_issue_extension_queued(order_id, days, products, progress_callback=None):
+    """Run the dedicated Stock Issue Extension workflow for one CRM order."""
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    if not normalized_order_id:
+        return False, "Open a CRM order with a valid 7-digit order number first.", {}
+    if not crm_lock.acquire(blocking=False):
+        return False, "A CRM automation run is already in progress.", {}
+    try:
+        from workers.crm_stock_issue_extension import run_stock_issue_extension_order
+
+        return run_stock_issue_extension_order(
+            normalized_order_id,
+            days,
+            products,
+            dry_run=False,
+            progress_callback=progress_callback,
+        )
+    finally:
+        crm_lock.release()
+
+
+CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["stock_issue_extension"] = {
+    "label": "Stock Issue - Extension Required",
+    "task_type": "crm.stock_issue_extension",
+    "status_fn": get_crm_extension_order_status_payload,
+    "structured_request": True,
+    "request_validator": _normalize_stock_issue_extension_request,
+    "task_arguments": lambda order_id, _reason="", request_data=None: {
+        "order_id": order_id,
+        "days": int((request_data or {}).get("days") or 0),
+        "products": list((request_data or {}).get("products") or []),
+        "dry_run": False,
+    },
+    "runner": lambda order_id, _reason="", request_data=None, progress_callback=None: run_crm_stock_issue_extension_queued(
+        order_id,
+        (request_data or {}).get("days"),
+        (request_data or {}).get("products"),
+        progress_callback=progress_callback,
+    ),
+}
+
+
 for _process_key, _process_automation in CRM_EXTENSION_SHEET_SCANNER_ORDER_AUTOMATIONS.items():
     CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS[_process_key] = {
         "label": _process_automation["label"],
@@ -11882,7 +11934,7 @@ for _process_key, _process_automation in CRM_EXTENSION_SHEET_SCANNER_ORDER_AUTOM
     }
 
 
-def run_crm_extension_manual_order_run_queued(order_id, automation_key, reason=""):
+def run_crm_extension_manual_order_run_queued(order_id, automation_key, reason="", request_data=None):
     """Run one extension-triggered manual action while exposing its shared UI state."""
     automation_key = str(automation_key or "").strip().lower()
     automation = CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS[automation_key]
@@ -11890,6 +11942,12 @@ def run_crm_extension_manual_order_run_queued(order_id, automation_key, reason="
     started_at = datetime.now().isoformat()
     ok = False
     message = f"{label} did not run."
+    result_payload = {}
+
+    def publish_progress(stage, progress_message):
+        with crm_extension_order_runtime_lock:
+            crm_extension_order_runtime["currentStep"] = str(stage or automation_key)
+            crm_extension_order_runtime["lastMessage"] = str(progress_message or f"Running {label}.")
     try:
         with crm_extension_order_runtime_lock:
             crm_extension_order_runtime.update(
@@ -11906,7 +11964,19 @@ def run_crm_extension_manual_order_run_queued(order_id, automation_key, reason="
                     "steps": [],
                 }
             )
-        ok, message = automation["runner"](order_id, reason)
+        if automation.get("structured_request"):
+            runner_result = automation["runner"](
+                order_id,
+                reason,
+                request_data,
+                progress_callback=publish_progress,
+            )
+        else:
+            runner_result = automation["runner"](order_id, reason)
+        if isinstance(runner_result, tuple) and len(runner_result) >= 3:
+            ok, message, result_payload = runner_result[:3]
+        else:
+            ok, message = runner_result
         return ok, message
     except Exception as exc:
         logger.exception("Extension manual CRM action failed")
@@ -11923,11 +11993,12 @@ def run_crm_extension_manual_order_run_queued(order_id, automation_key, reason="
                     "lastMessage": str(message),
                     "lastSuccess": bool(ok),
                     "steps": [_crm_extension_order_stage(automation_key, label, ok, message)],
+                    "payload": result_payload if isinstance(result_payload, dict) else {},
                 }
             )
 
 
-def queue_crm_extension_manual_order_run(order_id, automation_key, reason=""):
+def queue_crm_extension_manual_order_run(order_id, automation_key, reason="", request_payload=None):
     normalized_order_id = _normalize_crm_single_order_id(order_id)
     if not normalized_order_id:
         return False, "Open a CRM order with a valid 7-digit order number first.", None
@@ -11940,6 +12011,12 @@ def queue_crm_extension_manual_order_run(order_id, automation_key, reason=""):
     clean_reason = str(reason or "").strip()
     if automation.get("requires_reason") and not clean_reason:
         return False, f"{label} requires a reason before it can be queued.", None
+    request_data = None
+    if automation.get("structured_request"):
+        try:
+            request_data = automation["request_validator"](request_payload)
+        except Exception as exc:
+            return False, str(exc), None
     with crm_extension_order_runtime_lock:
         crm_extension_order_runtime.update(
             {
@@ -11953,16 +12030,26 @@ def queue_crm_extension_manual_order_run(order_id, automation_key, reason=""):
                 "lastMessage": f"{label} for order {normalized_order_id} is waiting in the Automation queue.",
                 "lastSuccess": None,
                 "steps": [],
+                "payload": {},
             }
         )
+    if automation.get("structured_request"):
+        task_arguments = automation["task_arguments"](normalized_order_id, clean_reason, request_data)
+    else:
+        task_arguments = automation["task_arguments"](normalized_order_id, clean_reason)
     ok, message, task = enqueue_automation(
         f"{label} Order {normalized_order_id}",
         "Processing",
-        lambda: run_crm_extension_manual_order_run_queued(normalized_order_id, automation_key, clean_reason),
+        lambda: run_crm_extension_manual_order_run_queued(
+            normalized_order_id,
+            automation_key,
+            clean_reason,
+            request_data,
+        ),
         details=f"Single CRM order {normalized_order_id}",
         status_fn=get_crm_extension_order_status_payload,
         task_type=automation["task_type"],
-        task_arguments=automation["task_arguments"](normalized_order_id, clean_reason),
+        task_arguments=task_arguments,
     )
     if not ok:
         with crm_extension_order_runtime_lock:
@@ -13193,6 +13280,7 @@ def api_chrome_extension_bridge_manual_process_order():
         data.get("order_id"),
         data.get("automation"),
         data.get("reason"),
+        data,
     )
     payload = get_crm_extension_order_status_payload()
     payload.update(

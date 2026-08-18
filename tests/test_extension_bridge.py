@@ -371,6 +371,63 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         self.assertEqual(enqueue.call_args.kwargs["task_arguments"]["order_target"], "4917538")
         self.assertFalse(enqueue.call_args.kwargs["task_arguments"]["dry_run"])
 
+    def test_stock_issue_extension_queues_structured_single_order_request(self):
+        products = [
+            {
+                "tab_number": 1,
+                "design_item_id": "design-item-8206660",
+                "style": "DM130",
+                "description": "District Perfect Tri Tee",
+                "color": "Red",
+                "total_quantity": 4,
+            }
+        ]
+        with mock.patch(
+            "server.enqueue_automation",
+            return_value=(True, "Stock Extension queued.", {"id": "stock-1", "status": "queued"}),
+        ) as enqueue:
+            response = self.client.post(
+                "/api/extension/bridge/process-order/manual",
+                json={
+                    "order_id": "5043020",
+                    "automation": "stock_issue_extension",
+                    "days": 5,
+                    "products": products,
+                },
+                headers={"Origin": self.ORIGIN},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.get_json()["success"])
+        self.assertEqual(enqueue.call_args.kwargs["task_type"], "crm.stock_issue_extension")
+        arguments = enqueue.call_args.kwargs["task_arguments"]
+        self.assertEqual(arguments["order_id"], "5043020")
+        self.assertEqual(arguments["days"], 5)
+        self.assertEqual(arguments["products"][0]["style"], "DM130")
+        self.assertEqual(arguments["products"][0]["color"], "Red")
+        self.assertFalse(arguments["dry_run"])
+
+    def test_stock_issue_extension_rejects_invalid_days_and_empty_products(self):
+        invalid_payloads = [
+            {"days": 0, "products": [{"style": "DM130", "description": "Tee", "color": "Red"}]},
+            {"days": -2, "products": [{"style": "DM130", "description": "Tee", "color": "Red"}]},
+            {"days": 1.5, "products": [{"style": "DM130", "description": "Tee", "color": "Red"}]},
+            {"days": 5, "products": []},
+        ]
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload), mock.patch("server.enqueue_automation") as enqueue:
+                response = self.client.post(
+                    "/api/extension/bridge/process-order/manual",
+                    json={"order_id": "5043020", "automation": "stock_issue_extension", **payload},
+                    headers={"Origin": self.ORIGIN},
+                    environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+                )
+
+                self.assertEqual(response.status_code, 409)
+                self.assertFalse(response.get_json()["success"])
+                enqueue.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

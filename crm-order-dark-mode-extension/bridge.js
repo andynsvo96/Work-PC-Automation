@@ -66,14 +66,16 @@ export async function startLocalOrderProcessing(orderId, shippingTooExpensive) {
   });
 }
 
-export async function startLocalManualOrderProcessing(orderId, automation, reason = "") {
+export async function startLocalManualOrderProcessing(orderId, automation, reason = "", structuredData = {}) {
   return bridgeFetch(LOCAL_MANUAL_ORDER_PROCESS_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       order_id: String(orderId || ""),
       automation: String(automation || ""),
-      reason: String(reason || "")
+      reason: String(reason || ""),
+      days: structuredData.days,
+      products: structuredData.products
     })
   });
 }

@@ -38,6 +38,10 @@ const REACHOUT_ORDER_AUTOMATIONS = [
   { key: "copyright_reachout", label: "Copyright - Reachout", requiresReason: true }
 ];
 
+const STOCK_ISSUE_AUTOMATIONS = [
+  { key: "stock_issue_extension", label: "Extension Required" }
+];
+
 function currentOrderId() {
   const match = `${window.location.pathname || ""}${window.location.hash || ""}`.match(/\/order\/(\d{7})\b/);
   return match ? match[1] : "";
@@ -273,7 +277,7 @@ function closeAllOrderProcessMenus(exceptControl = null) {
   });
 }
 
-function queueManualOrderAutomation(automation, triggerButton, autoProcessButton, reason = "") {
+function queueManualOrderAutomation(automation, triggerButton, autoProcessButton, reason = "", structuredData = {}) {
   const orderId = currentOrderId();
   if (!orderId) return;
   const control = triggerButton.closest("[data-crm-order-menu-control='true']");
@@ -286,7 +290,8 @@ function queueManualOrderAutomation(automation, triggerButton, autoProcessButton
     type: "crm-order-automation:manual-start",
     orderId,
     automation: automation.key,
-    reason
+    reason,
+    ...structuredData
   }).then((response) => {
     if (response && response.success) {
       sessionStorage.setItem(`crm-auto-process-active:${orderId}`, "1");
@@ -304,6 +309,379 @@ function queueManualOrderAutomation(automation, triggerButton, autoProcessButton
     triggerButton.title = "Could not queue the selected automation. Confirm the local Automation app is running, then try again.";
     setOrderProcessorResult(triggerButton, triggerButton.title, "error");
   });
+}
+
+function stockIssueCleanText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function visibleStockIssueElement(element) {
+  if (!element) return false;
+  const rect = element.getBoundingClientRect();
+  const style = window.getComputedStyle ? window.getComputedStyle(element) : {};
+  return rect.width > 8 && rect.height > 8 && style.display !== "none" && style.visibility !== "hidden";
+}
+
+function visibleStockIssueDesignTabs() {
+  const bestByNumber = new Map();
+  for (const element of Array.from(document.querySelectorAll("div,a,button,li,span")).filter(visibleStockIssueElement)) {
+    const text = stockIssueCleanText(element.innerText || element.textContent);
+    const match = text.match(/\b(\d+)\s*-\s*QTY\s*:\s*(\d+)/i);
+    if (!match || !/Design Previews/i.test(text)) continue;
+    const rect = element.getBoundingClientRect();
+    let score = 1000 - text.length;
+    if (element.querySelector("input")) score += 100;
+    if (rect.top < 450) score += 100;
+    const tabNumber = Number(match[1]);
+    const previous = bestByNumber.get(tabNumber);
+    if (!previous || score > previous.score) {
+      bestByNumber.set(tabNumber, { element, tabNumber, quantity: Number(match[2]), score });
+    }
+  }
+  return Array.from(bestByNumber.values()).sort((left, right) => left.tabNumber - right.tabNumber);
+}
+
+function activeStockIssueDesignTabNumber(tabs) {
+  const active = tabs.find(({ element }) => (
+    element.classList.contains("active")
+    || element.getAttribute("aria-selected") === "true"
+    || Boolean(element.querySelector("input:checked, [aria-selected='true']"))
+    || Boolean(element.closest("li.active, [role='tab'].active, [role='tab'][aria-selected='true'], .nav-tabs .active"))
+  ));
+  return active ? active.tabNumber : null;
+}
+
+function clickStockIssueDesignTab(tabNumber) {
+  const tab = visibleStockIssueDesignTabs().find((item) => item.tabNumber === Number(tabNumber));
+  if (!tab) throw new Error(`Design tab ${tabNumber} is no longer available.`);
+  tab.element.scrollIntoView({ block: "center", inline: "center" });
+  tab.element.click();
+}
+
+function stockIssueDelay(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function parseStockIssueProductBlock(block, tabNumber) {
+  const rawLines = String(block.innerText || block.textContent || "").split(/\n+/).map(stockIssueCleanText).filter(Boolean);
+  const text = stockIssueCleanText(rawLines.join(" "));
+  const quantityMatch = text.match(/\bTotal Quantity\s*:?\s*(\d+)/i);
+  const totalQuantity = quantityMatch ? Number(quantityMatch[1]) : null;
+  if (totalQuantity !== null && totalQuantity <= 0) return null;
+
+  const supplierPattern = /^(?:-|–|—)?\s*(?:Alpha(?: Stock)?|SanMar(?: Stock)?|S&S(?: Activewear)?(?: Stock)?|Supplier|Stock Source)\s*$/i;
+  const cleanProductText = (value) => stockIssueCleanText(value)
+    .replace(/\s*-\s*(?:Alpha(?: Stock)?|SanMar(?: Stock)?|S&S(?: Activewear)?(?: Stock)?).*$/i, "")
+    .trim();
+  const productLinks = Array.from(block.querySelectorAll("a"))
+    .filter(visibleStockIssueElement)
+    .map((link) => cleanProductText(link.innerText || link.textContent))
+    .filter((value) => value && !supplierPattern.test(value) && !/^(?:check stock|edit|remove|view)$/i.test(value));
+
+  let style = "";
+  let description = "";
+  for (const candidate of productLinks.concat(rawLines.map(cleanProductText))) {
+    const match = candidate.match(/^([A-Z0-9][A-Z0-9.-]{1,24})\s*(?:[-–—:]\s*|\s+)(.+)$/i);
+    if (!match) continue;
+    const possibleDescription = cleanProductText(match[2])
+      .replace(/\s+(?:Color|Total Quantity|Size|Quantity|Price)\s*:.*$/i, "")
+      .trim();
+    if (!possibleDescription || /^(?:stock|qty|quantity|price|size)\b/i.test(possibleDescription)) continue;
+    style = match[1].toUpperCase();
+    description = possibleDescription;
+    break;
+  }
+  if (!style) {
+    const styleMatch = text.match(/\b([A-Z0-9][A-Z0-9.-]{2,20})\b(?=\s+[A-Z][A-Za-z])/);
+    if (styleMatch) style = styleMatch[1].toUpperCase();
+  }
+  if (style && !description) {
+    const escapedStyle = style.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const descriptionMatch = text.match(new RegExp(`\\b${escapedStyle}\\b\\s+(.+?)(?=\\s+-?\\s*(?:Alpha|SanMar|S&S|Supplier)|\\s+Color\\s*:|\\s+Total Quantity|\\s+Size\\s*:|\\s+Quantity\\s*:|$)`, "i"));
+    if (descriptionMatch) description = cleanProductText(descriptionMatch[1]);
+  }
+
+  let color = "";
+  const explicitColor = text.match(/\bColor\s*:?\s*(.+?)(?=\s+Total Quantity|\s+Size\s*:|\s+Quantity\s*:|\s+Price\s*:|$)/i);
+  if (explicitColor) color = stockIssueCleanText(explicitColor[1]);
+  if (!color) {
+    const colorControl = Array.from(block.querySelectorAll("select,input,[data-color],[ng-model*='color' i]"))
+      .find(visibleStockIssueElement);
+    if (colorControl) {
+      const selected = colorControl.options && colorControl.selectedIndex >= 0 ? colorControl.options[colorControl.selectedIndex] : null;
+      color = stockIssueCleanText(
+        (selected && (selected.text || selected.label || selected.value))
+        || colorControl.value
+        || colorControl.getAttribute("data-color")
+      );
+    }
+  }
+  if (!color) {
+    const quantityLineIndex = rawLines.findIndex((line) => /Total Quantity/i.test(line));
+    const preceding = rawLines.slice(Math.max(0, quantityLineIndex - 5), quantityLineIndex < 0 ? rawLines.length : quantityLineIndex).reverse();
+    color = preceding.find((line) => (
+      line.length <= 80
+      && !supplierPattern.test(line)
+      && !productLinks.includes(cleanProductText(line))
+      && !/^\s*(?:Color|Total Quantity|Size|Quantity|Price|Check Stock)\b/i.test(line)
+      && !/\$\s*\d/.test(line)
+      && stockIssueCleanText(line).toLowerCase() !== stockIssueCleanText(description).toLowerCase()
+      && stockIssueCleanText(line).toLowerCase() !== stockIssueCleanText(style).toLowerCase()
+    )) || "";
+  }
+  color = stockIssueCleanText(color).replace(/^Color\s*:?\s*/i, "");
+  description = cleanProductText(description);
+  if (!style || !description || !color) {
+    return { invalid: true, design_item_id: block.id || "", style, description, color, total_quantity: totalQuantity };
+  }
+  return {
+    tab_number: Number(tabNumber),
+    design_item_id: block.id || "",
+    style,
+    description,
+    color,
+    total_quantity: totalQuantity
+  };
+}
+
+function scanCurrentStockIssueDesignTab(tabNumber) {
+  const blocks = Array.from(document.querySelectorAll("#design-items-list [id^='design-item-']"))
+    .filter(visibleStockIssueElement);
+  const seenIds = new Set();
+  const products = [];
+  for (const block of blocks) {
+    if (seenIds.has(block.id)) continue;
+    seenIds.add(block.id);
+    const product = parseStockIssueProductBlock(block, tabNumber);
+    if (product) products.push(product);
+  }
+  return products;
+}
+
+function deduplicateStockIssueProducts(products) {
+  const unique = new Map();
+  for (const product of products) {
+    const key = [product.style, product.description, product.color]
+      .map((value) => stockIssueCleanText(value).toLowerCase()).join("\u0000");
+    if (!unique.has(key)) {
+      unique.set(key, {
+        ...product,
+        tab_numbers: [product.tab_number],
+        design_item_ids: product.design_item_id ? [product.design_item_id] : []
+      });
+      continue;
+    }
+    const existing = unique.get(key);
+    if (!existing.tab_numbers.includes(product.tab_number)) existing.tab_numbers.push(product.tab_number);
+    if (product.design_item_id && !existing.design_item_ids.includes(product.design_item_id)) existing.design_item_ids.push(product.design_item_id);
+    if (Number.isInteger(product.total_quantity)) {
+      existing.total_quantity = Number(existing.total_quantity || 0) + product.total_quantity;
+    }
+  }
+  return Array.from(unique.values());
+}
+
+async function scanAllStockIssueProducts(onProgress = () => {}) {
+  const initialTabs = visibleStockIssueDesignTabs();
+  const originalTabNumber = activeStockIssueDesignTabNumber(initialTabs);
+  if (initialTabs.length > 1 && originalTabNumber === null) {
+    throw new Error("Could not determine the active design tab, so the scan was stopped before changing tabs.");
+  }
+  const tabs = initialTabs.length ? initialTabs : [{ tabNumber: 1 }];
+  const found = [];
+  const invalid = [];
+  let scanError = null;
+  let restoreError = null;
+  try {
+    for (let index = 0; index < tabs.length; index += 1) {
+      const tabNumber = tabs[index].tabNumber;
+      onProgress(`Scanning design tab ${index + 1} of ${tabs.length}…`);
+      if (initialTabs.length) {
+        clickStockIssueDesignTab(tabNumber);
+        await stockIssueDelay(750);
+      }
+      for (const product of scanCurrentStockIssueDesignTab(tabNumber)) {
+        if (product.invalid) invalid.push(product);
+        else found.push(product);
+      }
+    }
+  } catch (error) {
+    scanError = error;
+  } finally {
+    if (originalTabNumber !== null && initialTabs.length) {
+      try {
+        clickStockIssueDesignTab(originalTabNumber);
+        await stockIssueDelay(500);
+      } catch (error) {
+        restoreError = error;
+      }
+    }
+  }
+  if (restoreError) {
+    throw new Error(`Products were scanned, but the original design tab could not be restored: ${restoreError.message || restoreError}`);
+  }
+  if (scanError) throw scanError;
+  if (invalid.length) {
+    const ids = invalid.map((product) => product.design_item_id || "unknown design item").slice(0, 5).join(", ");
+    throw new Error(`Could not safely read product ID, description, and color for: ${ids}.`);
+  }
+  return deduplicateStockIssueProducts(found);
+}
+
+function createStockIssueDialogShell(label) {
+  document.getElementById("crm-stock-issue-dialog")?.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "crm-stock-issue-dialog";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", label);
+  Object.assign(overlay.style, {
+    position: "fixed", zIndex: "2147483647", inset: "0", display: "flex", alignItems: "center", justifyContent: "center",
+    padding: "20px", background: "rgba(15,23,42,.56)", font: "14px system-ui, sans-serif"
+  });
+  const dialog = document.createElement("div");
+  Object.assign(dialog.style, {
+    width: "min(560px, 100%)", maxHeight: "min(720px, calc(100vh - 40px))", overflowY: "auto", padding: "20px",
+    borderRadius: "7px", color: "#0f172a", background: "#fff", boxShadow: "0 20px 45px rgba(15,23,42,.34)"
+  });
+  overlay.append(dialog);
+  document.body.append(overlay);
+  return { overlay, dialog };
+}
+
+function showStockIssueProductDialog(products, automation, triggerButton, autoProcessButton) {
+  const { overlay, dialog } = createStockIssueDialogShell("Configure Stock Issue Extension Required");
+  const title = document.createElement("div");
+  title.textContent = "Extension Required";
+  Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "6px" });
+  const explanation = document.createElement("p");
+  explanation.textContent = "Select each product/color that needs an extension, then enter the number of days.";
+  Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
+  dialog.append(title, explanation);
+
+  const table = document.createElement("table");
+  Object.assign(table.style, { width: "100%", borderCollapse: "collapse", marginBottom: "16px" });
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  for (const label of ["", "Product ID", "Color"]) {
+    const cell = document.createElement("th");
+    cell.textContent = label;
+    Object.assign(cell.style, { padding: "7px", borderBottom: "1px solid #94a3b8", textAlign: "left", fontWeight: "700" });
+    headRow.append(cell);
+  }
+  head.append(headRow);
+  table.append(head);
+  const body = document.createElement("tbody");
+  const checkboxes = [];
+  products.forEach((product, index) => {
+    const row = document.createElement("tr");
+    const checkCell = document.createElement("td");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = String(index);
+    checkbox.setAttribute("aria-label", `Select ${product.style} in ${product.color}`);
+    checkCell.append(checkbox);
+    const styleCell = document.createElement("td");
+    styleCell.textContent = product.style;
+    const colorCell = document.createElement("td");
+    colorCell.textContent = product.color;
+    for (const cell of [checkCell, styleCell, colorCell]) {
+      Object.assign(cell.style, { padding: "8px 7px", borderBottom: "1px solid #e2e8f0" });
+    }
+    row.append(checkCell, styleCell, colorCell);
+    body.append(row);
+    checkboxes.push(checkbox);
+  });
+  table.append(body);
+  dialog.append(table);
+
+  const daysLabel = document.createElement("label");
+  daysLabel.textContent = "Extension days (required)";
+  daysLabel.htmlFor = "crm-stock-issue-days";
+  Object.assign(daysLabel.style, { display: "block", marginBottom: "5px", fontWeight: "700" });
+  const daysInput = document.createElement("input");
+  daysInput.id = "crm-stock-issue-days";
+  daysInput.type = "number";
+  daysInput.min = "1";
+  daysInput.max = "365";
+  daysInput.step = "1";
+  daysInput.inputMode = "numeric";
+  daysInput.required = true;
+  Object.assign(daysInput.style, { width: "120px", padding: "8px", border: "1px solid #64748b", borderRadius: "3px" });
+  dialog.append(daysLabel, daysInput);
+
+  const validation = document.createElement("div");
+  validation.setAttribute("role", "status");
+  Object.assign(validation.style, { minHeight: "18px", marginTop: "8px", color: "#b91c1c", fontWeight: "600" });
+  dialog.append(validation);
+  const actions = document.createElement("div");
+  Object.assign(actions.style, { display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "12px" });
+  const back = document.createElement("button");
+  back.type = "button";
+  back.textContent = "Back";
+  const queue = document.createElement("button");
+  queue.type = "button";
+  queue.textContent = "Queue task";
+  Object.assign(back.style, { padding: "7px 11px", cursor: "pointer" });
+  Object.assign(queue.style, { padding: "7px 11px", borderRadius: "3px", color: "#fff" });
+
+  const refresh = () => {
+    const selected = checkboxes.filter((checkbox) => checkbox.checked).length;
+    const daysText = String(daysInput.value || "");
+    const validDays = /^[1-9]\d*$/.test(daysText) && Number(daysText) <= 365;
+    const enabled = selected > 0 && validDays;
+    validation.textContent = !selected ? "Select at least one product." : (!validDays ? "Enter a positive whole number of days." : "");
+    queue.disabled = !enabled;
+    queue.setAttribute("aria-disabled", String(!enabled));
+    queue.style.setProperty("background", enabled ? "#15803d" : "#9ca3af", "important");
+    queue.style.setProperty("border", `1px solid ${enabled ? "#166534" : "#6b7280"}`, "important");
+    queue.style.setProperty("cursor", enabled ? "pointer" : "not-allowed", "important");
+  };
+  checkboxes.forEach((checkbox) => checkbox.addEventListener("change", refresh));
+  daysInput.addEventListener("input", refresh);
+  back.addEventListener("click", () => overlay.remove());
+  queue.addEventListener("click", () => {
+    const selectedProducts = checkboxes
+      .filter((checkbox) => checkbox.checked)
+      .map((checkbox) => products[Number(checkbox.value)]);
+    if (!selectedProducts.length || !/^[1-9]\d*$/.test(String(daysInput.value || ""))) return;
+    overlay.remove();
+    queueManualOrderAutomation(automation, triggerButton, autoProcessButton, "", {
+      days: Number(daysInput.value),
+      products: selectedProducts
+    });
+  });
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
+  overlay.addEventListener("keydown", (event) => { if (event.key === "Escape") overlay.remove(); });
+  actions.append(back, queue);
+  dialog.append(actions);
+  refresh();
+  daysInput.focus();
+}
+
+async function startStockIssueExtensionSelection(automation, triggerButton, autoProcessButton) {
+  const { overlay, dialog } = createStockIssueDialogShell("Scanning Stock Issue products");
+  const title = document.createElement("div");
+  title.textContent = "Scanning products…";
+  Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "8px" });
+  const progress = document.createElement("p");
+  progress.textContent = "Reading the order's design tabs.";
+  Object.assign(progress.style, { margin: "0", lineHeight: "1.45" });
+  dialog.append(title, progress);
+  setOrderProcessorControlsDisabled(true);
+  try {
+    const products = await scanAllStockIssueProducts((message) => { progress.textContent = message; });
+    overlay.remove();
+    setOrderProcessorControlsDisabled(false);
+    if (!products.length) throw new Error("No positive-quantity products were found on this order.");
+    showStockIssueProductDialog(products, automation, triggerButton, autoProcessButton);
+  } catch (error) {
+    overlay.remove();
+    setOrderProcessorControlsDisabled(false);
+    const message = error && error.message ? error.message : "The order products could not be scanned.";
+    triggerButton.title = message;
+    setOrderProcessorResult(triggerButton, message, "error");
+  }
 }
 
 function showOrderAutomationConfirmation(automation, triggerButton, autoProcessButton) {
@@ -386,7 +764,7 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
   if (reasonInput) reasonInput.focus(); else continueButton.focus();
 }
 
-function createOrderProcessMenuControl({ controlId, buttonId, label, title, color, border, automations, needsConfirmation }) {
+function createOrderProcessMenuControl({ controlId, buttonId, label, title, color, border, automations, needsConfirmation, onSelect }) {
   const control = document.createElement("span");
   control.id = controlId;
   control.dataset.crmOrderMenuControl = "true";
@@ -424,7 +802,8 @@ function createOrderProcessMenuControl({ controlId, buttonId, label, title, colo
     option.addEventListener("mouseleave", () => { option.style.background = "transparent"; });
     option.addEventListener("click", () => {
       closeOrderProcessMenu(control);
-      if (needsConfirmation) showOrderAutomationConfirmation(automation, button, document.getElementById("crm-order-automation-button"));
+      if (typeof onSelect === "function") onSelect(automation, button, document.getElementById("crm-order-automation-button"));
+      else if (needsConfirmation) showOrderAutomationConfirmation(automation, button, document.getElementById("crm-order-automation-button"));
       else queueManualOrderAutomation(automation, button, document.getElementById("crm-order-automation-button"));
     });
     menu.appendChild(option);
@@ -465,14 +844,14 @@ function findAddAccountButton() {
     .find((button) => crmControlLabel(button) === "add account");
 }
 
-function ensureConfirmedOrderControl({ controlId, buttonId, label, title, color, border, automations, anchor }) {
+function ensureConfirmedOrderControl({ controlId, buttonId, label, title, color, border, automations, anchor, onSelect }) {
   let control = document.getElementById(controlId);
   if (!anchor) {
     control?.remove();
     return null;
   }
   if (!control) {
-    control = createOrderProcessMenuControl({ controlId, buttonId, label, title, color, border, automations, needsConfirmation: true });
+    control = createOrderProcessMenuControl({ controlId, buttonId, label, title, color, border, automations, needsConfirmation: true, onSelect });
     control.style.marginRight = "4px";
   }
   if (anchor.previousElementSibling !== control) anchor.insertAdjacentElement("beforebegin", control);
@@ -480,7 +859,7 @@ function ensureConfirmedOrderControl({ controlId, buttonId, label, title, color,
 }
 
 function ensureSingleOrderSheetScannerControls() {
-  ensureConfirmedOrderControl({
+  const reachoutControl = ensureConfirmedOrderControl({
     controlId: "crm-order-cancel-control", buttonId: "crm-order-cancel-button", label: "Cancel",
     title: "Choose a cancellation workflow for this order.", color: "#b91c1c", border: "#991b1b",
     automations: CANCEL_ORDER_AUTOMATIONS, anchor: findNativeEditOrderButton()
@@ -489,6 +868,14 @@ function ensureSingleOrderSheetScannerControls() {
     controlId: "crm-order-reachout-control", buttonId: "crm-order-reachout-button", label: "Reachout",
     title: "Choose a customer-reachout workflow for this order.", color: "#15803d", border: "#166534",
     automations: REACHOUT_ORDER_AUTOMATIONS, anchor: findAddAccountButton()
+  });
+  ensureConfirmedOrderControl({
+    controlId: "crm-order-stock-issue-control", buttonId: "crm-order-stock-issue-button", label: "Stock Issue",
+    title: "Choose a stock-issue workflow for this order.", color: "#a16207", border: "#854d0e",
+    automations: STOCK_ISSUE_AUTOMATIONS, anchor: reachoutControl,
+    onSelect: (automation, triggerButton, autoProcessButton) => {
+      void startStockIssueExtensionSelection(automation, triggerButton, autoProcessButton);
+    }
   });
 }
 
@@ -501,6 +888,7 @@ function ensureOrderProcessorButton() {
     document.getElementById("crm-order-manual-process-control")?.remove();
     document.getElementById("crm-order-cancel-control")?.remove();
     document.getElementById("crm-order-reachout-control")?.remove();
+    document.getElementById("crm-order-stock-issue-control")?.remove();
     stopOrderProcessorPolling();
     return;
   }
