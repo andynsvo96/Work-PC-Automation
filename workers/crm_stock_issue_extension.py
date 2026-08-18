@@ -51,15 +51,131 @@ STOCK_EXTENSION_PROCESS = shared.CancelProcess(
     key=AUTOMATION_KEY,
     issue_type="Stock Issue - Extension Required",
     salesforce_template=SALESFORCE_TEMPLATE,
-    template_search="stock extension",
+    template_search="[AUTO]",
     sales_note_reason_label="",
     sales_note_email_line="",
-    subject_markers=(),
-    body_markers=(),
+    subject_markers=("urgent", "extension required"),
+    body_markers=(
+        "unable to receive the required",
+        "[stock]",
+        "[days]-business day(s) extension",
+        "not including holidays",
+        "additional stock to arrive and complete your order",
+        "available options",
+    ),
     display_name=DISPLAY_NAME,
     requires_reason=False,
     cancel_and_refund=False,
 )
+
+
+def _stock_extension_template_signature_error(state):
+    state = state if isinstance(state, dict) else {}
+    subject = shared._clean_text(state.get("subject"))
+    body = shared._clean_text(state.get("body"))
+    expected_subject = re.compile(
+        r"^RushOrderTees Order #\[ORDER-NUMBER\]\s*-\s*URGENT\s*-\s*Extension Required$",
+        flags=re.IGNORECASE,
+    )
+    if not expected_subject.fullmatch(subject):
+        return f"subject did not match the new Stock Extension template (found: {subject or 'blank'})"
+    missing = shared._missing_body_markers(body, STOCK_EXTENSION_PROCESS)
+    if missing:
+        return f"body was missing: {', '.join(missing)}"
+    if body.casefold().count(STOCK_PLACEHOLDER.casefold()) != 1:
+        return f"body must contain exactly one {STOCK_PLACEHOLDER} placeholder"
+    if body.casefold().count(DAYS_PLACEHOLDER.casefold()) != 1:
+        return f"body must contain exactly one {DAYS_PLACEHOLDER} placeholder"
+    return ""
+
+
+def _click_exact_stock_extension_template(driver):
+    """Select only the exact template-name result, never a containing menu or row."""
+    target = SALESFORCE_TEMPLATE.casefold()
+    option = driver.execute_script(
+        r"""
+        const target = String(arguments[0] || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        function clean(value) {
+          return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        }
+        function visible(el) {
+          if (!el || !el.getBoundingClientRect) return false;
+          const rect = el.getBoundingClientRect();
+          const view = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+          const style = view.getComputedStyle(el);
+          return rect.width > 0 && rect.height > 0
+            && style.display !== 'none' && style.visibility !== 'hidden'
+            && rect.bottom > 0 && rect.top < window.innerHeight
+            && rect.right > 0 && rect.left < window.innerWidth;
+        }
+        function walk(root, out = []) {
+          if (!root || !root.querySelectorAll) return out;
+          for (const el of Array.from(root.querySelectorAll('*'))) {
+            out.push(el);
+            if (el.shadowRoot) walk(el.shadowRoot, out);
+          }
+          return out;
+        }
+        const exact = walk(document)
+          .filter((el) => visible(el) && clean(el.innerText || el.textContent || el.value || '') === target)
+          .filter((el) => {
+            const rect = el.getBoundingClientRect();
+            return rect.width >= 40 && rect.height >= 10;
+          })
+          .sort((a, b) => {
+            const ar = a.getBoundingClientRect();
+            const br = b.getBoundingClientRect();
+            const aAction = /^(a|button|td|li)$/i.test(a.tagName)
+              || /button|option|menuitem|row/i.test(a.getAttribute('role') || '') ? 0 : 1;
+            const bAction = /^(a|button|td|li)$/i.test(b.tagName)
+              || /button|option|menuitem|row/i.test(b.getAttribute('role') || '') ? 0 : 1;
+            if (aAction !== bAction) return aAction - bAction;
+            return (ar.width * ar.height) - (br.width * br.height);
+          });
+        if (!exact.length) return null;
+        const node = exact[0];
+        const clickable = node.closest('a,button,[role=button],[role=option],[role=menuitem],tr,[role=row],li') || node;
+        try { clickable.scrollIntoView({block: 'center', inline: 'center'}); } catch (err) {}
+        return clickable;
+        """,
+        target,
+    )
+    if option is None:
+        return False
+    return shared._click_element_center(driver, option)
+
+
+def _insert_exact_stock_extension_template(driver):
+    """Open the full picker, search [AUTO], and require the exact Stock Extension result."""
+    shared._focus_salesforce_body_editor(driver)
+    shared._click_template_button(driver)
+    time.sleep(0.5)
+    if not shared._open_full_template_picker_from_menu(driver):
+        raise StockIssueExtensionError("Salesforce full email-template picker could not be opened.")
+    shared._ensure_private_email_templates_folder(driver)
+    deadline = time.monotonic() + 35
+    while time.monotonic() < deadline:
+        shared._search_full_template_modal(driver, "[AUTO]")
+        time.sleep(1)
+        if _click_exact_stock_extension_template(driver):
+            shared._confirm_salesforce_template_insert(driver)
+            if shared._wait_for_salesforce_template_markers(driver, STOCK_EXTENSION_PROCESS, timeout=10):
+                state = shared._read_salesforce_email_state(driver) or {}
+                signature_error = _stock_extension_template_signature_error(state)
+                if not signature_error:
+                    return True
+                raise StockIssueExtensionError(
+                    f"Salesforce inserted {SALESFORCE_TEMPLATE}, but its content was not the new approved version: "
+                    f"{signature_error}."
+                )
+            raise StockIssueExtensionError(
+                f"Salesforce inserted an email, but it was not the exact {SALESFORCE_TEMPLATE} content."
+            )
+        shared._scroll_full_template_modal(driver)
+        time.sleep(0.5)
+    raise StockIssueExtensionError(
+        f"Salesforce template {SALESFORCE_TEMPLATE} was not found after searching [AUTO]."
+    )
 
 
 def _clean_text(value, *, field, maximum, required=True):
@@ -491,7 +607,7 @@ def _prepare_and_send_salesforce_email(
     shared._wait_for_email_composer(driver)
     selected_from = shared._set_salesforce_from_orders(driver)
     time.sleep(0.5)
-    shared._insert_cancel_template(driver, STOCK_EXTENSION_PROCESS)
+    _insert_exact_stock_extension_template(driver)
 
     deadline = time.monotonic() + 20
     state = {}

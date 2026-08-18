@@ -96,6 +96,17 @@ class StockIssueExtensionFormattingTests(unittest.TestCase):
 
 
 class StockIssueExtensionWorkflowTests(unittest.TestCase):
+    @staticmethod
+    def _new_stock_template_state():
+        return {
+            "subject": "RushOrderTees Order #[ORDER-NUMBER]-URGENT- Extension Required",
+            "body": (
+                "Unfortunately, we are unable to receive the required [STOCK] in time to meet your current due date. "
+                "We would like to request a [DAYS]-business day(s) extension, not including holidays, to allow the "
+                "additional stock to arrive and complete your order. Please reply to review the available options."
+            ),
+        }
+
     def _base_patches(self):
         driver = mock.Mock()
         driver.current_window_handle = "crm"
@@ -128,6 +139,74 @@ class StockIssueExtensionWorkflowTests(unittest.TestCase):
         self.assertFalse(raised.exception.result["activity"]["status_applied"])
         self.assertIn("sales_note_saved=True", str(raised.exception))
         self.assertIs(driver, driver)
+
+    def test_stock_template_uses_auto_search_and_new_email_markers(self):
+        self.assertEqual(stock_extension.STOCK_EXTENSION_PROCESS.template_search, "[AUTO]")
+        self.assertEqual(stock_extension.STOCK_EXTENSION_PROCESS.salesforce_template, "[AUTO] STOCK - Extension")
+        self.assertIn("[stock]", stock_extension.STOCK_EXTENSION_PROCESS.body_markers)
+        self.assertIn("[days]-business day(s) extension", stock_extension.STOCK_EXTENSION_PROCESS.body_markers)
+        self.assertIn("not including holidays", stock_extension.STOCK_EXTENSION_PROCESS.body_markers)
+
+    def test_new_stock_template_signature_rejects_the_old_email(self):
+        self.assertEqual(
+            stock_extension._stock_extension_template_signature_error(self._new_stock_template_state()),
+            "",
+        )
+
+        old_template = {
+            "subject": "RushOrderTees Order #XXXXXX -URGENT- Extension Required",
+            "body": "We cannot get any XXXXXX in time and would like a 1-day extension.",
+        }
+        error = stock_extension._stock_extension_template_signature_error(old_template)
+
+        self.assertIn("subject did not match", error)
+
+    def test_exact_stock_template_selector_requires_exact_name(self):
+        driver = mock.Mock()
+        exact_option = object()
+        driver.execute_script.return_value = exact_option
+
+        with mock.patch.object(stock_extension.shared, "_click_element_center", return_value=True) as click:
+            selected = stock_extension._click_exact_stock_extension_template(driver)
+
+        self.assertTrue(selected)
+        self.assertEqual(driver.execute_script.call_args.args[1], "[auto] stock - extension")
+        click.assert_called_once_with(driver, exact_option)
+
+    def test_stock_template_insertion_opens_full_picker_and_searches_auto(self):
+        driver = mock.Mock()
+        with (
+            mock.patch.object(stock_extension.shared, "_focus_salesforce_body_editor") as focus,
+            mock.patch.object(stock_extension.shared, "_click_template_button") as template_button,
+            mock.patch.object(stock_extension.shared, "_open_full_template_picker_from_menu", return_value=True) as open_picker,
+            mock.patch.object(stock_extension.shared, "_ensure_private_email_templates_folder") as private_folder,
+            mock.patch.object(stock_extension.shared, "_search_full_template_modal", return_value=True) as search,
+            mock.patch.object(stock_extension, "_click_exact_stock_extension_template", return_value=True) as exact_click,
+            mock.patch.object(stock_extension.shared, "_confirm_salesforce_template_insert") as confirm,
+            mock.patch.object(stock_extension.shared, "_wait_for_salesforce_template_markers", return_value=True) as wait_markers,
+            mock.patch.object(
+                stock_extension.shared,
+                "_read_salesforce_email_state",
+                return_value=self._new_stock_template_state(),
+            ) as read_state,
+            mock.patch.object(stock_extension.time, "sleep"),
+        ):
+            inserted = stock_extension._insert_exact_stock_extension_template(driver)
+
+        self.assertTrue(inserted)
+        focus.assert_called_once_with(driver)
+        template_button.assert_called_once_with(driver)
+        open_picker.assert_called_once_with(driver)
+        private_folder.assert_called_once_with(driver)
+        search.assert_called_once_with(driver, "[AUTO]")
+        exact_click.assert_called_once_with(driver)
+        confirm.assert_called_once_with(driver)
+        read_state.assert_called_once_with(driver)
+        wait_markers.assert_called_once_with(
+            driver,
+            stock_extension.STOCK_EXTENSION_PROCESS,
+            timeout=10,
+        )
 
     def test_success_order_is_note_email_slack_then_status(self):
         _driver, patches = self._base_patches()
@@ -231,6 +310,7 @@ class StockIssueExtensionSourceContractTests(unittest.TestCase):
         self.assertIn("products: structuredData.products", bridge)
         self.assertIn("days: message.days", background)
         self.assertIn("products: message.products", background)
+        self.assertIn("_insert_exact_stock_extension_template(driver)", (ROOT / "workers" / "crm_stock_issue_extension.py").read_text(encoding="utf-8"))
         self.assertEqual(manifest["version"], "1.4.0")
 
 
