@@ -6,6 +6,39 @@ let themeEnabled = false;
 let refreshQueued = false;
 let orderProcessorPollTimer = null;
 
+function isSalesforceLink(value) {
+  try {
+    const url = new URL(String(value || ""), window.location.href);
+    const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+    return (url.protocol === "https:" || url.protocol === "http:") && [
+      "salesforce.com",
+      "force.com",
+      "visualforce.com"
+    ].some((suffix) => hostname === suffix || hostname.endsWith(`.${suffix}`));
+  } catch (_error) {
+    return false;
+  }
+}
+
+function clickedLink(event) {
+  const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+  return path.find((node) => node && node.nodeType === Node.ELEMENT_NODE && node.matches("a[href]"))
+    || (event.target && event.target.closest && event.target.closest("a[href]"));
+}
+
+// Route Salesforce links before CRM can create a duplicate tab. The service
+// worker searches the entire Chrome profile, so an existing Salesforce tab in
+// another browser window is reused and its window is brought forward.
+document.addEventListener("click", (event) => {
+  if (event.button !== 0) return;
+  const anchor = clickedLink(event);
+  const url = anchor && anchor.href;
+  if (!isSalesforceLink(url)) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  void chrome.runtime.sendMessage({ type: "crm-salesforce:open-link", url });
+}, true);
+
 // Keep extension menus from staying open after the user returns to the CRM
 // page. Checking each whole control lets its button continue to toggle it.
 document.addEventListener("click", (event) => {

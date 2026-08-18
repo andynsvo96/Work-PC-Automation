@@ -230,7 +230,7 @@ class StockIssueExtensionSourceContractTests(unittest.TestCase):
         self.assertIn("products: structuredData.products", bridge)
         self.assertIn("days: message.days", background)
         self.assertIn("products: message.products", background)
-        self.assertEqual(manifest["version"], "1.3.0")
+        self.assertEqual(manifest["version"], "1.4.0")
 
 
 if __name__ == "__main__":

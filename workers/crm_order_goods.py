@@ -2422,15 +2422,14 @@ def _order_goods_worker_payload(order_id, headless_mode, dry_run=False, profile_
             profile_label=f"CRM order goods worker {order_id}",
             skip_stale_chrome_check=skip_stale_chrome_check,
         )
-        # A click only queues CRM's asynchronous Auto Ordering job.  Batch
-        # runs must wait for the same definitive CRM feedback as single-order
-        # and Push Back runs; otherwise a rejected order is recorded as a
-        # success after the button disappears.
+        # Order Goods owns only the stock-order click. Post-click Auto Ordering
+        # feedback is handled by Push Back, which deliberately waits for and
+        # classifies those results before deciding what to do next.
         report_items = _run_order_with_driver(
             driver,
             order_id,
             dry_run=dry_run,
-            wait_for_auto_order_result=not dry_run,
+            wait_for_auto_order_result=False,
         )
         duration = _elapsed_seconds(started_at)
         for item in report_items:
@@ -3003,14 +3002,13 @@ def _run_single_with_mode(headless_mode, order_id, dry_run=False, profile_path=N
     )
     report_items = []
     try:
-        # A single-order run is used by Auto-Process. Wait for CRM's actual
-        # Auto Ordering response so a shipping-cost failure can be bypassed
-        # instead of being mistaken for a finished order.
+        # Keep single-order behavior aligned with batch Order Goods: click the
+        # control and move on. Push Back owns post-click feedback processing.
         report_items = _run_order_with_driver(
             driver,
             normalized_order_id,
             dry_run=dry_run,
-            wait_for_auto_order_result=not dry_run,
+            wait_for_auto_order_result=False,
         )
         _publish_status(
             f"Finished Rush Order Goods order {normalized_order_id} (1/1 done).",
