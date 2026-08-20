@@ -2130,7 +2130,7 @@ function crmProcessingErrorGroups(payload = crmProcessingStatusPayload) {
       : (hasRecordedError ? [{
           order_id: '',
           status: 'Needs attention',
-          message: row && row.message ? row.message : 'Automation needs attention.',
+          message: row && row.message ? row.message : 'Failure reason was not recorded.',
         }] : []);
     return {
       key: String(row && row.key || ''),
@@ -2213,7 +2213,7 @@ function openCrmProcessingRunReport(runRef = 'latest') {
       const errors = result && Array.isArray(result.errors) ? result.errors : [];
       const errorHtml = errors.length ? `<ol style='margin:8px 0 0;padding-left:22px'>${errors.map((error) => {
         const orderId = String(error && error.order_id || '').trim();
-        const message = String(error && error.message || 'Automation needs attention.');
+        const message = String(error && error.message || 'Failure reason was not recorded.');
         return `<li style='margin-bottom:5px'>${orderId ? `<strong>Order ${esc(orderId)}</strong> — ` : ''}<span class='bad'>${esc(message)}</span></li>`;
       }).join('')}</ol>` : '';
       return `<section style='border-top:1px solid var(--rough-divider);padding-top:10px;margin-top:10px'><div style='display:flex;justify-content:space-between;gap:10px'><strong>${esc(label)}</strong><span class='${hasErrors ? 'bad' : result ? 'ok' : 'muted'}'>${hasErrors ? '× ' : result ? '✓ ' : ''}${esc(stateText)}</span></div><div class='muted' style='margin-top:4px'>${esc(result && result.message ? result.message : 'No result message recorded.')} • ${esc(fmtDuration(result && result.duration_seconds))}</div>${errorHtml}</section>`;
@@ -2240,7 +2240,7 @@ function openCrmProcessingErrorsDialog() {
         const items = group.errors.map((error) => {
           const orderId = String(error && error.order_id || '').trim();
           const status = String(error && error.status || 'Needs attention').trim();
-          const message = String(error && error.message || 'Automation needs attention.').trim();
+          const message = String(error && error.message || 'Failure reason was not recorded.').trim();
           const orderText = orderId ? `<strong>Order ${esc(orderId)}</strong> — ` : '';
           return `<li style='margin:0 0 8px'>${orderText}<span class='bad'>${esc(status)}</span>: ${esc(message)}</li>`;
         }).join('');
@@ -3643,6 +3643,7 @@ function conciseAutomationFailureMessage(message, payload = {}, automationLabel 
   });
   const text = evidence.join(' ').toLowerCase();
   const mappings = [
+    [['outside limit cancel template was not selectable', '[auto] outside limit cancel'], 'Salesforce template unavailable: [AUTO] Outside Limit Cancel.'],
     [['sanmar_color_not_found', 'color could not be selected', 'color mismatch', 'selected color'], 'Stock color mismatch detected.'],
     [['sanmar_product_not_found', 'product could not be found'], 'Stock product not found.'],
     [['no_single_warehouse', 'no available inventory', 'insufficient stock', 'out of stock'], 'Required stock is unavailable.'],
@@ -3650,7 +3651,7 @@ function conciseAutomationFailureMessage(message, payload = {}, automationLabel 
     [['sanmar_inventory_missing', 'inventory table was not found'], 'SanMar inventory could not be read.'],
     [['eta_after_due_date', 'not before the crm due date'], 'Stock would arrive too late.'],
     [['crm_data_missing', 'crm_product_data_missing', 'crm_quantities_missing'], 'CRM order data is incomplete.'],
-    [['address', 'postal code', 'zip code'], 'Address validation failed.'],
+    [['address validation', 'postal code', 'zip code'], 'Address validation failed.'],
     [['separator', 'separation'], 'Product separation failed.'],
     [['split', 'division'], 'Order split failed.'],
     [['email verification', 'login', 'authentication', 'challenge'], 'Login verification is required.'],
@@ -3662,8 +3663,17 @@ function conciseAutomationFailureMessage(message, payload = {}, automationLabel 
   for (const [needles, concise] of mappings) {
     if (needles.some((needle) => text.includes(needle))) return concise;
   }
-  const label = String(automationLabel || 'Automation').replace(/\s+Order\s+\d{7}.*$/i, '').trim();
-  return `${label || 'Automation'} needs attention.`;
+  const candidates = [
+    ...rows.filter((row) => row && !Boolean(row.success)).map((row) => String(row.message || '').trim()),
+    String(message || '').trim(),
+  ];
+  for (let candidate of candidates) {
+    if (!candidate || /\bneeds? attention\b/i.test(candidate)) continue;
+    if (/^(?:(?:automation|order|task|run|processing|sheets scanner) (?:failed|error)|failed|error)\.?$/i.test(candidate)) continue;
+    candidate = candidate.replace(/^(?:sheet scanner order|automation|order|task|run) failed:\s*/i, '').trim();
+    if (candidate) return candidate;
+  }
+  return 'Failure reason was not recorded.';
 }
 function fmtHours(v) { const n = Number(v); return Number.isFinite(n) ? n.toFixed(2) : '-'; }
 function fmtDateTime(v) {

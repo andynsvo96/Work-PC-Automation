@@ -2268,6 +2268,10 @@ def _concise_automation_failure_message(task, message=""):
         evidence.extend((str(row.get("outcome") or ""), str(row.get("message") or ""), str(row.get("status") or "")))
     text = " ".join(evidence).lower()
     causal_messages = (
+        (
+            ("outside limit cancel template was not selectable", "[auto] outside limit cancel"),
+            "Salesforce template unavailable: [AUTO] Outside Limit Cancel.",
+        ),
         (("sanmar_color_not_found", "color could not be selected", "color mismatch", "selected color"), "Stock color mismatch detected."),
         (("sanmar_product_not_found", "product could not be found"), "Stock product not found."),
         (("no_single_warehouse", "no available inventory", "insufficient stock", "out of stock"), "Required stock is unavailable."),
@@ -2275,7 +2279,7 @@ def _concise_automation_failure_message(task, message=""):
         (("sanmar_inventory_missing", "inventory table was not found"), "SanMar inventory could not be read."),
         (("eta_after_due_date", "not before the crm due date"), "Stock would arrive too late."),
         (("crm_data_missing", "crm_product_data_missing", "crm_quantities_missing"), "CRM order data is incomplete."),
-        (("address", "postal code", "zip code"), "Address validation failed."),
+        (("address validation", "postal code", "zip code"), "Address validation failed."),
         (("separator", "separation"), "Product separation failed."),
         (("split", "division"), "Order split failed."),
         (("email verification", "login", "authentication", "challenge"), "Login verification is required."),
@@ -2287,19 +2291,33 @@ def _concise_automation_failure_message(task, message=""):
     for needles, concise in causal_messages:
         if any(needle in text for needle in needles):
             return concise
-    defaults = {
-        "crm.address_validator": "Address validation needs attention.",
-        "crm.auto_splitter": "Order split needs attention.",
-        "crm.extension_order": "Order processing needs attention.",
-        "crm.mass_emailer": "Sheets Scanner needs attention.",
-        "crm.order_goods": "Stock ordering needs attention.",
-        "crm.product_separator": "Product separation needs attention.",
-        "crm.push_back": "Push Back needs attention.",
-        "crm.sheet_scanner_order": "CRM order action needs attention.",
-        "crm.shipping_bypasser": "Shipping Bypasser needs attention.",
-        "crm.stock_issue_extension": "Stock Issue - Extension Required failed. Open View Errors for details.",
-    }
-    return defaults.get(task_type, "Automation needs attention.")
+
+    # Do not hide a useful worker exception behind a generic queue label. Prefer
+    # the per-order cause, then the top-level cause, while rejecting aggregate
+    # summaries such as "1 order needs attention".
+    candidates = [
+        str(row.get("message") or "").strip()
+        for row in details
+        if isinstance(row, dict) and not bool(row.get("success"))
+    ]
+    candidates.append(str(message or "").strip())
+    generic_patterns = (
+        r"\bneeds? attention\b",
+        r"^(?:automation|order|task|run|processing|sheets scanner) (?:failed|error)\.?$",
+        r"^(?:failed|error)\.?$",
+    )
+    for candidate in candidates:
+        if not candidate or any(re.search(pattern, candidate, re.IGNORECASE) for pattern in generic_patterns):
+            continue
+        candidate = re.sub(
+            r"^(?:sheet scanner order|automation|order|task|run) failed:\s*",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        ).strip()
+        if candidate:
+            return candidate
+    return "Failure reason was not recorded."
 
 
 def _automation_runtime_display_message(task_type, ok, message, payload=None):
@@ -5929,7 +5947,7 @@ def _crm_processing_step_error_details(step_key, payload, success, message=""):
             {
                 "order_id": row.get("order_id"),
                 "status": status or ("Manual review" if row.get("manual_review_required") else "Needs attention"),
-                "message": detail_message or str(message or payload.get("message") or "Automation needs attention."),
+                "message": detail_message or str(message or payload.get("message") or "Failure reason was not recorded."),
                 "outcome": row.get("outcome") or row.get("resolution"),
             }
         )
@@ -5940,7 +5958,7 @@ def _crm_processing_step_error_details(step_key, payload, success, message=""):
             {
                 "order_id": fallback_order_ids[0] if len(fallback_order_ids) == 1 else None,
                 "status": "Needs attention",
-                "message": str(message or payload.get("message") or "Automation needs attention."),
+                "message": str(message or payload.get("message") or "Failure reason was not recorded."),
                 "outcome": payload.get("resolution") or payload.get("outcome"),
             }
         )
@@ -5977,7 +5995,7 @@ def _normalize_crm_processing_step_results(items):
                 [
                     {
                         "status": "Needs attention",
-                        "message": cleaned[-1]["message"] or "Automation needs attention.",
+                        "message": cleaned[-1]["message"] or "Failure reason was not recorded.",
                     }
                 ]
             )
@@ -8632,7 +8650,10 @@ def _notify_shipping_bypasser_problem_orders(payload, message=None):
         },
         message or payload.get("message"),
     )
-    notify_user("Shipping Bypasser Needs Attention", text)
+    affected = _shipping_bypasser_problem_details(payload)
+    if affected:
+        text = f"{text.rstrip()} Affected: {', '.join(affected)}."
+    notify_user("Shipping Bypasser Failed", text)
 
 
 def _start_crm_shipping_bypasser_runtime(dry_run=False, batch_size=None, list_url=None, order_id=None):

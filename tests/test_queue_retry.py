@@ -177,6 +177,50 @@ class LocalQueueRetryTests(unittest.TestCase):
             detailed_message,
         )
 
+    def test_outside_limit_failure_names_missing_salesforce_template(self):
+        task = {
+            "task_type": "crm.mass_emailer",
+            "status": "failed",
+            "message": (
+                "Sheet scanner order failed: Outside limit cancel template was not selectable "
+                "in Salesforce. Tried: [AUTO] Outside Limit Cancel"
+            ),
+            "result_context": {"report": {"order_details": []}},
+        }
+
+        payload = server._automation_queue_task_payload(task)
+
+        self.assertEqual(
+            payload["message"],
+            "Salesforce template unavailable: [AUTO] Outside Limit Cancel.",
+        )
+        self.assertNotIn("needs attention", payload["message"].lower())
+
+    def test_unknown_specific_failure_is_preserved_instead_of_generic_task_label(self):
+        task = {
+            "task_type": "crm.mass_emailer",
+            "status": "failed",
+            "message": "Sheet scanner order failed: Customer email address is blank.",
+            "result_context": {"report": {"order_details": []}},
+        }
+
+        payload = server._automation_queue_task_payload(task)
+
+        self.assertEqual(payload["message"], "Customer email address is blank.")
+
+    def test_generic_failure_reports_that_the_cause_was_not_recorded(self):
+        task = {
+            "task_type": "crm.mass_emailer",
+            "status": "failed",
+            "message": "Sheets Scanner needs attention.",
+            "result_context": {"report": {"order_details": []}},
+        }
+
+        payload = server._automation_queue_task_payload(task)
+
+        self.assertEqual(payload["message"], "Failure reason was not recorded.")
+        self.assertNotIn("needs attention", payload["message"].lower())
+
     def test_shipping_result_context_captures_worker_details_for_view_errors(self):
         detailed_payload = {
             "success": False,
