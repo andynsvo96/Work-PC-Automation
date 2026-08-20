@@ -2269,8 +2269,8 @@ def _concise_automation_failure_message(task, message=""):
     text = " ".join(evidence).lower()
     causal_messages = (
         (
-            ("outside limit cancel template was not selectable", "[auto] outside limit cancel"),
-            "Salesforce template unavailable: [AUTO] Outside Limit Cancel.",
+            ("outside limit cancel template was not selectable", "could not select outside limit cancel template", "[auto] outside limit cancel"),
+            "Salesforce template selection failed: [AUTO] Outside Limit Cancel.",
         ),
         (("sanmar_color_not_found", "color could not be selected", "color mismatch", "selected color"), "Stock color mismatch detected."),
         (("sanmar_product_not_found", "product could not be found"), "Stock product not found."),

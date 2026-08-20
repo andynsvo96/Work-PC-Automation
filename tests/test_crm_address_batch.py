@@ -1729,6 +1729,60 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertIn("[AUTO] Complicated EMB to HDD", queries)
         self.assertIn("updated to ink printing", crm_copyright_cancel.COMPLICATED_EMB_TO_HDD_PROCESS.body_markers)
 
+    def test_outside_limit_template_search_uses_exact_configured_name(self):
+        process = crm_copyright_cancel.OUTSIDE_LIMIT_CANCEL_PROCESS
+        queries = crm_copyright_cancel._template_search_queries(process)
+
+        self.assertEqual(process.salesforce_template, "[AUTO] Outside Limit Cancel")
+        self.assertIn("[AUTO] Outside Limit Cancel", queries)
+        self.assertIn("outside limit", [query.lower() for query in queries])
+
+    def test_outside_limit_search_targets_only_modal_field(self):
+        driver = mock.Mock()
+        search = mock.Mock()
+        driver.execute_script.return_value = search
+
+        found = crm_copyright_cancel._search_outside_limit_template_modal(
+            driver,
+            "[AUTO] Outside Limit Cancel",
+        )
+
+        self.assertTrue(found)
+        script = driver.execute_script.call_args.args[0]
+        self.assertIn("includes('search templates')", script)
+        search.send_keys.assert_has_calls(
+            [
+                mock.call(crm_copyright_cancel.Keys.CONTROL, "a"),
+                mock.call(crm_copyright_cancel.Keys.BACKSPACE),
+                mock.call("[AUTO] Outside Limit Cancel"),
+            ]
+        )
+
+    def test_shared_template_search_used_by_copyright_is_unchanged(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = True
+
+        found = crm_copyright_cancel._search_full_template_modal(driver, "copyright")
+
+        self.assertTrue(found)
+        script, query = driver.execute_script.call_args.args
+        self.assertEqual(query, "copyright")
+        self.assertIn("Array.from(document.querySelectorAll('input')).find", script)
+
+    def test_only_outside_limit_uses_targeted_template_search(self):
+        self.assertIs(
+            crm_copyright_cancel._template_modal_searcher(
+                crm_copyright_cancel.OUTSIDE_LIMIT_CANCEL_PROCESS
+            ),
+            crm_copyright_cancel._search_outside_limit_template_modal,
+        )
+        self.assertIs(
+            crm_copyright_cancel._template_modal_searcher(
+                crm_copyright_cancel.COPYRIGHT_CANCEL_PROCESS
+            ),
+            crm_copyright_cancel._search_full_template_modal,
+        )
+
     def test_copyright_template_search_uses_exact_template_before_broad_keyword(self):
         cancel_queries = crm_copyright_cancel._template_search_queries(crm_copyright_cancel.COPYRIGHT_CANCEL_PROCESS)
         reachout_queries = crm_copyright_cancel._template_search_queries(crm_copyright_cancel.COPYRIGHT_REACHOUT_PROCESS)

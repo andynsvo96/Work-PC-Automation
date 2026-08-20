@@ -3643,7 +3643,7 @@ function conciseAutomationFailureMessage(message, payload = {}, automationLabel 
   });
   const text = evidence.join(' ').toLowerCase();
   const mappings = [
-    [['outside limit cancel template was not selectable', '[auto] outside limit cancel'], 'Salesforce template unavailable: [AUTO] Outside Limit Cancel.'],
+    [['outside limit cancel template was not selectable', 'could not select outside limit cancel template', '[auto] outside limit cancel'], 'Salesforce template selection failed: [AUTO] Outside Limit Cancel.'],
     [['sanmar_color_not_found', 'color could not be selected', 'color mismatch', 'selected color'], 'Stock color mismatch detected.'],
     [['sanmar_product_not_found', 'product could not be found'], 'Stock product not found.'],
     [['no_single_warehouse', 'no available inventory', 'insufficient stock', 'out of stock'], 'Required stock is unavailable.'],

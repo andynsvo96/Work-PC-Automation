@@ -192,7 +192,7 @@ class LocalQueueRetryTests(unittest.TestCase):
 
         self.assertEqual(
             payload["message"],
-            "Salesforce template unavailable: [AUTO] Outside Limit Cancel.",
+            "Salesforce template selection failed: [AUTO] Outside Limit Cancel.",
         )
         self.assertNotIn("needs attention", payload["message"].lower())
 

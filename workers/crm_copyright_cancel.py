@@ -3982,6 +3982,84 @@ def _search_full_template_modal(driver, query):
     )
 
 
+def _search_outside_limit_template_modal(driver, query):
+    """Type only in the full picker's Search templates field.
+
+    Salesforce also keeps its global header search visible behind this modal.
+    This targeted path avoids changing the working picker behavior used by the
+    other cancellation automations.
+    """
+    search = driver.execute_script(
+        """
+        function clean(value) {
+          return (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+        }
+        function visible(el) {
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          return rect.width > 0 && rect.height > 0
+            && style.display !== 'none' && style.visibility !== 'hidden'
+            && rect.bottom > 0 && rect.top < window.innerHeight
+            && rect.right > 0 && rect.left < window.innerWidth;
+        }
+        function walk(root, out = []) {
+          if (!root || !root.querySelectorAll) return out;
+          for (const el of Array.from(root.querySelectorAll('*'))) {
+            if (el.tagName && el.tagName.toLowerCase() === 'input') out.push(el);
+            if (el.shadowRoot) walk(el.shadowRoot, out);
+          }
+          return out;
+        }
+        const matches = walk(document)
+          .filter(visible)
+          .filter((el) => {
+            const label = clean((el.placeholder || '') + ' '
+              + (el.getAttribute('aria-label') || '') + ' '
+              + (el.getAttribute('title') || ''));
+            return label.includes('search templates');
+          });
+        const search = matches[0] || null;
+        if (search) {
+          try { search.scrollIntoView({block: 'center', inline: 'center'}); } catch (err) {}
+        }
+        return search;
+        """
+    )
+    if search is None:
+        return False
+    try:
+        search.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
+        search.send_keys(Keys.BACKSPACE)
+        search.send_keys(str(query or ""))
+        return True
+    except Exception:
+        return bool(
+            driver.execute_script(
+                """
+                const input = arguments[0];
+                const value = String(arguments[1] || '');
+                if (!input) return false;
+                const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+                if (descriptor && descriptor.set) descriptor.set.call(input, value);
+                else input.value = value;
+                input.dispatchEvent(new InputEvent('input', {
+                  bubbles: true, inputType: 'insertText', data: value
+                }));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+                return true;
+                """,
+                search,
+                query,
+            )
+        )
+
+
+def _template_modal_searcher(process):
+    if process.key == OUTSIDE_LIMIT_CANCEL_PROCESS.key:
+        return _search_outside_limit_template_modal
+    return _search_full_template_modal
+
+
 def _template_search_queries(process=COPYRIGHT_CANCEL_PROCESS):
     queries = []
     candidates = []
@@ -4254,9 +4332,10 @@ def _insert_cancel_template(driver, process=COPYRIGHT_CANCEL_PROCESS):
     _ensure_private_email_templates_folder(driver)
     deadline = time.monotonic() + 35
     search_queries = _template_search_queries(process)
+    search_template = _template_modal_searcher(process)
     while time.monotonic() < deadline:
         for query in search_queries:
-            _search_full_template_modal(driver, query)
+            search_template(driver, query)
             time.sleep(1)
             if _click_full_template_modal_match(driver, process):
                 _confirm_salesforce_template_insert(driver)
@@ -4272,7 +4351,8 @@ def _insert_cancel_template(driver, process=COPYRIGHT_CANCEL_PROCESS):
                 time.sleep(0.5)
             time.sleep(0.4)
     raise CopyrightCancelError(
-        f"{process.display_name} template was not selectable in Salesforce. Tried: {', '.join(_template_match_labels(process))}"
+        f"Salesforce could not select {process.display_name.lower()} template "
+        f"'{process.salesforce_template}' after searching for it."
     )
 
 
