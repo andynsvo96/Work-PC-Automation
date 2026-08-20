@@ -148,9 +148,11 @@ RUSH_PO_BOX_SALES_NOTE = (
     "Cannot use PO Box for rush orders. USPS cannot guarantee delivery time\n"
     "Need physical address"
 )
+CANADA_PO_BOX_SALES_NOTE = "Cannot use PO Box for Canadian orders\nNeed physical address"
 MISSING_STREET_NUMBER_SALES_NOTE = "Incomplete shipping address"
 SHIPPING_ISSUE_LABELS = {
     "missing_street_number": "Missing Street Number",
+    "po_box_canada": "Canada PO Box",
     "po_box_rush": "Rush PO Box",
 }
 
@@ -2093,6 +2095,10 @@ def _is_canadian_postal(postal_text):
     return bool(re.match(r"^[A-Z]\d[A-Z]\d[A-Z]\d$", _normalize_postal(postal_text)))
 
 
+def _is_canadian_address(address_fields):
+    return _is_canadian_postal((address_fields or {}).get("zip"))
+
+
 def _postal_tokens_from_text(text):
     text = str(text or "")
     us_tokens = [
@@ -2816,7 +2822,10 @@ def _handle_shipping_issue(
         issue_kind,
         str(issue_kind or "Shipping Issue").replace("_", " ").title(),
     )
-    message_label = "rush PO Box" if issue_kind == "po_box_rush" else issue_label.lower()
+    message_label = {
+        "po_box_canada": "Canadian PO Box",
+        "po_box_rush": "rush PO Box",
+    }.get(issue_kind, issue_label.lower())
     result = _result_for(
         order_id,
         f"{issue_kind}_shipping_issue_{ready_or_applied}",
@@ -4417,7 +4426,7 @@ def _extract_shipping_panel_address(driver):
     postal = ""
     city_line = address_lines[-1]
     city_match = re.match(
-        r"^(?P<city>.+?),\s*(?P<state>[A-Za-z][A-Za-z .'-]*?)\s*,?\s*(?P<zip>\d{5}(?:-\d{4})?)$",
+        r"^(?P<city>.+?),\s*(?P<state>[A-Za-z][A-Za-z .'-]*?)\s*,?\s*(?P<zip>\d{5}(?:-\d{4})?|[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d)$",
         city_line,
     )
     if city_match:
@@ -4882,6 +4891,20 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
             )
         panel_valid_but_needs_caps_normalization = _shipping_address_needs_caps_normalization(current_address)
         panel_valid_but_needs_split_street_normalization = _shipping_address_needs_split_street_normalization(current_address)
+        panel_po_box_profile = _classify_po_box_address(current_address)
+        if panel_po_box_profile["po_box_only"] and _is_canadian_address(current_address):
+            warnings = ["Canadian orders cannot ship to a PO Box without a separate street address."]
+            return _handle_shipping_issue(
+                driver,
+                None,
+                order_id,
+                CANADA_PO_BOX_SALES_NOTE,
+                "po_box_canada",
+                dry_run=dry_run,
+                warnings=warnings,
+                original_address=current_address,
+                final_address=current_address,
+            )
         if (
             not panel_valid_but_needs_caps_normalization
             and not panel_valid_but_needs_split_street_normalization
@@ -4915,6 +4938,20 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
         warnings.append("The order already showed a valid shipping address, but Address only contained the house number and Address (cont) contained the street name. Opening the editor to merge them.")
 
     zip_plus4_normalized = _normalize_plain_us_zip_plus4(shipping_modal, warnings)
+    original_po_box_profile = _classify_po_box_address(original_address)
+    if original_po_box_profile["po_box_only"] and _is_canadian_address(original_address):
+        warnings.append("Canadian orders cannot ship to a PO Box without a separate street address.")
+        return _handle_shipping_issue(
+            driver,
+            shipping_modal,
+            order_id,
+            CANADA_PO_BOX_SALES_NOTE,
+            "po_box_canada",
+            dry_run=dry_run,
+            warnings=warnings,
+            original_address=original_address,
+            final_address=original_address,
+        )
     if _address_is_valid(shipping_modal):
         modal_needs_split_street_normalization = _shipping_address_needs_split_street_normalization(original_address)
         if (
@@ -5147,14 +5184,22 @@ def _evaluate_and_resolve_order(driver, order_id=None, dry_run=False, retry_on_i
         )
 
     if po_box_profile["po_box_only"]:
-        if po_box_shipping_filter_key == "rush":
-            warnings.append("Rush orders cannot ship to a PO Box without a separate street address.")
+        canadian_po_box = _is_canadian_address(current_address)
+        if po_box_shipping_filter_key == "rush" or canadian_po_box:
+            if canadian_po_box:
+                warnings.append("Canadian orders cannot ship to a PO Box without a separate street address.")
+                sales_note = CANADA_PO_BOX_SALES_NOTE
+                issue_kind = "po_box_canada"
+            else:
+                warnings.append("Rush orders cannot ship to a PO Box without a separate street address.")
+                sales_note = RUSH_PO_BOX_SALES_NOTE
+                issue_kind = "po_box_rush"
             return _handle_shipping_issue(
                 driver,
                 shipping_modal,
                 order_id,
-                RUSH_PO_BOX_SALES_NOTE,
-                "po_box_rush",
+                sales_note,
+                issue_kind,
                 dry_run=dry_run,
                 warnings=warnings,
                 original_address=original_address,

@@ -230,6 +230,7 @@ class SettingsUiStructureTests(unittest.TestCase):
         self.assertIn(".crm-address-shipping-issue-message{color:var(--vscode-orange)}", self.html)
         self.assertIn("function isCrmAddressShippingIssue(", self.html)
         self.assertIn("function buildCrmAddressShippingIssueMessagesHtml(", self.html)
+        self.assertIn("if (outcome.startsWith('po_box_canada_shipping_issue_')) return 'Canada PO Box';", self.html)
         self.assertIn("const shippingIssueMessages = buildCrmAddressShippingIssueMessagesHtml(row, orderId);", self.html)
 
     def test_existing_backend_control_roots_remain_unique(self):

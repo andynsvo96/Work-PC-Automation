@@ -7460,6 +7460,45 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "po_box_rush_shipping_issue_applied")
         self.assertEqual(result["issue_label"], "Rush PO Box")
 
+    def test_canada_po_box_shipping_issue_saves_note_then_applies_issue(self):
+        driver = mock.Mock()
+        shipping_modal = object()
+        calls = []
+
+        with mock.patch.object(
+            crm_validate_address,
+            "_reload_order_for_shipping_issue",
+            side_effect=lambda *args, **kwargs: calls.append("reload"),
+        ), mock.patch.object(
+            crm_validate_address,
+            "_add_shipping_issue_sales_note",
+            side_effect=lambda *args, **kwargs: calls.append(("note", args[1], kwargs["dry_run"])) or {"updated": True},
+        ), mock.patch.object(
+            crm_validate_address,
+            "_apply_order_status",
+            side_effect=lambda *args, **kwargs: calls.append(("status", args[1], kwargs["dry_run"])) or {"status_applied": True},
+        ):
+            result = crm_validate_address._handle_shipping_issue(
+                driver,
+                shipping_modal,
+                "4885011",
+                crm_validate_address.CANADA_PO_BOX_SALES_NOTE,
+                "po_box_canada",
+                dry_run=False,
+            )
+
+        self.assertEqual(
+            calls,
+            [
+                "reload",
+                ("note", "Cannot use PO Box for Canadian orders\nNeed physical address", False),
+                ("status", "Issue - Shipping", False),
+            ],
+        )
+        self.assertTrue(result["success"])
+        self.assertEqual(result["outcome"], "po_box_canada_shipping_issue_applied")
+        self.assertEqual(result["issue_label"], "Canada PO Box")
+
     def test_missing_street_number_shipping_issue_dry_run_previews_note_and_issue(self):
         driver = mock.Mock()
         shipping_modal = object()
@@ -8002,6 +8041,29 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
 
         self.assertEqual(policy, "rush")
         self.assertTrue(any("rush" in warning.lower() for warning in warnings))
+
+    def test_shipping_panel_extracts_canadian_postal_code(self):
+        driver = mock.Mock()
+        shipping_section = mock.Mock()
+        shipping_section.text = (
+            "Shipping Transaction\n"
+            "EXAMPLE RECIPIENT\n"
+            "PO BOX 123\n"
+            "TORONTO, ON M5V 3A8\n"
+            "Valid Address"
+        )
+
+        with mock.patch.object(crm_validate_address, "_switch_to_order_app_frame"), mock.patch.object(
+            crm_validate_address,
+            "_find_shipping_section",
+            return_value=shipping_section,
+        ):
+            address = crm_validate_address._extract_shipping_panel_address(driver)
+
+        self.assertEqual(address["city"], "TORONTO")
+        self.assertEqual(address["state"], "ON")
+        self.assertEqual(address["zip"], "M5V 3A8")
+        self.assertTrue(crm_validate_address._is_canadian_address(address))
 
     def test_effective_address_cont_ignores_locality_overflow(self):
         address_fields = {
@@ -9016,6 +9078,107 @@ class CrmAddressBatchWorkerTests(unittest.TestCase):
         self.assertTrue(any("Non-rush PO Box" in warning for warning in result["warnings"]))
         mock_ensure.assert_called_once_with(driver, shipping_modal, mock.ANY, dry_run=False)
         mock_save.assert_called_once_with(driver, shipping_modal, "4605090", False, use_scope_send=True)
+
+    def test_free_canada_po_box_applies_shipping_issue_instead_of_override(self):
+        driver = object()
+        shipping_modal = object()
+        address = {
+            "recipient": "Example Recipient",
+            "address": "PO Box 550193",
+            "address_cont": "",
+            "city": "Toronto",
+            "state": "Ontario",
+            "zip": "M5V 3A8",
+        }
+        expected_result = {
+            "success": True,
+            "outcome": "po_box_canada_shipping_issue_applied",
+            "resolution": "shipping_issue_applied",
+        }
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(crm_validate_address, "_open_target_order", return_value="4605091"))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_extract_shipping_panel_address", return_value=dict(address)))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_shipping_panel_has_valid_address", return_value=False))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_read_order_totals_shipping_class", return_value="free"))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_open_shipping_editor", return_value=shipping_modal))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_extract_current_address", return_value=dict(address)))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_address_is_valid", return_value=False))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_ensure_recipient_present", return_value=(True, dict(address))))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_collect_existing_address_options", return_value=[]))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_find_best_existing_address_option", return_value=None))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_rewrite_address_fields_if_needed", return_value=(dict(address), "")))
+            mock_override = stack.enter_context(mock.patch.object(crm_validate_address, "_apply_override"))
+            mock_issue = stack.enter_context(
+                mock.patch.object(crm_validate_address, "_handle_shipping_issue", return_value=expected_result)
+            )
+
+            result = crm_validate_address._evaluate_and_resolve_order(
+                driver,
+                order_id="4605091",
+                dry_run=False,
+                shipping_filter="all",
+            )
+
+        self.assertEqual(result, expected_result)
+        mock_override.assert_not_called()
+        mock_issue.assert_called_once_with(
+            driver,
+            shipping_modal,
+            "4605091",
+            crm_validate_address.CANADA_PO_BOX_SALES_NOTE,
+            "po_box_canada",
+            dry_run=False,
+            warnings=mock.ANY,
+            original_address=address,
+            final_address=address,
+        )
+
+    def test_already_valid_canada_po_box_still_applies_shipping_issue(self):
+        driver = object()
+        address = {
+            "recipient": "EXAMPLE RECIPIENT",
+            "address": "PO BOX 123",
+            "address_cont": "",
+            "city": "TORONTO",
+            "state": "ON",
+            "zip": "M5V 3A8",
+        }
+        expected_result = {
+            "success": True,
+            "outcome": "po_box_canada_shipping_issue_applied",
+            "resolution": "shipping_issue_applied",
+        }
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(crm_validate_address, "_open_target_order", return_value="4605092"))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_extract_shipping_panel_address", return_value=dict(address)))
+            stack.enter_context(mock.patch.object(crm_validate_address, "_shipping_panel_has_valid_address", return_value=True))
+            mock_open_editor = stack.enter_context(mock.patch.object(crm_validate_address, "_open_shipping_editor"))
+            mock_issue = stack.enter_context(
+                mock.patch.object(crm_validate_address, "_handle_shipping_issue", return_value=expected_result)
+            )
+
+            result = crm_validate_address._evaluate_and_resolve_order(
+                driver,
+                order_id="4605092",
+                dry_run=False,
+                shipping_filter="free",
+            )
+
+        self.assertEqual(result, expected_result)
+        mock_open_editor.assert_not_called()
+        mock_issue.assert_called_once_with(
+            driver,
+            None,
+            "4605092",
+            crm_validate_address.CANADA_PO_BOX_SALES_NOTE,
+            "po_box_canada",
+            dry_run=False,
+            warnings=mock.ANY,
+            original_address=address,
+            final_address=address,
+        )
 
     def test_valid_split_street_address_is_rewritten_instead_of_skipped(self):
         driver = object()

@@ -8873,6 +8873,7 @@ function formatCrmAddressIssueLabel(item) {
   if (explicitLabel) return explicitLabel;
   const outcome = String(item && item.outcome || '').trim().toLowerCase();
   if (outcome.startsWith('missing_street_number_shipping_issue_')) return 'Missing Street Number';
+  if (outcome.startsWith('po_box_canada_shipping_issue_')) return 'Canada PO Box';
   if (outcome.startsWith('po_box_rush_shipping_issue_')) return 'Rush PO Box';
   return '';
 }

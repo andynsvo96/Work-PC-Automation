@@ -462,7 +462,7 @@ Handle outcomes:
 - Existing saved address: select it if it matches the current address.
 - Suggested validated address: select only if it matches closely enough.
 - APO/FPO or override path: set validation override when allowed.
-- PO Box restrictions: skip when the configured shipping filter says not to process it.
+- PO Box restrictions: apply `Issue - Shipping` for rush orders and for all Canadian orders, regardless of rush status. Other non-rush PO Boxes may use the allowed override path.
 
 ### 6. Final Modal Save
 
