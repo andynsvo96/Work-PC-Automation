@@ -258,7 +258,10 @@ OUTSIDE_LIMIT_CANCEL_PROCESS = CancelProcess(
     sales_note_reason_label="",
     sales_note_email_line="",
     subject_markers=(),
-    body_markers=("part of the artwork extends outside the designated print area",),
+    body_markers=(
+        "part of your design extends outside of the available print area",
+        "blue boundary",
+    ),
     display_name="Outside limit cancel",
     requires_reason=False,
     fixed_sales_note="Cannot print beyond the designated area limit\nCancelled",
@@ -4088,6 +4091,111 @@ def _template_modal_searcher(process):
     return _search_full_template_modal
 
 
+def _scroll_outside_limit_template_modal(driver):
+    """Scroll the smallest visible template-results pane, not the page behind it."""
+    return bool(
+        driver.execute_script(
+            """
+            function clean(value) {
+              return (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            }
+            function visible(el) {
+              const rect = el.getBoundingClientRect();
+              const style = window.getComputedStyle(el);
+              return rect.width > 0 && rect.height > 0
+                && style.display !== 'none' && style.visibility !== 'hidden'
+                && rect.bottom > 0 && rect.top < window.innerHeight
+                && rect.right > 0 && rect.left < window.innerWidth;
+            }
+            const panes = Array.from(document.querySelectorAll('*'))
+              .filter((el) => {
+                if (!visible(el) || el.scrollHeight <= el.clientHeight + 20) return false;
+                const rect = el.getBoundingClientRect();
+                const text = clean(el.innerText || el.textContent || '');
+                return rect.width > 700 && rect.height > 180
+                  && text.includes('[auto] copyright cancel')
+                  && text.includes('private email templates');
+              })
+              .sort((a, b) => {
+                const ar = a.getBoundingClientRect();
+                const br = b.getBoundingClientRect();
+                return (ar.width * ar.height) - (br.width * br.height);
+              });
+            for (const pane of panes) {
+              const before = pane.scrollTop;
+              pane.scrollTop = Math.min(
+                pane.scrollHeight,
+                before + Math.max(220, Math.floor(pane.clientHeight * 0.7))
+              );
+              pane.dispatchEvent(new Event('scroll', {bubbles: true}));
+              if (pane.scrollTop !== before) return true;
+            }
+            return false;
+            """
+        )
+    )
+
+
+def _outside_limit_template_modal_diagnostics(driver):
+    try:
+        return driver.execute_script(
+            """
+            function clean(value) {
+              return (value || '').replace(/\s+/g, ' ').trim();
+            }
+            function visible(el) {
+              const rect = el.getBoundingClientRect();
+              const style = window.getComputedStyle(el);
+              return rect.width > 0 && rect.height > 0
+                && style.display !== 'none' && style.visibility !== 'hidden'
+                && rect.bottom > 0 && rect.top < window.innerHeight
+                && rect.right > 0 && rect.left < window.innerWidth;
+            }
+            function rect(el) {
+              const r = el.getBoundingClientRect();
+              return {x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height)};
+            }
+            const searchInputs = Array.from(document.querySelectorAll('input'))
+              .filter(visible)
+              .map((el) => ({
+                placeholder: clean(el.placeholder || ''),
+                aria: clean(el.getAttribute('aria-label') || ''),
+                value: clean(el.value || ''),
+                rect: rect(el)
+              }))
+              .filter((row) => /search|template/i.test(`${row.placeholder} ${row.aria}`));
+            const scrollers = Array.from(document.querySelectorAll('*'))
+              .filter((el) => visible(el) && el.scrollHeight > el.clientHeight + 20)
+              .map((el) => ({
+                tag: (el.tagName || '').toLowerCase(),
+                role: el.getAttribute('role') || '',
+                className: String(el.className || '').slice(0, 160),
+                scrollTop: Math.round(el.scrollTop),
+                scrollHeight: Math.round(el.scrollHeight),
+                clientHeight: Math.round(el.clientHeight),
+                rect: rect(el),
+                text: clean(el.innerText || el.textContent || '').slice(0, 240)
+              }))
+              .filter((row) => /template|\[auto\]|private email/i.test(row.text))
+              .slice(0, 12);
+            const exact = Array.from(document.querySelectorAll('a,button,td,tr,span,div'))
+              .map((el) => ({el, text: clean(el.innerText || el.textContent || '')}))
+              .filter((row) => row.text.toLowerCase().includes('[auto] outside limit cancel'))
+              .slice(0, 10)
+              .map((row) => ({text: row.text.slice(0, 200), visible: visible(row.el), rect: rect(row.el)}));
+            return {searchInputs, scrollers, exact};
+            """
+        ) or {}
+    except Exception as exc:
+        return {"diagnostic_error": str(exc)}
+
+
+def _template_modal_scroller(process):
+    if process.key == OUTSIDE_LIMIT_CANCEL_PROCESS.key:
+        return _scroll_outside_limit_template_modal
+    return _scroll_full_template_modal
+
+
 def _template_search_queries(process=COPYRIGHT_CANCEL_PROCESS):
     queries = []
     candidates = []
@@ -4361,6 +4469,7 @@ def _insert_cancel_template(driver, process=COPYRIGHT_CANCEL_PROCESS):
     deadline = time.monotonic() + 35
     search_queries = _template_search_queries(process)
     search_template = _template_modal_searcher(process)
+    scroll_templates = _template_modal_scroller(process)
     while time.monotonic() < deadline:
         for query in search_queries:
             search_template(driver, query)
@@ -4375,7 +4484,7 @@ def _insert_cancel_template(driver, process=COPYRIGHT_CANCEL_PROCESS):
                     raise CopyrightCancelError("Insert a template was not found in Salesforce template menu.")
                 time.sleep(1)
                 _ensure_private_email_templates_folder(driver)
-            if not _scroll_full_template_modal(driver):
+            if not scroll_templates(driver):
                 time.sleep(0.5)
             time.sleep(0.4)
     raise CopyrightCancelError(

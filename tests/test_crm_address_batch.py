@@ -612,7 +612,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             crm_copyright_cancel.EXISTING_DESIGNS_CANCEL_PROCESS.body_markers,
         )
         self.assertIn(
-            "part of the artwork extends outside the designated print area",
+            "part of your design extends outside of the available print area",
             crm_copyright_cancel.OUTSIDE_LIMIT_CANCEL_PROCESS.body_markers,
         )
 
@@ -1737,6 +1737,20 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertIn("[AUTO] Outside Limit Cancel", queries)
         self.assertIn("outside limit", [query.lower() for query in queries])
 
+    def test_outside_limit_template_body_matches_current_salesforce_copy(self):
+        body = (
+            "While reviewing your order, we noticed that part of your design extends outside "
+            "of the available print area, which is shown by the blue boundary in the Design Studio."
+        )
+
+        self.assertEqual(
+            crm_copyright_cancel._missing_body_markers(
+                body,
+                crm_copyright_cancel.OUTSIDE_LIMIT_CANCEL_PROCESS,
+            ),
+            [],
+        )
+
     def test_outside_limit_search_targets_only_modal_field(self):
         driver = mock.Mock()
         search = mock.Mock()
@@ -1797,6 +1811,18 @@ class CrmCopyrightCancelTests(unittest.TestCase):
                 crm_copyright_cancel.COPYRIGHT_CANCEL_PROCESS
             ),
             crm_copyright_cancel._search_full_template_modal,
+        )
+        self.assertIs(
+            crm_copyright_cancel._template_modal_scroller(
+                crm_copyright_cancel.OUTSIDE_LIMIT_CANCEL_PROCESS
+            ),
+            crm_copyright_cancel._scroll_outside_limit_template_modal,
+        )
+        self.assertIs(
+            crm_copyright_cancel._template_modal_scroller(
+                crm_copyright_cancel.COPYRIGHT_CANCEL_PROCESS
+            ),
+            crm_copyright_cancel._scroll_full_template_modal,
         )
 
     def test_copyright_template_search_uses_exact_template_before_broad_keyword(self):
