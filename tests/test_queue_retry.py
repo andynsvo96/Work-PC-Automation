@@ -221,6 +221,41 @@ class LocalQueueRetryTests(unittest.TestCase):
         self.assertEqual(payload["message"], "Failure reason was not recorded.")
         self.assertNotIn("needs attention", payload["message"].lower())
 
+    def test_main_processing_queue_reads_nested_step_error_message(self):
+        task = {
+            "task_type": "crm.processing",
+            "status": "failed",
+            "message": "Automate Processing completed with partial success. Needs attention: Order Goods.",
+            "result_context": {
+                "report": {
+                    "step_results": [
+                        {
+                            "key": "order_goods",
+                            "success": False,
+                            "errors": [
+                                {
+                                    "order_id": "5067329",
+                                    "status": "Needs attention",
+                                    "outcome": "stock_unlock_not_confirmed",
+                                    "message": (
+                                        "Stock Auto Ordering Unlocked was not confirmed: "
+                                        "CRM still shows 'Locked for Auto Ordering'."
+                                    ),
+                                }
+                            ],
+                        }
+                    ]
+                }
+            },
+        }
+
+        payload = server._automation_queue_task_payload(task)
+
+        self.assertEqual(
+            payload["message"],
+            "Stock Auto Ordering Unlocked was not confirmed: CRM still shows 'Locked for Auto Ordering'.",
+        )
+
     def test_shipping_result_context_captures_worker_details_for_view_errors(self):
         detailed_payload = {
             "success": False,

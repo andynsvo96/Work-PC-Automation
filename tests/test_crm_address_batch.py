@@ -10451,6 +10451,61 @@ class CrmAddressServerTests(unittest.TestCase):
         field.send_keys.assert_any_call(crm_order_goods.STOCK_UNLOCK_STATUS)
         self.assertEqual(mock_click.call_args_list[-1].args[1], apply_button)
 
+    @mock.patch.object(crm_order_goods, "_unlock_current_order_via_preview_panel")
+    @mock.patch.object(crm_order_goods, "_page_indicates_stock_locked_for_auto_ordering", return_value=True)
+    def test_order_goods_prefers_header_apply_unlock_for_locked_order(self, _mock_locked, mock_header_unlock):
+        result = crm_order_goods._unlock_current_order_for_auto_ordering(mock.Mock(), "4418860")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["outcome"], "stock_unlocked")
+        mock_header_unlock.assert_called_once_with(mock.ANY)
+
+    def test_order_goods_locked_status_check_uses_current_stock_status(self):
+        self.assertTrue(
+            crm_order_goods._text_indicates_stock_locked_for_auto_ordering(
+                "Stock Status: Locked for Auto Ordering"
+            )
+        )
+        self.assertFalse(
+            crm_order_goods._text_indicates_stock_locked_for_auto_ordering(
+                "Status menu option: Locked for Auto Ordering. Stock Status: Need To Order"
+            )
+        )
+
+    @mock.patch.object(crm_order_goods, "_wait_after_stock_unlock", return_value="orderable")
+    @mock.patch.object(crm_order_goods, "_unlock_current_order_for_auto_ordering")
+    @mock.patch.object(crm_order_goods, "_require_order_goods_page_ready", return_value=True)
+    @mock.patch.object(crm_order_goods, "_open_target_order_with_refresh")
+    @mock.patch.object(crm_order_goods, "_unlock_single_order_through_locked_report")
+    def test_order_goods_retries_apply_unlock_when_locked_report_lags(
+        self,
+        mock_report_unlock,
+        mock_open,
+        _mock_ready,
+        mock_direct_unlock,
+        _mock_wait,
+    ):
+        mock_report_unlock.return_value = {
+            "order_id": "4418860",
+            "success": False,
+            "outcome": "stock_unlock_report_order_not_found",
+            "message": "The order was not present in the targeted locked-orders report.",
+        }
+        mock_direct_unlock.return_value = {
+            "order_id": "4418860",
+            "success": True,
+            "outcome": "stock_unlocked",
+            "message": "Applied Stock Auto Ordering Unlocked.",
+        }
+
+        result, state = crm_order_goods._retry_stock_unlock_via_preview_panel(mock.Mock(), "4418860")
+
+        self.assertEqual(state, "orderable")
+        self.assertTrue(result["success"])
+        self.assertIn("report retry was unavailable", result["message"])
+        mock_direct_unlock.assert_called_once_with(mock.ANY, "4418860", dry_run=False, force=True)
+        mock_open.assert_called_once()
+
     def test_stock_tab_script_prefers_unique_header_design_tabs(self):
         self.assertIn("#main-header-design-tabs button", crm_order_goods.STOCK_TAB_SCRIPT)
         self.assertIn("if (!tabs.length)", crm_order_goods.STOCK_TAB_SCRIPT)

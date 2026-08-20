@@ -2251,8 +2251,32 @@ def _concise_automation_failure_message(task, message=""):
     """Return a short causal queue message while detailed errors stay in View Errors."""
     context = (task or {}).get("result_context") if isinstance((task or {}).get("result_context"), dict) else {}
     report = context.get("report") if isinstance(context.get("report"), dict) else {}
-    details = report.get("order_details") if isinstance(report.get("order_details"), list) else []
     task_type = str((task or {}).get("task_type") or "").strip().lower()
+    details = report.get("order_details") if isinstance(report.get("order_details"), list) else []
+    if task_type == "crm.processing":
+        # Main Automation stores failures one level deeper than single-worker
+        # queue entries. Flatten those rows so the queue summary uses the cause
+        # that is already persisted in View Errors instead of claiming it was
+        # not recorded.
+        details = []
+        step_results = report.get("step_results") if isinstance(report.get("step_results"), list) else []
+        for step_result in step_results:
+            if not isinstance(step_result, dict):
+                continue
+            step_errors = step_result.get("errors") if isinstance(step_result.get("errors"), list) else []
+            details.extend(error for error in step_errors if isinstance(error, dict))
+            if (
+                not step_errors
+                and not bool(step_result.get("success"))
+                and str(step_result.get("message") or "").strip()
+            ):
+                details.append(
+                    {
+                        "success": False,
+                        "status": "Needs attention",
+                        "message": str(step_result.get("message") or "").strip(),
+                    }
+                )
     if task_type == "crm.stock_issue_extension":
         stock_payload = context.get("stock_issue_extension")
         if isinstance(stock_payload, dict) and stock_payload:

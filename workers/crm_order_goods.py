@@ -551,35 +551,27 @@ def _stock_already_ordered_result(order_id, message=None):
     }
 
 
+def _text_indicates_stock_locked_for_auto_ordering(text):
+    normalized = " ".join(str(text or "").lower().split())
+    return bool(
+        re.search(
+            r"\bstock\s+status\s*(?::|=|-)?\s*(?:stock\s+)?locked\s+for\s+auto\s+ordering\b",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _page_indicates_stock_locked_for_auto_ordering(driver):
     try:
-        detected = driver.execute_script(
+        text = driver.execute_script(
             r"""
-const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
-function visibleText(node) {
-  if (!node) return '';
-  const rect = node.getBoundingClientRect && node.getBoundingClientRect();
-  if (rect && (rect.width || 0) <= 0 && (rect.height || 0) <= 0) return '';
-  return normalize([
-    node.innerText,
-    node.textContent,
-    node.value,
-    node.getAttribute && node.getAttribute('aria-label'),
-    node.getAttribute && node.getAttribute('title')
-  ].join(' '));
-}
-const bodyText = normalize(document.body && (document.body.innerText || document.body.textContent));
-if (bodyText.includes('locked for auto ordering')) return true;
-for (const node of Array.from(document.querySelectorAll('body *'))) {
-  const text = visibleText(node);
-  if (text.includes('locked for auto ordering')) return true;
-}
-return false;
+return String((document.body && document.body.innerText) || '');
 """
         )
-        return detected is True
     except Exception:
         return False
+    return _text_indicates_stock_locked_for_auto_ordering(text)
 
 
 STOCK_UNLOCK_CONTROL_SCRIPT = r"""
@@ -1333,25 +1325,30 @@ def _unlock_current_order_for_auto_ordering(driver, order_id, dry_run=False, for
             "stock_unlock_required": True,
         }
 
-    if force:
-        try:
-            _unlock_current_order_via_preview_panel(driver)
-            return {
-                "order_id": order_id,
-                "success": True,
-                "outcome": "stock_unlocked",
-                "message": "Applied Stock Auto Ordering Unlocked before attempting Order Goods.",
-                "manual_review_required": False,
-                "stock_unlock_required": True,
-                "stock_unlocked_before_order_goods": True,
-            }
-        except Exception as preview_exc:
-            controls = {"found": False, "message": str(preview_exc)}
-    else:
+    # Prefer the actual Angular order-header typeahead and its paired Apply
+    # button for every locked order. The older DOM heuristic remains a fallback
+    # for CRM layouts that do not expose the header control.
+    try:
+        _unlock_current_order_via_preview_panel(driver)
+        return {
+            "order_id": order_id,
+            "success": True,
+            "outcome": "stock_unlocked",
+            "message": "Applied Stock Auto Ordering Unlocked before attempting Order Goods.",
+            "manual_review_required": False,
+            "stock_unlock_required": True,
+            "stock_unlocked_before_order_goods": True,
+        }
+    except Exception as preview_exc:
         try:
             controls = driver.execute_script(STOCK_UNLOCK_CONTROL_SCRIPT)
         except Exception as exc:
-            controls = {"found": False, "message": str(exc)}
+            controls = {
+                "found": False,
+                "message": f"Primary Apply Unlock path failed: {preview_exc}. Fallback control search failed: {exc}",
+            }
+        if isinstance(controls, dict) and not controls.get("found") and not controls.get("message"):
+            controls["message"] = str(preview_exc)
     if force and (not isinstance(controls, dict) or not controls.get("found")):
         try:
             controls = driver.execute_script(FORCE_STOCK_UNLOCK_CONTROL_SCRIPT)
@@ -1486,10 +1483,44 @@ def _retry_stock_unlock_via_preview_panel(driver, order_id, stock_tab_index=None
             "manual_review_required": True,
             "stock_unlock_required": True,
         }
+    order_page_open = False
     if not retry_result or not retry_result.get("success"):
-        return retry_result, "locked"
-    _open_target_order_with_refresh(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
-    _require_order_goods_page_ready(driver, order_id)
+        report_failure = str((retry_result or {}).get("message") or "The targeted locked-orders retry failed.").strip()
+        # A newly eligible Order Goods row may not exist in the locked-orders
+        # report yet. Reopen the order and make one final targeted Apply Unlock
+        # attempt through the order header instead of stopping at report lag.
+        try:
+            _open_target_order_with_refresh(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
+            _require_order_goods_page_ready(driver, order_id)
+            order_page_open = True
+            direct_retry = _unlock_current_order_for_auto_ordering(driver, order_id, dry_run=False, force=True)
+        except Exception as exc:
+            direct_retry = {
+                "order_id": order_id,
+                "success": False,
+                "outcome": "stock_unlock_direct_retry_failed",
+                "message": f"The direct Apply Unlock retry failed: {exc}",
+                "manual_review_required": True,
+                "stock_unlock_required": True,
+            }
+        if not direct_retry or not direct_retry.get("success"):
+            direct_failure = str((direct_retry or {}).get("message") or "The direct Apply Unlock retry failed.").strip()
+            return {
+                "order_id": order_id,
+                "success": False,
+                "outcome": str((direct_retry or {}).get("outcome") or "stock_unlock_retry_failed"),
+                "message": f"{report_failure} {direct_failure}".strip(),
+                "manual_review_required": True,
+                "stock_unlock_required": True,
+            }, "locked"
+        retry_result = dict(direct_retry)
+        retry_result["message"] = (
+            f"{retry_result.get('message') or 'Applied Stock Auto Ordering Unlocked.'} "
+            f"The locked-orders report retry was unavailable: {report_failure}"
+        ).strip()
+    if not order_page_open:
+        _open_target_order_with_refresh(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
+        _require_order_goods_page_ready(driver, order_id)
     return retry_result, _wait_after_stock_unlock(driver, order_id, stock_tab_index=stock_tab_index)
 
 
@@ -2361,7 +2392,11 @@ def _run_order_with_driver(
         if post_unlock_state != "orderable":
             failure = _stock_unlock_not_confirmed_result(normalized_order_id, post_unlock_state)
             if post_unlock_state == "locked":
-                failure["message"] += " Retried once through Order Preview before stopping."
+                retry_message = str((retry_unlock_result or {}).get("message") or "").strip()
+                if retry_message:
+                    failure["message"] += f" Apply Unlock retry result: {retry_message}"
+                else:
+                    failure["message"] += " Apply Unlock was retried once before stopping."
             return [failure]
         unlock_result["verified"] = True
         _publish_status(f"Ordering stock tabs for order {normalized_order_id}.", stage="ordering_stock", order_id=normalized_order_id)
