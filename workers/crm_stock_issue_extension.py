@@ -51,7 +51,7 @@ STOCK_EXTENSION_PROCESS = shared.CancelProcess(
     key=AUTOMATION_KEY,
     issue_type="Stock Issue - Extension Required",
     salesforce_template=SALESFORCE_TEMPLATE,
-    template_search="[AUTO]",
+    template_search=SALESFORCE_TEMPLATE,
     sales_note_reason_label="",
     sales_note_email_line="",
     subject_markers=("urgent", "extension required"),
@@ -146,7 +146,7 @@ def _click_exact_stock_extension_template(driver):
 
 
 def _insert_exact_stock_extension_template(driver):
-    """Open the full picker, search [AUTO], and require the exact Stock Extension result."""
+    """Search the full template name and require the exact Stock Extension result."""
     shared._focus_salesforce_body_editor(driver)
     shared._click_template_button(driver)
     time.sleep(0.5)
@@ -155,7 +155,7 @@ def _insert_exact_stock_extension_template(driver):
     shared._ensure_private_email_templates_folder(driver)
     deadline = time.monotonic() + 35
     while time.monotonic() < deadline:
-        shared._search_full_template_modal(driver, "[AUTO]")
+        shared._search_full_template_modal(driver, SALESFORCE_TEMPLATE)
         time.sleep(1)
         if _click_exact_stock_extension_template(driver):
             shared._confirm_salesforce_template_insert(driver)
@@ -174,7 +174,7 @@ def _insert_exact_stock_extension_template(driver):
         shared._scroll_full_template_modal(driver)
         time.sleep(0.5)
     raise StockIssueExtensionError(
-        f"Salesforce template {SALESFORCE_TEMPLATE} was not found after searching [AUTO]."
+        f"Salesforce template {SALESFORCE_TEMPLATE} was not found after searching its full name."
     )
 
 
@@ -513,6 +513,12 @@ def _read_recipient_state(driver):
           const lower = label.toLowerCase();
           const labels = Array.from(document.querySelectorAll('label,span,div,td,th'))
             .filter((el) => visible(el) && clean(el.innerText || el.textContent).replace(/:$/, '').toLowerCase() === lower);
+          const ariaRows = Array.from(document.querySelectorAll('[aria-label]'))
+            .filter((el) => visible(el) && clean(el.getAttribute('aria-label')).replace(/:$/, '').toLowerCase() === lower)
+            .map((el) => clean(el.innerText || el.textContent))
+            .map((text) => text.toLowerCase().startsWith(`${lower} `) ? text.slice(label.length).trim() : text)
+            .filter((text) => text && text.toLowerCase() !== lower);
+          if (ariaRows.length) return Array.from(new Set(ariaRows));
           const pills = Array.from(document.querySelectorAll('.pillText, .uiPill .pillText, [class*="pillText"]'))
             .filter(visible);
           const nearby = [];

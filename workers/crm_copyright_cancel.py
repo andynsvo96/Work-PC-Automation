@@ -216,7 +216,7 @@ COPYRIGHT_CANCEL_PROCESS = CancelProcess(
     key="copyright_cancel",
     issue_type=COPYRIGHT_CANCEL_ISSUE_TYPE,
     salesforce_template=SALESFORCE_COPYRIGHT_CANCEL_TEMPLATE,
-    template_search="copyright",
+    template_search=SALESFORCE_COPYRIGHT_CANCEL_TEMPLATE,
     sales_note_reason_label="copyright",
     sales_note_email_line="emailed copyright cancellation",
     subject_markers=("refund has been issued",),
@@ -228,11 +228,11 @@ CONTENT_VIOLATION_CANCEL_PROCESS = CancelProcess(
     key="content_violation_cancel",
     issue_type=CONTENT_VIOLATION_CANCEL_ISSUE_TYPE,
     salesforce_template=SALESFORCE_CONTENT_VIOLATION_CANCEL_TEMPLATE,
-    template_search="content violation",
+    template_search=SALESFORCE_CONTENT_VIOLATION_CANCEL_TEMPLATE,
     sales_note_reason_label="content violation",
     sales_note_email_line="emailed content violation cancellation",
     subject_markers=(),
-    body_markers=("content policy", "refund"),
+    body_markers=("content standards", "processed a full refund"),
     display_name="Content violation cancel",
     refund_case_subject="Content Violation",
 )
@@ -240,11 +240,11 @@ EXISTING_DESIGNS_CANCEL_PROCESS = CancelProcess(
     key="existing_designs_cancel",
     issue_type=EXISTING_DESIGNS_CANCEL_ISSUE_TYPE,
     salesforce_template=SALESFORCE_EXISTING_DESIGNS_CANCEL_TEMPLATE,
-    template_search="existing t-shirt",
+    template_search=SALESFORCE_EXISTING_DESIGNS_CANCEL_TEMPLATE,
     sales_note_reason_label="",
     sales_note_email_line="",
     subject_markers=(),
-    body_markers=("photograph or screenshot of artwork printed on another shirt",),
+    body_markers=("photo, screenshot, or mockup of a garment", "cancelled the order and issued a full refund"),
     display_name="Existing designs cancel",
     requires_reason=False,
     fixed_sales_note="Cannot print an screenshot/photograph of a design on a t-shirt\nCancelled",
@@ -254,7 +254,7 @@ OUTSIDE_LIMIT_CANCEL_PROCESS = CancelProcess(
     key="outside_limit_cancel",
     issue_type=OUTSIDE_LIMIT_CANCEL_ISSUE_TYPE,
     salesforce_template=SALESFORCE_OUTSIDE_LIMIT_CANCEL_TEMPLATE,
-    template_search="outside limit",
+    template_search=SALESFORCE_OUTSIDE_LIMIT_CANCEL_TEMPLATE,
     sales_note_reason_label="",
     sales_note_email_line="",
     subject_markers=(),
@@ -271,11 +271,14 @@ COMPLICATED_EMB_TO_HDD_PROCESS = CancelProcess(
     key="complicated_emb_to_hdd",
     issue_type=COMPLICATED_EMB_ISSUE_TYPE,
     salesforce_template=SALESFORCE_COMPLICATED_EMB_TO_HDD_TEMPLATE,
-    template_search="complicated",
+    template_search=SALESFORCE_COMPLICATED_EMB_TO_HDD_TEMPLATE,
     sales_note_reason_label="",
     sales_note_email_line="",
     subject_markers=(),
-    body_markers=("unable to fulfill your request to embroider", "updated to ink printing"),
+    body_markers=(
+        "details are too small or complex to reproduce clearly with embroidery",
+        "updated the order from embroidery to ink printing instead",
+    ),
     display_name="Complicated EMB to HDD",
     requires_reason=False,
     cancel_and_refund=False,
@@ -285,7 +288,7 @@ OVERSIZE_EMB_TO_HDD_PROCESS = CancelProcess(
     key="oversize_emb_to_hdd",
     issue_type=OVERSIZE_EMB_TO_HDD_ISSUE_TYPE,
     salesforce_template=SALESFORCE_OVERSIZE_EMBROIDERY_TEMPLATE,
-    template_search="oversize embroidery",
+    template_search=SALESFORCE_OVERSIZE_EMBROIDERY_TEMPLATE,
     sales_note_reason_label="",
     sales_note_email_line="",
     subject_markers=(),
@@ -299,7 +302,7 @@ COPYRIGHT_REACHOUT_PROCESS = CancelProcess(
     key="copyright_reachout",
     issue_type=COPYRIGHT_REACHOUT_ISSUE_TYPE,
     salesforce_template=SALESFORCE_COPYRIGHT_REACHOUT_TEMPLATE,
-    template_search="copyright",
+    template_search=SALESFORCE_COPYRIGHT_REACHOUT_TEMPLATE,
     sales_note_reason_label="Copyright",
     sales_note_email_line="Emailed txted",
     subject_markers=(),
@@ -313,7 +316,7 @@ COPYRIGHT_REMOVAL_PROCESS = CancelProcess(
     key="copyright_removal",
     issue_type=COPYRIGHT_REMOVAL_ISSUE_TYPE,
     salesforce_template=SALESFORCE_COPYRIGHT_REMOVAL_TEMPLATE,
-    template_search="copyright",
+    template_search=SALESFORCE_COPYRIGHT_REMOVAL_TEMPLATE,
     sales_note_reason_label="",
     sales_note_email_line="",
     subject_markers=("copyrighted element removed",),
@@ -3926,7 +3929,7 @@ def _ensure_private_email_templates_folder(driver):
     return False
 
 
-def _search_full_template_modal(driver, query):
+def _search_full_template_modal_legacy_js(driver, query):
     return bool(
         driver.execute_script(
             """
@@ -3986,11 +3989,10 @@ def _search_full_template_modal(driver, query):
 
 
 def _search_outside_limit_template_modal(driver, query):
-    """Type only in the full picker's Search templates field.
+    """Type the full name only in the picker's Search templates field.
 
-    Salesforce also keeps its global header search visible behind this modal.
-    This targeted path avoids changing the working picker behavior used by the
-    other cancellation automations.
+    Salesforce keeps its global header search visible behind this modal, so the
+    target must be scoped precisely and updated with real keyboard input.
     """
     search = driver.execute_script(
         """
@@ -4083,6 +4085,10 @@ def _search_outside_limit_template_modal(driver, query):
         return _query_is_visible()
     except Exception:
         return False
+
+
+def _search_full_template_modal(driver, query):
+    return _search_outside_limit_template_modal(driver, query)
 
 
 def _template_modal_searcher(process):
@@ -4197,23 +4203,8 @@ def _template_modal_scroller(process):
 
 
 def _template_search_queries(process=COPYRIGHT_CANCEL_PROCESS):
-    queries = []
-    candidates = []
-    if "[AUTO]" in str(process.salesforce_template).upper():
-        candidates.append("[AUTO]")
-    candidates.extend(
-        (
-            process.salesforce_template,
-            *(process.template_aliases or ()),
-            process.salesforce_template.replace("NO REPLY -", ""),
-            process.template_search,
-        )
-    )
-    for query in candidates:
-        query = _clean_text(query)
-        if query and query.lower() not in [item.lower() for item in queries]:
-            queries.append(query)
-    return queries
+    query = _clean_text(process.salesforce_template)
+    return [query] if query else []
 
 
 def _scroll_full_template_modal(driver):

@@ -608,8 +608,12 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertEqual([row.process_key for row in eligible], ["existing_designs_cancel", "outside_limit_cancel"])
         self.assertTrue(all(row.process.cancel_and_refund for row in eligible))
         self.assertIn(
-            "photograph or screenshot of artwork printed on another shirt",
+            "photo, screenshot, or mockup of a garment",
             crm_copyright_cancel.EXISTING_DESIGNS_CANCEL_PROCESS.body_markers,
+        )
+        self.assertIn(
+            "content standards",
+            crm_copyright_cancel.CONTENT_VIOLATION_CANCEL_PROCESS.body_markers,
         )
         self.assertIn(
             "part of your design extends outside of the available print area",
@@ -1722,20 +1726,21 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertFalse(eligible[0].process.cancel_and_refund)
         self.assertFalse(eligible[1].process.cancel_and_refund)
 
-    def test_complicated_emb_template_search_uses_picker_match(self):
+    def test_complicated_emb_template_search_uses_full_name_only(self):
         queries = crm_copyright_cancel._template_search_queries(crm_copyright_cancel.COMPLICATED_EMB_TO_HDD_PROCESS)
 
-        self.assertEqual(queries[0], "[AUTO]")
-        self.assertIn("[AUTO] Complicated EMB to HDD", queries)
-        self.assertIn("updated to ink printing", crm_copyright_cancel.COMPLICATED_EMB_TO_HDD_PROCESS.body_markers)
+        self.assertEqual(queries, ["[AUTO] Complicated EMB to HDD"])
+        self.assertIn(
+            "updated the order from embroidery to ink printing instead",
+            crm_copyright_cancel.COMPLICATED_EMB_TO_HDD_PROCESS.body_markers,
+        )
 
     def test_outside_limit_template_search_uses_exact_configured_name(self):
         process = crm_copyright_cancel.OUTSIDE_LIMIT_CANCEL_PROCESS
         queries = crm_copyright_cancel._template_search_queries(process)
 
         self.assertEqual(process.salesforce_template, "[AUTO] Outside Limit Cancel")
-        self.assertIn("[AUTO] Outside Limit Cancel", queries)
-        self.assertIn("outside limit", [query.lower() for query in queries])
+        self.assertEqual(queries, ["[AUTO] Outside Limit Cancel"])
 
     def test_outside_limit_template_body_matches_current_salesforce_copy(self):
         body = (
@@ -1788,16 +1793,23 @@ class CrmCopyrightCancelTests(unittest.TestCase):
 
         self.assertFalse(found)
 
-    def test_shared_template_search_used_by_copyright_is_unchanged(self):
+    def test_shared_template_search_uses_targeted_modal_field(self):
         driver = mock.Mock()
-        driver.execute_script.return_value = True
+        search = mock.Mock()
+        driver.execute_script.return_value = search
+        search.get_attribute.return_value = "[AUTO] Copyright Cancel"
 
-        found = crm_copyright_cancel._search_full_template_modal(driver, "copyright")
+        with mock.patch.object(crm_copyright_cancel, "_click_element_center", return_value=True):
+            found = crm_copyright_cancel._search_full_template_modal(driver, "[AUTO] Copyright Cancel")
 
         self.assertTrue(found)
-        script, query = driver.execute_script.call_args.args
-        self.assertEqual(query, "copyright")
-        self.assertIn("Array.from(document.querySelectorAll('input')).find", script)
+        search.send_keys.assert_has_calls(
+            [
+                mock.call(crm_copyright_cancel.Keys.CONTROL, "a"),
+                mock.call(crm_copyright_cancel.Keys.BACKSPACE),
+                mock.call("[AUTO] Copyright Cancel"),
+            ]
+        )
 
     def test_only_outside_limit_uses_targeted_template_search(self):
         self.assertIs(
@@ -1825,24 +1837,14 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             crm_copyright_cancel._scroll_full_template_modal,
         )
 
-    def test_copyright_template_search_uses_exact_template_before_broad_keyword(self):
+    def test_copyright_template_search_uses_exact_template_name_only(self):
         cancel_queries = crm_copyright_cancel._template_search_queries(crm_copyright_cancel.COPYRIGHT_CANCEL_PROCESS)
         reachout_queries = crm_copyright_cancel._template_search_queries(crm_copyright_cancel.COPYRIGHT_REACHOUT_PROCESS)
         removal_queries = crm_copyright_cancel._template_search_queries(crm_copyright_cancel.COPYRIGHT_REMOVAL_PROCESS)
 
-        self.assertEqual(cancel_queries[0], "[AUTO]")
-        self.assertEqual(reachout_queries[0], "[AUTO]")
-        self.assertEqual(removal_queries[0], "[AUTO]")
-        self.assertIn("[AUTO] Copyright Cancel", cancel_queries)
-        self.assertIn("[AUTO] Copyright Reachout", reachout_queries)
-        self.assertIn("[AUTO] Copyright Removal", removal_queries)
-        self.assertNotIn("NO REPLY - Removed Copyright", removal_queries)
-        self.assertNotIn("A Copyrighted Element Removed", removal_queries)
-        self.assertNotIn("Copyrighted Element Removed", removal_queries)
-        self.assertIn("copyright", [query.lower() for query in cancel_queries[1:]])
-        self.assertIn("copyright", [query.lower() for query in reachout_queries[1:]])
-        self.assertIn("copyright", [query.lower() for query in removal_queries[1:]])
-        self.assertNotEqual(cancel_queries[1], reachout_queries[1])
+        self.assertEqual(cancel_queries, ["[AUTO] Copyright Cancel"])
+        self.assertEqual(reachout_queries, ["[AUTO] Copyright Reachout"])
+        self.assertEqual(removal_queries, ["[AUTO] Copyright Removal"])
         self.assertTrue(crm_copyright_cancel.COPYRIGHT_CANCEL_PROCESS.replace_body_placeholder_with_reason)
         self.assertTrue(crm_copyright_cancel.COPYRIGHT_REMOVAL_PROCESS.replace_body_placeholder_with_reason)
 
