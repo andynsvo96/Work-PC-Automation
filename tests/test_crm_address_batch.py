@@ -1741,11 +1741,13 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         driver = mock.Mock()
         search = mock.Mock()
         driver.execute_script.return_value = search
+        search.get_attribute.return_value = "[AUTO] Outside Limit Cancel"
 
-        found = crm_copyright_cancel._search_outside_limit_template_modal(
-            driver,
-            "[AUTO] Outside Limit Cancel",
-        )
+        with mock.patch.object(crm_copyright_cancel, "_click_element_center", return_value=True):
+            found = crm_copyright_cancel._search_outside_limit_template_modal(
+                driver,
+                "[AUTO] Outside Limit Cancel",
+            )
 
         self.assertTrue(found)
         script = driver.execute_script.call_args.args[0]
@@ -1757,6 +1759,20 @@ class CrmCopyrightCancelTests(unittest.TestCase):
                 mock.call("[AUTO] Outside Limit Cancel"),
             ]
         )
+
+    def test_outside_limit_search_refuses_unconfirmed_typing(self):
+        driver = mock.Mock()
+        search = mock.Mock()
+        driver.execute_script.side_effect = [search, True]
+        search.get_attribute.return_value = ""
+
+        with mock.patch.object(crm_copyright_cancel, "_click_element_center", return_value=True):
+            found = crm_copyright_cancel._search_outside_limit_template_modal(
+                driver,
+                "[AUTO] Outside Limit Cancel",
+            )
+
+        self.assertFalse(found)
 
     def test_shared_template_search_used_by_copyright_is_unchanged(self):
         driver = mock.Mock()

@@ -4027,31 +4027,59 @@ def _search_outside_limit_template_modal(driver, query):
     )
     if search is None:
         return False
+    target = str(query or "")
+
+    def _query_is_visible():
+        try:
+            return _clean_text(search.get_attribute("value")).lower() == _clean_text(target).lower()
+        except Exception:
+            return False
+
     try:
+        _click_element_center(driver, search)
         search.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
         search.send_keys(Keys.BACKSPACE)
-        search.send_keys(str(query or ""))
-        return True
+        search.send_keys(target)
+        time.sleep(0.5)
+        if _query_is_visible():
+            return True
     except Exception:
-        return bool(
-            driver.execute_script(
-                """
-                const input = arguments[0];
-                const value = String(arguments[1] || '');
-                if (!input) return false;
-                const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
-                if (descriptor && descriptor.set) descriptor.set.call(input, value);
-                else input.value = value;
-                input.dispatchEvent(new InputEvent('input', {
-                  bubbles: true, inputType: 'insertText', data: value
-                }));
-                input.dispatchEvent(new Event('change', {bubbles: true}));
-                return true;
-                """,
-                search,
-                query,
-            )
+        pass
+    try:
+        _click_element_center(driver, search)
+        driver.switch_to.active_element.send_keys(
+            Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL,
+            "a",
         )
+        driver.switch_to.active_element.send_keys(Keys.BACKSPACE)
+        driver.execute_cdp_cmd("Input.insertText", {"text": target})
+        time.sleep(0.5)
+        if _query_is_visible():
+            return True
+    except Exception:
+        pass
+    try:
+        driver.execute_script(
+            """
+            const input = arguments[0];
+            const value = String(arguments[1] || '');
+            if (!input) return false;
+            const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+            if (descriptor && descriptor.set) descriptor.set.call(input, value);
+            else input.value = value;
+            input.dispatchEvent(new InputEvent('input', {
+              bubbles: true, inputType: 'insertText', data: value
+            }));
+            input.dispatchEvent(new Event('change', {bubbles: true}));
+            return true;
+            """,
+            search,
+            target,
+        )
+        time.sleep(0.5)
+        return _query_is_visible()
+    except Exception:
+        return False
 
 
 def _template_modal_searcher(process):
