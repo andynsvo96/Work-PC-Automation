@@ -360,6 +360,7 @@ class StockIssueExtensionSourceContractTests(unittest.TestCase):
         self.assertIn("descriptionCell.textContent = product.description", content)
         self.assertIn("const supplierColor = text.match", content)
         self.assertIn("Alpha(?: Stock)?", content)
+        self.assertIn(r"/\bColor\b\s*:?\s*", content)
         self.assertIn("validateStockIssueExtensionDays", content)
         self.assertIn("Extension days must be a positive whole number.", content)
         self.assertIn('queue.disabled = !enabled', content)

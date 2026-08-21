@@ -435,7 +435,7 @@ function parseStockIssueProductBlock(block, tabNumber) {
   }
 
   let color = "";
-  const explicitColor = text.match(/\bColor\s*:?\s*(.+?)(?=\s+Total Quantity|\s+Size\s*:|\s+Quantity\s*:|\s+Price\s*:|$)/i);
+  const explicitColor = text.match(/\bColor\b\s*:?\s*(.+?)(?=\s+Total Quantity|\s+Size\s*:|\s+Quantity\s*:|\s+Price\s*:|$)/i);
   if (explicitColor) color = stockIssueCleanText(explicitColor[1]);
   if (!color) {
     const colorControl = Array.from(block.querySelectorAll("select,input,[data-color],[ng-model*='color' i]"))
