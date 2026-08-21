@@ -94,6 +94,11 @@ class StockIssueExtensionFormattingTests(unittest.TestCase):
                 with self.assertRaises(stock_extension.StockIssueExtensionError):
                     stock_extension.normalize_request(days, products)
 
+    def test_request_validation_accepts_integer_days_from_json_or_numeric_coercion(self):
+        for days in (5, 5.0, "5"):
+            with self.subTest(days=days):
+                self.assertEqual(stock_extension.normalize_request(days, [product()])["days"], 5)
+
 
 class StockIssueExtensionWorkflowTests(unittest.TestCase):
     @staticmethod
@@ -351,6 +356,10 @@ class StockIssueExtensionSourceContractTests(unittest.TestCase):
         self.assertIn("#design-items-list [id^='design-item-']", content)
         self.assertIn("totalQuantity <= 0", content)
         self.assertIn("deduplicateStockIssueProducts", content)
+        self.assertIn("validateStockIssueExtensionDays", content)
+        self.assertIn("Extension days must be a positive whole number.", content)
+        self.assertIn('queue.disabled = !enabled', content)
+        self.assertIn('daysInput.setAttribute("aria-invalid", String(!daysValidation.valid))', content)
         self.assertIn("days: structuredData.days", bridge)
         self.assertIn("products: structuredData.products", bridge)
         self.assertIn("days: message.days", background)

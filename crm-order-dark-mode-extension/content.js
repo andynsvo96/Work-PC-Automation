@@ -582,6 +582,21 @@ function createStockIssueDialogShell(label) {
   return { overlay, dialog };
 }
 
+function validateStockIssueExtensionDays(value) {
+  const text = String(value ?? "").trim();
+  if (!/^[1-9]\d*$/.test(text)) {
+    return { valid: false, days: null, message: "Extension days must be a positive whole number." };
+  }
+  const days = Number(text);
+  if (!Number.isSafeInteger(days)) {
+    return { valid: false, days: null, message: "Extension days must be a positive whole number." };
+  }
+  if (days > 365) {
+    return { valid: false, days: null, message: "Extension days cannot exceed 365." };
+  }
+  return { valid: true, days, message: "" };
+}
+
 function showStockIssueProductDialog(products, automation, triggerButton, autoProcessButton) {
   const { overlay, dialog } = createStockIssueDialogShell("Configure Stock Issue Extension Required");
   const title = document.createElement("div");
@@ -644,7 +659,10 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
   dialog.append(daysLabel, daysInput);
 
   const validation = document.createElement("div");
+  validation.id = "crm-stock-issue-validation";
   validation.setAttribute("role", "status");
+  validation.setAttribute("aria-live", "polite");
+  daysInput.setAttribute("aria-describedby", validation.id);
   Object.assign(validation.style, { minHeight: "18px", marginTop: "8px", color: "#b91c1c", fontWeight: "600" });
   dialog.append(validation);
   const actions = document.createElement("div");
@@ -660,10 +678,13 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
 
   const refresh = () => {
     const selected = checkboxes.filter((checkbox) => checkbox.checked).length;
-    const daysText = String(daysInput.value || "");
-    const validDays = /^[1-9]\d*$/.test(daysText) && Number(daysText) <= 365;
-    const enabled = selected > 0 && validDays;
-    validation.textContent = !selected ? "Select at least one product." : (!validDays ? "Enter a positive whole number of days." : "");
+    const daysValidation = validateStockIssueExtensionDays(daysInput.value);
+    const errors = [];
+    if (!selected) errors.push("Select at least one product.");
+    if (!daysValidation.valid) errors.push(daysValidation.message);
+    const enabled = selected > 0 && daysValidation.valid;
+    validation.textContent = errors.join(" ");
+    daysInput.setAttribute("aria-invalid", String(!daysValidation.valid));
     queue.disabled = !enabled;
     queue.setAttribute("aria-disabled", String(!enabled));
     queue.style.setProperty("background", enabled ? "#15803d" : "#9ca3af", "important");
@@ -677,10 +698,14 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
     const selectedProducts = checkboxes
       .filter((checkbox) => checkbox.checked)
       .map((checkbox) => products[Number(checkbox.value)]);
-    if (!selectedProducts.length || !/^[1-9]\d*$/.test(String(daysInput.value || ""))) return;
+    const daysValidation = validateStockIssueExtensionDays(daysInput.value);
+    if (!selectedProducts.length || !daysValidation.valid) {
+      refresh();
+      return;
+    }
     overlay.remove();
     queueManualOrderAutomation(automation, triggerButton, autoProcessButton, "", {
-      days: Number(daysInput.value),
+      days: daysValidation.days,
       products: selectedProducts
     });
   });

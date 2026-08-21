@@ -192,10 +192,19 @@ def _clean_text(value, *, field, maximum, required=True):
 def _positive_integer(value, *, label, maximum=None):
     if isinstance(value, bool):
         raise StockIssueExtensionError(f"{label} must be a positive whole number.")
-    text = str(value or "").strip()
-    if not re.fullmatch(r"[1-9]\d*", text):
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise StockIssueExtensionError(f"{label} must be a positive whole number.")
+        number = int(value)
+    elif isinstance(value, int):
+        number = value
+    else:
+        text = str(value or "").strip()
+        if not re.fullmatch(r"[1-9]\d*", text):
+            raise StockIssueExtensionError(f"{label} must be a positive whole number.")
+        number = int(text)
+    if number <= 0:
         raise StockIssueExtensionError(f"{label} must be a positive whole number.")
-    number = int(text)
     if maximum is not None and number > maximum:
         raise StockIssueExtensionError(f"{label} cannot exceed {maximum}.")
     return number
