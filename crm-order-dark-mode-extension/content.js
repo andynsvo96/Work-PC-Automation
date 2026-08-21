@@ -361,27 +361,55 @@ function visibleStockIssueDesignTabs() {
     const text = stockIssueCleanText(element.innerText || element.textContent);
     const match = text.match(/\b(\d+)\s*-\s*QTY\s*:\s*(\d+)/i);
     if (!match || !/Design Previews/i.test(text)) continue;
-    const rect = element.getBoundingClientRect();
+    const clickTarget = element.closest("#main-header-design-tabs button, button, a, [role='tab'], [ng-click], [onclick], li") || element;
+    const rect = clickTarget.getBoundingClientRect();
     let score = 1000 - text.length;
     if (element.querySelector("input")) score += 100;
+    if (/^(?:BUTTON|A)$/i.test(clickTarget.tagName || "")) score += 50;
     if (rect.top < 450) score += 100;
     const tabNumber = Number(match[1]);
     const previous = bestByNumber.get(tabNumber);
     if (!previous || score > previous.score) {
-      bestByNumber.set(tabNumber, { element, tabNumber, quantity: Number(match[2]), score });
+      bestByNumber.set(tabNumber, { element: clickTarget, tabNumber, quantity: Number(match[2]), score });
     }
   }
   return Array.from(bestByNumber.values()).sort((left, right) => left.tabNumber - right.tabNumber);
 }
 
+function stockIssueTabHasActiveMarker(element) {
+  for (let current = element; current && current !== document.body; current = current.parentElement) {
+    if (["active", "selected", "current", "btn-inverse"].some((name) => current.classList?.contains(name))) return true;
+    if (["aria-selected", "aria-pressed", "data-active", "data-selected"].some((name) => current.getAttribute?.(name) === "true")) return true;
+    if (current !== element && current.id === "main-header-design-tabs") break;
+  }
+  return Boolean(element.querySelector("input:checked, [aria-selected='true'], [aria-pressed='true'], [data-active='true'], [data-selected='true']"));
+}
+
+function stockIssueTabBackgroundBrightness(element) {
+  for (let current = element, depth = 0; current && current !== document.body && depth < 4; current = current.parentElement, depth += 1) {
+    const color = window.getComputedStyle?.(current).backgroundColor || "";
+    const match = color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)$/i);
+    if (!match || (match[4] !== undefined && Number(match[4]) < 0.25)) continue;
+    return (Number(match[1]) * 299 + Number(match[2]) * 587 + Number(match[3]) * 114) / 1000;
+  }
+  return null;
+}
+
 function activeStockIssueDesignTabNumber(tabs) {
-  const active = tabs.find(({ element }) => (
-    element.classList.contains("active")
-    || element.getAttribute("aria-selected") === "true"
-    || Boolean(element.querySelector("input:checked, [aria-selected='true']"))
-    || Boolean(element.closest("li.active, [role='tab'].active, [role='tab'][aria-selected='true'], .nav-tabs .active"))
-  ));
-  return active ? active.tabNumber : null;
+  if (tabs.length === 1) return tabs[0].tabNumber;
+  const marked = tabs.filter(({ element }) => stockIssueTabHasActiveMarker(element));
+  if (marked.length === 1) return marked[0].tabNumber;
+
+  // Some CRM order pages expose no selected-state attribute. On those pages
+  // the active design tab is the one dark button among otherwise light tabs.
+  const byBrightness = tabs
+    .map((tab) => ({ ...tab, brightness: stockIssueTabBackgroundBrightness(tab.element) }))
+    .filter((tab) => Number.isFinite(tab.brightness))
+    .sort((left, right) => left.brightness - right.brightness);
+  if (byBrightness.length === tabs.length && byBrightness[1].brightness - byBrightness[0].brightness >= 35) {
+    return byBrightness[0].tabNumber;
+  }
+  return null;
 }
 
 function clickStockIssueDesignTab(tabNumber) {
