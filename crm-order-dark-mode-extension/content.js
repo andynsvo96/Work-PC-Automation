@@ -450,6 +450,15 @@ function parseStockIssueProductBlock(block, tabNumber) {
     }
   }
   if (!color) {
+    // CRM renders the product link, supplier annotation, and color as adjacent
+    // text. Read only the value between the supplier and Total Quantity instead
+    // of treating that whole combined line as the color.
+    const supplierColor = text.match(
+      /(?:^|\s)-?\s*(?:Alpha(?: Stock)?|SanMar(?: Stock)?|S&S(?: Activewear)?(?: Stock)?|Supplier|Stock Source)\s+(.+?)(?=\s+Total Quantity|\s+Size\s*:|\s+Quantity\s*:|\s+Price\s*:|$)/i
+    );
+    if (supplierColor) color = stockIssueCleanText(supplierColor[1]);
+  }
+  if (!color) {
     const quantityLineIndex = rawLines.findIndex((line) => /Total Quantity/i.test(line));
     const preceding = rawLines.slice(Math.max(0, quantityLineIndex - 5), quantityLineIndex < 0 ? rawLines.length : quantityLineIndex).reverse();
     color = preceding.find((line) => (
@@ -462,7 +471,9 @@ function parseStockIssueProductBlock(block, tabNumber) {
       && stockIssueCleanText(line).toLowerCase() !== stockIssueCleanText(style).toLowerCase()
     )) || "";
   }
-  color = stockIssueCleanText(color).replace(/^Color\s*:?\s*/i, "");
+  color = stockIssueCleanText(color)
+    .replace(/^Color\s*:?\s*/i, "")
+    .replace(/^\s*-?\s*(?:Alpha(?: Stock)?|SanMar(?: Stock)?|S&S(?: Activewear)?(?: Stock)?|Supplier|Stock Source)\s+/i, "");
   description = cleanProductText(description);
   if (!style || !description || !color) {
     return { invalid: true, design_item_id: block.id || "", style, description, color, total_quantity: totalQuantity };
@@ -611,7 +622,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
   Object.assign(table.style, { width: "100%", borderCollapse: "collapse", marginBottom: "16px" });
   const head = document.createElement("thead");
   const headRow = document.createElement("tr");
-  for (const label of ["", "Product ID", "Color"]) {
+  for (const label of ["", "Product ID", "Description", "Color"]) {
     const cell = document.createElement("th");
     cell.textContent = label;
     Object.assign(cell.style, { padding: "7px", borderBottom: "1px solid #94a3b8", textAlign: "left", fontWeight: "700" });
@@ -631,12 +642,15 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
     checkCell.append(checkbox);
     const styleCell = document.createElement("td");
     styleCell.textContent = product.style;
+    const descriptionCell = document.createElement("td");
+    descriptionCell.textContent = product.description;
     const colorCell = document.createElement("td");
     colorCell.textContent = product.color;
-    for (const cell of [checkCell, styleCell, colorCell]) {
+    for (const cell of [checkCell, styleCell, descriptionCell, colorCell]) {
       Object.assign(cell.style, { padding: "8px 7px", borderBottom: "1px solid #e2e8f0" });
     }
-    row.append(checkCell, styleCell, colorCell);
+    Object.assign(styleCell.style, { whiteSpace: "nowrap" });
+    row.append(checkCell, styleCell, descriptionCell, colorCell);
     body.append(row);
     checkboxes.push(checkbox);
   });
