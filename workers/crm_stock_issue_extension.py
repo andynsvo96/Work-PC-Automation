@@ -56,7 +56,6 @@ STOCK_EXTENSION_PROCESS = shared.CancelProcess(
     sales_note_email_line="",
     subject_markers=("urgent", "extension required"),
     body_markers=(
-        "unable to receive the required",
         "[stock]",
         "[days]-business day(s) extension",
         "not including holidays",

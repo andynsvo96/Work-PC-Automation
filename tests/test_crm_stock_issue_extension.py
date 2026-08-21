@@ -151,6 +151,7 @@ class StockIssueExtensionWorkflowTests(unittest.TestCase):
         self.assertIn("[stock]", stock_extension.STOCK_EXTENSION_PROCESS.body_markers)
         self.assertIn("[days]-business day(s) extension", stock_extension.STOCK_EXTENSION_PROCESS.body_markers)
         self.assertIn("not including holidays", stock_extension.STOCK_EXTENSION_PROCESS.body_markers)
+        self.assertNotIn("unable to receive the required", stock_extension.STOCK_EXTENSION_PROCESS.body_markers)
 
     def test_new_stock_template_signature_rejects_the_old_email(self):
         self.assertEqual(
