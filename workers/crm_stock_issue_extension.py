@@ -159,7 +159,7 @@ def _insert_exact_stock_extension_template(driver):
         time.sleep(1)
         if _click_exact_stock_extension_template(driver):
             shared._confirm_salesforce_template_insert(driver)
-            if shared._wait_for_salesforce_template_markers(driver, STOCK_EXTENSION_PROCESS, timeout=10):
+            if shared._wait_for_salesforce_template_markers(driver, STOCK_EXTENSION_PROCESS, timeout=20):
                 state = shared._read_salesforce_email_state(driver) or {}
                 signature_error = _stock_extension_template_signature_error(state)
                 if not signature_error:
@@ -168,8 +168,10 @@ def _insert_exact_stock_extension_template(driver):
                     f"Salesforce inserted {SALESFORCE_TEMPLATE}, but its content was not the new approved version: "
                     f"{signature_error}."
                 )
+            state = shared._read_salesforce_email_state(driver) or {}
+            signature_error = _stock_extension_template_signature_error(state) or "approved subject/body markers were not detected before timeout"
             raise StockIssueExtensionError(
-                f"Salesforce inserted an email, but it was not the exact {SALESFORCE_TEMPLATE} content."
+                f"Salesforce inserted {SALESFORCE_TEMPLATE}, but its content could not be verified: {signature_error}."
             )
         shared._scroll_full_template_modal(driver)
         time.sleep(0.5)

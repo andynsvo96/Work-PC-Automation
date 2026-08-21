@@ -210,8 +210,32 @@ class StockIssueExtensionWorkflowTests(unittest.TestCase):
         wait_markers.assert_called_once_with(
             driver,
             stock_extension.STOCK_EXTENSION_PROCESS,
-            timeout=10,
+            timeout=20,
         )
+
+    def test_stock_template_insertion_reports_the_unverified_content(self):
+        driver = mock.Mock()
+        state = {
+            "subject": "RushOrderTees Order #[ORDER-NUMBER]-URGENT- Extension Required",
+            "body": "Wrong Salesforce editor content",
+        }
+        with (
+            mock.patch.object(stock_extension.shared, "_focus_salesforce_body_editor"),
+            mock.patch.object(stock_extension.shared, "_click_template_button"),
+            mock.patch.object(stock_extension.shared, "_open_full_template_picker_from_menu", return_value=True),
+            mock.patch.object(stock_extension.shared, "_ensure_private_email_templates_folder"),
+            mock.patch.object(stock_extension.shared, "_search_full_template_modal", return_value=True),
+            mock.patch.object(stock_extension, "_click_exact_stock_extension_template", return_value=True),
+            mock.patch.object(stock_extension.shared, "_confirm_salesforce_template_insert"),
+            mock.patch.object(stock_extension.shared, "_wait_for_salesforce_template_markers", return_value=False),
+            mock.patch.object(stock_extension.shared, "_read_salesforce_email_state", return_value=state),
+            mock.patch.object(stock_extension.time, "sleep"),
+        ):
+            with self.assertRaises(stock_extension.StockIssueExtensionError) as raised:
+                stock_extension._insert_exact_stock_extension_template(driver)
+
+        self.assertIn("content could not be verified", str(raised.exception))
+        self.assertIn("body was missing", str(raised.exception))
 
     def test_success_order_is_note_email_slack_then_status(self):
         _driver, patches = self._base_patches()
@@ -373,7 +397,10 @@ class StockIssueExtensionSourceContractTests(unittest.TestCase):
         self.assertIn("products: structuredData.products", bridge)
         self.assertIn("days: message.days", background)
         self.assertIn("products: message.products", background)
-        self.assertIn("_insert_exact_stock_extension_template(driver)", (ROOT / "workers" / "crm_stock_issue_extension.py").read_text(encoding="utf-8"))
+        stock_worker = (ROOT / "workers" / "crm_stock_issue_extension.py").read_text(encoding="utf-8")
+        shared_worker = (ROOT / "workers" / "crm_copyright_cancel.py").read_text(encoding="utf-8")
+        self.assertIn("_insert_exact_stock_extension_template(driver)", stock_worker)
+        self.assertIn("(?:STOCK|DAYS)", shared_worker)
         self.assertEqual(manifest["version"], "1.4.0")
 
 

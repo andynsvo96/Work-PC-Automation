@@ -5816,6 +5816,8 @@ def _read_salesforce_email_state(driver):
             }
             if (/XXXXXX|\\[\\s*REASON\\s*\\]/i.test(cleanText) || /XXXXXX|\\[\\s*REASON\\s*\\]/i.test(cleanHtml)) score += 60000;
             if (cleanText.toLowerCase().includes('while reviewing your order') || cleanHtml.toLowerCase().includes('while reviewing your order')) score += 60000;
+            if (/\\[\\s*(?:STOCK|DAYS)\\s*\\]/i.test(cleanText) || /\\[\\s*(?:STOCK|DAYS)\\s*\\]/i.test(cleanHtml)) score += 120000;
+            if (cleanText.toLowerCase().includes('unable to receive the required') || cleanHtml.toLowerCase().includes('unable to receive the required')) score += 60000;
             candidates.push({kind, text: cleanText || cleanHtml, score});
           }
           function readDoc(doc, frame, seen = new Set()) {
