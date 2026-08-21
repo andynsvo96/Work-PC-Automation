@@ -1923,6 +1923,45 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertEqual(result["cancel"]["reason"], "already_refunded")
         self.assertEqual(result["refund_fee"]["reason"], "already_refunded")
 
+    def test_payment_summary_ignores_promo_row_before_stripe_payment(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = (
+            "Payments and Credits\nAmount Type Date\n"
+            "$5.00 promo 08/21/26 view\n"
+            "$145.72 Stripe.com 08/21/26 view refund"
+        )
+        state = {
+            "amount_paid": "145.72",
+            "amount_due": "-145.72",
+            "transactions": [
+                {"amount": "5.00", "tag": "promo", "type": "promo"},
+                {"amount": "145.72", "tag": "Stripe.com", "type": "Stripe.com"},
+            ],
+        }
+
+        with mock.patch.object(crm_copyright_cancel, "_activate_crm_context"), mock.patch.object(
+            crm_copyright_cancel,
+            "_get_order_live_state",
+            return_value=state,
+        ):
+            payment = crm_copyright_cancel._read_payment_summary(driver)
+
+        self.assertEqual(payment["payment_type"], "Stripe.com")
+        self.assertEqual(payment["amount"], "145.72")
+
+    def test_live_refund_amount_check_allows_matching_totals_after_promo_is_ignored(self):
+        driver = mock.Mock()
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_read_order_totals",
+            return_value={"paid": "145.72", "balance_due": "-145.72"},
+        ):
+            result = crm_copyright_cancel._validate_live_refund_amounts(driver, "145.72")
+
+        self.assertEqual(result["paid"], "145.72")
+        self.assertEqual(result["balance_due"], "-145.72")
+        self.assertEqual(result["payment_amount"], "145.72")
+
     def test_live_refund_amount_check_blocks_two_cent_balance_mismatch(self):
         driver = mock.Mock()
         with mock.patch.object(

@@ -7290,15 +7290,15 @@ def _read_payment_summary(driver):
     try:
         state = _get_order_live_state(driver)
         transactions = state.get("transactions") or []
-        transaction_amount = ""
-        for transaction in transactions:
+        live_candidates = []
+        for index, transaction in enumerate(transactions):
             tag = _clean_text(transaction.get("tag") or transaction.get("type"))
             amount_value = _parse_money(transaction.get("amount"))
-            if amount_value > 0:
-                live_payment_type = tag
-                transaction_amount = _money_text(amount_value)
-                break
-        live_amount = transaction_amount
+            if amount_value <= 0 or "promo" in tag.lower():
+                continue
+            live_candidates.append(("stripe" in tag.lower(), -index, tag, _money_text(amount_value)))
+        if live_candidates:
+            _is_stripe, _position, live_payment_type, live_amount = max(live_candidates)
         live_panel_text = _clean_text(
             " ".join(
                 [
@@ -7319,25 +7319,25 @@ def _read_payment_summary(driver):
     )
     payment_type = ""
     amount = ""
-    match = re.search(r"\$?\s*([0-9,]+\.\d{2})\s+([^\n\r]+?)\s+\d{1,2}/\d{1,2}/\d{2,4}", text)
-    if match:
-        amount = _money_text(_parse_money(match.group(1)))
-        payment_type = _clean_text(match.group(2))
+    panel_candidates = []
+    row_pattern = r"\$?\s*([0-9,]+\.\d{2})\s+([^\n\r]+?)\s+\d{1,2}/\d{1,2}/\d{2,4}"
+    for index, match in enumerate(re.finditer(row_pattern, text)):
+        candidate_type = _clean_text(match.group(2))
+        if "promo" in candidate_type.lower():
+            continue
+        candidate_amount = _parse_money(match.group(1))
+        if candidate_amount <= 0:
+            continue
+        panel_candidates.append(
+            ("stripe" in candidate_type.lower(), -index, candidate_type, _money_text(candidate_amount))
+        )
+    if panel_candidates:
+        _is_stripe, _position, payment_type, amount = max(panel_candidates)
     elif "stripe.com" in text.lower():
-        payment_type = "Stripe.com"
-        lines = [line.strip() for line in re.split(r"[\r\n]+", text) if line.strip()]
-        for index, line in enumerate(lines):
-            if "stripe.com" not in line.lower():
-                continue
-            same_line_amounts = re.findall(r"\$?\s*([0-9,]+\.\d{2})", line)
-            if same_line_amounts:
-                amount = _money_text(_parse_money(same_line_amounts[0]))
-                break
-            nearby = " ".join(lines[max(0, index - 1) : min(len(lines), index + 2)])
-            nearby_amounts = re.findall(r"\$?\s*([0-9,]+\.\d{2})", nearby)
-            if nearby_amounts:
-                amount = _money_text(_parse_money(nearby_amounts[0]))
-                break
+        stripe_match = re.search(r"\$?\s*([0-9,]+\.\d{2})\s+Stripe\.com\b", text, re.I)
+        if stripe_match:
+            payment_type = "Stripe.com"
+            amount = _money_text(_parse_money(stripe_match.group(1)))
     if not payment_type:
         payment_type = live_payment_type
     if not amount:
