@@ -1121,6 +1121,16 @@ def _get_order_live_state(driver):
           amount_paid: s.order.getAmountPaid ? s.order.getAmountPaid() : null,
           amount_due: s.order.getAmountDue ? s.order.getAmountDue() : null,
           sales_notes: r.salesNotes || r.filteredSalesNotes || '',
+          promo_transactions: (r.promoTransactions || []).map((tx) => ({
+            amount: tx.amount || tx.value || tx.total || '',
+            tag: tx.tag || tx.type || tx.name || tx.code || 'promo',
+            type: tx.type || tx.tag || tx.name || tx.code || 'promo'
+          })),
+          order_fees: (r.orderFees || r.fees || []).map((fee) => ({
+            amount: fee.amount || fee.price || fee.total || '',
+            name: fee.name || fee.feeName || '',
+            code: fee.code || ''
+          })),
           transactions: txs.map((tx) => ({
             amount: tx.amount || '',
             tag: tx.tag || tx.type || '',

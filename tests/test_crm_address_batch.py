@@ -1949,6 +1949,50 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertEqual(payment["payment_type"], "Stripe.com")
         self.assertEqual(payment["amount"], "145.72")
 
+    def test_refund_fee_uses_promo_adjusted_subtotal_before_tax(self):
+        state = {
+            "subtotal": "115.59",
+            "shipping_charges": "23.11",
+            "promo_transactions": [
+                {"amount": "5.00", "tag": "Promo", "type": "Promo"},
+            ],
+            "transactions": [
+                {"amount": "145.72", "tag": "Stripe.com", "type": "Stripe.com"},
+            ],
+        }
+
+        amount = crm_copyright_cancel._refund_fee_amount_from_order_state(state)
+
+        self.assertEqual(amount, crm_copyright_cancel.Decimal("133.70"))
+
+    def test_refund_fee_recovery_replaces_existing_non_promo_adjusted_fee(self):
+        state = {
+            "subtotal": "-23.11",
+            "shipping_charges": "23.11",
+            "promo_transactions": [{"amount": "5.00", "tag": "Promo", "type": "Promo"}],
+            "order_fees": [{"amount": "-138.70", "name": "Refund", "code": "refund"}],
+            "transactions": [
+                {"amount": "145.72", "tag": "Stripe.com", "type": "Stripe.com"},
+            ],
+        }
+
+        amount = crm_copyright_cancel._refund_fee_amount_from_order_state(state)
+
+        self.assertEqual(amount, crm_copyright_cancel.Decimal("133.70"))
+
+    def test_refund_fee_without_promo_remains_subtotal_plus_shipping(self):
+        state = {
+            "subtotal": "115.59",
+            "shipping_charges": "23.11",
+            "transactions": [
+                {"amount": "145.72", "tag": "Stripe.com", "type": "Stripe.com"},
+            ],
+        }
+
+        amount = crm_copyright_cancel._refund_fee_amount_from_order_state(state)
+
+        self.assertEqual(amount, crm_copyright_cancel.Decimal("138.70"))
+
     def test_live_refund_amount_check_allows_matching_totals_after_promo_is_ignored(self):
         driver = mock.Mock()
         with mock.patch.object(

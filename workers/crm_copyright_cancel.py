@@ -7708,14 +7708,41 @@ def _read_order_refund_fee_amount(driver):
 
 
 def _refund_fee_amount_from_order_state(state):
-    # Refund fee should offset the pre-tax customer charge: item subtotal plus shipping, excluding sales tax.
+    # Refund fee should offset the pre-tax customer charge: item subtotal plus
+    # shipping, less promotions, and excluding sales tax. Promo transactions are
+    # displayed as positive credits in CRM, but they reduce what the customer
+    # was charged and therefore must not be included in the Refund fee.
     subtotal = _parse_money(state.get("subtotal"))
     shipping = _parse_money(state.get("shipping_charges")).copy_abs()
-    amount = (subtotal.copy_abs() + shipping).quantize(Decimal("0.01"))
+    promo_rows = state.get("promo_transactions")
+    if promo_rows is None:
+        promo_rows = [
+            transaction
+            for transaction in (state.get("transactions") or [])
+            if "promo"
+            in _clean_text(f"{transaction.get('tag', '')} {transaction.get('type', '')}").lower()
+        ]
+    promo = sum(
+        (_parse_money(transaction.get("amount")).copy_abs() for transaction in promo_rows),
+        Decimal("0.00"),
+    )
+    existing_refund_fee = sum(
+        (
+            _parse_money(fee.get("amount")).copy_abs()
+            for fee in (state.get("order_fees") or [])
+            if "refund" in _clean_text(f"{fee.get('name', '')} {fee.get('code', '')}").lower()
+        ),
+        Decimal("0.00"),
+    )
+    # getSubTotal includes an already-saved Refund fee on recovery attempts.
+    # Add that fee back before recomputing the desired promo-adjusted amount.
+    base_subtotal = subtotal + existing_refund_fee
+    amount = (base_subtotal + shipping - promo).quantize(Decimal("0.01"))
     if amount <= 0:
         raise CopyrightCancelError(
             "Could not determine a positive CRM subtotal for the Refund fee. "
-            f"Subtotal: {_money_text(subtotal)}; shipping: {_money_text(shipping)}."
+            f"Subtotal: {_money_text(subtotal)}; shipping: {_money_text(shipping)}; "
+            f"promo: {_money_text(promo)}; existing refund fee: {_money_text(existing_refund_fee)}."
         )
     return amount
 
