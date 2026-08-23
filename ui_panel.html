@@ -91,6 +91,10 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .settings-connection-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;width:100%;min-width:0}
 .settings-connection-card{display:flex;flex-direction:column;align-items:flex-start;min-width:0;max-width:100%;min-height:92px;padding:13px;overflow:hidden;border:1px solid #dbe3ef;border-radius:10px;background:#f8fafc;color:#0f172a;text-align:left}
 .settings-connection-card:hover{background:#eff6ff;border-color:#93c5fd}
+.settings-connection-card.has-credential-action{position:relative;min-height:120px;padding:0}
+.settings-connection-profile-btn{display:flex;flex-direction:column;align-items:flex-start;width:100%;min-height:118px;padding:13px 13px 43px;border:0;background:transparent;color:inherit;text-align:left}
+.settings-connection-profile-btn:hover{background:transparent}
+.settings-credential-btn{position:absolute;right:10px;bottom:9px;z-index:1}
 .settings-connection-name{display:flex;align-items:center;gap:8px;max-width:100%;font-size:13px;font-weight:750;overflow-wrap:anywhere}
 .settings-connection-mark{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:6px;background:#dbeafe;color:#2563eb;font-size:11px;font-weight:900}
 .settings-connection-action{max-width:100%;margin-top:auto;color:#2563eb;font-size:11px;font-weight:750;overflow-wrap:anywhere}
@@ -112,6 +116,7 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .salesforce-worker-state.browser_open{background:#dbeafe;color:#1d4ed8}
 .salesforce-worker-state.browser_open::before{background:#3b82f6}
 .salesforce-worker-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px}
+.salesforce-credential-action{display:flex;justify-content:flex-end;margin-top:10px}
 .settings-task-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .settings-task-card{display:flex;align-items:center;gap:12px;min-height:72px;padding:12px;border:1px solid #dbe3ef;border-radius:10px;background:#f8fafc;color:#0f172a;text-align:left}
 .settings-task-card:hover{background:#eff6ff;border-color:#93c5fd}
@@ -591,6 +596,8 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 :root[data-theme='dark'] .settings-connection-card{background:#2d2d30;border-color:#3c3c3c}
 :root[data-theme='dark'] .settings-task-card:hover,
 :root[data-theme='dark'] .settings-connection-card:hover{background:#04395e;border-color:#007acc}
+:root[data-theme='dark'] .settings-connection-profile-btn,
+:root[data-theme='dark'] .settings-connection-profile-btn:hover:not(:disabled){background:transparent;border-color:transparent;color:inherit}
 :root[data-theme='dark'] .settings-summary-k{color:#9d9d9d}
 :root[data-theme='dark'] .settings-summary-state{background:#20382b;color:#89d185}
 :root[data-theme='dark'] .settings-summary-state.off{background:#3c3c3c;color:#b8b8b8}
@@ -1642,12 +1649,12 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
           <details class='section-note'><summary>How setup works</summary><div class='section-note-body'><p>Setup opens the visible login profile and fills credentials stored in the system credential manager. It does not submit the form.</p></div></details>
         </div>
         <div class='settings-panel-card'>
-          <p class='settings-connections-note'>Choose a service to open its setup window. You can review the filled username, password, and Paycom PIN before continuing.</p>
+          <p class='settings-connections-note'>Choose a service to open its profile window. Use Set credentials to open a secure terminal prompt for Windows Credential Manager or macOS Keychain.</p>
           <div class='settings-connection-grid'>
-            <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('paycom', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>P</span>Paycom</span><span class='settings-connection-action'>Open profile setup →</span></button>
-            <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('crm', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>C</span>CRM</span><span class='settings-connection-action'>Open profile setup →</span></button>
-            <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('slack', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>Slack</span><span class='settings-connection-action'>Open profile setup →</span></button>
-            <button class='settings-connection-card' type='button' onclick="openChromeProfileSetup('sanmar', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>SanMar</span><span class='settings-connection-action'>Open profile setup →</span></button>
+            <div class='settings-connection-card has-credential-action'><button class='settings-connection-profile-btn' type='button' onclick="openChromeProfileSetup('paycom', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>P</span>Paycom</span><span class='settings-connection-action'>Open profile setup →</span></button><button class='secondary tiny settings-credential-btn' type='button' title='Set Paycom credentials in the operating system credential store' onclick="openCredentialSetup('paycom', this)">Set credentials</button></div>
+            <div class='settings-connection-card has-credential-action'><button class='settings-connection-profile-btn' type='button' onclick="openChromeProfileSetup('crm', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>C</span>CRM</span><span class='settings-connection-action'>Open profile setup →</span></button><button class='secondary tiny settings-credential-btn' type='button' title='Set CRM credentials in the operating system credential store' onclick="openCredentialSetup('crm', this)">Set credentials</button></div>
+            <div class='settings-connection-card has-credential-action'><button class='settings-connection-profile-btn' type='button' onclick="openChromeProfileSetup('slack', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>Slack</span><span class='settings-connection-action'>Open profile setup →</span></button><button class='secondary tiny settings-credential-btn' type='button' title='Set Slack credentials in the operating system credential store' onclick="openCredentialSetup('slack', this)">Set credentials</button></div>
+            <div class='settings-connection-card has-credential-action'><button class='settings-connection-profile-btn' type='button' onclick="openChromeProfileSetup('sanmar', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>SanMar</span><span class='settings-connection-action'>Open profile setup →</span></button><button class='secondary tiny settings-credential-btn' type='button' title='Set SanMar credentials in the operating system credential store' onclick="openCredentialSetup('sanmar', this)">Set credentials</button></div>
           </div>
           <div class='salesforce-worker-panel'>
             <div class='salesforce-worker-heading'>
@@ -1659,6 +1666,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
               </div>
             </div>
             <div class='salesforce-worker-list' id='salesforceWorkerSetupRows'><div class='muted'>Loading Salesforce workers…</div></div>
+            <div class='salesforce-credential-action'><button class='secondary tiny' type='button' title='Set Salesforce credentials in the operating system credential store' onclick="openCredentialSetup('salesforce', this)">Set Salesforce credentials</button></div>
           </div>
         </div>
       </section>
@@ -3358,6 +3366,22 @@ async function openChromeProfileSetup(profile, button = null) {
       setStatus(d.message || 'Chrome profile setup window opened.', 'settings');
     } catch (e) {
       setStatus('Chrome profile setup failed: ' + e.message, 'settings');
+    }
+  });
+}
+
+async function openCredentialSetup(service, button = null) {
+  return withButtonBusy(button, 'OPENING...', async () => {
+    setStatus('Opening ' + String(service || '').toUpperCase() + ' credential setup terminal...', 'settings');
+    try {
+      const d = await api('/automation/credential-setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service }),
+      });
+      setStatus(d.message || 'Credential setup terminal opened.', 'settings');
+    } catch (e) {
+      setStatus('Credential setup failed: ' + e.message, 'settings');
     }
   });
 }

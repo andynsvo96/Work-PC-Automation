@@ -12,6 +12,7 @@ import math
 import os
 import re
 import secrets
+import shlex
 import shutil
 import socket
 import struct
@@ -50,6 +51,7 @@ from clipboard_runtime import (
     UnsupportedClipboardAdapter,
     create_platform_clipboard_adapter,
 )
+from credential_store import CREDENTIAL_TARGETS
 import config as config_module
 from node_preferences import load_node_preferences, update_node_preferences
 from platform_runtime import get_platform_snapshot, normalize_os_name, resolve_worker_count
@@ -539,6 +541,61 @@ def _resolve_windowless_python():
         if os.path.exists(candidate):
             return os.path.normpath(candidate)
     return os.path.normpath(p)
+
+
+def _powershell_single_quote(value):
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _launch_credential_setup_terminal(service):
+    """Open an interactive OS terminal for the credential setup command."""
+    service_key = str(service or "").strip().lower()
+    allowed_services = {"paycom", "crm", "slack", "sanmar", "salesforce"}
+    if service_key not in allowed_services or service_key not in CREDENTIAL_TARGETS:
+        raise ValueError("Unknown credential setup service.")
+
+    python_exe = _resolve_console_python()
+    setup_script = os.path.join(SCRIPT_DIR, "manage_credentials.py")
+    platform_name = normalize_os_name()
+    if platform_name == "windows":
+        command = "& {python} {script} set {service}".format(
+            python=_powershell_single_quote(python_exe),
+            script=_powershell_single_quote(setup_script),
+            service=_powershell_single_quote(service_key),
+        )
+        subprocess.Popen(
+            ["powershell.exe", "-NoLogo", "-NoProfile", "-NoExit", "-Command", command],
+            cwd=SCRIPT_DIR,
+            creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+        )
+        return "Windows Credential Manager"
+
+    if platform_name == "macos":
+        shell_command = "cd {cwd} && {python} {script} set {service}".format(
+            cwd=shlex.quote(SCRIPT_DIR),
+            python=shlex.quote(python_exe),
+            script=shlex.quote(setup_script),
+            service=shlex.quote(service_key),
+        )
+        apple_script_command = shell_command.replace("\\", "\\\\").replace('"', '\\"')
+        subprocess.Popen(
+            [
+                "osascript",
+                "-e",
+                'tell application "Terminal"',
+                "-e",
+                "activate",
+                "-e",
+                f'do script "{apple_script_command}"',
+                "-e",
+                "end tell",
+            ],
+            cwd=SCRIPT_DIR,
+            start_new_session=True,
+        )
+        return "macOS Keychain"
+
+    raise RuntimeError("Credential setup terminals are supported on Windows and macOS.")
 
 
 def _safe_float(value, default=0.0):
@@ -14058,6 +14115,34 @@ def automation_chrome_profile_setup():
             "profile_path": profile_path,
             "url": target["url"],
             "fields_filled": result.fields_filled,
+        }
+    )
+
+
+@app.route("/automation/credential-setup", methods=["POST"])
+def automation_credential_setup():
+    data = request.get_json(silent=True) or {}
+    service = str(data.get("service") or "").strip().lower()
+    try:
+        credential_store_name = _launch_credential_setup_terminal(service)
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    except RuntimeError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 501
+    except Exception:
+        logger.exception("Could not open the %s credential setup terminal", service or "unknown")
+        return jsonify(
+            {"success": False, "message": "Could not open the credential setup terminal. Check the local server log."}
+        ), 500
+
+    label = _chrome_profile_setup_targets().get(service, {}).get("label", service.title())
+    message = f"Opened {label} credential setup for {credential_store_name}."
+    return jsonify(
+        {
+            "success": True,
+            "message": message,
+            "service": service,
+            "credential_store": credential_store_name,
         }
     )
 

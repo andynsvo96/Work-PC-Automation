@@ -53,6 +53,13 @@ class SettingsUiStructureTests(unittest.TestCase):
             r"\.settings-connection-grid\{[^}]*grid-template-columns:repeat\(auto-fit,minmax\(140px,1fr\)\)",
         )
 
+    def test_each_connection_has_credential_setup_action(self):
+        for service in ("paycom", "crm", "slack", "sanmar", "salesforce"):
+            with self.subTest(service=service):
+                self.assertIn(f"openCredentialSetup('{service}', this)", self.html)
+        self.assertIn("function openCredentialSetup(", self.html)
+        self.assertIn("/automation/credential-setup", self.html)
+
     def test_primary_navigation_is_consolidated(self):
         self.assertIn("id='tabBtnAutomation'", self.html)
         self.assertIn("id='tabBtnProcessing'", self.html)
