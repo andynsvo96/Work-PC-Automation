@@ -25,9 +25,9 @@ SALESFORCE_TEMPLATE = str(
     getattr(
         config_module,
         "SALESFORCE_STOCK_ISSUE_COLOR_TEMPLATE",
-        "[AUTO] STOCK - Suggest Different Color",
+        "[AUTO] STOCK - Color",
     )
-    or "[AUTO] STOCK - Suggest Different Color"
+    or "[AUTO] STOCK - Color"
 ).strip()
 CRM_STATUS = str(
     getattr(config_module, "STOCK_ISSUE_EXTENSION_CRM_STATUS", "Issue - Stock") or "Issue - Stock"
@@ -166,8 +166,8 @@ def _stock_color_template_signature_error(state):
     return ""
 
 
-def _click_exact_stock_color_template(driver):
-    target = SALESFORCE_TEMPLATE.casefold()
+def _click_exact_stock_color_template(driver, template_name=None):
+    target = str(template_name or SALESFORCE_TEMPLATE).strip().casefold()
     option = driver.execute_script(
         r"""
         const target = String(arguments[0] || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -189,7 +189,9 @@ def _click_exact_stock_color_template(driver):
           return out;
         }
         const exact = walk(document)
-          .filter((el) => visible(el) && clean(el.innerText || el.textContent || el.value || '') === target)
+          // Never treat Salesforce's template-search input as a matching result.
+          .filter((el) => !/^(input|textarea|select|option)$/i.test(el.tagName || ''))
+          .filter((el) => visible(el) && clean(el.innerText || el.textContent || '') === target)
           .filter((el) => {
             const rect = el.getBoundingClientRect();
             return rect.width >= 40 && rect.height >= 10;
@@ -508,6 +510,121 @@ def _send_required_slack(order_id, activity, dry_run=False):
     activity["slack_sent"] = True
     result.update({"sent": True, "result": response})
     return result
+
+
+def inspect_stock_color_template_options(
+    order_id,
+    search_text="Color",
+    *,
+    visible=False,
+    login_wait_seconds=0,
+    select_configured_template=False,
+    template_name=None,
+):
+    """Read matching Salesforce template-picker text without selecting or sending."""
+    order_id = shared._normalize_order_id(order_id)
+    order_url = shared.PROCESSOR_ORDER_URL_TEMPLATE.format(order_id=order_id)
+    driver = None
+    try:
+        print(f"Opening CRM order {order_id} for template inspection...", flush=True)
+        driver = shared._open_driver(visible=visible)
+        shared.safe_get_with_partial_load(driver, order_url, f"CRM order {order_id}")
+        shared._login_to_crm_if_needed(driver, order_url, login_wait_seconds=login_wait_seconds)
+        shared._switch_to_crm_app_frame(driver)
+        shared._wait_for_order_scope(driver, order_id=order_id)
+        print("CRM order verified; reading its saved Sales Note and customer email...", flush=True)
+        try:
+            import crm_product_separator
+
+            product_scan = crm_product_separator._scan_order(
+                driver,
+                expected_order_id=order_id,
+                refresh_on_missing_tabs=False,
+            )
+            shared._activate_crm_context(driver)
+            shared._wait_for_order_scope(driver, order_id=order_id)
+        except Exception as exc:
+            product_scan = {"error": f"{type(exc).__name__}: {exc}"}
+        crm_handle = driver.current_window_handle
+        sales_notes = shared._order_scope(
+            driver,
+            "return String(r.addSalesNotes || r.salesNotes || r.filteredSalesNotes || '');",
+        )
+        contact = shared._wait_for_crm_contact_info(driver, order_id=order_id)
+        print("Opening the verified Salesforce customer account...", flush=True)
+        shared._open_salesforce_account(
+            driver,
+            crm_handle,
+            contact["email"],
+            login_wait_seconds=login_wait_seconds,
+            order_id=order_id,
+        )
+        shared._verify_salesforce_email(driver, contact["email"])
+        print("Salesforce customer email verified; opening the email template picker...", flush=True)
+        shared._click_salesforce_email(driver, contact["email"])
+        shared._wait_for_email_composer(driver)
+        shared._focus_salesforce_body_editor(driver)
+        shared._click_template_button(driver)
+        time.sleep(0.5)
+        if not shared._open_full_template_picker_from_menu(driver):
+            raise StockIssueColorError("Salesforce full email-template picker could not be opened.")
+        shared._ensure_private_email_templates_folder(driver)
+        shared._search_full_template_modal(driver, str(search_text or "Color"))
+        time.sleep(3)
+        print(f"Reading template results for {search_text!r}...", flush=True)
+        picker = driver.execute_script(
+            r"""
+            function clean(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+            function visible(el) {
+              if (!el || !el.getBoundingClientRect) return false;
+              const rect = el.getBoundingClientRect();
+              const style = window.getComputedStyle(el);
+              return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+            }
+            const dialogs = Array.from(document.querySelectorAll('[role=dialog],section,.modal-container'))
+              .filter((el) => visible(el) && /Insert Email Template/i.test(el.innerText || el.textContent || ''))
+              .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+            const dialog = dialogs[0] || document;
+            const candidates = Array.from(dialog.querySelectorAll('a,button,td,tr,[role=row],[role=option],[role=menuitem],li'))
+              .filter(visible)
+              .map((el) => clean(el.innerText || el.textContent || ''))
+              .filter((text) => text && text.length <= 240)
+              .filter((text) => !/^(?:Cancel|Search|Templates|Template Folders)$/i.test(text));
+            return {
+              text: clean(dialog.innerText || dialog.textContent || ''),
+              candidates: Array.from(new Set(candidates)),
+            };
+            """
+        ) or {}
+        template_state = None
+        signature_error = None
+        if select_configured_template:
+            inspected_template = str(template_name or SALESFORCE_TEMPLATE).strip()
+            print(f"Selecting and reading {inspected_template!r} without sending...", flush=True)
+            if not _click_exact_stock_color_template(driver, inspected_template):
+                raise StockIssueColorError(
+                    f"Salesforce template {inspected_template} was not present in the inspected results."
+                )
+            shared._confirm_salesforce_template_insert(driver)
+            time.sleep(2)
+            template_state = shared._read_salesforce_email_state(driver) or {}
+            signature_error = _stock_color_template_signature_error(template_state)
+        shared.safe_take_screenshot(driver, f"stock_issue_color_{order_id}_template_search_diagnostic")
+        return {
+            "order_id": order_id,
+            "customer_email": contact["email"],
+            "sales_notes": str(sales_notes or ""),
+            "product_scan": product_scan,
+            "search_text": str(search_text or "Color"),
+            "picker": picker,
+            "configured_template": SALESFORCE_TEMPLATE,
+            "inspected_template": str(template_name or SALESFORCE_TEMPLATE).strip(),
+            "template_state": template_state,
+            "signature_error": signature_error,
+        }
+    finally:
+        if driver is not None:
+            shared.safe_driver_quit(driver, profile_path=shared._profile_path())
 
 
 def process_stock_issue_color_order(

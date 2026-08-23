@@ -21,6 +21,9 @@ def product(style="DM130", description="District Perfect Tri Tee", color="Red"):
 
 
 class StockIssueColorFormattingTests(unittest.TestCase):
+    def test_uses_confirmed_live_salesforce_template_name(self):
+        self.assertEqual(stock_color.SALESFORCE_TEMPLATE, "[AUTO] STOCK - Color")
+
     def test_suggested_color_grammar(self):
         self.assertEqual(stock_color.format_suggested_colors(["Navy"]), "Navy")
         self.assertEqual(stock_color.format_suggested_colors(["Navy", "Black"]), "Navy or Black")
@@ -81,6 +84,15 @@ class StockIssueColorFormattingTests(unittest.TestCase):
             "DM130 District Perfect Tri Tee in the color Red",
             "Navy or Black",
         ))
+
+    def test_exact_template_selector_does_not_accept_the_search_input(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = None
+
+        self.assertFalse(stock_color._click_exact_stock_color_template(driver))
+        selector_script = driver.execute_script.call_args.args[0]
+        self.assertIn("input|textarea|select|option", selector_script)
+        self.assertNotIn("el.textContent || el.value", selector_script)
 
 
 class StockIssueColorSourceContractTests(unittest.TestCase):

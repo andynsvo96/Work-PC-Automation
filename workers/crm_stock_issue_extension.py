@@ -116,7 +116,8 @@ def _click_exact_stock_extension_template(driver):
           return out;
         }
         const exact = walk(document)
-          .filter((el) => visible(el) && clean(el.innerText || el.textContent || el.value || '') === target)
+          .filter((el) => !/^(input|textarea|select|option)$/i.test(el.tagName || ''))
+          .filter((el) => visible(el) && clean(el.innerText || el.textContent || '') === target)
           .filter((el) => {
             const rect = el.getBoundingClientRect();
             return rect.width >= 40 && rect.height >= 10;
