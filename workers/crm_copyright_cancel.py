@@ -6009,14 +6009,43 @@ def _verify_salesforce_email_ready_to_send(driver, order_id, subject, body, proc
     return state
 
 
+def _salesforce_sent_email_activity_visible(driver, order_id, subject):
+    """Return True only when Salesforce shows this order's sent-email activity."""
+    visible_text = _clean_text(_visible_salesforce_text(driver))
+    lower_text = visible_text.lower()
+    target_subject = _clean_text(subject).lower()
+    if not target_subject or target_subject not in lower_text:
+        return False
+    start = 0
+    while True:
+        index = lower_text.find(target_subject, start)
+        if index < 0:
+            return False
+        context = lower_text[max(0, index - 250) : index + len(target_subject) + 350]
+        if str(order_id) in context and "sent an email to" in context:
+            return True
+        start = index + len(target_subject)
+
+
+def _wait_for_salesforce_sent_email_activity(driver, order_id, subject, timeout=20):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _salesforce_sent_email_activity_visible(driver, order_id, subject):
+            return True
+        time.sleep(0.5)
+    raise CopyrightCancelError(
+        f"Salesforce did not show sent-email activity for order {order_id} after Send was clicked."
+    )
+
+
 def _send_salesforce_email(driver, dry_run, order_id, subject, body, skip_ready_verify=False, process=COPYRIGHT_CANCEL_PROCESS):
     ready_state = _read_salesforce_email_state(driver) if skip_ready_verify else _verify_salesforce_email_ready_to_send(driver, order_id, subject, body, process=process)
     if dry_run:
         return {"sent": False, "dry_run": True, "email_state": ready_state, "message": "Skipped Salesforce Send in dry-run mode."}
     if not _click_salesforce_send_button(driver):
         raise CopyrightCancelError("Salesforce Send button was not found.")
-    time.sleep(4)
-    return {"sent": True, "dry_run": False, "email_state": ready_state}
+    _wait_for_salesforce_sent_email_activity(driver, order_id, subject)
+    return {"sent": True, "dry_run": False, "email_state": ready_state, "activity_verified": True}
 
 
 def _click_salesforce_send_button(driver):

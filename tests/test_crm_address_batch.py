@@ -529,6 +529,45 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertTrue(result["preparation_retried"])
         self.assertIn("stalled", result["first_preparation_error"])
 
+    def test_salesforce_sent_email_activity_requires_subject_order_and_sent_marker(self):
+        driver = mock.Mock()
+        subject = "RushOrderTees Order #5076174 - A Refund Has Been Issued to Your Account"
+        activity = f"Details for {subject} orders@rushordertees.com sent an email to Customer Today"
+
+        with mock.patch.object(crm_copyright_cancel, "_visible_salesforce_text", return_value=activity):
+            self.assertTrue(
+                crm_copyright_cancel._salesforce_sent_email_activity_visible(driver, "5076174", subject)
+            )
+
+        composer_only = f"Subject {subject} Send"
+        with mock.patch.object(crm_copyright_cancel, "_visible_salesforce_text", return_value=composer_only):
+            self.assertFalse(
+                crm_copyright_cancel._salesforce_sent_email_activity_visible(driver, "5076174", subject)
+            )
+
+    def test_salesforce_send_is_not_successful_until_activity_is_verified(self):
+        driver = mock.Mock()
+        subject = "RushOrderTees Order #5076174 - A Refund Has Been Issued to Your Account"
+        ready_state = {"subject": subject, "body": "Refund body", "from": "Orders"}
+        with mock.patch.object(
+            crm_copyright_cancel, "_verify_salesforce_email_ready_to_send", return_value=ready_state
+        ), mock.patch.object(
+            crm_copyright_cancel, "_click_salesforce_send_button", return_value=True
+        ), mock.patch.object(
+            crm_copyright_cancel, "_wait_for_salesforce_sent_email_activity", return_value=True
+        ) as verify_activity:
+            result = crm_copyright_cancel._send_salesforce_email(
+                driver,
+                False,
+                "5076174",
+                subject,
+                "Refund body",
+            )
+
+        verify_activity.assert_called_once_with(driver, "5076174", subject)
+        self.assertTrue(result["sent"])
+        self.assertTrue(result["activity_verified"])
+
     def test_contact_panel_timeout_refreshes_once_then_retries(self):
         driver = mock.Mock()
         contact = {"email": "customer@example.com", "salesforce_visible": True}
