@@ -135,6 +135,8 @@ SANMAR_PRODUCT_SEARCH_OVERRIDES = {
     # Bella+Canvas product info pages can require the blue inventory button.
     # CRM 3001C maps to SanMar BC3001; searching 3001 lands on the correct result family.
     "3001C": {"search_id": "3001", "click_inventory_button": True, "expected_style_keys": ["BC3001"]},
+    # CRM's custom 1012BE style maps to the standard SanMar Bella+Canvas BC1012 style.
+    "1012BE": {"search_id": "BC1012", "click_inventory_button": True, "expected_style_keys": ["BC1012"]},
     # Gildan's women's Heavy Cotton V-neck uses an irregular SanMar style ID.
     "G500VL": {
         "search_id": "5V00L",

@@ -837,11 +837,7 @@ def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=Fal
                 order_id,
                 False,
                 "push_back_no_purchase_plan_due_date_reached",
-                (
-                    "Stock could not be auto ordered because no purchase plan was available, and production date "
-                    f"{_date_text(current_production_date)} is already the last allowable business day before due date "
-                    f"{_date_text(due_date)}."
-                ),
+                "Order need extension",
                 manual_review_required=True,
                 production_date=original_production_date,
                 saved_production_date=current_production_date,

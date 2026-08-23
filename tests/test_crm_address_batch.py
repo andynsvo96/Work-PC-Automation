@@ -2879,6 +2879,7 @@ class CrmPushBackTests(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertEqual(result["outcome"], "push_back_no_purchase_plan_due_date_reached")
         self.assertEqual(result["saved_production_date"], "2026-07-21")
+        self.assertEqual(result["message"], "Order need extension")
 
     def test_push_back_routes_shipment_cost_failure_to_shipping_bypasser(self):
         row = {
@@ -3400,6 +3401,15 @@ class ShippingBypasserTests(unittest.TestCase):
         self.assertEqual(options["search_id"], "3001")
         self.assertTrue(options["click_inventory_button"])
         self.assertEqual(options["handler"], "3001C")
+
+    def test_custom_1012be_maps_to_sanmar_bc1012(self):
+        options = crm_shipping_bypasser._sanmar_search_options_for_product(
+            {"product_id": "1012BE", "product_name": "Bella + Canvas Jersey T-Shirt"}
+        )
+
+        self.assertEqual(options["search_id"], "BC1012")
+        self.assertTrue(options["click_inventory_button"])
+        self.assertEqual(options["expected_style_keys"], ["BC1012"])
 
     def test_bella_canvas_crm_c_suffix_maps_to_sanmar_bc_style(self):
         options = crm_shipping_bypasser._sanmar_search_options_for_product(
