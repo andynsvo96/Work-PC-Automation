@@ -428,6 +428,61 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
                 self.assertFalse(response.get_json()["success"])
                 enqueue.assert_not_called()
 
+    def test_stock_issue_color_queues_normalized_colors_and_products(self):
+        products = [{
+            "tab_number": 1,
+            "design_item_id": "design-item-8206660",
+            "style": "DM130",
+            "description": "District Perfect Tri Tee",
+            "color": "Red",
+            "total_quantity": 4,
+        }]
+        with mock.patch(
+            "server.enqueue_automation",
+            return_value=(True, "Suggest Different Color queued.", {"id": "stock-color-1", "status": "queued"}),
+        ) as enqueue:
+            response = self.client.post(
+                "/api/extension/bridge/process-order/manual",
+                json={
+                    "order_id": "5043020",
+                    "automation": "stock_issue_color",
+                    "colors": [" Navy ", "Black", "navy"],
+                    "products": products,
+                },
+                headers={"Origin": self.ORIGIN},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.get_json()["success"])
+        self.assertEqual(enqueue.call_args.kwargs["task_type"], "crm.stock_issue_color")
+        arguments = enqueue.call_args.kwargs["task_arguments"]
+        self.assertEqual(arguments["order_id"], "5043020")
+        self.assertEqual(arguments["colors"], ["Navy", "Black"])
+        self.assertEqual(arguments["products"][0]["style"], "DM130")
+        self.assertFalse(arguments["dry_run"])
+
+    def test_stock_issue_color_rejects_empty_or_unsafe_colors(self):
+        product = [{"style": "DM130", "description": "Tee", "color": "Red"}]
+        invalid_colors = [[], [""], ["Navy", ""], ["<b>Black</b>"]]
+        for colors in invalid_colors:
+            with self.subTest(colors=colors), mock.patch("server.enqueue_automation") as enqueue:
+                response = self.client.post(
+                    "/api/extension/bridge/process-order/manual",
+                    json={
+                        "order_id": "5043020",
+                        "automation": "stock_issue_color",
+                        "colors": colors,
+                        "products": product,
+                    },
+                    headers={"Origin": self.ORIGIN},
+                    environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+                )
+
+                self.assertEqual(response.status_code, 409)
+                self.assertFalse(response.get_json()["success"])
+                enqueue.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

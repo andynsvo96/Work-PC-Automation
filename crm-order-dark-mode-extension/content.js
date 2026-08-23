@@ -72,7 +72,8 @@ const REACHOUT_ORDER_AUTOMATIONS = [
 ];
 
 const STOCK_ISSUE_AUTOMATIONS = [
-  { key: "stock_issue_extension", label: "Extension Required" }
+  { key: "stock_issue_extension", label: "Extension Required" },
+  { key: "stock_issue_color", label: "Suggest Different Color" }
 ];
 
 function currentOrderId() {
@@ -636,13 +637,48 @@ function validateStockIssueExtensionDays(value) {
   return { valid: true, days, message: "" };
 }
 
+function validateStockIssueSuggestedColors(value) {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return { valid: false, colors: [], message: "Enter at least one suggested color." };
+  }
+  if (text.length > 500) {
+    return { valid: false, colors: [], message: "The suggested color list is too long." };
+  }
+  const rawColors = text.split(",");
+  if (rawColors.length > 20) {
+    return { valid: false, colors: [], message: "Enter no more than 20 suggested colors." };
+  }
+  if (rawColors.some((color) => !stockIssueCleanText(color))) {
+    return { valid: false, colors: [], message: "List colors separated by commas, without empty entries." };
+  }
+  const colors = [];
+  const seen = new Set();
+  for (const rawColor of rawColors) {
+    const color = stockIssueCleanText(rawColor);
+    if (color.length > 80 || /[<>\r\n]/.test(color)) {
+      return { valid: false, colors: [], message: "Each suggested color must be plain text under 80 characters." };
+    }
+    const key = color.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      colors.push(color);
+    }
+  }
+  return { valid: true, colors, message: "" };
+}
+
 function showStockIssueProductDialog(products, automation, triggerButton, autoProcessButton) {
-  const { overlay, dialog } = createStockIssueDialogShell("Configure Stock Issue Extension Required");
+  const isColorSuggestion = automation.key === "stock_issue_color";
+  const dialogName = isColorSuggestion ? "Suggest Different Color" : "Extension Required";
+  const { overlay, dialog } = createStockIssueDialogShell(`Configure Stock Issue ${dialogName}`);
   const title = document.createElement("div");
-  title.textContent = "Extension Required";
+  title.textContent = dialogName;
   Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "6px" });
   const explanation = document.createElement("p");
-  explanation.textContent = "Select each product/color that needs an extension, then enter the number of days.";
+  explanation.textContent = isColorSuggestion
+    ? "Select each out-of-stock product/color, then list the available replacement colors separated by commas."
+    : "Select each product/color that needs an extension, then enter the number of days.";
   Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
   dialog.append(title, explanation);
 
@@ -685,26 +721,34 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
   table.append(body);
   dialog.append(table);
 
-  const daysLabel = document.createElement("label");
-  daysLabel.textContent = "Extension days (required)";
-  daysLabel.htmlFor = "crm-stock-issue-days";
-  Object.assign(daysLabel.style, { display: "block", marginBottom: "5px", fontWeight: "700" });
-  const daysInput = document.createElement("input");
-  daysInput.id = "crm-stock-issue-days";
-  daysInput.type = "number";
-  daysInput.min = "1";
-  daysInput.max = "365";
-  daysInput.step = "1";
-  daysInput.inputMode = "numeric";
-  daysInput.required = true;
-  Object.assign(daysInput.style, { width: "120px", padding: "8px", border: "1px solid #64748b", borderRadius: "3px" });
-  dialog.append(daysLabel, daysInput);
+  const inputLabel = document.createElement("label");
+  inputLabel.textContent = isColorSuggestion ? "Suggested colors (required)" : "Extension days (required)";
+  inputLabel.htmlFor = isColorSuggestion ? "crm-stock-issue-colors" : "crm-stock-issue-days";
+  Object.assign(inputLabel.style, { display: "block", marginBottom: "5px", fontWeight: "700" });
+  const detailInput = document.createElement("input");
+  detailInput.id = inputLabel.htmlFor;
+  detailInput.type = isColorSuggestion ? "text" : "number";
+  if (isColorSuggestion) {
+    detailInput.placeholder = "Example: Navy, Black, White";
+    detailInput.autocomplete = "off";
+  } else {
+    detailInput.min = "1";
+    detailInput.max = "365";
+    detailInput.step = "1";
+    detailInput.inputMode = "numeric";
+  }
+  detailInput.required = true;
+  Object.assign(detailInput.style, {
+    width: isColorSuggestion ? "min(100%, 420px)" : "120px",
+    boxSizing: "border-box", padding: "8px", border: "1px solid #64748b", borderRadius: "3px"
+  });
+  dialog.append(inputLabel, detailInput);
 
   const validation = document.createElement("div");
   validation.id = "crm-stock-issue-validation";
   validation.setAttribute("role", "status");
   validation.setAttribute("aria-live", "polite");
-  daysInput.setAttribute("aria-describedby", validation.id);
+  detailInput.setAttribute("aria-describedby", validation.id);
   Object.assign(validation.style, { minHeight: "18px", marginTop: "8px", color: "#b91c1c", fontWeight: "600" });
   dialog.append(validation);
   const actions = document.createElement("div");
@@ -720,13 +764,15 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
 
   const refresh = () => {
     const selected = checkboxes.filter((checkbox) => checkbox.checked).length;
-    const daysValidation = validateStockIssueExtensionDays(daysInput.value);
+    const inputValidation = isColorSuggestion
+      ? validateStockIssueSuggestedColors(detailInput.value)
+      : validateStockIssueExtensionDays(detailInput.value);
     const errors = [];
     if (!selected) errors.push("Select at least one product.");
-    if (!daysValidation.valid) errors.push(daysValidation.message);
-    const enabled = selected > 0 && daysValidation.valid;
+    if (!inputValidation.valid) errors.push(inputValidation.message);
+    const enabled = selected > 0 && inputValidation.valid;
     validation.textContent = errors.join(" ");
-    daysInput.setAttribute("aria-invalid", String(!daysValidation.valid));
+    detailInput.setAttribute("aria-invalid", String(!inputValidation.valid));
     queue.disabled = !enabled;
     queue.setAttribute("aria-disabled", String(!enabled));
     queue.style.setProperty("background", enabled ? "#15803d" : "#9ca3af", "important");
@@ -734,29 +780,31 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
     queue.style.setProperty("cursor", enabled ? "pointer" : "not-allowed", "important");
   };
   checkboxes.forEach((checkbox) => checkbox.addEventListener("change", refresh));
-  daysInput.addEventListener("input", refresh);
+  detailInput.addEventListener("input", refresh);
   back.addEventListener("click", () => overlay.remove());
   queue.addEventListener("click", () => {
     const selectedProducts = checkboxes
       .filter((checkbox) => checkbox.checked)
       .map((checkbox) => products[Number(checkbox.value)]);
-    const daysValidation = validateStockIssueExtensionDays(daysInput.value);
-    if (!selectedProducts.length || !daysValidation.valid) {
+    const inputValidation = isColorSuggestion
+      ? validateStockIssueSuggestedColors(detailInput.value)
+      : validateStockIssueExtensionDays(detailInput.value);
+    if (!selectedProducts.length || !inputValidation.valid) {
       refresh();
       return;
     }
     overlay.remove();
-    queueManualOrderAutomation(automation, triggerButton, autoProcessButton, "", {
-      days: daysValidation.days,
-      products: selectedProducts
-    });
+    const structuredData = isColorSuggestion
+      ? { colors: inputValidation.colors, products: selectedProducts }
+      : { days: inputValidation.days, products: selectedProducts };
+    queueManualOrderAutomation(automation, triggerButton, autoProcessButton, "", structuredData);
   });
   overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
   overlay.addEventListener("keydown", (event) => { if (event.key === "Escape") overlay.remove(); });
   actions.append(back, queue);
   dialog.append(actions);
   refresh();
-  daysInput.focus();
+  detailInput.focus();
 }
 
 async function startStockIssueExtensionSelection(automation, triggerButton, autoProcessButton) {

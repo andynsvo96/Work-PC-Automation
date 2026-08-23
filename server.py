@@ -120,6 +120,7 @@ CRM_PUSH_BACK_SCRIPT = os.path.join(WORKERS_DIR, "crm_push_back.py")
 CRM_AUTO_SPLITTER_SCRIPT = os.path.join(WORKERS_DIR, "crm_auto_splitter.py")
 CRM_MASS_EMAILER_SCRIPT = os.path.join(WORKERS_DIR, "crm_copyright_cancel.py")
 CRM_STOCK_ISSUE_EXTENSION_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_extension.py")
+CRM_STOCK_ISSUE_COLOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_color.py")
 SLACK_SCRIPT_TIMEOUT_SECONDS = 150
 BROWSER_WORKER_FILENAMES = frozenset(
     {
@@ -135,6 +136,7 @@ BROWSER_WORKER_FILENAMES = frozenset(
         os.path.basename(CRM_AUTO_SPLITTER_SCRIPT),
         os.path.basename(CRM_MASS_EMAILER_SCRIPT),
         os.path.basename(CRM_STOCK_ISSUE_EXTENSION_SCRIPT),
+        os.path.basename(CRM_STOCK_ISSUE_COLOR_SCRIPT),
     }
 )
 CRM_VISIBLE_FLAG_WORKER_FILENAMES = BROWSER_WORKER_FILENAMES - {
@@ -2045,7 +2047,7 @@ _STOCK_ISSUE_EXTENSION_STAGE_LABELS = {
 }
 
 
-def _stock_issue_extension_failure_message(result_payload, fallback=""):
+def _stock_issue_extension_failure_message(result_payload, fallback="", workflow_label="Stock Issue - Extension Required"):
     """Explain the failure and whether any customer-facing actions already occurred."""
     payload = result_payload if isinstance(result_payload, dict) else {}
     stage = str(payload.get("failed_stage") or "").strip()
@@ -2054,7 +2056,7 @@ def _stock_issue_extension_failure_message(result_payload, fallback=""):
     fallback_match = None
     if fallback_text:
         fallback_match = re.search(
-            r"Stock Extension stopped at ([^:]+):\s*(.*?)(?:\.\s*Recovery state:|$)",
+            r"(?:Stock Extension|Suggest Different Color) stopped at ([^:]+):\s*(.*?)(?:\.\s*Recovery state:|$)",
             fallback_text,
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -2064,7 +2066,7 @@ def _stock_issue_extension_failure_message(result_payload, fallback=""):
         cause = (fallback_match.group(2) if fallback_match else fallback_text).strip()
     stage_label = _STOCK_ISSUE_EXTENSION_STAGE_LABELS.get(stage, stage.replace("_", " ").title())
     if not stage_label:
-        stage_label = "Stock Issue - Extension Required"
+        stage_label = workflow_label
     cause = cause.rstrip(".")
     summary = f"{stage_label} failed"
     if cause:
@@ -2157,8 +2159,11 @@ def _automation_queue_result_context(task, ok, message):
         result_payload = runtime.get("payload") if isinstance(runtime.get("payload"), dict) else {}
         if not result_payload and isinstance(status_payload, dict):
             result_payload = status_payload
-        if task_type == "crm.stock_issue_extension" and result_payload:
-            failure_message = _stock_issue_extension_failure_message(result_payload, message)
+        if task_type in {"crm.stock_issue_extension", "crm.stock_issue_color"} and result_payload:
+            color_workflow = task_type == "crm.stock_issue_color"
+            process_key = "stock_issue_color" if color_workflow else "stock_issue_extension"
+            workflow_label = "Stock Issue - Suggest Different Color" if color_workflow else "Stock Issue - Extension Required"
+            failure_message = _stock_issue_extension_failure_message(result_payload, message, workflow_label)
             task_arguments = (task or {}).get("task_arguments") or (task or {}).get("arguments") or {}
             task_arguments = task_arguments if isinstance(task_arguments, dict) else {}
             order_id = str(
@@ -2174,19 +2179,19 @@ def _automation_queue_result_context(task, ok, message):
                         "order_id": order_id,
                         "success": False,
                         "status": "Failed",
-                        "process": "stock_issue_extension",
+                        "process": process_key,
                         "outcome": failed_stage or "failed",
                         "function_label": _STOCK_ISSUE_EXTENSION_STAGE_LABELS.get(
                             failed_stage, failed_stage.replace("_", " ").title()
                         )
-                        or "Stock Issue - Extension Required",
+                        or workflow_label,
                         "message": failure_message,
                         "activity": dict(result_payload.get("activity") or {}),
                     }
                 )
             return {
                 **existing,
-                "stock_issue_extension": dict(result_payload),
+                process_key: dict(result_payload),
                 "report": {
                     "success": bool(ok),
                     "message": str(message or result_payload.get("message") or "") if ok else failure_message,
@@ -2277,14 +2282,17 @@ def _concise_automation_failure_message(task, message=""):
                         "message": str(step_result.get("message") or "").strip(),
                     }
                 )
-    if task_type == "crm.stock_issue_extension":
-        stock_payload = context.get("stock_issue_extension")
+    if task_type in {"crm.stock_issue_extension", "crm.stock_issue_color"}:
+        color_workflow = task_type == "crm.stock_issue_color"
+        context_key = "stock_issue_color" if color_workflow else "stock_issue_extension"
+        workflow_label = "Stock Issue - Suggest Different Color" if color_workflow else "Stock Issue - Extension Required"
+        stock_payload = context.get(context_key)
         if isinstance(stock_payload, dict) and stock_payload:
-            return _stock_issue_extension_failure_message(stock_payload, message)
+            return _stock_issue_extension_failure_message(stock_payload, message, workflow_label)
         for row in details:
             if isinstance(row, dict) and not bool(row.get("success")) and str(row.get("message") or "").strip():
                 return str(row.get("message")).strip()
-        return _stock_issue_extension_failure_message({}, message)
+        return _stock_issue_extension_failure_message({}, message, workflow_label)
     evidence = [str(message or "")]
     for row in details:
         if not isinstance(row, dict) or bool(row.get("success")):
@@ -12082,6 +12090,55 @@ CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["stock_issue_extension"] = {
     "runner": lambda order_id, _reason="", request_data=None, progress_callback=None: run_crm_stock_issue_extension_queued(
         order_id,
         (request_data or {}).get("days"),
+        (request_data or {}).get("products"),
+        progress_callback=progress_callback,
+    ),
+}
+
+
+def _normalize_stock_issue_color_request(data):
+    from workers.crm_stock_issue_color import normalize_request
+
+    payload = data if isinstance(data, dict) else {}
+    return normalize_request(payload.get("colors"), payload.get("products"))
+
+
+def run_crm_stock_issue_color_queued(order_id, colors, products, progress_callback=None):
+    """Run Suggest Different Color for one CRM order."""
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    if not normalized_order_id:
+        return False, "Open a CRM order with a valid 7-digit order number first.", {}
+    if not crm_lock.acquire(blocking=False):
+        return False, "A CRM automation run is already in progress.", {}
+    try:
+        from workers.crm_stock_issue_color import run_stock_issue_color_order
+
+        return run_stock_issue_color_order(
+            normalized_order_id,
+            colors,
+            products,
+            dry_run=False,
+            progress_callback=progress_callback,
+        )
+    finally:
+        crm_lock.release()
+
+
+CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["stock_issue_color"] = {
+    "label": "Stock Issue - Suggest Different Color",
+    "task_type": "crm.stock_issue_color",
+    "status_fn": get_crm_extension_order_status_payload,
+    "structured_request": True,
+    "request_validator": _normalize_stock_issue_color_request,
+    "task_arguments": lambda order_id, _reason="", request_data=None: {
+        "order_id": order_id,
+        "colors": list((request_data or {}).get("colors") or []),
+        "products": list((request_data or {}).get("products") or []),
+        "dry_run": False,
+    },
+    "runner": lambda order_id, _reason="", request_data=None, progress_callback=None: run_crm_stock_issue_color_queued(
+        order_id,
+        (request_data or {}).get("colors"),
         (request_data or {}).get("products"),
         progress_callback=progress_callback,
     ),

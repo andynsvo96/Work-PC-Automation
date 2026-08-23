@@ -118,6 +118,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "crm-order-automation:manual-start") {
     startLocalManualOrderProcessing(message.orderId, message.automation, message.reason, {
       days: message.days,
+      colors: message.colors,
       products: message.products
     })
       .then(sendResponse)

@@ -393,7 +393,7 @@ class StockIssueExtensionSourceContractTests(unittest.TestCase):
         self.assertIn("validateStockIssueExtensionDays", content)
         self.assertIn("Extension days must be a positive whole number.", content)
         self.assertIn('queue.disabled = !enabled', content)
-        self.assertIn('daysInput.setAttribute("aria-invalid", String(!daysValidation.valid))', content)
+        self.assertIn('detailInput.setAttribute("aria-invalid", String(!inputValidation.valid))', content)
         self.assertIn("days: structuredData.days", bridge)
         self.assertIn("products: structuredData.products", bridge)
         self.assertIn("days: message.days", background)
@@ -401,8 +401,8 @@ class StockIssueExtensionSourceContractTests(unittest.TestCase):
         stock_worker = (ROOT / "workers" / "crm_stock_issue_extension.py").read_text(encoding="utf-8")
         shared_worker = (ROOT / "workers" / "crm_copyright_cancel.py").read_text(encoding="utf-8")
         self.assertIn("_insert_exact_stock_extension_template(driver)", stock_worker)
-        self.assertIn("(?:STOCK|DAYS)", shared_worker)
-        self.assertEqual(manifest["version"], "1.4.0")
+        self.assertIn("(?:STOCK|DAYS|COLOR)", shared_worker)
+        self.assertEqual(manifest["version"], "1.5.0")
 
 
 if __name__ == "__main__":
