@@ -57,7 +57,8 @@ STOCK_COLOR_PROCESS = shared.CancelProcess(
     body_markers=(
         "[stock]",
         "currently out of stock",
-        "available color such as [color]",
+        "available color",
+        "such as [color]",
         "approve the color change",
         "rushordertees.com team",
     ),

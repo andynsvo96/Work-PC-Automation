@@ -54,20 +54,44 @@ class StockIssueColorFormattingTests(unittest.TestCase):
             "No stock for DM130 in Red - suggested Navy or Black\nEmailed Txted",
         )
 
-    def test_template_signature_matches_approved_email(self):
+    def test_template_signature_matches_current_live_email(self):
         state = {
             "subject": "RushOrderTees Order #[ORDER-NUMBER] - URGENT Stock Issue",
             "body": (
                 "Thank you for placing your order with RushOrderTees! We're reaching out regarding a minor "
                 "inventory issue with your order. Unfortunately, the [STOCK] is currently out of stock and will "
-                "not be available in time to meet your current due date. To help keep your order on schedule, we "
-                "would like to switch the item to an available color such as [COLOR]. Please reply to this email "
-                "or call us at (800) 620-1233 to let us know if you approve the color change. We're happy to review "
-                "the available options with you. Thank you for trusting the RushOrderTees.com team."
+                "not be available in time to meet your scheduled due date. To help avoid a delay, we can switch "
+                "the item to an available color, such as [COLOR]. Please reply to this email or call us at "
+                "(800) 620-1233 to let us know if you approve the color change. If you'd prefer to review other "
+                "available options, we'll be happy to go over them with you. Thank you for trusting the "
+                "RushOrderTees.com team."
             ),
         }
 
         self.assertEqual(stock_color._stock_color_template_signature_error(state), "")
+
+    def test_template_signature_allows_same_phrase_without_optional_comma(self):
+        state = {
+            "subject": "RushOrderTees Order #[ORDER-NUMBER] - URGENT Stock Issue",
+            "body": (
+                "The [STOCK] is currently out of stock. We can switch the item to an available color such as "
+                "[COLOR]. Please let us know if you approve the color change. Thank you for trusting the "
+                "RushOrderTees.com team."
+            ),
+        }
+
+        self.assertEqual(stock_color._stock_color_template_signature_error(state), "")
+
+    def test_template_signature_still_requires_color_offer_phrase(self):
+        state = {
+            "subject": "RushOrderTees Order #[ORDER-NUMBER] - URGENT Stock Issue",
+            "body": (
+                "The [STOCK] is currently out of stock. Choose [COLOR]. Please let us know if you approve the "
+                "color change. Thank you for trusting the RushOrderTees.com team."
+            ),
+        }
+
+        self.assertIn("available color", stock_color._stock_color_template_signature_error(state))
 
     def test_body_replacement_requires_both_placeholders(self):
         driver = mock.Mock()
