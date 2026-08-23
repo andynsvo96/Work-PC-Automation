@@ -301,6 +301,28 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         password.click.assert_called_once_with()
         self.assertEqual(password.send_keys.call_args_list[-1].args, ("secret",))
 
+    def test_salesforce_login_fill_reacquires_fields_after_transient_stale_element(self):
+        stale_username = mock.Mock()
+        stale_username.click.side_effect = RuntimeError("stale element")
+        fresh_username = mock.Mock()
+        fresh_username.get_attribute.return_value = "saved@example.test"
+        credential = mock.Mock(username="saved@example.test", secret="secret")
+
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_salesforce_login_fields",
+            side_effect=[(stale_username, None), (fresh_username, None)],
+        ) as login_fields, mock.patch.object(
+            crm_copyright_cancel,
+            "read_windows_credential",
+            return_value=credential,
+        ), mock.patch.object(crm_copyright_cancel.time, "sleep"):
+            filled = crm_copyright_cancel._fill_salesforce_login_with_autofill(mock.Mock())
+
+        self.assertTrue(filled)
+        self.assertEqual(login_fields.call_count, 2)
+        self.assertEqual(fresh_username.send_keys.call_args_list[-1].args, ("saved@example.test",))
+
     def test_salesforce_password_only_stage_excludes_login_submit_from_fields(self):
         def input_element(input_type, *, name="", element_id=""):
             element = mock.Mock(size={"width": 320, "height": 48})
@@ -325,6 +347,35 @@ class CrmCopyrightCancelTests(unittest.TestCase):
 
         self.assertIsNone(username)
         self.assertIs(detected_password, password)
+
+    def test_salesforce_authenticated_composer_inputs_are_not_a_login_form(self):
+        def text_input(*, name="", element_id="", placeholder=""):
+            element = mock.Mock(size={"width": 320, "height": 48})
+            element.is_displayed.return_value = True
+            attributes = {
+                "type": "text",
+                "name": name,
+                "id": element_id,
+                "placeholder": placeholder,
+                "autocomplete": "",
+                "aria-label": "",
+            }
+            element.get_attribute.side_effect = attributes.get
+            return element
+
+        driver = mock.Mock(current_url="https://printfly.lightning.force.com/lightning/r/Contact/test/view")
+        driver.find_elements.return_value = [
+            text_input(name="fromAddress", placeholder="From"),
+            text_input(name="subject", placeholder="Subject"),
+        ]
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_visible_text",
+            return_value="From Orders To Customer Subject Refund Send",
+        ):
+            is_login = crm_copyright_cancel._is_salesforce_login_page(driver)
+
+        self.assertFalse(is_login)
 
     def test_salesforce_login_advances_from_username_to_password_stage(self):
         driver = mock.Mock(current_url="https://printfly.my.salesforce.com/")
@@ -2039,6 +2090,82 @@ class CrmCopyrightCancelTests(unittest.TestCase):
                 )
 
         driver.execute_script.assert_not_called()
+
+    def test_refund_modal_amount_parser_accepts_current_and_alternate_labels(self):
+        current = crm_copyright_cancel._refund_amounts_from_snapshot({
+            "text": "Max Refund Available: $1,234.50",
+            "input_values": ["1,234.50"],
+        })
+        alternate = crm_copyright_cancel._refund_amounts_from_snapshot({
+            "text": "Amount available to refund $88",
+            "input_values": ["$88.00"],
+        })
+
+        self.assertEqual(current, ("1234.50", "1234.50"))
+        self.assertEqual(alternate, ("88.00", "88.00"))
+
+    def test_open_refund_modal_waits_for_rendered_dialog_after_click(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = True
+        rendered = {
+            "text": "Max Refund Available: $50.00",
+            "input_values": ["50.00"],
+            "alerts": [],
+        }
+
+        with mock.patch.object(crm_copyright_cancel, "_activate_crm_context"), mock.patch.object(
+            crm_copyright_cancel,
+            "_refund_modal_snapshot",
+            side_effect=[None, None, rendered],
+        ) as snapshot, mock.patch.object(
+            crm_copyright_cancel.time,
+            "monotonic",
+            side_effect=[0, 0, 0, 1, 1, 2],
+        ), mock.patch.object(crm_copyright_cancel.time, "sleep"):
+            crm_copyright_cancel._open_stripe_refund_modal(driver)
+
+        self.assertEqual(snapshot.call_count, 3)
+        self.assertEqual(driver.execute_script.call_count, 1)
+
+    def test_refund_modal_reloads_once_after_orphaned_backdrop(self):
+        driver = mock.Mock()
+        state = {"max_refund": "50.00", "input_amount": "50.00"}
+
+        with mock.patch.object(
+            crm_copyright_cancel,
+            "_open_stripe_refund_modal",
+            side_effect=[
+                crm_copyright_cancel.CopyrightCancelError(
+                    "Stripe.com Refund was clicked, but the refund dialog did not open."
+                ),
+                None,
+            ],
+        ) as open_modal, mock.patch.object(
+            crm_copyright_cancel,
+            "_read_refund_modal_state",
+            return_value=state,
+        ), mock.patch.object(
+            crm_copyright_cancel,
+            "_activate_crm_context",
+        ) as activate, mock.patch.object(
+            crm_copyright_cancel,
+            "_wait_for_order_scope",
+        ) as wait_for_order, mock.patch.object(
+            crm_copyright_cancel,
+            "_close_refund_modal",
+        ) as close_modal, mock.patch.object(crm_copyright_cancel.time, "sleep"):
+            result = crm_copyright_cancel._refund_via_stripe_payment_modal(
+                driver,
+                dry_run=True,
+                payment_amount="50.00",
+            )
+
+        self.assertTrue(result["prepared"])
+        self.assertEqual(open_modal.call_count, 2)
+        driver.refresh.assert_called_once_with()
+        activate.assert_called_once_with(driver)
+        wait_for_order.assert_called_once_with(driver, timeout=30)
+        close_modal.assert_called_once_with(driver)
 
     def test_cancel_and_refund_skips_refund_work_for_zero_charge_order(self):
         driver = mock.Mock()

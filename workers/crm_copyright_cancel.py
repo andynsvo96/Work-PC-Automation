@@ -1809,8 +1809,6 @@ def _salesforce_login_fields(driver):
                 username_input = element
         except Exception:
             pass
-    if password_input is None and len(inputs) >= 2:
-        password_input = inputs[1]
     if username_input is None:
         username_input = next((element for element in inputs if element != password_input), None)
     return username_input, password_input
@@ -1869,58 +1867,66 @@ def _click_salesforce_saved_username(driver):
 
 
 def _fill_salesforce_login_with_autofill(driver):
-    username_input, password_input = _salesforce_login_fields(driver)
-    if username_input is None and password_input is None:
-        return False
+    # Salesforce frequently replaces a staged-login input after focus or while
+    # its password manager initializes. Reacquire the fields on every attempt;
+    # otherwise one stale WebElement turns a valid stored credential into a
+    # misleading Credential Manager failure.
+    for attempt in range(3):
+        username_input, password_input = _salesforce_login_fields(driver)
+        if username_input is None and password_input is None:
+            if attempt < 2:
+                time.sleep(0.4)
+                continue
+            return False
 
-    def has_login_values():
-        try:
-            username_value = (username_input.get_attribute("value") or "").strip()
-        except Exception:
-            username_value = ""
-        try:
-            password_value = (password_input.get_attribute("value") or "") if password_input is not None else ""
-        except Exception:
-            password_value = ""
-        if password_input is not None:
-            return bool(password_value and (username_value or username_input is None))
-        return bool(username_value)
+        def has_login_values():
+            try:
+                username_value = (username_input.get_attribute("value") or "").strip()
+            except Exception:
+                username_value = ""
+            try:
+                password_value = (password_input.get_attribute("value") or "") if password_input is not None else ""
+            except Exception:
+                password_value = ""
+            if password_input is not None:
+                return bool(password_value and (username_value or username_input is None))
+            return bool(username_value)
 
-    try:
-        if username_input is not None:
-            username_input.click()
-            time.sleep(0.3)
-        credential = read_windows_credential(SALESFORCE_CREDENTIAL_TARGET, required=False)
-        configured_username = credential.username.strip() if credential else ""
-        configured_password = credential.secret if credential else ""
-        if configured_username:
+        try:
             if username_input is not None:
-                username_input.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
-                username_input.send_keys(configured_username)
-            if configured_password and password_input is not None:
-                password_input.click()
-                password_input.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
-                password_input.send_keys(configured_password)
-            return has_login_values()
-
-        # Trigger Chrome's credential/autofill dropdown and choose the first saved login.
-        if username_input is None:
-            return has_login_values()
-        username_input.send_keys(Keys.ARROW_DOWN)
-        time.sleep(0.2)
-        username_input.send_keys(Keys.ENTER)
-        time.sleep(0.8)
-        if has_login_values():
-            return True
-        # Some Chrome autofill menus need a second focus cycle.
-        username_input.click()
-        time.sleep(0.2)
-        username_input.send_keys(Keys.ARROW_DOWN)
-        username_input.send_keys(Keys.ENTER)
-        time.sleep(0.8)
-        return has_login_values()
-    except Exception:
-        return False
+                username_input.click()
+                time.sleep(0.3)
+            credential = read_windows_credential(SALESFORCE_CREDENTIAL_TARGET, required=False)
+            configured_username = credential.username.strip() if credential else ""
+            configured_password = credential.secret if credential else ""
+            if configured_username:
+                if username_input is not None:
+                    username_input.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
+                    username_input.send_keys(configured_username)
+                if configured_password and password_input is not None:
+                    password_input.click()
+                    password_input.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
+                    password_input.send_keys(configured_password)
+                if has_login_values():
+                    return True
+            else:
+                # Trigger Chrome's credential/autofill dropdown and choose the
+                # first saved login. A later retry gets fresh field objects.
+                if username_input is None:
+                    if has_login_values():
+                        return True
+                else:
+                    username_input.send_keys(Keys.ARROW_DOWN)
+                    time.sleep(0.2)
+                    username_input.send_keys(Keys.ENTER)
+                    time.sleep(0.8)
+                    if has_login_values():
+                        return True
+        except Exception:
+            pass
+        if attempt < 2:
+            time.sleep(0.4)
+    return False
 
 
 def _click_salesforce_login_with_selenium(driver):
@@ -7931,11 +7937,103 @@ def _add_refund_fee_to_original(driver, refund_amount=None):
     }
 
 
+def _refund_modal_snapshot(driver):
+    """Return rendered refund-dialog state without requiring legacy wording."""
+    return driver.execute_script(
+        """
+        function visible(el) {
+          if (!el) return false;
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          return rect.width > 0 && rect.height > 0
+            && style.display !== 'none' && style.visibility !== 'hidden';
+        }
+        function clean(value) {
+          return String(value || '').replace(/\s+/g, ' ').trim();
+        }
+        const selector = [
+          '.modal', '.modal-dialog', '.modal-content', '[role=dialog]',
+          '[aria-modal=true]', '.ngdialog-content', 'md-dialog'
+        ].join(',');
+        const dialogs = Array.from(new Set(document.querySelectorAll(selector)))
+          .filter(visible)
+          .map((dialog) => {
+            const text = clean(dialog.innerText || dialog.textContent || '');
+            const inputs = Array.from(dialog.querySelectorAll('input'))
+              .filter((el) => {
+                const type = String(el.type || '').toLowerCase();
+                return visible(el) && !['button', 'submit', 'reset', 'hidden', 'checkbox', 'radio'].includes(type);
+              })
+              .map((el) => ({
+                value: String(el.value || '').trim(),
+                hint: clean([
+                  el.type, el.name, el.id, el.placeholder,
+                  el.getAttribute('aria-label'), el.getAttribute('ng-model')
+                ].join(' ')).toLowerCase()
+              }))
+              .sort((a, b) => {
+                const aAmount = /refund|amount|money|currency/.test(a.hint) ? 0 : 1;
+                const bAmount = /refund|amount|money|currency/.test(b.hint) ? 0 : 1;
+                return aAmount - bAmount;
+              });
+            const actions = Array.from(dialog.querySelectorAll('button,a,input,[role=button]'))
+              .filter(visible)
+              .map((el) => clean(el.innerText || el.value || el.getAttribute('aria-label') || '').toLowerCase());
+            const looksLikeRefund = /refund/i.test(text)
+              || inputs.some((input) => /refund/.test(input.hint));
+            const hasDialogActions = actions.some((action) => ['save', 'cancel', 'refund'].includes(action));
+            const rect = dialog.getBoundingClientRect();
+            return {dialog, text, inputs, actions, looksLikeRefund, hasDialogActions, area: rect.width * rect.height};
+          })
+          .filter((item) => item.looksLikeRefund && item.inputs.length && item.hasDialogActions)
+          .sort((a, b) => a.area - b.area || a.text.length - b.text.length);
+        if (!dialogs.length) return null;
+        const selected = dialogs[0];
+        const alerts = Array.from(document.querySelectorAll(
+          '[role=alert], .alert-danger, .alert-error, .toast-error, .validation-summary-errors'
+        )).filter(visible).map((el) => clean(el.innerText || el.textContent || '')).filter(Boolean);
+        return {
+          text: selected.text,
+          input_values: selected.inputs.map((input) => input.value),
+          alerts: alerts.slice(0, 3)
+        };
+        """
+    )
+
+
+def _refund_amounts_from_snapshot(snapshot):
+    if not isinstance(snapshot, dict):
+        return "", ""
+    text = _clean_text(snapshot.get("text"))
+    max_match = re.search(
+        r"(?:max(?:imum)?\s+refund(?:\s+available)?|maximum\s+available\s+refund|"
+        r"(?:amount\s+)?available\s+to\s+refund|refundable\s+amount)\s*:?\s*\$?\s*([0-9,]+(?:\.\d{1,2})?)",
+        text,
+        re.I,
+    )
+    max_value = max_match.group(1) if max_match else ""
+    if not max_value:
+        # Some CRM releases shorten the label to simply "Refund". Only use a
+        # fallback when the dialog contains exactly one currency amount.
+        currency_amounts = re.findall(r"\$\s*([0-9,]+(?:\.\d{1,2})?)", text)
+        if len(currency_amounts) == 1:
+            max_value = currency_amounts[0]
+    max_amount = _money_text(_parse_money(max_value)) if max_value else ""
+    input_amount = ""
+    for value in snapshot.get("input_values") or []:
+        value_text = str(value or "").strip()
+        if not re.fullmatch(r"-?\s*\$?\s*[0-9,]+(?:\.\d{1,2})?", value_text):
+            continue
+        input_amount = _money_text(_parse_money(value_text).copy_abs())
+        break
+    return max_amount, input_amount
+
+
 def _open_stripe_refund_modal(driver):
     _activate_crm_context(driver)
     def refund_modal_visible():
         try:
-            return "max refund available" in _page_text(driver).lower()
+            return bool(_refund_modal_snapshot(driver))
         except Exception:
             return False
 
@@ -7953,6 +8051,11 @@ def _open_stripe_refund_modal(driver):
                   return (el.innerText || el.value || el.getAttribute('aria-label') || '')
                     .replace(/\\s+/g, ' ').trim().toLowerCase();
                 }
+                function enabled(el) {
+                  const style = window.getComputedStyle(el);
+                  return !el.disabled && el.getAttribute('aria-disabled') !== 'true'
+                    && style.pointerEvents !== 'none';
+                }
                 const panels = Array.from(document.querySelectorAll('div,section,table'))
                   .filter((el) => {
                     const text = (el.innerText || '').toLowerCase();
@@ -7967,7 +8070,7 @@ def _open_stripe_refund_modal(driver):
                 const scopes = rows.concat([root]);
                 for (const scope of scopes) {
                   const candidates = Array.from(scope.querySelectorAll('button,a,input,[role=button]'))
-                    .filter((el) => clean(el) === 'refund' && visible(el))
+                    .filter((el) => clean(el) === 'refund' && visible(el) && enabled(el))
                     .sort((a, b) => {
                       const ar = a.getBoundingClientRect();
                       const br = b.getBoundingClientRect();
@@ -7984,9 +8087,20 @@ def _open_stripe_refund_modal(driver):
             )
         )
 
-    if click_refund_button():
-        time.sleep(1)
-        return
+    # JavaScript .click() can return normally even when Angular ignores it
+    # because the control is momentarily disabled or covered. Confirm that the
+    # dialog rendered, and retry this non-submitting click under load.
+    clicked_refund = False
+    direct_deadline = time.monotonic() + 15
+    next_click_at = 0
+    while time.monotonic() < direct_deadline:
+        if refund_modal_visible():
+            return
+        now = time.monotonic()
+        if now >= next_click_at:
+            clicked_refund = click_refund_button() or clicked_refund
+            next_click_at = now + 2
+        time.sleep(0.5)
 
     clicked_view = bool(
         driver.execute_script(
@@ -8013,7 +8127,8 @@ def _open_stripe_refund_modal(driver):
               const rect = el.getBoundingClientRect();
               const style = window.getComputedStyle(el);
               return (text === 'view' || text === 'details' || text === 'refund') && rect.width > 0 && rect.height > 0
-                && style.display !== 'none' && style.visibility !== 'hidden';
+                && style.display !== 'none' && style.visibility !== 'hidden' && style.pointerEvents !== 'none'
+                && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
             });
             if (!control) return false;
             control.scrollIntoView({block: 'center', inline: 'center'});
@@ -8032,35 +8147,27 @@ def _open_stripe_refund_modal(driver):
                 if refund_modal_visible():
                     return
             time.sleep(0.5)
-    if not clicked_view:
+    if not clicked_view and not clicked_refund:
         raise CopyrightCancelError("Stripe.com payment was not found with a clickable refund button.")
-    raise CopyrightCancelError("Stripe.com payment details opened, but the Refund button was not found.")
+    raise CopyrightCancelError("Stripe.com Refund was clicked, but the refund dialog did not open.")
 
 
 def _read_refund_modal_state(driver):
     deadline = time.monotonic() + 20
+    last_snapshot = None
     while time.monotonic() < deadline:
-        state = driver.execute_script(
-            """
-            const modal = Array.from(document.querySelectorAll('.modal, .modal-content, [role=dialog]'))
-              .find((el) => (el.innerText || '').toLowerCase().includes('max refund available'));
-            if (!modal) return null;
-            const text = modal.innerText || '';
-            const input = Array.from(modal.querySelectorAll('input')).find((el) => {
-              const rect = el.getBoundingClientRect();
-              return rect.width > 0 && rect.height > 0;
-            });
-            return {text, input_value: input ? input.value : ''};
-            """
-        )
-        if state:
-            max_match = re.search(r"Max Refund Available:\s*\$?\s*([0-9,]+\.\d{2})", state.get("text", ""), re.I)
-            max_amount = _money_text(_parse_money(max_match.group(1))) if max_match else ""
-            input_amount = _money_text(_parse_money(state.get("input_value", ""))) if state.get("input_value") else ""
-            if max_amount and input_amount:
-                return {"max_refund": max_amount, "input_amount": input_amount}
+        last_snapshot = _refund_modal_snapshot(driver)
+        max_amount, input_amount = _refund_amounts_from_snapshot(last_snapshot)
+        if max_amount and input_amount:
+            return {"max_refund": max_amount, "input_amount": input_amount}
         time.sleep(0.5)
-    raise CopyrightCancelError("Refund modal did not show max refund and input amount.")
+    if last_snapshot:
+        max_amount, _ = _refund_amounts_from_snapshot(last_snapshot)
+        missing = "max refund" if not max_amount else "input amount"
+        alerts = "; ".join(_clean_text(item) for item in last_snapshot.get("alerts") or [] if _clean_text(item))
+        alert_suffix = f" CRM message: {alerts[:240]}" if alerts else ""
+        raise CopyrightCancelError(f"Refund dialog opened but did not show {missing}.{alert_suffix}")
+    raise CopyrightCancelError("Refund button was clicked, but the refund dialog did not open.")
 
 
 def _close_refund_modal(driver):
@@ -8095,8 +8202,25 @@ def _save_refund_modal(driver, dry_run, payment_amount=None):
     clicked = bool(
         driver.execute_script(
             """
-            const modal = Array.from(document.querySelectorAll('.modal, .modal-content, [role=dialog]'))
-              .find((el) => (el.innerText || '').toLowerCase().includes('max refund available'));
+            function visible(el) {
+              if (!el) return false;
+              const rect = el.getBoundingClientRect();
+              const style = window.getComputedStyle(el);
+              return rect.width > 0 && rect.height > 0
+                && style.display !== 'none' && style.visibility !== 'hidden' && style.pointerEvents !== 'none'
+                && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+            }
+            const modal = Array.from(document.querySelectorAll(
+              '.modal, .modal-dialog, .modal-content, [role=dialog], [aria-modal=true], .ngdialog-content, md-dialog'
+            )).filter(visible).filter((el) => {
+              const text = (el.innerText || el.textContent || '').toLowerCase();
+              const hasInput = Array.from(el.querySelectorAll('input')).some(visible);
+              return text.includes('refund') && hasInput;
+            }).sort((a, b) => {
+              const ar = a.getBoundingClientRect();
+              const br = b.getBoundingClientRect();
+              return (ar.width * ar.height) - (br.width * br.height);
+            })[0];
             if (!modal) return false;
             const buttons = Array.from(modal.querySelectorAll('button,a,input,[role=button]'));
             const save = buttons.find((el) => {
@@ -8121,7 +8245,20 @@ def _save_refund_modal(driver, dry_run, payment_amount=None):
 
 
 def _refund_via_stripe_payment_modal(driver, dry_run, click_refund_button=True, payment_amount=None):
-    _open_stripe_refund_modal(driver)
+    try:
+        _open_stripe_refund_modal(driver)
+    except CopyrightCancelError as exc:
+        if "refund dialog did not open" not in str(exc).lower():
+            raise
+        # The legacy CRM sometimes leaves only a Bootstrap backdrop after a
+        # Refund click, especially when several sheet workers render at once.
+        # Reloading is safe here: no refund is submitted until the later Save
+        # click, and cancellation/refund-fee changes were already persisted.
+        driver.refresh()
+        time.sleep(2)
+        _activate_crm_context(driver)
+        _wait_for_order_scope(driver, timeout=30)
+        _open_stripe_refund_modal(driver)
     state = _read_refund_modal_state(driver)
     if dry_run:
         _close_refund_modal(driver)
