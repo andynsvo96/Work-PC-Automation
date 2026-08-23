@@ -545,7 +545,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
                 crm_copyright_cancel._salesforce_sent_email_activity_visible(driver, "5076174", subject)
             )
 
-    def test_salesforce_send_is_not_successful_until_activity_is_verified(self):
+    def test_salesforce_send_click_is_success_without_activity_verification(self):
         driver = mock.Mock()
         subject = "RushOrderTees Order #5076174 - A Refund Has Been Issued to Your Account"
         ready_state = {"subject": subject, "body": "Refund body", "from": "Orders"}
@@ -554,7 +554,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         ), mock.patch.object(
             crm_copyright_cancel, "_click_salesforce_send_button", return_value=True
         ), mock.patch.object(
-            crm_copyright_cancel, "_wait_for_salesforce_sent_email_activity", return_value=True
+            crm_copyright_cancel, "_wait_for_salesforce_sent_email_activity"
         ) as verify_activity:
             result = crm_copyright_cancel._send_salesforce_email(
                 driver,
@@ -564,9 +564,10 @@ class CrmCopyrightCancelTests(unittest.TestCase):
                 "Refund body",
             )
 
-        verify_activity.assert_called_once_with(driver, "5076174", subject)
+        verify_activity.assert_not_called()
         self.assertTrue(result["sent"])
-        self.assertTrue(result["activity_verified"])
+        self.assertTrue(result["send_clicked"])
+        self.assertFalse(result["activity_verified"])
 
     def test_contact_panel_timeout_refreshes_once_then_retries(self):
         driver = mock.Mock()

@@ -6044,8 +6044,17 @@ def _send_salesforce_email(driver, dry_run, order_id, subject, body, skip_ready_
         return {"sent": False, "dry_run": True, "email_state": ready_state, "message": "Skipped Salesforce Send in dry-run mode."}
     if not _click_salesforce_send_button(driver):
         raise CopyrightCancelError("Salesforce Send button was not found.")
-    _wait_for_salesforce_sent_email_activity(driver, order_id, subject)
-    return {"sent": True, "dry_run": False, "email_state": ready_state, "activity_verified": True}
+    # Treat a completed click on Salesforce's Send control as success. The
+    # activity feed is eventually consistent and can remain stale even after a
+    # successful send, so its visibility must not turn a sent order into a
+    # failed/retryable order (which could also cause a duplicate email).
+    return {
+        "sent": True,
+        "dry_run": False,
+        "email_state": ready_state,
+        "send_clicked": True,
+        "activity_verified": False,
+    }
 
 
 def _click_salesforce_send_button(driver):
