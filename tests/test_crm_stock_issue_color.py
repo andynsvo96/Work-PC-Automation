@@ -48,7 +48,7 @@ class StockIssueColorFormattingTests(unittest.TestCase):
         )
         self.assertEqual(
             stock_color.format_sales_note(["Navy", "Black"], [product()]),
-            "DM130 in Red - suggested Navy or Black\nEmailed Txted",
+            "No stock for DM130 in Red - suggested Navy or Black\nEmailed Txted",
         )
 
     def test_template_signature_matches_approved_email(self):

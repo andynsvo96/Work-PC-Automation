@@ -139,7 +139,7 @@ def format_sales_note(colors, products):
         [f"{group['style']} in {extension.format_color_list(group['colors'])}" for group in groups],
         final_word="and",
     )
-    return f"{product_text} - suggested {format_suggested_colors(colors)}\nEmailed Txted"
+    return f"No stock for {product_text} - suggested {format_suggested_colors(colors)}\nEmailed Txted"
 
 
 def format_slack_message(order_id):
