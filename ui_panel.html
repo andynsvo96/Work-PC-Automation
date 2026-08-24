@@ -217,6 +217,11 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .action-feedback{position:fixed;right:18px;bottom:18px;z-index:70;display:none;width:min(520px,calc(100vw - 36px));box-sizing:border-box;padding:11px 13px;border:1px solid #93c5fd;border-radius:10px;background:#eff6ff;color:#1e3a8a;box-shadow:0 16px 42px rgba(15,23,42,.28);font-size:13px;line-height:1.45}
 .action-feedback.active{display:block}
 .action-feedback.error{border-color:#fca5a5;background:#fef2f2;color:#991b1b}
+.action-feedback-content{display:flex;align-items:flex-start;gap:10px}
+.action-feedback-message{flex:1;min-width:0}
+.action-feedback-dismiss{flex:0 0 auto;width:24px;height:24px;margin:-3px -4px -3px 0;padding:0;border:0;border-radius:5px;background:transparent;color:currentColor;font-size:21px;font-weight:400;line-height:1;cursor:pointer}
+.action-feedback-dismiss:hover,.action-feedback-dismiss:focus-visible{background:rgba(30,58,138,.12)}
+.action-feedback.error .action-feedback-dismiss:hover,.action-feedback.error .action-feedback-dismiss:focus-visible{background:rgba(153,27,27,.12)}
 .app-update-modal{max-width:560px}
 .app-update-details{margin-top:10px;white-space:pre-wrap}
 .auto-split-review-modal{max-width:560px}
@@ -727,7 +732,12 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
 </div>
 <div id='platformCapabilityNotice' class='notice platform-capability-notice'>Windows only</div>
 <div id='versionGateNotice' class='notice version-gate-notice'></div>
-<div id='actionFeedback' class='action-feedback' role='status' aria-live='polite'></div>
+  <div id='actionFeedback' class='action-feedback' role='status' aria-live='polite'>
+    <div class='action-feedback-content'>
+      <span id='actionFeedbackMessage' class='action-feedback-message'></span>
+      <button class='action-feedback-dismiss' type='button' onclick='dismissActionFeedback()' aria-label='Dismiss notification' title='Dismiss notification'>&times;</button>
+    </div>
+  </div>
 <div id='appUpdateModal' class='modal-backdrop' role='presentation'>
   <div class='modal app-update-modal' role='dialog' aria-modal='true' aria-labelledby='appUpdateTitle'>
     <div class='modal-title-row'>
@@ -1746,6 +1756,7 @@ let slackHistoryPayload = null;
 let dismissedAppUpdateTarget = null;
 let appUpdateInProgress = false;
 let actionFeedbackTimer = null;
+let dismissedActionFeedbackMessage = null;
 let queueDragTaskId = null;
 let settingsSaveTimer = null;
 let settingsSavePromise = Promise.resolve();
@@ -2738,10 +2749,12 @@ function setProcessingStatus(msg) { setStatus(msg, 'processing'); }
 
 function showActionFeedback(message) {
   const feedback = document.getElementById('actionFeedback');
+  const messageEl = document.getElementById('actionFeedbackMessage');
   const text = String(message || '').trim();
-  if (!feedback || !text) return;
+  if (!feedback || !messageEl || !text || text === dismissedActionFeedbackMessage) return;
   const isError = /fail|error|could not|cannot|locked|blocked|offline|unavailable|missing|required|invalid/i.test(text);
-  feedback.textContent = text;
+  dismissedActionFeedbackMessage = null;
+  messageEl.textContent = text;
   feedback.classList.toggle('error', isError);
   feedback.classList.add('active');
   if (actionFeedbackTimer) clearTimeout(actionFeedbackTimer);
@@ -2749,6 +2762,15 @@ function showActionFeedback(message) {
     feedback.classList.remove('active', 'error');
     actionFeedbackTimer = null;
   }, isError ? 15000 : 7000);
+}
+
+function dismissActionFeedback() {
+  const feedback = document.getElementById('actionFeedback');
+  const messageEl = document.getElementById('actionFeedbackMessage');
+  dismissedActionFeedbackMessage = messageEl ? messageEl.textContent : null;
+  if (actionFeedbackTimer) clearTimeout(actionFeedbackTimer);
+  actionFeedbackTimer = null;
+  if (feedback) feedback.classList.remove('active', 'error');
 }
 
 function renderClipboardStatus(payload) {
