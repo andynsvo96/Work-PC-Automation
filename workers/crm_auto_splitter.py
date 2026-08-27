@@ -182,7 +182,7 @@ def _build_splitter_driver(profile, visible=False):
     )
 
 
-def _write_result(success, message, result_file=None, **extra_fields):
+def _write_result(success, message, result_file=None, audit_log=True, **extra_fields):
     return write_result_payload(
         AUTOMATION_NAME,
         SOURCE,
@@ -190,6 +190,52 @@ def _write_result(success, message, result_file=None, **extra_fields):
         message,
         extra_fields=extra_fields,
         result_file=result_file or RESULT_FILE,
+        audit_log=audit_log,
+    )
+
+
+def _write_split_progress_checkpoint(
+    result_file,
+    report,
+    split_orders,
+    resolved_order_id,
+    target_url,
+    expected_tab_count,
+    divisions,
+    started,
+    stage="split_orders_created",
+):
+    """Persist created IDs immediately so a retry can resume instead of copying again."""
+    new_order_ids = [
+        str(item.get("order_id"))
+        for item in (split_orders or [])
+        if item.get("order_id") and not item.get("retained_original")
+    ]
+    if not new_order_ids:
+        return None
+    report["partial"] = True
+    report["checkpoint_stage"] = stage
+    report["split_orders"] = sorted(
+        split_orders,
+        key=lambda item: int(item.get("split_index") or 0),
+    )
+    return _write_result(
+        False,
+        f"Auto-split in progress for order {resolved_order_id}; created {_format_order_list(new_order_ids)}.",
+        result_file=result_file,
+        audit_log=False,
+        action="split_order",
+        dry_run=False,
+        status="in_progress",
+        checkpoint=True,
+        checkpoint_stage=stage,
+        target_order_id=resolved_order_id,
+        order_url=target_url,
+        expected_tab_count=expected_tab_count,
+        divisions=divisions,
+        new_order_ids=new_order_ids,
+        report=report,
+        duration_seconds=round(time.monotonic() - started, 2),
     )
 
 
@@ -3209,6 +3255,70 @@ def _add_original_transfer_note(driver, note):
     return _save_order_and_wait(driver)
 
 
+def _original_transaction_control_is_interactable(driver):
+    return bool(
+        driver.execute_script(
+            """
+            const clean = (value) => (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            const visible = (el) => {
+              if (!el) return false;
+              const rect = el.getBoundingClientRect();
+              const style = window.getComputedStyle(el);
+              return rect.width > 0 && rect.height > 0 &&
+                style.display !== 'none' && style.visibility !== 'hidden';
+            };
+            const control = Array.from(document.querySelectorAll('button,a,[role=button]')).find((el) => {
+              const text = clean(`${el.innerText || ''} ${el.value || ''}`);
+              return visible(el) && text.includes('record a payment or credit') &&
+                !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+            });
+            if (!control) return false;
+            const rect = control.getBoundingClientRect();
+            const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+            return !!top && (top === control || control.contains(top));
+            """
+        )
+    )
+
+
+def _reload_and_verify_original_after_cancellation(
+    driver,
+    original_order_id,
+    require_transaction_control=False,
+    timeout=60,
+):
+    """Reload a cancelled original and wait until overlays no longer block the next action."""
+    order_url = _order_url(order_id=original_order_id)
+    _open_order_scope_with_reload(
+        driver,
+        order_url,
+        order_id=original_order_id,
+        label="cancelled original order readiness verification",
+    )
+    deadline = time.monotonic() + max(1, int(timeout or 60))
+    while time.monotonic() < deadline:
+        if _original_order_is_cancelled(driver):
+            if not require_transaction_control or _original_transaction_control_is_interactable(driver):
+                return True
+        time.sleep(0.5)
+    detail = " and its manual transaction control is interactive" if require_transaction_control else ""
+    raise SplitterError(
+        f"Original order {original_order_id} did not reload as cancelled{detail}. "
+        "Stopped before recording the manual Refund transaction."
+    )
+
+
+def _set_original_cleanup_progress(progress, step):
+    if not isinstance(progress, dict):
+        return
+    completed = progress.setdefault("completed", [])
+    if step not in completed:
+        completed.append(step)
+    required = progress.get("required") if isinstance(progress.get("required"), list) else []
+    progress["incomplete"] = [name for name in required if name not in completed]
+    progress["status"] = "completed" if not progress["incomplete"] else "in_progress"
+
+
 def _finalize_original_order_after_split(
     driver,
     payment_detected,
@@ -3216,6 +3326,7 @@ def _finalize_original_order_after_split(
     original_grand_total,
     transfer_note,
     original_order_id,
+    progress=None,
 ):
     """Complete and persist the original-order cleanup after all split orders exist.
 
@@ -3230,9 +3341,16 @@ def _finalize_original_order_after_split(
             if not _original_refund_fee_already_present(driver, refund_amount):
                 _add_refund_fee_to_original(driver, refund_amount)
             refunded_totals = _read_order_totals(driver)
+            _set_original_cleanup_progress(progress, "refund_fee")
 
         if not _original_order_is_cancelled(driver):
             _cancel_original_order(driver)
+        _reload_and_verify_original_after_cancellation(
+            driver,
+            original_order_id,
+            require_transaction_control=payment_detected,
+        )
+        _set_original_cleanup_progress(progress, "cancellation")
 
         if payment_detected and not _original_refund_transaction_is_present(
             driver, transfer_note, original_grand_total
@@ -3240,9 +3358,12 @@ def _finalize_original_order_after_split(
             _open_record_transaction(driver, quote=False)
             _save_transaction_modal_with_amount(driver, "Refund", transfer_note, amount=-original_grand_total)
             time.sleep(2)
+        if payment_detected:
+            _set_original_cleanup_progress(progress, "manual_refund_transaction")
 
         if not _original_transfer_note_is_present(driver, transfer_note):
             _add_original_transfer_note(driver, transfer_note)
+        _set_original_cleanup_progress(progress, "sales_note")
 
         missing = _verify_original_finalization_after_reload(
             driver,
@@ -3253,6 +3374,8 @@ def _finalize_original_order_after_split(
             transfer_note,
         )
         if not missing:
+            if isinstance(progress, dict):
+                progress["verification"] = {"passed": True, "attempts": attempt}
             return {
                 "refund_fee_amount": _money_text(refund_amount) if payment_detected else "0.00",
                 "refund_transaction_id": transfer_note if payment_detected else "",
@@ -3604,7 +3727,6 @@ def run_process_order(order_id=None, dry_run=True, visible=False, result_file=No
 
 PROCESS_BATCH_REPORT_ORDER_IDS_JS = r"""
 const ids = new Set();
-function clean(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
 function visible(el) {
   if (!el) return false;
   const rect = el.getBoundingClientRect();
@@ -3612,17 +3734,10 @@ function visible(el) {
   const style = window.getComputedStyle ? window.getComputedStyle(el) : {};
   return style.display !== 'none' && style.visibility !== 'hidden';
 }
-function addFromText(text) {
-  for (const match of clean(text).matchAll(/\b\d{7}\b/g)) ids.add(match[0]);
-}
 for (const link of Array.from(document.querySelectorAll('a')).filter(visible)) {
-  addFromText(link.innerText || link.textContent || '');
-  const href = String(link.getAttribute('href') || '');
+  const href = String(link.getAttribute('href') || link.getAttribute('ng-href') || '');
   const match = href.match(/\/order\/(\d{7})\b/);
   if (match) ids.add(match[1]);
-}
-for (const row of Array.from(document.querySelectorAll('tr')).filter(visible)) {
-  addFromText(row.innerText || row.textContent || '');
 }
 return Array.from(ids);
 """
@@ -4009,6 +4124,16 @@ def run_split_order(
                         report["completed_split_count"] = len(split_orders)
                         report["remaining_split_count"] = max(len(plan) - len(split_orders) - (1 if retain_original else 0), 0)
                         report["split_total_so_far"] = _money_text(split_total)
+                        _write_split_progress_checkpoint(
+                            result_file,
+                            report,
+                            split_orders,
+                            resolved_order_id,
+                            target_url,
+                            expected_tab_count,
+                            divisions,
+                            started,
+                        )
                         if not worker_errors:
                             _submit_next(executor, profile_for_split)
                     if worker_errors:
@@ -4078,6 +4203,16 @@ def run_split_order(
                     report["completed_split_count"] = len(split_orders)
                     report["remaining_split_count"] = max(len(plan) - len(split_orders) - (1 if retain_original else 0), 0)
                     report["split_total_so_far"] = _money_text(split_total)
+                    _write_split_progress_checkpoint(
+                        result_file,
+                        report,
+                        split_orders,
+                        resolved_order_id,
+                        target_url,
+                        expected_tab_count,
+                        divisions,
+                        started,
+                    )
 
             new_split_order_ids = [
                 str(item.get("order_id"))
@@ -4212,6 +4347,17 @@ def run_split_order(
                     login_wait_seconds=login_wait_seconds,
                 )
                 report["stock_transfer"] = stock_transfer_result
+                _write_split_progress_checkpoint(
+                    result_file,
+                    report,
+                    split_orders,
+                    resolved_order_id,
+                    target_url,
+                    expected_tab_count,
+                    divisions,
+                    started,
+                    stage="stock_records_copied",
+                )
 
             if original_grand_total == Decimal("0.00") and resume_existing_order_ids and split_total > Decimal("0.00"):
                 original_grand_total = split_total.quantize(Decimal("0.01"))
@@ -4255,6 +4401,33 @@ def run_split_order(
                     "verification": {"passed": True, "mode": "retain_as_split_1"},
                 }
             else:
+                cleanup_required = ["cancellation", "sales_note"]
+                if payment_detected:
+                    cleanup_required = [
+                        "refund_fee",
+                        "cancellation",
+                        "manual_refund_transaction",
+                        "sales_note",
+                    ]
+                original_cleanup_progress = {
+                    "mode": "cancel_after_split",
+                    "required": cleanup_required,
+                    "completed": [],
+                    "incomplete": list(cleanup_required),
+                    "status": "not_started",
+                }
+                report["original_cleanup_progress"] = original_cleanup_progress
+                _write_split_progress_checkpoint(
+                    result_file,
+                    report,
+                    split_orders,
+                    resolved_order_id,
+                    target_url,
+                    expected_tab_count,
+                    divisions,
+                    started,
+                    stage="original_cleanup_started",
+                )
                 _open_order_scope_with_reload(
                     driver,
                     target_url,
@@ -4268,6 +4441,7 @@ def run_split_order(
                     original_grand_total,
                     transfer_note,
                     resolved_order_id,
+                    progress=original_cleanup_progress,
                 )
             if stock_routing.get("action") == "slack_mach6_cancelled":
                 report["stock_cancel_slack"] = _send_mach6_stock_cancel_slack(target_url, dry_run=False)
@@ -4290,6 +4464,7 @@ def run_split_order(
                     "remaining_split_count": 0,
                     "parallel_workers": parallel_workers,
                     "partial": False,
+                    "checkpoint_stage": "completed",
                     "original_order_final_steps": {
                         **report["original_order_final_steps"],
                         **original_finalization,

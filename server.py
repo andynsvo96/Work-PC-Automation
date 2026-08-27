@@ -9593,6 +9593,59 @@ def _execute_crm_auto_splitter_worker(order_target, tab_count, divisions, minimu
     return ok, message, payload
 
 
+def _crm_auto_splitter_preflight_fingerprint(payload):
+    """Return a conservative fingerprint used only to block exact source duplicates."""
+    if not isinstance(payload, dict) or not payload.get("success"):
+        return None
+    report = payload.get("report") if isinstance(payload.get("report"), dict) else {}
+    designs = report.get("designs") if isinstance(report.get("designs"), list) else []
+    design_rows = []
+    for design in designs:
+        if not isinstance(design, dict):
+            return None
+        design_id = str(design.get("design_id") or "").strip()
+        if not design_id.isdigit():
+            return None
+        design_rows.append(
+            (
+                design_id,
+                int(_safe_float(design.get("quantity"), 0)),
+                str(design.get("subtotal") or "").strip(),
+            )
+        )
+    if not design_rows:
+        return None
+    totals = report.get("totals") if isinstance(report.get("totals"), dict) else {}
+    return (
+        tuple(sorted(design_rows)),
+        str(totals.get("grand_total") or "").strip(),
+        str(totals.get("paid") or "").strip(),
+        str(totals.get("shipping") or "").strip(),
+        int(_safe_float(payload.get("detected_tab_count") or report.get("detected_tab_count"), 0)),
+    )
+
+
+def _crm_auto_splitter_duplicate_preflight_groups(preflight_rows):
+    grouped = {}
+    for order_id, payload in (preflight_rows or {}).items():
+        fingerprint = _crm_auto_splitter_preflight_fingerprint(payload)
+        if fingerprint is not None:
+            grouped.setdefault(fingerprint, []).append(str(order_id))
+    return [order_ids for order_ids in grouped.values() if len(order_ids) > 1]
+
+
+def _crm_auto_splitter_payload_has_partial_mutation(payload):
+    if not isinstance(payload, dict):
+        return False
+    if _extract_crm_order_ids({"order_ids": payload.get("new_order_ids")}):
+        return True
+    report = payload.get("report") if isinstance(payload.get("report"), dict) else {}
+    split_orders = report.get("split_orders") if isinstance(report.get("split_orders"), list) else []
+    if any(isinstance(item, dict) and item.get("order_id") for item in split_orders):
+        return True
+    return bool(report.get("partial") and int(_safe_float(report.get("completed_split_count"), 0)) > 0)
+
+
 def _execute_crm_auto_splitter_batch(list_url, minimum_tabs=10, parallel_workers=1):
     started = time.monotonic()
     normalized_list_url = _normalize_crm_list_url(list_url)
@@ -9629,22 +9682,27 @@ def _execute_crm_auto_splitter_batch(list_url, minimum_tabs=10, parallel_workers
         crm_auto_splitter_runtime["orderCount"] = len(order_ids)
         crm_auto_splitter_runtime["totalOrderCount"] = len(order_ids)
 
-    order_results = []
+    order_results_by_id = {}
     new_order_ids = []
+    preflight_rows = {}
+
+    # Inspect every source before the first live mutation. This makes it
+    # possible to block two different CRM order IDs that contain the exact
+    # same designs, quantities, and money totals.
     for index, order_id in enumerate(order_ids, start=1):
         if _automation_stop_is_blocking():
-            order_results.append({
+            order_results_by_id[order_id] = {
                 "order_id": order_id,
                 "success": False,
                 "status": "Stopped",
                 "outcome": "stopped",
                 "message": _force_stop_message("Auto Splitter"),
-            })
+            }
             break
         with crm_auto_splitter_runtime_lock:
             crm_auto_splitter_runtime["targetOrderId"] = order_id
             crm_auto_splitter_runtime["currentOrderIndex"] = index
-            crm_auto_splitter_runtime["lastMessage"] = f"Auto-splitting order {order_id} ({index}/{len(order_ids)})."
+            crm_auto_splitter_runtime["lastMessage"] = f"Checking Auto Splitter order {order_id} ({index}/{len(order_ids)})."
 
         preflight_ok, preflight_message, preflight_payload = _execute_crm_auto_splitter_worker(
             order_id,
@@ -9657,15 +9715,54 @@ def _execute_crm_auto_splitter_batch(list_url, minimum_tabs=10, parallel_workers
         )
         preflight_payload = preflight_payload if isinstance(preflight_payload, dict) else {}
         if not preflight_ok:
-            order_results.append({
+            order_results_by_id[order_id] = {
                 "order_id": order_id,
                 "success": False,
                 "status": "Preflight failed",
                 "outcome": "preflight_failed",
                 "message": str(preflight_message),
                 "preflight": preflight_payload,
-            })
+            }
             continue
+        preflight_rows[order_id] = preflight_payload
+
+    duplicate_groups = _crm_auto_splitter_duplicate_preflight_groups(preflight_rows)
+    for duplicate_order_ids in duplicate_groups:
+        duplicate_label = " and ".join(duplicate_order_ids)
+        for order_id in duplicate_order_ids:
+            order_results_by_id[order_id] = {
+                "order_id": order_id,
+                "success": False,
+                "status": "Duplicate source blocked",
+                "outcome": "duplicate_source_blocked",
+                "message": (
+                    f"Blocked before making CRM changes because source orders {duplicate_label} "
+                    "have the same designs, quantities, payment totals, and shipping total."
+                ),
+                "preflight": preflight_rows[order_id],
+                "duplicate_order_ids": list(duplicate_order_ids),
+            }
+
+    stopped_after_partial_failure = None
+    for index, order_id in enumerate(order_ids, start=1):
+        if order_id in order_results_by_id:
+            continue
+        preflight_payload = preflight_rows.get(order_id)
+        if not isinstance(preflight_payload, dict):
+            continue
+        if _automation_stop_is_blocking():
+            order_results_by_id[order_id] = {
+                "order_id": order_id,
+                "success": False,
+                "status": "Stopped",
+                "outcome": "stopped",
+                "message": _force_stop_message("Auto Splitter"),
+            }
+            break
+        with crm_auto_splitter_runtime_lock:
+            crm_auto_splitter_runtime["targetOrderId"] = order_id
+            crm_auto_splitter_runtime["currentOrderIndex"] = index
+            crm_auto_splitter_runtime["lastMessage"] = f"Auto-splitting order {order_id} ({index}/{len(order_ids)})."
 
         detected_tabs = preflight_payload.get("expected_tab_count") or preflight_payload.get("detected_tab_count")
         divisions = preflight_payload.get("divisions")
@@ -9683,7 +9780,7 @@ def _execute_crm_auto_splitter_batch(list_url, minimum_tabs=10, parallel_workers
         for created_id in created_ids:
             if created_id not in new_order_ids:
                 new_order_ids.append(created_id)
-        order_results.append({
+        order_results_by_id[order_id] = {
             "order_id": order_id,
             "success": bool(live_ok),
             "status": "Completed" if live_ok else "Needs attention",
@@ -9694,7 +9791,28 @@ def _execute_crm_auto_splitter_batch(list_url, minimum_tabs=10, parallel_workers
             "new_order_ids": created_ids,
             "preflight": preflight_payload,
             "result": live_payload,
-        })
+        }
+        if not live_ok and _crm_auto_splitter_payload_has_partial_mutation(live_payload):
+            stopped_after_partial_failure = order_id
+            break
+
+    if stopped_after_partial_failure:
+        for order_id in order_ids:
+            if order_id in order_results_by_id:
+                continue
+            order_results_by_id[order_id] = {
+                "order_id": order_id,
+                "success": False,
+                "status": "Not started",
+                "outcome": "blocked_after_partial_failure",
+                "message": (
+                    f"Not started because order {stopped_after_partial_failure} failed after creating CRM records. "
+                    "The batch stopped to prevent duplicate orders."
+                ),
+                "preflight": preflight_rows.get(order_id, {}),
+            }
+
+    order_results = [order_results_by_id[order_id] for order_id in order_ids if order_id in order_results_by_id]
 
     failed_count = sum(1 for item in order_results if not item.get("success"))
     completed_count = sum(1 for item in order_results if item.get("success"))
@@ -9717,6 +9835,8 @@ def _execute_crm_auto_splitter_batch(list_url, minimum_tabs=10, parallel_workers
         "new_order_ids": new_order_ids,
         "order_results": order_results,
         "parallel_workers": normalized_workers,
+        "duplicate_source_groups": duplicate_groups,
+        "stopped_after_partial_failure_order_id": stopped_after_partial_failure,
         "list_scan": scan_payload,
         "duration_seconds": round(time.monotonic() - started, 2),
     }

@@ -5066,6 +5066,7 @@ class CrmAutoSplitterTests(unittest.TestCase):
              mock.patch.object(crm_auto_splitter, "_save_transaction_modal_with_amount") as save_transaction, \
              mock.patch.object(crm_auto_splitter, "_add_original_transfer_note") as add_note, \
              mock.patch.object(crm_auto_splitter, "_original_order_is_cancelled", return_value=False), \
+             mock.patch.object(crm_auto_splitter, "_reload_and_verify_original_after_cancellation", return_value=True), \
              mock.patch.object(crm_auto_splitter, "_original_transfer_note_is_present", return_value=False), \
              mock.patch.object(crm_auto_splitter, "_verify_original_finalization_after_reload", return_value=[]), \
              mock.patch.object(
@@ -5092,6 +5093,12 @@ class CrmAutoSplitterTests(unittest.TestCase):
 
     def test_paid_original_finalization_keeps_existing_refund_actions(self):
         driver = mock.Mock()
+        progress = {
+            "required": ["refund_fee", "cancellation", "manual_refund_transaction", "sales_note"],
+            "completed": [],
+            "incomplete": ["refund_fee", "cancellation", "manual_refund_transaction", "sales_note"],
+            "status": "not_started",
+        }
         totals = [
             {"grand_total": "0.00", "paid": "125.00", "balance_due": "-125.00"},
             {"grand_total": "0.00", "paid": "0.00", "balance_due": "0.00"},
@@ -5103,6 +5110,7 @@ class CrmAutoSplitterTests(unittest.TestCase):
              mock.patch.object(crm_auto_splitter, "_add_original_transfer_note") as add_note, \
              mock.patch.object(crm_auto_splitter, "_original_refund_fee_already_present", return_value=False), \
              mock.patch.object(crm_auto_splitter, "_original_order_is_cancelled", return_value=False), \
+             mock.patch.object(crm_auto_splitter, "_reload_and_verify_original_after_cancellation", return_value=True), \
              mock.patch.object(crm_auto_splitter, "_original_refund_transaction_is_present", return_value=False), \
              mock.patch.object(crm_auto_splitter, "_original_transfer_note_is_present", return_value=False), \
              mock.patch.object(crm_auto_splitter, "_verify_original_finalization_after_reload", return_value=[]), \
@@ -5115,6 +5123,7 @@ class CrmAutoSplitterTests(unittest.TestCase):
                 crm_auto_splitter.Decimal("125.00"),
                 "transferred to 4882000, 4882001",
                 "4881999",
+                progress=progress,
             )
 
         add_refund_fee.assert_called_once_with(driver, crm_auto_splitter.Decimal("125.00"))
@@ -5129,6 +5138,12 @@ class CrmAutoSplitterTests(unittest.TestCase):
         add_note.assert_called_once_with(driver, "transferred to 4882000, 4882001")
         self.assertFalse(result["payment_actions_skipped"])
         self.assertEqual(result["refund_fee_amount"], "125.00")
+        self.assertEqual(progress["status"], "completed")
+        self.assertEqual(progress["incomplete"], [])
+        self.assertEqual(
+            progress["completed"],
+            ["refund_fee", "cancellation", "manual_refund_transaction", "sales_note"],
+        )
 
     def test_original_finalization_reloads_and_repairs_unsaved_sales_note_once(self):
         driver = mock.Mock()
@@ -5139,6 +5154,7 @@ class CrmAutoSplitterTests(unittest.TestCase):
              mock.patch.object(crm_auto_splitter, "_add_original_transfer_note") as add_note, \
              mock.patch.object(crm_auto_splitter, "_original_refund_fee_already_present", side_effect=[False, True]), \
              mock.patch.object(crm_auto_splitter, "_original_order_is_cancelled", side_effect=[False, True]), \
+             mock.patch.object(crm_auto_splitter, "_reload_and_verify_original_after_cancellation", return_value=True), \
              mock.patch.object(crm_auto_splitter, "_original_refund_transaction_is_present", side_effect=[False, True]), \
              mock.patch.object(crm_auto_splitter, "_original_transfer_note_is_present", side_effect=[False, False]), \
              mock.patch.object(
@@ -5516,6 +5532,29 @@ class CrmAutoSplitterTests(unittest.TestCase):
         self.assertTrue(report["split_plan"][0]["retained_original"])
         self.assertEqual([item["promo_credit"] for item in report["split_plan"]], ["6.00", "0.00"])
         self.assertEqual(report["original_order_final_steps"]["sales_note"], "Tabs 7-12 transferred to <split order #>")
+
+    def test_split_checkpoint_preserves_new_order_ids_for_retained_original_workflow(self):
+        report = {"retain_original": True}
+        split_orders = [
+            {"split_index": 1, "order_id": "4900000", "retained_original": True},
+            {"split_index": 2, "order_id": "4900001"},
+        ]
+        with mock.patch.object(crm_auto_splitter, "_write_result") as write_result:
+            crm_auto_splitter._write_split_progress_checkpoint(
+                "result.json",
+                report,
+                split_orders,
+                "4900000",
+                "https://crm.example/app#/order/4900000",
+                12,
+                2,
+                crm_auto_splitter.time.monotonic(),
+            )
+
+        self.assertEqual(write_result.call_args.kwargs["new_order_ids"], ["4900001"])
+        self.assertTrue(write_result.call_args.kwargs["checkpoint"])
+        self.assertFalse(write_result.call_args.kwargs["audit_log"])
+        self.assertEqual(report["checkpoint_stage"], "split_orders_created")
 
     def test_partial_payment_is_allocated_across_retained_and_new_orders(self):
         driver = mock.Mock()
@@ -11344,8 +11383,8 @@ class CrmAddressServerTests(unittest.TestCase):
         )
         mock_execute_splitter.side_effect = [
             (True, "Preflight one.", {"expected_tab_count": 12, "divisions": 2}),
-            (True, "Split one.", {"new_order_ids": ["4800001", "4800002"]}),
             (True, "Preflight two.", {"expected_tab_count": 21, "divisions": 3}),
+            (True, "Split one.", {"new_order_ids": ["4800001", "4800002"]}),
             (False, "Split two failed.", {"new_order_ids": []}),
         ]
 
@@ -11362,9 +11401,106 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertEqual([row["success"] for row in payload["order_results"]], [True, False])
         self.assertEqual(mock_execute_splitter.call_count, 4)
         self.assertEqual(mock_execute_splitter.call_args_list[0].args[:3], ("4700001", None, None))
-        self.assertEqual(mock_execute_splitter.call_args_list[1].args[:3], ("4700001", 12, 2))
-        self.assertEqual(mock_execute_splitter.call_args_list[2].args[:3], ("4700002", None, None))
+        self.assertEqual(mock_execute_splitter.call_args_list[1].args[:3], ("4700002", None, None))
+        self.assertEqual(mock_execute_splitter.call_args_list[2].args[:3], ("4700001", 12, 2))
         self.assertEqual(mock_execute_splitter.call_args_list[3].args[:3], ("4700002", 21, 3))
+
+    @mock.patch.object(server, "_automation_stop_is_blocking", return_value=False)
+    @mock.patch.object(server, "_execute_crm_auto_splitter_worker")
+    @mock.patch.object(server, "_run_script")
+    def test_auto_splitter_batch_blocks_exact_duplicate_sources_before_live_changes(
+        self,
+        mock_run_script,
+        mock_execute_splitter,
+        _mock_stop,
+    ):
+        mock_run_script.return_value = (
+            True,
+            "Found two orders.",
+            {"success": True, "order_ids": ["5107177", "5107193"]},
+        )
+        duplicate_preflight = {
+            "success": True,
+            "expected_tab_count": 16,
+            "detected_tab_count": 16,
+            "divisions": 2,
+            "report": {
+                "designs": [
+                    {"design_id": "700001", "quantity": 24, "subtotal": "1200.00"},
+                    {"design_id": "700002", "quantity": 30, "subtotal": "1202.00"},
+                ],
+                "totals": {"grand_total": "3266.02", "paid": "3266.02", "shipping": "864.31"},
+            },
+        }
+        mock_execute_splitter.side_effect = [
+            (True, "Preflight one.", duplicate_preflight),
+            (True, "Preflight two.", duplicate_preflight),
+        ]
+
+        ok, message, payload = server._execute_crm_auto_splitter_batch(
+            "https://crm.example/report/split-all",
+            minimum_tabs=10,
+            parallel_workers=2,
+        )
+
+        self.assertFalse(ok)
+        self.assertIn("2 need attention", message)
+        self.assertEqual(mock_execute_splitter.call_count, 2)
+        self.assertEqual(payload["duplicate_source_groups"], [["5107177", "5107193"]])
+        self.assertEqual(
+            [row["outcome"] for row in payload["order_results"]],
+            ["duplicate_source_blocked", "duplicate_source_blocked"],
+        )
+
+    @mock.patch.object(server, "_automation_stop_is_blocking", return_value=False)
+    @mock.patch.object(server, "_execute_crm_auto_splitter_worker")
+    @mock.patch.object(server, "_run_script")
+    def test_auto_splitter_batch_stops_after_partial_live_failure(
+        self,
+        mock_run_script,
+        mock_execute_splitter,
+        _mock_stop,
+    ):
+        order_ids = ["4700001", "4700002", "4700003"]
+        mock_run_script.return_value = (
+            True,
+            "Found three orders.",
+            {"success": True, "order_ids": order_ids},
+        )
+        preflights = [
+            (
+                True,
+                f"Preflight {order_id}.",
+                {
+                    "success": True,
+                    "expected_tab_count": 12,
+                    "detected_tab_count": 12,
+                    "divisions": 2,
+                    "report": {
+                        "designs": [{"design_id": str(700000 + index), "quantity": 1, "subtotal": "10.00"}],
+                        "totals": {"grand_total": "20.00", "paid": "20.00", "shipping": "10.00"},
+                    },
+                },
+            )
+            for index, order_id in enumerate(order_ids, start=1)
+        ]
+        mock_execute_splitter.side_effect = preflights + [
+            (False, "Cleanup failed after split creation.", {"new_order_ids": ["4800001", "4800002"]}),
+        ]
+
+        ok, _message, payload = server._execute_crm_auto_splitter_batch(
+            "https://crm.example/report/split-all",
+            minimum_tabs=10,
+            parallel_workers=2,
+        )
+
+        self.assertFalse(ok)
+        self.assertEqual(mock_execute_splitter.call_count, 4)
+        self.assertEqual(payload["stopped_after_partial_failure_order_id"], "4700001")
+        self.assertEqual(
+            [row["outcome"] for row in payload["order_results"]],
+            ["split_failed", "blocked_after_partial_failure", "blocked_after_partial_failure"],
+        )
 
     def test_processing_free_order_goods_reports_missing_mode_link(self):
         with mock.patch.object(server, "CRM_ORDER_GOODS_FREE_URL", ""):
