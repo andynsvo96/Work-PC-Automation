@@ -261,6 +261,19 @@ def normalize_selected_products(products):
         else:
             total_quantity = _positive_integer(total_quantity, label="Product total quantity", maximum=1_000_000)
 
+        affected_sizes = None
+        if "affected_sizes" in product:
+            raw_affected_sizes = product.get("affected_sizes")
+            if not isinstance(raw_affected_sizes, list) or not raw_affected_sizes:
+                raise StockIssueExtensionError("Select at least one affected size for each selected product.")
+            if len(raw_affected_sizes) > 20:
+                raise StockIssueExtensionError("Select no more than 20 affected sizes per product.")
+            affected_sizes = []
+            for raw_size in raw_affected_sizes:
+                size = _clean_text(raw_size, field="affected size", maximum=80)
+                if size.casefold() not in {item.casefold() for item in affected_sizes}:
+                    affected_sizes.append(size)
+
         key = (style.casefold(), description.casefold(), color.casefold())
         if key not in normalized:
             normalized[key] = {
@@ -270,6 +283,7 @@ def normalize_selected_products(products):
                 "tab_numbers": [],
                 "design_item_ids": [],
                 "total_quantity": 0 if total_quantity is not None else None,
+                "affected_sizes": [] if affected_sizes is not None else None,
             }
         row = normalized[key]
         for tab_number in tab_numbers:
@@ -280,8 +294,17 @@ def normalize_selected_products(products):
                 row["design_item_ids"].append(design_item_id)
         if total_quantity is not None:
             row["total_quantity"] = int(row.get("total_quantity") or 0) + total_quantity
+        if affected_sizes is not None:
+            if row["affected_sizes"] is None:
+                raise StockIssueExtensionError("Every matching selected product must include its affected sizes.")
+            for size in affected_sizes:
+                if size.casefold() not in {item.casefold() for item in row["affected_sizes"]}:
+                    row["affected_sizes"].append(size)
 
-    return list(normalized.values())
+    return [
+        {key: value for key, value in row.items() if key != "affected_sizes" or value is not None}
+        for row in normalized.values()
+    ]
 
 
 def normalize_request(days, products):

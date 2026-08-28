@@ -484,7 +484,10 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
                 enqueue.assert_not_called()
 
     def test_stock_issue_size_queues_normalized_sizes_and_products(self):
-        products = [{"style": "DM130", "description": "District Perfect Tri Tee", "color": "Red"}]
+        products = [{
+            "style": "DM130", "description": "District Perfect Tri Tee", "color": "Red",
+            "available_sizes": ["Small", "Medium"], "affected_sizes": ["Small"],
+        }]
         with mock.patch(
             "server.enqueue_automation",
             return_value=(True, "Suggest Different Size queued.", {"id": "stock-size-1", "status": "queued"}),

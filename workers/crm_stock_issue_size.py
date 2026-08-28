@@ -97,12 +97,25 @@ def normalize_suggested_sizes(sizes):
 
 
 def normalize_request(sizes, products):
+    if not isinstance(products, list):
+        raise StockIssueSizeError("Select at least one product and its affected size before queueing Suggest Different Size.")
+    for product in products:
+        if not isinstance(product, dict):
+            continue
+        selected_sizes = product.get("affected_sizes")
+        if not isinstance(selected_sizes, list) or not selected_sizes:
+            raise StockIssueSizeError("Select at least one affected size for each selected product.")
+        available_sizes = product.get("available_sizes")
+        if isinstance(available_sizes, list) and available_sizes:
+            available_keys = {str(value).strip().casefold() for value in available_sizes}
+            if any(str(value).strip().casefold() not in available_keys for value in selected_sizes):
+                raise StockIssueSizeError("Each affected size must be one detected on its selected product.")
     with _size_workflow():
         try:
-            payload = color.normalize_request(sizes, products)
-        except StockIssueSizeError as exc:
+            selected_products = extension.normalize_selected_products(products)
+        except extension.StockIssueExtensionError as exc:
             raise StockIssueSizeError(_size_message(exc)) from exc
-    return {"sizes": payload["colors"], "products": payload["products"]}
+    return {"sizes": normalize_suggested_sizes(sizes), "products": selected_products}
 
 
 def format_suggested_sizes(sizes):

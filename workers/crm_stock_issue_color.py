@@ -130,7 +130,30 @@ def format_suggested_colors(colors):
 
 def format_email_stock_text(products):
     try:
-        return extension.format_email_stock_text(products)
+        selected_products = extension.normalize_selected_products(products)
+        if selected_products and all("affected_sizes" in product for product in selected_products):
+            groups = {}
+            for product in selected_products:
+                key = (product["style"].casefold(), product["description"].casefold(), product["color"].casefold())
+                group = groups.setdefault(
+                    key,
+                    {
+                        "style": product["style"], "description": product["description"], "color": product["color"],
+                        "sizes": [],
+                    },
+                )
+                for size in product["affected_sizes"]:
+                    if size.casefold() not in {item.casefold() for item in group["sizes"]}:
+                        group["sizes"].append(size)
+            phrases = []
+            for group in groups.values():
+                size_label = "size" if len(group["sizes"]) == 1 else "sizes"
+                phrases.append(
+                    f"{group['style']} {group['description']} in the color {group['color']} for {size_label} "
+                    f"{extension._natural_join(group['sizes'], final_word='and')}"
+                )
+            return extension._natural_join(phrases, final_word="and")
+        return extension.format_email_stock_text(selected_products)
     except extension.StockIssueExtensionError as exc:
         raise StockIssueColorError(str(exc)) from exc
 

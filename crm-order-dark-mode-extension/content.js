@@ -425,6 +425,35 @@ function stockIssueDelay(milliseconds) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
+function stockIssueDetectedSizes(block, rawLines, text) {
+  const values = [];
+  const add = (value) => {
+    const size = stockIssueCleanText(value).replace(/^Sizes?\s*:\s*/i, "");
+    if (!size || /^(?:size|sizes|quantity|qty|price)$/i.test(size)) return;
+    if (!values.some((item) => item.toLowerCase() === size.toLowerCase())) values.push(size);
+  };
+  const addSizeText = (value) => {
+    const cleaned = stockIssueCleanText(value).replace(/\s+(?:Quantity|Qty|Price)\s*:.*$/i, "");
+    if (!cleaned) return;
+    const named = cleaned.match(/\b(?:one\s+size|osfa|xxs|xs|s|m|l|xl|2xl|3xl|4xl|5xl|6xl|x-small|small|medium|large|x-large|xx-large|xxx-large)\b/gi);
+    if (named && named.length > 1) named.forEach(add);
+    else if (/[|,/]/.test(cleaned)) cleaned.split(/[|,/]/).forEach(add);
+    else add(cleaned);
+  };
+  for (const element of Array.from(block.querySelectorAll(".design-item-size-active,[data-size],[data-size-name],[ng-model*='size' i]"))) {
+    if (!visibleStockIssueElement(element)) continue;
+    add(element.getAttribute("data-size") || element.getAttribute("data-size-name") || element.value || element.innerText || element.textContent);
+  }
+  for (const line of rawLines) {
+    const match = line.match(/^Sizes?\s*:\s*(.+)$/i);
+    if (match) addSizeText(match[1]);
+  }
+  for (const match of text.matchAll(/\bSizes?\s*:\s*(.+?)(?=\s+(?:Quantity|Qty|Price|Sizes?)\s*:|$)/gi)) {
+    addSizeText(match[1]);
+  }
+  return values;
+}
+
 function parseStockIssueProductBlock(block, tabNumber) {
   const rawLines = String(block.innerText || block.textContent || "").split(/\n+/).map(stockIssueCleanText).filter(Boolean);
   const text = stockIssueCleanText(rawLines.join(" "));
@@ -505,6 +534,7 @@ function parseStockIssueProductBlock(block, tabNumber) {
     .replace(/^Color\s*:?\s*/i, "")
     .replace(/^\s*-?\s*(?:Alpha(?: Stock)?|SanMar(?: Stock)?|S&S(?: Activewear)?(?: Stock)?|Supplier|Stock Source)\s+/i, "");
   description = cleanProductText(description);
+  const availableSizes = stockIssueDetectedSizes(block, rawLines, text);
   if (!style || !description || !color) {
     return { invalid: true, design_item_id: block.id || "", style, description, color, total_quantity: totalQuantity };
   }
@@ -514,6 +544,7 @@ function parseStockIssueProductBlock(block, tabNumber) {
     style,
     description,
     color,
+    available_sizes: availableSizes,
     total_quantity: totalQuantity
   };
 }
@@ -550,6 +581,11 @@ function deduplicateStockIssueProducts(products) {
     if (product.design_item_id && !existing.design_item_ids.includes(product.design_item_id)) existing.design_item_ids.push(product.design_item_id);
     if (Number.isInteger(product.total_quantity)) {
       existing.total_quantity = Number(existing.total_quantity || 0) + product.total_quantity;
+    }
+    for (const size of product.available_sizes || []) {
+      if (!existing.available_sizes.some((item) => item.toLowerCase() === size.toLowerCase())) {
+        existing.available_sizes.push(size);
+      }
     }
   }
   return Array.from(unique.values());
@@ -711,6 +747,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
   table.append(head);
   const body = document.createElement("tbody");
   const checkboxes = [];
+  const sizeCheckboxesByProduct = new Map();
   products.forEach((product, index) => {
     const row = document.createElement("tr");
     const checkCell = document.createElement("td");
@@ -732,6 +769,47 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
     row.append(checkCell, styleCell, descriptionCell, colorCell);
     body.append(row);
     checkboxes.push(checkbox);
+    if (isSizeSuggestion) {
+      const sizeRow = document.createElement("tr");
+      sizeRow.hidden = true;
+      const sizeCell = document.createElement("td");
+      sizeCell.colSpan = 4;
+      Object.assign(sizeCell.style, { padding: "7px 7px 11px 38px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" });
+      const sizePrompt = document.createElement("div");
+      sizePrompt.textContent = "Affected sizes (select at least one)";
+      Object.assign(sizePrompt.style, { marginBottom: "6px", fontWeight: "700" });
+      const sizes = Array.isArray(product.available_sizes) ? product.available_sizes : [];
+      const sizeChoices = [];
+      if (sizes.length) {
+        const choices = document.createElement("div");
+        Object.assign(choices.style, { display: "flex", flexWrap: "wrap", gap: "8px 12px" });
+        sizes.forEach((size, sizeIndex) => {
+          const label = document.createElement("label");
+          const sizeCheckbox = document.createElement("input");
+          sizeCheckbox.type = "checkbox";
+          sizeCheckbox.value = size;
+          sizeCheckbox.id = `crm-stock-issue-size-${index}-${sizeIndex}`;
+          sizeCheckbox.setAttribute("aria-label", `Select ${size} for ${product.style} in ${product.color}`);
+          label.htmlFor = sizeCheckbox.id;
+          label.append(sizeCheckbox, document.createTextNode(` ${size}`));
+          choices.append(label);
+          sizeChoices.push(sizeCheckbox);
+        });
+        sizeCell.append(sizePrompt, choices);
+      } else {
+        const unavailable = document.createElement("div");
+        unavailable.textContent = "No order sizes could be detected for this product. It cannot be selected for this workflow.";
+        unavailable.style.color = "#b91c1c";
+        sizeCell.append(sizePrompt, unavailable);
+      }
+      sizeRow.append(sizeCell);
+      body.append(sizeRow);
+      sizeCheckboxesByProduct.set(checkbox, sizeChoices);
+      checkbox.addEventListener("change", () => {
+        sizeRow.hidden = !checkbox.checked;
+        if (!checkbox.checked) sizeChoices.forEach((choice) => { choice.checked = false; });
+      });
+    }
   });
   table.append(body);
   dialog.append(table);
@@ -778,7 +856,8 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
   Object.assign(queue.style, { padding: "7px 11px", borderRadius: "3px", color: "#fff" });
 
   const refresh = () => {
-    const selected = checkboxes.filter((checkbox) => checkbox.checked).length;
+    const selectedCheckboxes = checkboxes.filter((checkbox) => checkbox.checked);
+    const selected = selectedCheckboxes.length;
     const inputValidation = isColorSuggestion
       ? validateStockIssueSuggestedColors(detailInput.value)
       : isSizeSuggestion
@@ -786,8 +865,12 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
       : validateStockIssueExtensionDays(detailInput.value);
     const errors = [];
     if (!selected) errors.push("Select at least one product.");
+    const productsMissingSizes = isSizeSuggestion && selectedCheckboxes.some(
+      (checkbox) => !(sizeCheckboxesByProduct.get(checkbox) || []).some((choice) => choice.checked)
+    );
+    if (productsMissingSizes) errors.push("Select at least one affected size for every selected product.");
     if (!inputValidation.valid) errors.push(inputValidation.message);
-    const enabled = selected > 0 && inputValidation.valid;
+    const enabled = selected > 0 && !productsMissingSizes && inputValidation.valid;
     validation.textContent = errors.join(" ");
     detailInput.setAttribute("aria-invalid", String(!inputValidation.valid));
     queue.disabled = !enabled;
@@ -797,18 +880,29 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
     queue.style.setProperty("cursor", enabled ? "pointer" : "not-allowed", "important");
   };
   checkboxes.forEach((checkbox) => checkbox.addEventListener("change", refresh));
+  sizeCheckboxesByProduct.forEach((choices) => choices.forEach((choice) => choice.addEventListener("change", refresh)));
   detailInput.addEventListener("input", refresh);
   back.addEventListener("click", () => overlay.remove());
   queue.addEventListener("click", () => {
     const selectedProducts = checkboxes
       .filter((checkbox) => checkbox.checked)
-      .map((checkbox) => products[Number(checkbox.value)]);
+      .map((checkbox) => {
+        const product = products[Number(checkbox.value)];
+        if (!isSizeSuggestion) return product;
+        return {
+          ...product,
+          affected_sizes: (sizeCheckboxesByProduct.get(checkbox) || [])
+            .filter((choice) => choice.checked)
+            .map((choice) => choice.value)
+        };
+      });
     const inputValidation = isColorSuggestion
       ? validateStockIssueSuggestedColors(detailInput.value)
       : isSizeSuggestion
       ? validateStockIssueSuggestedSizes(detailInput.value)
       : validateStockIssueExtensionDays(detailInput.value);
-    if (!selectedProducts.length || !inputValidation.valid) {
+    const missingSelectedSizes = isSizeSuggestion && selectedProducts.some((product) => !product.affected_sizes.length);
+    if (!selectedProducts.length || missingSelectedSizes || !inputValidation.valid) {
       refresh();
       return;
     }

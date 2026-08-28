@@ -5,7 +5,10 @@ from workers import crm_stock_issue_size as stock_size
 
 
 def product():
-    return {"style": "DM130", "description": "District Perfect Tri Tee", "color": "Red"}
+    return {
+        "style": "DM130", "description": "District Perfect Tri Tee", "color": "Red",
+        "available_sizes": ["Small", "Medium", "Large"], "affected_sizes": ["Medium", "Large"],
+    }
 
 
 class StockIssueSizeTests(unittest.TestCase):
@@ -19,6 +22,28 @@ class StockIssueSizeTests(unittest.TestCase):
         self.assertEqual(stock_size.normalize_suggested_sizes(" Small, Medium, small "), ["Small", "Medium"])
         with self.assertRaises(stock_size.StockIssueSizeError):
             stock_size.normalize_request(["<b>Small</b>"], [product()])
+
+    def test_selected_product_sizes_are_required_and_used_in_stock_text(self):
+        single_size_product = product()
+        single_size_product["affected_sizes"] = ["X-Small"]
+        self.assertEqual(
+            stock_size.format_email_stock_text([single_size_product]),
+            "DM130 District Perfect Tri Tee in the color Red for size X-Small",
+        )
+        three_sizes_product = product()
+        three_sizes_product["affected_sizes"] = ["Medium", "Large", "X-Large"]
+        self.assertEqual(
+            stock_size.format_email_stock_text([three_sizes_product]),
+            "DM130 District Perfect Tri Tee in the color Red for sizes Medium, Large, and X-Large",
+        )
+        missing_selection = product()
+        missing_selection.pop("affected_sizes")
+        with self.assertRaises(stock_size.StockIssueSizeError):
+            stock_size.normalize_request(["Small"], [missing_selection])
+        unavailable_selection = product()
+        unavailable_selection["affected_sizes"] = ["X-Large"]
+        with self.assertRaises(stock_size.StockIssueSizeError):
+            stock_size.normalize_request(["Small"], [unavailable_selection])
 
     def test_template_requires_the_size_language_and_placeholder(self):
         state = {
