@@ -265,6 +265,39 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         self.assertEqual(enqueue.call_args.kwargs["task_arguments"]["order_id"], "4917538")
         self.assertEqual(enqueue.call_args.kwargs["task_arguments"]["list_mode"], "all")
 
+    def test_manual_shipping_bypasser_explicitly_allows_low_sanmar_stock_buffer(self):
+        with mock.patch(
+            "server.enqueue_automation",
+            return_value=(True, "Shipping Bypasser queued.", {"id": "task-shipping", "status": "queued"}),
+        ) as enqueue:
+            response = self.client.post(
+                "/api/extension/bridge/process-order/manual",
+                json={"order_id": "4917538", "automation": "shipping_bypasser"},
+                headers={"Origin": self.ORIGIN},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.get_json()["success"])
+        self.assertEqual(enqueue.call_args.kwargs["task_type"], "crm.shipping_bypasser")
+        self.assertTrue(enqueue.call_args.kwargs["task_arguments"]["allow_low_stock_buffer"])
+
+    def test_shipping_bypasser_worker_only_gets_override_when_requested(self):
+        with mock.patch(
+            "server._run_script",
+            return_value=(True, "Shipping Bypasser completed.", {"success": True}),
+        ) as run_script:
+            server._execute_crm_shipping_bypasser_worker(order_id="4917538")
+            standard_args = run_script.call_args.args[1]
+            server._execute_crm_shipping_bypasser_worker(
+                order_id="4917538",
+                allow_low_stock_buffer=True,
+            )
+            manual_args = run_script.call_args.args[1]
+
+        self.assertNotIn("--allow-low-stock-buffer", standard_args)
+        self.assertIn("--allow-low-stock-buffer", manual_args)
+
     def test_manual_order_control_rejects_unknown_automation(self):
         response = self.client.post(
             "/api/extension/bridge/process-order/manual",

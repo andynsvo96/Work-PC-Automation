@@ -8637,7 +8637,15 @@ def _shipping_bypasser_worker_timeout(batch_size=None):
     return base_timeout + max(0, normalized_batch_size - 1) * extra_order_timeout
 
 
-def _execute_crm_shipping_bypasser_worker(dry_run=False, batch_size=None, list_url=None, visible=None, show_terminal=None, order_id=None):
+def _execute_crm_shipping_bypasser_worker(
+    dry_run=False,
+    batch_size=None,
+    list_url=None,
+    visible=None,
+    show_terminal=None,
+    order_id=None,
+    allow_low_stock_buffer=False,
+):
     normalized_order_id = _normalize_crm_single_order_id(order_id)
     if _crm_address_value_supplied(order_id) and not normalized_order_id:
         return False, "Order ID must be a 7-digit value or CRM order URL.", {
@@ -8667,6 +8675,8 @@ def _execute_crm_shipping_bypasser_worker(dry_run=False, batch_size=None, list_u
         args.extend(["--list-url", normalized_list_url])
     if dry_run:
         args.append("--dry-run")
+    if normalized_order_id and allow_low_stock_buffer:
+        args.append("--allow-low-stock-buffer")
     ok, message, payload = _run_script(
         CRM_SHIPPING_BYPASSER_SCRIPT,
         args,
@@ -8681,6 +8691,7 @@ def _execute_crm_shipping_bypasser_worker(dry_run=False, batch_size=None, list_u
     payload.setdefault("shipping_filter", "rush")
     payload.setdefault("batch_size", normalized_batch_size)
     payload.setdefault("parallel_workers", 1)
+    payload.setdefault("stock_buffer_override", bool(normalized_order_id and allow_low_stock_buffer))
     if normalized_order_id:
         payload.setdefault("target_order_id", normalized_order_id)
         payload.setdefault("order_ids", [normalized_order_id])
@@ -8854,7 +8865,7 @@ def _persist_crm_shipping_bypasser_run_result(ok, message, payload, dry_run=Fals
     return state
 
 
-def _crm_shipping_bypasser_run_thread(dry_run=False, batch_size=None, list_url=None, order_id=None):
+def _crm_shipping_bypasser_run_thread(dry_run=False, batch_size=None, list_url=None, order_id=None, allow_low_stock_buffer=False):
     normalized_order_id = _normalize_crm_single_order_id(order_id)
     ok = False
     message = "Shipping Bypasser did not run."
@@ -8871,6 +8882,7 @@ def _crm_shipping_bypasser_run_thread(dry_run=False, batch_size=None, list_url=N
             batch_size=batch_size,
             list_url=list_url,
             order_id=normalized_order_id,
+            allow_low_stock_buffer=allow_low_stock_buffer,
         )
     except Exception as e:
         logger.exception("CRM Shipping Bypasser background run failed unexpectedly")
@@ -8886,7 +8898,7 @@ def _crm_shipping_bypasser_run_thread(dry_run=False, batch_size=None, list_url=N
         _finish_crm_shipping_bypasser_runtime(ok, message, payload, release_lock=True)
 
 
-def start_crm_shipping_bypasser_run(dry_run=False, batch_size=None, list_url=None, order_id=None):
+def start_crm_shipping_bypasser_run(dry_run=False, batch_size=None, list_url=None, order_id=None, allow_low_stock_buffer=False):
     normalized_order_id = _normalize_crm_single_order_id(order_id) if _crm_address_value_supplied(order_id) else None
     if _crm_address_value_supplied(order_id) and not normalized_order_id:
         return False, "Order ID must be a 7-digit value or CRM order URL."
@@ -8903,7 +8915,13 @@ def start_crm_shipping_bypasser_run(dry_run=False, batch_size=None, list_url=Non
     )
     threading.Thread(
         target=_crm_shipping_bypasser_run_thread,
-        args=(bool(dry_run), normalized_batch_size, _normalize_crm_list_url(list_url), normalized_order_id),
+        args=(
+            bool(dry_run),
+            normalized_batch_size,
+            _normalize_crm_list_url(list_url),
+            normalized_order_id,
+            bool(normalized_order_id and allow_low_stock_buffer),
+        ),
         daemon=True,
     ).start()
     if normalized_order_id:
@@ -12206,8 +12224,16 @@ CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS = {
         "label": "Shipping Bypasser",
         "task_type": "crm.shipping_bypasser",
         "status_fn": get_crm_shipping_bypasser_status_payload,
-        "task_arguments": lambda order_id, _reason="": {"order_id": order_id, "dry_run": False},
-        "runner": lambda order_id, _reason="": run_crm_shipping_bypasser_run_queued(order_id=order_id, dry_run=False),
+        "task_arguments": lambda order_id, _reason="": {
+            "order_id": order_id,
+            "dry_run": False,
+            "allow_low_stock_buffer": True,
+        },
+        "runner": lambda order_id, _reason="": run_crm_shipping_bypasser_run_queued(
+            order_id=order_id,
+            dry_run=False,
+            allow_low_stock_buffer=True,
+        ),
     },
     "push_back": {
         "label": "Push Back",
@@ -13155,12 +13181,13 @@ def run_crm_order_goods_run_queued(dry_run=False, batch_size=None, parallel_work
     return _wait_for_status_completion(get_crm_order_goods_status_payload, msg)
 
 
-def run_crm_shipping_bypasser_run_queued(dry_run=False, batch_size=None, list_url=None, order_id=None):
+def run_crm_shipping_bypasser_run_queued(dry_run=False, batch_size=None, list_url=None, order_id=None, allow_low_stock_buffer=False):
     ok, msg = start_crm_shipping_bypasser_run(
         dry_run=dry_run,
         batch_size=batch_size,
         list_url=list_url,
         order_id=order_id,
+        allow_low_stock_buffer=allow_low_stock_buffer,
     )
     if not ok:
         return ok, msg

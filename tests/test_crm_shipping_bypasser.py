@@ -66,5 +66,50 @@ class ShippingBypassSingleCleanupTests(unittest.TestCase):
         cleanup.assert_called_once_with(sanmar_driver, "5039567", payload["report"])
 
 
+class ShippingBypassStockBufferTests(unittest.TestCase):
+    def _product_lines(self, available, needed=1):
+        return [
+            {
+                "product": {"index": 1, "product_id": "PC54"},
+                "quantities": {"M": needed},
+                "inventory": [
+                    {
+                        "warehouse": "Robbinsville, NJ",
+                        "stock": {"M": available},
+                    }
+                ],
+            }
+        ]
+
+    def test_default_plan_keeps_ten_piece_safety_buffer(self):
+        warehouse, plan = crm_shipping_bypasser._choose_warehouse_plan(
+            self._product_lines(available=1),
+            "inhouse",
+        )
+
+        self.assertIsNone(warehouse)
+        self.assertIsNone(plan)
+
+    def test_manual_override_uses_available_stock_without_safety_buffer(self):
+        warehouse, plan = crm_shipping_bypasser._choose_warehouse_plan(
+            self._product_lines(available=1),
+            "inhouse",
+            stock_buffer=0,
+        )
+
+        self.assertEqual(warehouse, "Robbinsville, NJ")
+        self.assertEqual(plan["warehouses"], ["Robbinsville, NJ"])
+
+    def test_manual_override_still_rejects_actual_stock_shortages(self):
+        warehouse, plan = crm_shipping_bypasser._choose_warehouse_plan(
+            self._product_lines(available=1, needed=2),
+            "inhouse",
+            stock_buffer=0,
+        )
+
+        self.assertIsNone(warehouse)
+        self.assertIsNone(plan)
+
+
 if __name__ == "__main__":
     unittest.main()

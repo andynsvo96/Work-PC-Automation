@@ -2604,7 +2604,7 @@ def _wait_for_sanmar_inventory(driver, search_id, timeout=12):
     return last_rows
 
 
-def _choose_warehouse(inventory, required, order_type):
+def _choose_warehouse(inventory, required, order_type, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
     order = WAREHOUSE_DISTANCE.get(order_type) or WAREHOUSE_DISTANCE["inhouse"]
     by_name = {}
     for row in inventory:
@@ -2623,7 +2623,7 @@ def _choose_warehouse(inventory, required, order_type):
         if not row:
             continue
         stock = row.get("stock") if isinstance(row.get("stock"), dict) else {}
-        if all(_stock_qty_can_cover_order(stock.get(size, 0), qty) for size, qty in required.items()):
+        if all(_stock_qty_can_cover_order(stock.get(size, 0), qty, stock_buffer=stock_buffer) for size, qty in required.items()):
             return warehouse
     return None
 
@@ -2689,14 +2689,14 @@ def _stock_qty(value):
         return 0
 
 
-def _stock_qty_can_cover_order(available, needed):
+def _stock_qty_can_cover_order(available, needed, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
     needed = _stock_qty(needed)
     if needed <= 0:
         return True
-    return _stock_qty(available) >= needed + SANMAR_WAREHOUSE_STOCK_BUFFER
+    return _stock_qty(available) >= needed + max(0, _stock_qty(stock_buffer))
 
 
-def _choose_common_warehouse(product_lines, order_type):
+def _choose_common_warehouse(product_lines, order_type, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
     order = WAREHOUSE_DISTANCE.get(order_type) or WAREHOUSE_DISTANCE["inhouse"]
     lines = product_lines if isinstance(product_lines, list) else []
     for warehouse in order:
@@ -2709,7 +2709,7 @@ def _choose_common_warehouse(product_lines, order_type):
                 break
             stock = row.get("stock") if isinstance(row.get("stock"), dict) else {}
             required = line.get("quantities") if isinstance(line.get("quantities"), dict) else {}
-            if not all(_stock_qty_can_cover_order(stock.get(size, 0), qty) for size, qty in required.items()):
+            if not all(_stock_qty_can_cover_order(stock.get(size, 0), qty, stock_buffer=stock_buffer) for size, qty in required.items()):
                 can_fulfill = False
                 break
         if can_fulfill:
@@ -2754,11 +2754,11 @@ def _warehouse_available_qty(line, warehouse, size):
     return _stock_qty(stock.get(size, 0))
 
 
-def _warehouse_usable_qty(line, warehouse, size):
-    return max(0, _warehouse_available_qty(line, warehouse, size) - SANMAR_WAREHOUSE_STOCK_BUFFER)
+def _warehouse_usable_qty(line, warehouse, size, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
+    return max(0, _warehouse_available_qty(line, warehouse, size) - max(0, _stock_qty(stock_buffer)))
 
 
-def _choose_multi_warehouse_plan(product_lines, order_type):
+def _choose_multi_warehouse_plan(product_lines, order_type, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
     lines = product_lines if isinstance(product_lines, list) else []
     priority = _warehouse_priority(order_type)
     expanded_lines = []
@@ -2774,14 +2774,14 @@ def _choose_multi_warehouse_plan(product_lines, order_type):
             remaining = needed
             full_warehouse = None
             for warehouse in priority:
-                if _stock_qty_can_cover_order(_warehouse_available_qty(line, warehouse, size), needed):
+                if _stock_qty_can_cover_order(_warehouse_available_qty(line, warehouse, size), needed, stock_buffer=stock_buffer):
                     full_warehouse = warehouse
                     break
             allocation_targets = [full_warehouse] if full_warehouse else priority
             for warehouse in allocation_targets:
                 if not warehouse:
                     continue
-                available = _warehouse_usable_qty(line, warehouse, size)
+                available = _warehouse_usable_qty(line, warehouse, size, stock_buffer=stock_buffer)
                 qty = min(remaining, available)
                 if qty <= 0:
                     continue
@@ -2828,14 +2828,14 @@ def _single_warehouse_plan(product_lines, warehouse):
     }
 
 
-def _choose_warehouse_plan(product_lines, order_type):
-    warehouse = _choose_common_warehouse(product_lines, order_type)
+def _choose_warehouse_plan(product_lines, order_type, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
+    warehouse = _choose_common_warehouse(product_lines, order_type, stock_buffer=stock_buffer)
     if warehouse:
         return warehouse, _single_warehouse_plan(product_lines, warehouse)
-    return None, _choose_multi_warehouse_plan(product_lines, order_type)
+    return None, _choose_multi_warehouse_plan(product_lines, order_type, stock_buffer=stock_buffer)
 
 
-def _late_eta_stock_context(product_lines, order_type, selected_warehouses):
+def _late_eta_stock_context(product_lines, order_type, selected_warehouses, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
     lines = product_lines if isinstance(product_lines, list) else []
     selected = [str(item or "").strip() for item in (selected_warehouses or []) if str(item or "").strip()]
     pieces = sum(
@@ -2847,7 +2847,7 @@ def _late_eta_stock_context(product_lines, order_type, selected_warehouses):
     if len(selected) > 1:
         return (
             f"Stock availability required splitting {piece_label} across {', '.join(selected)} while retaining "
-            f"the required {SANMAR_WAREHOUSE_STOCK_BUFFER}-piece per-size safety buffer."
+            f"the required {stock_buffer}-piece per-size safety buffer."
         )
     if not selected:
         return ""
@@ -2865,7 +2865,7 @@ def _late_eta_stock_context(product_lines, order_type, selected_warehouses):
             inventory = _inventory_by_warehouse(line.get("inventory"))
             stock = ((inventory.get(candidate) or {}).get("stock") or {})
             required = line.get("quantities") if isinstance(line.get("quantities"), dict) else {}
-            if not all(_stock_qty_can_cover_order(stock.get(size, 0), qty) for size, qty in required.items()):
+            if not all(_stock_qty_can_cover_order(stock.get(size, 0), qty, stock_buffer=stock_buffer) for size, qty in required.items()):
                 can_fulfill = False
                 break
         if not can_fulfill:
@@ -2875,16 +2875,16 @@ def _late_eta_stock_context(product_lines, order_type, selected_warehouses):
         return (
             f"Stock availability forced {piece_label} to {chosen}: closer preferred {closer_label} "
             f"{'; '.join(unavailable_closer)} could not fulfill every requested size while retaining the required "
-            f"{SANMAR_WAREHOUSE_STOCK_BUFFER}-piece per-size safety buffer."
+            f"{stock_buffer}-piece per-size safety buffer."
         )
     return (
         f"Stock for {piece_label} was allocated to {chosen} while retaining the required "
-        f"{SANMAR_WAREHOUSE_STOCK_BUFFER}-piece per-size safety buffer."
+        f"{stock_buffer}-piece per-size safety buffer."
     )
 
 
-def _late_eta_failure_message(order, product_lines, selected_warehouses, eta, production_target):
-    context = _late_eta_stock_context(product_lines, order.get("order_type"), selected_warehouses)
+def _late_eta_failure_message(order, product_lines, selected_warehouses, eta, production_target, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
+    context = _late_eta_stock_context(product_lines, order.get("order_type"), selected_warehouses, stock_buffer=stock_buffer)
     timing = (
         f"Its UPS ETA is {eta.isoformat()}, which would move production to {production_target.isoformat()}; "
         f"that is not before the CRM due date {order['due_date'].isoformat()}."
@@ -2917,7 +2917,7 @@ def _format_multi_warehouse_production_note(order, plan):
     return "\n".join(lines)
 
 
-def _single_warehouse_failure_message(product_lines, order_type):
+def _single_warehouse_failure_message(product_lines, order_type, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
     order = WAREHOUSE_DISTANCE.get(order_type) or WAREHOUSE_DISTANCE["inhouse"]
     unavailable = []
     low_buffer = []
@@ -2944,10 +2944,10 @@ def _single_warehouse_failure_message(product_lines, order_type):
                     detail = f"{detail} at {best_warehouse}"
                 unavailable.append(detail)
             elif not any(
-                _stock_qty_can_cover_order(((inventory.get(warehouse) or {}).get("stock") or {}).get(size, 0), needed)
+                _stock_qty_can_cover_order(((inventory.get(warehouse) or {}).get("stock") or {}).get(size, 0), needed, stock_buffer=stock_buffer)
                 for warehouse in order
             ):
-                detail = f"{label} {size} needs {needed} plus {SANMAR_WAREHOUSE_STOCK_BUFFER} buffer, max available {max_available}"
+                detail = f"{label} {size} needs {needed} plus {stock_buffer} buffer, max available {max_available}"
                 if best_warehouse:
                     detail = f"{detail} at {best_warehouse}"
                 low_buffer.append(detail)
@@ -5473,7 +5473,17 @@ def _shipping_bypasser_actionable_stock_tabs(driver, order_id, tabs):
     return actionable, skipped
 
 
-def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stock_tab_index=None, stock_tab_count=None, stock_tab_label=None, stock_tab_context=None):
+def _process_open_order(
+    crm_driver,
+    sanmar_driver,
+    order_id,
+    dry_run=False,
+    stock_tab_index=None,
+    stock_tab_count=None,
+    stock_tab_label=None,
+    stock_tab_context=None,
+    allow_low_stock_buffer=False,
+):
     _require_crm_order_ready_once_with_refresh(crm_driver, order_id)
     stock_tab_label = _stock_tab_summary_label(stock_tab_label)
     stock_tab_context = stock_tab_context if isinstance(stock_tab_context, dict) else {}
@@ -5707,9 +5717,21 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
             }
         )
 
-    warehouse, warehouse_plan = _choose_warehouse_plan(product_lines, order["order_type"])
+    stock_buffer = 0 if allow_low_stock_buffer else SANMAR_WAREHOUSE_STOCK_BUFFER
+    warehouse, warehouse_plan = _choose_warehouse_plan(
+        product_lines,
+        order["order_type"],
+        stock_buffer=stock_buffer,
+    )
     if not warehouse_plan:
-        return done(_result(order_id, False, "no_single_warehouse", _single_warehouse_failure_message(product_lines, order["order_type"]), order=order, products=product_lines))
+        return done(_result(
+            order_id,
+            False,
+            "no_single_warehouse",
+            _single_warehouse_failure_message(product_lines, order["order_type"], stock_buffer=stock_buffer),
+            order=order,
+            products=product_lines,
+        ))
 
     multi_warehouse = str(warehouse_plan.get("mode") or "") == "multi_warehouse"
     selected_warehouses = warehouse_plan.get("warehouses") or ([warehouse] if warehouse else [])
@@ -5825,7 +5847,14 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
                         order_id,
                         False,
                         "eta_after_due_date",
-                        _late_eta_failure_message(order, product_lines, selected_warehouses, eta, production_target),
+                        _late_eta_failure_message(
+                            order,
+                            product_lines,
+                            selected_warehouses,
+                            eta,
+                            production_target,
+                            stock_buffer=stock_buffer,
+                        ),
                         order=order,
                         warehouse=warehouse,
                         warehouses=selected_warehouses,
@@ -5837,7 +5866,14 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
                     order_id,
                     False,
                     "eta_after_due_date",
-                    _late_eta_failure_message(order, product_lines, selected_warehouses, eta, production_target),
+                    _late_eta_failure_message(
+                        order,
+                        product_lines,
+                        selected_warehouses,
+                        eta,
+                        production_target,
+                        stock_buffer=stock_buffer,
+                    ),
                     order=order,
                     warehouse=warehouse,
                     warehouses=selected_warehouses,
@@ -5951,7 +5987,7 @@ def _process_open_order(crm_driver, sanmar_driver, order_id, dry_run=False, stoc
     ))
 
 
-def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False):
+def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False, allow_low_stock_buffer=False):
     normalized_order_id = _normalize_target_order_id(order_id)
     if not normalized_order_id:
         raise RuntimeError("Order ID must be a 7-digit value or CRM order URL.")
@@ -6008,6 +6044,7 @@ def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False):
             stock_tab_count=max(1, tab_count),
             stock_tab_label=tab_label,
             stock_tab_context=tabs[0] if tabs else None,
+            allow_low_stock_buffer=allow_low_stock_buffer,
         )
         if dry_run and result.get("success") and str(result.get("outcome") or "") == "shipping_bypass_ready":
             result["sanmar_cart_cleanup"] = _clear_sanmar_cart(sanmar_driver, order_id=normalized_order_id)
@@ -6082,6 +6119,7 @@ def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False):
                         stock_tab_count=tab_count,
                         stock_tab_label=tab_label,
                         stock_tab_context=tab,
+                        allow_low_stock_buffer=allow_low_stock_buffer,
                     )
                     result["stock_tab_preflight_reason"] = "needs_shipping_bypass"
         except Exception as exc:
@@ -6323,7 +6361,14 @@ def _report_has_fully_failed_order(report_items):
     return not _report_orders_succeeded_or_partially_succeeded(report_items)
 
 
-def _run_single_with_mode(headless_mode, order_id, dry_run=False, profile_path=None, sanmar_visible=False):
+def _run_single_with_mode(
+    headless_mode,
+    order_id,
+    dry_run=False,
+    profile_path=None,
+    sanmar_visible=False,
+    allow_low_stock_buffer=False,
+):
     started_at = time.monotonic()
     normalized_order_id = _normalize_target_order_id(order_id)
     if not normalized_order_id:
@@ -6358,7 +6403,13 @@ def _run_single_with_mode(headless_mode, order_id, dry_run=False, profile_path=N
         )
         sanmar_driver = _build_sanmar_driver(visible=sanmar_visible or dry_run)
         try:
-            report_items = _run_order_with_drivers(crm_driver, sanmar_driver, normalized_order_id, dry_run=dry_run)
+            report_items = _run_order_with_drivers(
+                crm_driver,
+                sanmar_driver,
+                normalized_order_id,
+                dry_run=dry_run,
+                allow_low_stock_buffer=allow_low_stock_buffer,
+            )
             if _post_submit_crm_record_recovery_needed(report_items):
                 safe_driver_quit(crm_driver, profile_path=resolved_profile_path)
                 time.sleep(1)
@@ -6401,6 +6452,7 @@ def _run_single_with_mode(headless_mode, order_id, dry_run=False, profile_path=N
         "dry_run": bool(dry_run),
         "headless": bool(headless_mode),
         "shipping_filter": RUSH_FILTER,
+        "stock_buffer_override": bool(allow_low_stock_buffer),
         "batch_size": 1,
         "parallel_workers": 1,
         "refresh_passes": 1,
@@ -6410,7 +6462,7 @@ def _run_single_with_mode(headless_mode, order_id, dry_run=False, profile_path=N
     }
 
 
-def _run_single(order_id, dry_run=False, profile_path=None, visible=False):
+def _run_single(order_id, dry_run=False, profile_path=None, visible=False, allow_low_stock_buffer=False):
     started_at = time.monotonic()
     normalized_order_id = _normalize_target_order_id(order_id)
     if not normalized_order_id:
@@ -6438,6 +6490,7 @@ def _run_single(order_id, dry_run=False, profile_path=None, visible=False):
                 dry_run=dry_run,
                 profile_path=profile_path,
                 sanmar_visible=visible,
+                allow_low_stock_buffer=allow_low_stock_buffer,
             )
             payload["headless"] = bool(headless_mode)
             return payload
@@ -6701,11 +6754,17 @@ def _run_batch(dry_run=False, batch_size=None, profile_path=None, list_url=None,
     return last_payload
 
 
-def run(action="shipping_bypass_batch", dry_run=False, batch_size=None, profile_path=None, result_file=None, list_url=None, visible=False, order_id=None):
+def run(action="shipping_bypass_batch", dry_run=False, batch_size=None, profile_path=None, result_file=None, list_url=None, visible=False, order_id=None, allow_low_stock_buffer=False):
     if action not in {"shipping_bypass_batch", "shipping_bypass_single"}:
         raise RuntimeError("Unsupported CRM Shipping Bypasser action.")
     if action == "shipping_bypass_single" or order_id:
-        payload = _run_single(order_id, dry_run=dry_run, profile_path=profile_path, visible=visible)
+        payload = _run_single(
+            order_id,
+            dry_run=dry_run,
+            profile_path=profile_path,
+            visible=visible,
+            allow_low_stock_buffer=allow_low_stock_buffer,
+        )
     else:
         payload = _run_batch(dry_run=dry_run, batch_size=batch_size, profile_path=profile_path, list_url=list_url, visible=visible)
     write_result_payload(
@@ -6728,6 +6787,11 @@ def parse_args(argv=None):
     parser.add_argument("--result-file", required=False, help="Optional path for the JSON result payload.")
     parser.add_argument("--list-url", required=False, help="Optional Shipping Bypasser CRM report URL override.")
     parser.add_argument("--visible", action="store_true", help="Run Chrome visibly instead of headless for testing.")
+    parser.add_argument(
+        "--allow-low-stock-buffer",
+        action="store_true",
+        help="Allow a manually approved single order to use SanMar stock without the 10-piece safety buffer.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Stop before SanMar submit and CRM Manual Order save.")
     return parser.parse_args(argv)
 
@@ -6744,5 +6808,6 @@ if __name__ == "__main__":
             list_url=options.list_url,
             visible=bool(options.visible),
             order_id=options.order_id,
+            allow_low_stock_buffer=bool(options.allow_low_stock_buffer),
         )
     )
