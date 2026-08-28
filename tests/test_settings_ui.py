@@ -80,6 +80,10 @@ class SettingsUiStructureTests(unittest.TestCase):
         self.assertEqual(len(re.findall(r"\bid=['\"]appVersionText['\"]", self.html)), 1)
         self.assertNotIn(".app-version{display:none}", self.html)
         self.assertIn(".app-version{display:inline-flex}", self.html)
+        self.assertNotRegex(
+            self.html,
+            r":root\[data-theme='dark'\] \.app-version\s*\{",
+        )
         self.assertIn("Build: ${loadedCommit.slice(0, 7)} · Synced", self.html)
         self.assertIn("Build: ${loadedCommit.slice(0, 7)} → ${availableCommit.slice(0, 7)}", self.html)
         self.assertIn("Both computers should show this same build.", self.html)
