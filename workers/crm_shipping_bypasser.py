@@ -225,6 +225,7 @@ SANMAR_PRODUCT_COLOR_ALIASES = {
     ("DM136L", "REDFROSTGREYFROST"): ["Red Frost/ Grey Frost"],
     ("DM136L", "ROYALFRGYFR"): ["Royal Frost/ Grey Frost"],
     ("J325", "BTLGREY"): ["Battleship Grey"],
+    ("J325", "BATLSHPGREY"): ["Battleship Grey"],
     ("J325", "BATTLEGREY"): ["Battleship Grey"],
     ("J325", "BATTLESHIPGREY"): ["Battleship Grey"],
     ("J325", "BLACKCHARHTH"): ["Black Charcoal Heather"],
