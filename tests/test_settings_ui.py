@@ -28,6 +28,8 @@ class SettingsUiStructureTests(unittest.TestCase):
             "workerModeSelect",
             "manualWorkerCountInput",
             "workerRecommendationText",
+            "hardwareRequirementsGuide",
+            "workerSizingText",
         }
         for element_id in required_ids:
             with self.subTest(element_id=element_id):
@@ -35,6 +37,12 @@ class SettingsUiStructureTests(unittest.TestCase):
                     len(re.findall(rf"\bid=['\"]{re.escape(element_id)}['\"]", self.html)),
                     1,
                 )
+
+    def test_system_worker_settings_include_handoff_hardware_guidance(self):
+        self.assertIn("Hardware guide for a future owner", self.html)
+        self.assertIn("Minimum reliable setup", self.html)
+        self.assertIn("Recommended everyday setup", self.html)
+        self.assertIn("Each browser worker is budgeted", self.html)
 
     def test_settings_interactions_are_wired(self):
         for function_name in (
