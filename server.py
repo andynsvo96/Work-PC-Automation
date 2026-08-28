@@ -1641,7 +1641,8 @@ def get_app_update_payload(git_state=None):
 
 
 def _automatic_app_updates_enabled():
-    return False
+    value = getattr(config_module, "AUTOMATION_AUTO_UPDATE_ENABLED", True)
+    return value if isinstance(value, bool) else _is_trueish(value)
 
 
 def _set_automatic_update_wait_reason(reason=None):
@@ -1683,7 +1684,20 @@ def _version_monitor_loop():
 
 
 def start_version_monitor():
-    return None
+    global version_monitor_thread
+    if not _automatic_app_updates_enabled():
+        return None
+    with version_monitor_lock:
+        if version_monitor_thread is not None and version_monitor_thread.is_alive():
+            return version_monitor_thread
+        version_monitor_stop.clear()
+        version_monitor_thread = threading.Thread(
+            target=_version_monitor_loop,
+            name="automation-version-monitor",
+            daemon=True,
+        )
+        version_monitor_thread.start()
+        return version_monitor_thread
 
 
 def _local_queue_state_payload():

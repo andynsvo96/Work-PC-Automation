@@ -23,6 +23,12 @@ AUTOMATION_USE_LEGACY_PROFILES = False
 # This uses a signed HttpOnly cookie instead of an unreliable hardware ID.
 AUTOMATION_APP_TRUSTED_DEVICE_DAYS = 365
 
+# Check origin/main for a newer app version while the dashboard is running.
+# When the checkout is clean, the app waits for active work or timers to finish,
+# then fast-forwards safely and restarts. Set to False to require manual updates.
+AUTOMATION_AUTO_UPDATE_ENABLED = True
+AUTOMATION_VERSION_CHECK_INTERVAL_SECONDS = 30
+
 # Home Assistant/Alexa HTTP actions keep using the existing /clock, /slack,
 # /work, /crm, /pc, and /automation URLs on the computer receiving the request.
 # Browser PIN/CSRF protection remains enabled for control-panel traffic.

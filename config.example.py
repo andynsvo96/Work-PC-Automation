@@ -13,6 +13,7 @@ from config_defaults import *  # noqa: F403,F401
 # AUTOMATION_REMOTE_ACCESS_MODE = "tailscale"
 # AUTOMATION_APP_PIN_REQUIRED = True
 # AUTOMATION_USE_LEGACY_PROFILES = True
+# AUTOMATION_AUTO_UPDATE_ENABLED = False  # opt out of safe background updates
 # SLACK_CHANNEL_URL = "https://app.slack.com/client/<workspace>/<channel>"
 # CRM_REPORT_URL = "https://crm.example/report/..."
 # CRM_PROFILE_DIR = "chrome_profile_crm"
