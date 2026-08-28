@@ -227,6 +227,7 @@ SANMAR_PRODUCT_COLOR_ALIASES = {
     ("J325", "BTLGREY"): ["Battleship Grey"],
     ("J325", "BATTLEGREY"): ["Battleship Grey"],
     ("J325", "BATTLESHIPGREY"): ["Battleship Grey"],
+    ("J325", "BLACKCHARHTH"): ["Black Charcoal Heather"],
     ("J325", "DSBLNAVY"): ["Dress Blue Navy"],
     ("J325", "DRESSBLUENAVY"): ["Dress Blue Navy"],
     # CRM shortens both components of SanMar's JST60 label.

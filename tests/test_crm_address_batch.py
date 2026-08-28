@@ -3795,6 +3795,22 @@ class ShippingBypasserTests(unittest.TestCase):
             )
         )
 
+    def test_sanmar_j325_black_char_hth_matches_black_charcoal_heather(self):
+        product = {
+            "product_id": "J325",
+            "product_name": "Port Authority Core Soft Shell Vest",
+        }
+        aliases = crm_shipping_bypasser._sanmar_color_alias_labels("Black Char Hth", product=product)
+
+        self.assertIn("Black Charcoal Heather", aliases)
+        self.assertTrue(
+            crm_shipping_bypasser._cart_color_matches(
+                "Black Charcoal Heather",
+                "Black Char Hth",
+                product=product,
+            )
+        )
+
     def test_sanmar_j325_dress_blue_navy_variant_matches_sanmar_label(self):
         product = {
             "product_id": "J325",
