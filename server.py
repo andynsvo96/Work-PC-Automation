@@ -14421,13 +14421,16 @@ def automation_salesforce_worker_test():
             script_timeout=int(getattr(config_module, "PROCESSOR_ACTION_TIMEOUT", 15) or 15),
         )
         safe_get_with_partial_load(driver, _salesforce_home_url(), f"Salesforce Worker {worker_slot} test")
-        selected_saved_username = False
-        filled_login_fields = False
-        clicked_login_button = False
-        # A connection test must be read-only. Submitting credentials here can
-        # itself create the 2FA/code notification that this test is meant to
-        # diagnose.
         login_page = bool(salesforce_worker._is_salesforce_login_page(driver))
+        login_attempted = False
+        # A worker profile can be signed out even after Setup has completed.
+        # Exercise the same staged-login routine used by workers so a test can
+        # submit Salesforce's username/password login stages (the current UI
+        # can require two Login clicks) before judging the saved session.
+        if login_page:
+            login_attempted = True
+            salesforce_worker._attempt_salesforce_login(driver, timeout=60)
+
         approval_required = bool(salesforce_worker._is_salesforce_login_approval_page(driver))
         verification_code_required = bool(salesforce_worker._is_salesforce_verification_code_page(driver))
         connected = bool(salesforce_worker._is_salesforce_authenticated_page(driver))
@@ -14458,9 +14461,9 @@ def automation_salesforce_worker_test():
                 "success": connected,
                 "connected": connected,
                 "worker": worker_slot,
-                "selected_saved_username": selected_saved_username,
-                "filled_login_fields": filled_login_fields,
-                "clicked_login_button": clicked_login_button,
+                "selected_saved_username": login_attempted,
+                "filled_login_fields": login_attempted,
+                "clicked_login_button": login_attempted,
                 "approval_required": approval_required,
                 "verification_code_required": verification_code_required,
                 "message": message,
