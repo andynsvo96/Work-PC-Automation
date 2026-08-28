@@ -279,10 +279,9 @@ def _insert_exact_stock_color_template(driver):
 def _replace_stock_color_placeholders(driver, stock_text, color_text):
     result = driver.execute_script(
         r"""
-        const replacements = {
-          String(arguments[2]): String(arguments[0]),
-          String(arguments[3]): String(arguments[1])
-        };
+        const replacements = {};
+        replacements[String(arguments[2])] = String(arguments[0]);
+        replacements[String(arguments[3])] = String(arguments[1]);
         function visible(el) {
           if (!el || !el.getBoundingClientRect) return false;
           const rect = el.getBoundingClientRect();
