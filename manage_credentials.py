@@ -13,6 +13,7 @@ from credential_store import (
     credential_exists,
     delete_credential,
     read_credential,
+    read_paycom_credential,
     write_credential,
 )
 
@@ -37,7 +38,10 @@ def command_set(options):
         password = getpass.getpass("Paycom password: ")
         pin = getpass.getpass("Paycom 4-digit PIN: ")
         write_credential(target, username, build_paycom_secret(password, pin))
-        print("Stored Paycom username, password, and PIN in the operating system keychain.")
+        stored = read_paycom_credential()
+        if (stored.username, stored.password, stored.pin) != (username, password, pin):
+            raise RuntimeError("Paycom credential verification failed after saving.")
+        print("Stored and verified Paycom username, password, and PIN in the operating system keychain.")
         return 0
     username = options.username or input(f"{options.service} username/account label: ").strip()
     if options.json_file:

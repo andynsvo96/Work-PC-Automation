@@ -29,8 +29,11 @@ CREDENTIAL_TARGETS = {
 
 _CRED_TYPE_GENERIC = 1
 _CRED_PERSIST_LOCAL_MACHINE = 2
+_CRED_PERSIST_ENTERPRISE = 3
 _ERROR_NOT_FOUND = 1168
+_ERROR_NO_SUCH_LOGON_SESSION = 1312
 _MAX_CREDENTIAL_BLOB_SIZE = 5 * 512
+_MAX_DELETE_ATTEMPTS = 8
 _UTF8_TAG = b"WorkAutomation.UTF8\0"
 
 
@@ -120,7 +123,17 @@ def _decode_secret(payload: bytes) -> str:
 
 
 def write_windows_credential(target: str, username: str, secret: str) -> None:
-    """Create or replace a local-machine-persistent Generic Credential."""
+    """Authoritatively replace a persistent Generic Credential.
+
+    Older releases used Python keyring, which writes enterprise-persistent
+    credentials, while later native releases wrote local-machine credentials
+    under the same target.  Windows can retain both backing records and expose
+    the stale enterprise copy again after sign-in.  Delete every visible
+    version first and write the replacement with the original enterprise
+    persistence so the newest value remains authoritative after a restart.
+    Local-only Windows accounts can reject enterprise persistence; those
+    accounts safely fall back to local-machine persistence after cleanup.
+    """
     target = _validate_text("Credential target", target).strip()
     username = _validate_text("Credential username", username)
     secret = _validate_text("Credential secret", secret)
@@ -131,17 +144,49 @@ def write_windows_credential(target: str, username: str, secret: str) -> None:
     credential.TargetName = target
     credential.CredentialBlobSize = len(payload)
     credential.CredentialBlob = ctypes.cast(blob, ctypes.c_void_p)
-    credential.Persist = _CRED_PERSIST_LOCAL_MACHINE
+    credential.Persist = _CRED_PERSIST_ENTERPRISE
     credential.UserName = username
     api = _advapi32()
     try:
+        _delete_windows_credential_versions(api, target, missing_ok=True)
         if not api.CredWriteW(ctypes.byref(credential), 0):
             error_code = ctypes.get_last_error()
+            if error_code == _ERROR_NO_SUCH_LOGON_SESSION:
+                credential.Persist = _CRED_PERSIST_LOCAL_MACHINE
+                if api.CredWriteW(ctypes.byref(credential), 0):
+                    return
+                error_code = ctypes.get_last_error()
             raise WindowsCredentialError(
                 f"Could not write Windows credential '{target}': {ctypes.WinError(error_code)}"
             )
     finally:
         ctypes.memset(blob, 0, len(payload))
+
+
+def _delete_windows_credential_versions(api, target: str, *, missing_ok: bool) -> bool:
+    """Remove all records Windows exposes for one credential target.
+
+    Repeating the deletion matters for machines that have both an old roaming
+    keyring record and a newer local-machine record for the same target.
+    """
+    removed = False
+    for _attempt in range(_MAX_DELETE_ATTEMPTS):
+        if api.CredDeleteW(target, _CRED_TYPE_GENERIC, 0):
+            removed = True
+            continue
+        error_code = ctypes.get_last_error()
+        if error_code == _ERROR_NOT_FOUND:
+            if removed or missing_ok:
+                return removed
+            raise WindowsCredentialNotFoundError(
+                f"Windows credential '{target}' was not found."
+            )
+        raise WindowsCredentialError(
+            f"Could not delete Windows credential '{target}': {ctypes.WinError(error_code)}"
+        )
+    raise WindowsCredentialError(
+        f"Could not fully remove duplicate Windows credential records for '{target}'."
+    )
 
 
 def read_windows_credential(target: str, *, required: bool = True) -> WindowsCredential | None:
@@ -179,17 +224,10 @@ def credential_exists(target: str) -> bool:
 
 
 def delete_windows_credential(target: str, *, missing_ok: bool = True) -> bool:
-    """Delete a Generic Credential. Returns True when a value was removed."""
+    """Delete every Generic Credential record exposed for this target."""
     target = _validate_text("Credential target", target).strip()
     api = _advapi32()
-    if api.CredDeleteW(target, _CRED_TYPE_GENERIC, 0):
-        return True
-    error_code = ctypes.get_last_error()
-    if missing_ok and error_code == _ERROR_NOT_FOUND:
-        return False
-    raise WindowsCredentialError(
-        f"Could not delete Windows credential '{target}': {ctypes.WinError(error_code)}"
-    )
+    return _delete_windows_credential_versions(api, target, missing_ok=missing_ok)
 
 
 def read_json_credential(target: str) -> dict:
