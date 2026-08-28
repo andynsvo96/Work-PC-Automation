@@ -68,6 +68,12 @@ class SettingsUiStructureTests(unittest.TestCase):
         self.assertNotIn("id='tabBtnPower'", self.html)
         self.assertIn("id='tabSystem'", self.html)
 
+    def test_header_shows_a_live_build_indicator(self):
+        self.assertEqual(len(re.findall(r"\bid=['\"]appVersionText['\"]", self.html)), 1)
+        self.assertIn("Build: ${loadedCommit.slice(0, 7)} · Synced", self.html)
+        self.assertIn("Build: ${loadedCommit.slice(0, 7)} → ${availableCommit.slice(0, 7)}", self.html)
+        self.assertIn("Both computers should show this same build.", self.html)
+
     def test_processing_sections_and_main_run_views_are_present(self):
         expected = {"run", "reports", "tools"}
         sections = set(re.findall(r"data-processing-section=['\"]([^'\"]+)", self.html))

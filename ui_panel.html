@@ -27,7 +27,11 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .app-header h1{margin:0}
 .app-title-row{display:flex;align-items:baseline;gap:9px;min-width:0;flex-wrap:wrap}
 .app-header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-.app-version{color:#94a3b8;font-size:11px;font-weight:600;letter-spacing:.02em;white-space:nowrap}
+.app-version{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border:1px solid #cbd5e1;border-radius:999px;background:#f8fafc;color:#475569;font-size:11px;font-weight:700;letter-spacing:.02em;white-space:nowrap}
+.app-version::before{content:'';width:7px;height:7px;border-radius:50%;background:#94a3b8}
+.app-version.current{border-color:#86efac;background:#f0fdf4;color:#166534}.app-version.current::before{background:#22c55e}
+.app-version.update-needed{border-color:#fcd34d;background:#fffbeb;color:#92400e}.app-version.update-needed::before{background:#f59e0b}
+.app-version.unavailable{border-color:#fecaca;background:#fef2f2;color:#991b1b}.app-version.unavailable::before{background:#ef4444}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .card{background:#fff;border:1px solid #d9e2ec;border-radius:10px;padding:14px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
@@ -709,7 +713,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
   <div class='app-title-row'>
     <span class='app-brand-mark' aria-hidden='true'>✓</span>
     <div class='app-brand-copy'><h1>Automation</h1><span class='app-brand-sub'>Control Panel</span></div>
-    <span class='app-version' id='appVersionText'>Version: loading</span>
+    <span class='app-version' id='appVersionText' title='Loading app version'>Build: loading</span>
   </div>
   <div class='app-header-actions'>
     <button class='icon-btn' id='themeToggleBtn' type='button' onclick='toggleColorTheme()' title='Switch color theme' aria-label='Switch color theme'>Dark Mode</button>
@@ -3895,8 +3899,33 @@ function renderNodeRuntime(payload) {
   const versionText = document.getElementById('appVersionText');
   if (versionText) {
     const loadedCommit = String(appUpdate.loaded_commit || git.commit || '').trim();
-    versionText.textContent = loadedCommit ? `Version: ${loadedCommit.slice(0, 7)}` : 'Version: unknown';
-    versionText.title = loadedCommit ? `Running commit ${loadedCommit}` : 'Running commit unavailable';
+    const checkoutCommit = String(appUpdate.checkout_commit || git.commit || '').trim();
+    const targetCommit = String(appUpdate.target_commit || git.origin_commit || '').trim();
+    const relation = String(appUpdate.relation || git.relation || '').trim().toLowerCase();
+    const buildChanged = Boolean(
+      loadedCommit
+      && ((checkoutCommit && checkoutCommit !== loadedCommit) || (targetCommit && targetCommit !== loadedCommit))
+    );
+    versionText.classList.remove('current', 'update-needed', 'unavailable');
+    if (!loadedCommit) {
+      versionText.textContent = 'Build: unavailable';
+      versionText.title = 'The running app commit is unavailable.';
+      versionText.classList.add('unavailable');
+    } else if (buildChanged) {
+      const availableCommit = targetCommit && targetCommit !== loadedCommit ? targetCommit : checkoutCommit;
+      versionText.textContent = `Build: ${loadedCommit.slice(0, 7)} → ${availableCommit.slice(0, 7)}`;
+      versionText.title = `Running ${loadedCommit}; ${availableCommit} is available from origin/main.`;
+      versionText.classList.add('update-needed');
+    } else if (relation === 'current' && !git.dirty && !appUpdate.required) {
+      versionText.textContent = `Build: ${loadedCommit.slice(0, 7)} · Synced`;
+      versionText.title = `Running ${loadedCommit}, matching origin/main. Both computers should show this same build.`;
+      versionText.classList.add('current');
+    } else {
+      const state = git.dirty ? 'local changes' : (relation || 'checking');
+      versionText.textContent = `Build: ${loadedCommit.slice(0, 7)} · ${state}`;
+      versionText.title = `Running ${loadedCommit}. Git status: ${state}.`;
+      versionText.classList.add('update-needed');
+    }
   }
   const versionNotice = document.getElementById('versionGateNotice');
   const versionBlocked = Boolean(appUpdate.required || nodeRuntimePayload.version_eligible === false);
