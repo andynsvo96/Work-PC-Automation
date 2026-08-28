@@ -440,16 +440,34 @@ function stockIssueDetectedSizes(block, rawLines, text) {
     else if (/[|,/]/.test(cleaned)) cleaned.split(/[|,/]/).forEach(add);
     else add(cleaned);
   };
-  for (const element of Array.from(block.querySelectorAll(".design-item-size-active,[data-size],[data-size-name],[ng-model*='size' i]"))) {
+  // The CRM highlights the chosen size, quantity, and price with the same
+  // class. Scope that class to the row whose label is exactly "Size" so a
+  // quantity such as "1" or a price such as "10.00" can never be offered as
+  // a size.
+  const sizeRows = Array.from(block.querySelectorAll("tr")).filter((row) => {
+    const cells = Array.from(row.querySelectorAll(":scope > th, :scope > td"));
+    return cells.some((cell) => /^Size\s*:?$/i.test(stockIssueCleanText(cell.innerText || cell.textContent)));
+  });
+  for (const row of sizeRows) {
+    for (const element of Array.from(row.querySelectorAll(".design-item-size-active"))) {
+      if (visibleStockIssueElement(element)) add(element.innerText || element.textContent);
+    }
+  }
+  for (const element of Array.from(block.querySelectorAll("[data-size],[data-size-name],[ng-model*='size' i]"))) {
     if (!visibleStockIssueElement(element)) continue;
     add(element.getAttribute("data-size") || element.getAttribute("data-size-name") || element.value || element.innerText || element.textContent);
   }
-  for (const line of rawLines) {
-    const match = line.match(/^Sizes?\s*:\s*(.+)$/i);
-    if (match) addSizeText(match[1]);
-  }
-  for (const match of text.matchAll(/\bSizes?\s*:\s*(.+?)(?=\s+(?:Quantity|Qty|Price|Sizes?)\s*:|$)/gi)) {
-    addSizeText(match[1]);
+  // Text parsing is a last resort for older CRM markup without a Size row.
+  // A rendered Size row may contain every available size, whereas its active
+  // cell(s) above identify only the sizes actually on this order.
+  if (!sizeRows.length) {
+    for (const line of rawLines) {
+      const match = line.match(/^Sizes?\s*:\s*(.+)$/i);
+      if (match) addSizeText(match[1]);
+    }
+    for (const match of text.matchAll(/\bSizes?\s*:\s*(.+?)(?=\s+(?:Quantity|Qty|Price|Sizes?)\s*:|$)/gi)) {
+      addSizeText(match[1]);
+    }
   }
   return values;
 }
