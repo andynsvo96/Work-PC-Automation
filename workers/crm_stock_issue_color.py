@@ -36,6 +36,7 @@ ORDER_NUMBER_PLACEHOLDER = "[ORDER-NUMBER]"
 STOCK_PLACEHOLDER = "[STOCK]"
 COLOR_PLACEHOLDER = "[COLOR]"
 MAX_COLORS = 20
+SUGGESTION_LABEL = "color"
 
 
 class StockIssueColorError(RuntimeError):
@@ -145,7 +146,7 @@ def format_sales_note(colors, products):
 
 def format_slack_message(order_id):
     order_id = shared._normalize_order_id(order_id)
-    return f"{shared.PROCESSOR_ORDER_URL_TEMPLATE.format(order_id=order_id)} - Rush Order needs color change"
+    return f"{shared.PROCESSOR_ORDER_URL_TEMPLATE.format(order_id=order_id)} - Rush Order needs {SUGGESTION_LABEL} change"
 
 
 def _stock_color_template_signature_error(state):
@@ -255,7 +256,10 @@ def _insert_exact_stock_color_template(driver):
 def _replace_stock_color_placeholders(driver, stock_text, color_text):
     result = driver.execute_script(
         r"""
-        const replacements = {'[STOCK]': String(arguments[0]), '[COLOR]': String(arguments[1])};
+        const replacements = {
+          String(arguments[2]): String(arguments[0]),
+          String(arguments[3]): String(arguments[1])
+        };
         function visible(el) {
           if (!el || !el.getBoundingClientRect) return false;
           const rect = el.getBoundingClientRect();
@@ -289,7 +293,10 @@ def _replace_stock_color_placeholders(driver, stock_text, color_text):
           while (walker.nextNode()) nodes.push(walker.currentNode);
           for (const node of nodes) {
             const original = node.nodeValue || '';
-            if (!/\[\s*(?:STOCK|COLOR)\s*\]/i.test(original)) continue;
+            if (!Object.keys(replacements).some((placeholder) => {
+              const pattern = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+              return pattern.test(original);
+            })) continue;
             const replaced = replaceText(original, counts);
             const anchor = node.parentElement && node.parentElement.closest('a');
             node.nodeValue = replaced;
@@ -304,7 +311,7 @@ def _replace_stock_color_placeholders(driver, stock_text, color_text):
             root.dispatchEvent(new Event('change', {bubbles: true}));
           } catch (err) {}
         }
-        const counts = {'[STOCK]': 0, '[COLOR]': 0, unwrapped_links: 0};
+        const counts = {[String(arguments[2])]: 0, [String(arguments[3])]: 0, unwrapped_links: 0};
         const seen = new Set();
         function inspectDocument(doc) {
           if (!doc || seen.has(doc)) return;
@@ -333,6 +340,8 @@ def _replace_stock_color_placeholders(driver, stock_text, color_text):
         """,
         stock_text,
         color_text,
+        STOCK_PLACEHOLDER,
+        COLOR_PLACEHOLDER,
     ) or {}
     if int(result.get(STOCK_PLACEHOLDER) or 0) < 1:
         raise StockIssueColorError(f"Salesforce template body does not contain {STOCK_PLACEHOLDER}.")
@@ -357,7 +366,7 @@ def _verify_email_content(driver, order_id, stock_text, color_text):
     if stock_text.casefold() not in body.casefold():
         raise StockIssueColorError("Salesforce body does not contain the complete selected product text.")
     if color_text.casefold() not in body.casefold():
-        raise StockIssueColorError("Salesforce body does not contain the complete suggested color list.")
+        raise StockIssueColorError(f"Salesforce body does not contain the complete suggested {SUGGESTION_LABEL} list.")
     return {"subject": subject, "body": body, "state": state}
 
 

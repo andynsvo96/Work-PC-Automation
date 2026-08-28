@@ -76,6 +76,7 @@ export async function startLocalManualOrderProcessing(orderId, automation, reaso
       reason: String(reason || ""),
       days: structuredData.days,
       colors: structuredData.colors,
+      sizes: structuredData.sizes,
       products: structuredData.products
     })
   });

@@ -73,7 +73,8 @@ const REACHOUT_ORDER_AUTOMATIONS = [
 
 const STOCK_ISSUE_AUTOMATIONS = [
   { key: "stock_issue_extension", label: "Extension Required" },
-  { key: "stock_issue_color", label: "Suggest Different Color" }
+  { key: "stock_issue_color", label: "Suggest Different Color" },
+  { key: "stock_issue_size", label: "Suggest Different Size" }
 ];
 
 function currentOrderId() {
@@ -637,47 +638,61 @@ function validateStockIssueExtensionDays(value) {
   return { valid: true, days, message: "" };
 }
 
-function validateStockIssueSuggestedColors(value) {
+function validateStockIssueSuggestedValues(value, singular) {
+  const plural = `${singular}s`;
   const text = String(value ?? "").trim();
   if (!text) {
-    return { valid: false, colors: [], message: "Enter at least one suggested color." };
+    return { valid: false, values: [], message: `Enter at least one suggested ${singular}.` };
   }
   if (text.length > 500) {
-    return { valid: false, colors: [], message: "The suggested color list is too long." };
+    return { valid: false, values: [], message: `The suggested ${singular} list is too long.` };
   }
-  const rawColors = text.split(",");
-  if (rawColors.length > 20) {
-    return { valid: false, colors: [], message: "Enter no more than 20 suggested colors." };
+  const rawValues = text.split(",");
+  if (rawValues.length > 20) {
+    return { valid: false, values: [], message: `Enter no more than 20 suggested ${plural}.` };
   }
-  if (rawColors.some((color) => !stockIssueCleanText(color))) {
-    return { valid: false, colors: [], message: "List colors separated by commas, without empty entries." };
+  if (rawValues.some((item) => !stockIssueCleanText(item))) {
+    return { valid: false, values: [], message: `List ${plural} separated by commas, without empty entries.` };
   }
-  const colors = [];
+  const values = [];
   const seen = new Set();
-  for (const rawColor of rawColors) {
-    const color = stockIssueCleanText(rawColor);
-    if (color.length > 80 || /[<>\r\n]/.test(color)) {
-      return { valid: false, colors: [], message: "Each suggested color must be plain text under 80 characters." };
+  for (const rawValue of rawValues) {
+    const item = stockIssueCleanText(rawValue);
+    if (item.length > 80 || /[<>\r\n]/.test(item)) {
+      return { valid: false, values: [], message: `Each suggested ${singular} must be plain text under 80 characters.` };
     }
-    const key = color.toLowerCase();
+    const key = item.toLowerCase();
     if (!seen.has(key)) {
       seen.add(key);
-      colors.push(color);
+      values.push(item);
     }
   }
-  return { valid: true, colors, message: "" };
+  return { valid: true, values, message: "" };
+}
+
+function validateStockIssueSuggestedColors(value) {
+  const result = validateStockIssueSuggestedValues(value, "color");
+  return { ...result, colors: result.values };
+}
+
+function validateStockIssueSuggestedSizes(value) {
+  const result = validateStockIssueSuggestedValues(value, "size");
+  return { ...result, sizes: result.values };
 }
 
 function showStockIssueProductDialog(products, automation, triggerButton, autoProcessButton) {
   const isColorSuggestion = automation.key === "stock_issue_color";
-  const dialogName = isColorSuggestion ? "Suggest Different Color" : "Extension Required";
+  const isSizeSuggestion = automation.key === "stock_issue_size";
+  const isSuggestion = isColorSuggestion || isSizeSuggestion;
+  const suggestionLabel = isSizeSuggestion ? "size" : "color";
+  const dialogName = isSuggestion ? `Suggest Different ${suggestionLabel[0].toUpperCase()}${suggestionLabel.slice(1)}` : "Extension Required";
   const { overlay, dialog } = createStockIssueDialogShell(`Configure Stock Issue ${dialogName}`);
   const title = document.createElement("div");
   title.textContent = dialogName;
   Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "6px" });
   const explanation = document.createElement("p");
-  explanation.textContent = isColorSuggestion
-    ? "Select each out-of-stock product/color, then list the available replacement colors separated by commas."
+  explanation.textContent = isSuggestion
+    ? `Select each out-of-stock product/color, then list the available replacement ${suggestionLabel}s separated by commas.`
     : "Select each product/color that needs an extension, then enter the number of days.";
   Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
   dialog.append(title, explanation);
@@ -722,14 +737,14 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
   dialog.append(table);
 
   const inputLabel = document.createElement("label");
-  inputLabel.textContent = isColorSuggestion ? "Suggested colors (required)" : "Extension days (required)";
-  inputLabel.htmlFor = isColorSuggestion ? "crm-stock-issue-colors" : "crm-stock-issue-days";
+  inputLabel.textContent = isSuggestion ? `Suggested ${suggestionLabel}s (required)` : "Extension days (required)";
+  inputLabel.htmlFor = isSuggestion ? `crm-stock-issue-${suggestionLabel}s` : "crm-stock-issue-days";
   Object.assign(inputLabel.style, { display: "block", marginBottom: "5px", fontWeight: "700" });
   const detailInput = document.createElement("input");
   detailInput.id = inputLabel.htmlFor;
-  detailInput.type = isColorSuggestion ? "text" : "number";
-  if (isColorSuggestion) {
-    detailInput.placeholder = "Example: Navy, Black, White";
+  detailInput.type = isSuggestion ? "text" : "number";
+  if (isSuggestion) {
+    detailInput.placeholder = isSizeSuggestion ? "Example: Small, Medium, Large" : "Example: Navy, Black, White";
     detailInput.autocomplete = "off";
   } else {
     detailInput.min = "1";
@@ -739,7 +754,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
   }
   detailInput.required = true;
   Object.assign(detailInput.style, {
-    width: isColorSuggestion ? "min(100%, 420px)" : "120px",
+    width: isSuggestion ? "min(100%, 420px)" : "120px",
     boxSizing: "border-box", padding: "8px", border: "1px solid #64748b", borderRadius: "3px"
   });
   dialog.append(inputLabel, detailInput);
@@ -766,6 +781,8 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
     const selected = checkboxes.filter((checkbox) => checkbox.checked).length;
     const inputValidation = isColorSuggestion
       ? validateStockIssueSuggestedColors(detailInput.value)
+      : isSizeSuggestion
+      ? validateStockIssueSuggestedSizes(detailInput.value)
       : validateStockIssueExtensionDays(detailInput.value);
     const errors = [];
     if (!selected) errors.push("Select at least one product.");
@@ -788,6 +805,8 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
       .map((checkbox) => products[Number(checkbox.value)]);
     const inputValidation = isColorSuggestion
       ? validateStockIssueSuggestedColors(detailInput.value)
+      : isSizeSuggestion
+      ? validateStockIssueSuggestedSizes(detailInput.value)
       : validateStockIssueExtensionDays(detailInput.value);
     if (!selectedProducts.length || !inputValidation.valid) {
       refresh();
@@ -796,6 +815,8 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
     overlay.remove();
     const structuredData = isColorSuggestion
       ? { colors: inputValidation.colors, products: selectedProducts }
+      : isSizeSuggestion
+      ? { sizes: inputValidation.sizes, products: selectedProducts }
       : { days: inputValidation.days, products: selectedProducts };
     queueManualOrderAutomation(automation, triggerButton, autoProcessButton, "", structuredData);
   });

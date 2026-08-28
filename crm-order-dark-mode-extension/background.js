@@ -119,6 +119,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     startLocalManualOrderProcessing(message.orderId, message.automation, message.reason, {
       days: message.days,
       colors: message.colors,
+      sizes: message.sizes,
       products: message.products
     })
       .then(sendResponse)

@@ -107,6 +107,8 @@ class StockIssueColorFormattingTests(unittest.TestCase):
         self.assertEqual(driver.execute_script.call_args.args[1:], (
             "DM130 District Perfect Tri Tee in the color Red",
             "Navy or Black",
+            "[STOCK]",
+            "[COLOR]",
         ))
 
     def test_exact_template_selector_does_not_accept_the_search_input(self):
@@ -127,10 +129,15 @@ class StockIssueColorSourceContractTests(unittest.TestCase):
         manifest = json.loads((ROOT / "crm-order-dark-mode-extension" / "manifest.json").read_text(encoding="utf-8"))
 
         self.assertIn('key: "stock_issue_color", label: "Suggest Different Color"', content)
+        self.assertIn('key: "stock_issue_size", label: "Suggest Different Size"', content)
         self.assertIn("validateStockIssueSuggestedColors", content)
+        self.assertIn("validateStockIssueSuggestedSizes", content)
         self.assertIn("colors: inputValidation.colors", content)
+        self.assertIn("sizes: inputValidation.sizes", content)
         self.assertIn("colors: structuredData.colors", bridge)
+        self.assertIn("sizes: structuredData.sizes", bridge)
         self.assertIn("colors: message.colors", background)
+        self.assertIn("sizes: message.sizes", background)
         self.assertEqual(manifest["version"], "1.5.0")
 
 

@@ -123,6 +123,7 @@ CRM_AUTO_SPLITTER_SCRIPT = os.path.join(WORKERS_DIR, "crm_auto_splitter.py")
 CRM_MASS_EMAILER_SCRIPT = os.path.join(WORKERS_DIR, "crm_copyright_cancel.py")
 CRM_STOCK_ISSUE_EXTENSION_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_extension.py")
 CRM_STOCK_ISSUE_COLOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_color.py")
+CRM_STOCK_ISSUE_SIZE_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_size.py")
 SLACK_SCRIPT_TIMEOUT_SECONDS = 150
 BROWSER_WORKER_FILENAMES = frozenset(
     {
@@ -139,6 +140,7 @@ BROWSER_WORKER_FILENAMES = frozenset(
         os.path.basename(CRM_MASS_EMAILER_SCRIPT),
         os.path.basename(CRM_STOCK_ISSUE_EXTENSION_SCRIPT),
         os.path.basename(CRM_STOCK_ISSUE_COLOR_SCRIPT),
+        os.path.basename(CRM_STOCK_ISSUE_SIZE_SCRIPT),
     }
 )
 CRM_VISIBLE_FLAG_WORKER_FILENAMES = BROWSER_WORKER_FILENAMES - {
@@ -2127,7 +2129,7 @@ def _stock_issue_extension_failure_message(result_payload, fallback="", workflow
     fallback_match = None
     if fallback_text:
         fallback_match = re.search(
-            r"(?:Stock Extension|Suggest Different Color) stopped at ([^:]+):\s*(.*?)(?:\.\s*Recovery state:|$)",
+            r"(?:Stock Extension|Suggest Different Color|Suggest Different Size) stopped at ([^:]+):\s*(.*?)(?:\.\s*Recovery state:|$)",
             fallback_text,
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -2230,10 +2232,10 @@ def _automation_queue_result_context(task, ok, message):
         result_payload = runtime.get("payload") if isinstance(runtime.get("payload"), dict) else {}
         if not result_payload and isinstance(status_payload, dict):
             result_payload = status_payload
-        if task_type in {"crm.stock_issue_extension", "crm.stock_issue_color"} and result_payload:
-            color_workflow = task_type == "crm.stock_issue_color"
-            process_key = "stock_issue_color" if color_workflow else "stock_issue_extension"
-            workflow_label = "Stock Issue - Suggest Different Color" if color_workflow else "Stock Issue - Extension Required"
+        if task_type in {"crm.stock_issue_extension", "crm.stock_issue_color", "crm.stock_issue_size"} and result_payload:
+            suggestion_type = "color" if task_type == "crm.stock_issue_color" else "size" if task_type == "crm.stock_issue_size" else ""
+            process_key = f"stock_issue_{suggestion_type}" if suggestion_type else "stock_issue_extension"
+            workflow_label = f"Stock Issue - Suggest Different {suggestion_type.title()}" if suggestion_type else "Stock Issue - Extension Required"
             failure_message = _stock_issue_extension_failure_message(result_payload, message, workflow_label)
             task_arguments = (task or {}).get("task_arguments") or (task or {}).get("arguments") or {}
             task_arguments = task_arguments if isinstance(task_arguments, dict) else {}
@@ -2353,10 +2355,10 @@ def _concise_automation_failure_message(task, message=""):
                         "message": str(step_result.get("message") or "").strip(),
                     }
                 )
-    if task_type in {"crm.stock_issue_extension", "crm.stock_issue_color"}:
-        color_workflow = task_type == "crm.stock_issue_color"
-        context_key = "stock_issue_color" if color_workflow else "stock_issue_extension"
-        workflow_label = "Stock Issue - Suggest Different Color" if color_workflow else "Stock Issue - Extension Required"
+    if task_type in {"crm.stock_issue_extension", "crm.stock_issue_color", "crm.stock_issue_size"}:
+        suggestion_type = "color" if task_type == "crm.stock_issue_color" else "size" if task_type == "crm.stock_issue_size" else ""
+        context_key = f"stock_issue_{suggestion_type}" if suggestion_type else "stock_issue_extension"
+        workflow_label = f"Stock Issue - Suggest Different {suggestion_type.title()}" if suggestion_type else "Stock Issue - Extension Required"
         stock_payload = context.get(context_key)
         if isinstance(stock_payload, dict) and stock_payload:
             return _stock_issue_extension_failure_message(stock_payload, message, workflow_label)
@@ -12330,6 +12332,55 @@ CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["stock_issue_color"] = {
     "runner": lambda order_id, _reason="", request_data=None, progress_callback=None: run_crm_stock_issue_color_queued(
         order_id,
         (request_data or {}).get("colors"),
+        (request_data or {}).get("products"),
+        progress_callback=progress_callback,
+    ),
+}
+
+
+def _normalize_stock_issue_size_request(data):
+    from workers.crm_stock_issue_size import normalize_request
+
+    payload = data if isinstance(data, dict) else {}
+    return normalize_request(payload.get("sizes"), payload.get("products"))
+
+
+def run_crm_stock_issue_size_queued(order_id, sizes, products, progress_callback=None):
+    """Run Suggest Different Size for one CRM order."""
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    if not normalized_order_id:
+        return False, "Open a CRM order with a valid 7-digit order number first.", {}
+    if not crm_lock.acquire(blocking=False):
+        return False, "A CRM automation run is already in progress.", {}
+    try:
+        from workers.crm_stock_issue_size import run_stock_issue_size_order
+
+        return run_stock_issue_size_order(
+            normalized_order_id,
+            sizes,
+            products,
+            dry_run=False,
+            progress_callback=progress_callback,
+        )
+    finally:
+        crm_lock.release()
+
+
+CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["stock_issue_size"] = {
+    "label": "Stock Issue - Suggest Different Size",
+    "task_type": "crm.stock_issue_size",
+    "status_fn": get_crm_extension_order_status_payload,
+    "structured_request": True,
+    "request_validator": _normalize_stock_issue_size_request,
+    "task_arguments": lambda order_id, _reason="", request_data=None: {
+        "order_id": order_id,
+        "sizes": list((request_data or {}).get("sizes") or []),
+        "products": list((request_data or {}).get("products") or []),
+        "dry_run": False,
+    },
+    "runner": lambda order_id, _reason="", request_data=None, progress_callback=None: run_crm_stock_issue_size_queued(
+        order_id,
+        (request_data or {}).get("sizes"),
         (request_data or {}).get("products"),
         progress_callback=progress_callback,
     ),

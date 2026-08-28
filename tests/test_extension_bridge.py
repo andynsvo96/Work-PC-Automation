@@ -483,6 +483,29 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
                 self.assertFalse(response.get_json()["success"])
                 enqueue.assert_not_called()
 
+    def test_stock_issue_size_queues_normalized_sizes_and_products(self):
+        products = [{"style": "DM130", "description": "District Perfect Tri Tee", "color": "Red"}]
+        with mock.patch(
+            "server.enqueue_automation",
+            return_value=(True, "Suggest Different Size queued.", {"id": "stock-size-1", "status": "queued"}),
+        ) as enqueue:
+            response = self.client.post(
+                "/api/extension/bridge/process-order/manual",
+                json={
+                    "order_id": "5043020",
+                    "automation": "stock_issue_size",
+                    "sizes": [" Small ", "Medium", "small"],
+                    "products": products,
+                },
+                headers={"Origin": self.ORIGIN},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.get_json()["success"])
+        self.assertEqual(enqueue.call_args.kwargs["task_type"], "crm.stock_issue_size")
+        self.assertEqual(enqueue.call_args.kwargs["task_arguments"]["sizes"], ["Small", "Medium"])
+
 
 if __name__ == "__main__":
     unittest.main()
