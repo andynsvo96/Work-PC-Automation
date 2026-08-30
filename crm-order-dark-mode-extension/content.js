@@ -312,16 +312,28 @@ function closeAllOrderProcessMenus(exceptControl = null) {
   });
 }
 
-function queueManualOrderAutomation(automation, triggerButton, autoProcessButton, reason = "", structuredData = {}) {
+function queueManualOrderAutomation(
+  automation,
+  triggerButton,
+  autoProcessButton,
+  reason = "",
+  structuredData = {},
+  options = {}
+) {
   const orderId = currentOrderId();
-  if (!orderId) return;
+  if (!orderId) {
+    return Promise.resolve({ success: false, message: "Open a CRM order with a valid 7-digit order number first." });
+  }
+  const surfacePageErrors = options.surfacePageErrors !== false;
   const control = triggerButton.closest("[data-crm-order-menu-control='true']");
   closeOrderProcessMenu(control);
   setOrderProcessorControlsDisabled(true);
   const isManualButton = triggerButton.id === "crm-order-manual-process-button";
-  if (isManualButton) triggerButton.textContent = `Queuing ${automation.label}…`;
-  setOrderProcessorResult(triggerButton, `Sending ${automation.label} for order ${orderId} to the CRM automation queue…`, "progress");
-  chrome.runtime.sendMessage({
+  if (surfacePageErrors) {
+    if (isManualButton) triggerButton.textContent = `Queuing ${automation.label}…`;
+    setOrderProcessorResult(triggerButton, `Sending ${automation.label} for order ${orderId} to the CRM automation queue…`, "progress");
+  }
+  return chrome.runtime.sendMessage({
     type: "crm-order-automation:manual-start",
     orderId,
     automation: automation.key,
@@ -332,17 +344,25 @@ function queueManualOrderAutomation(automation, triggerButton, autoProcessButton
       sessionStorage.setItem(`crm-auto-process-active:${orderId}`, "1");
       renderOrderProcessorStatus(autoProcessButton, response);
       beginOrderProcessorPolling(autoProcessButton);
-      return;
+      return response;
     }
     setOrderProcessorControlsDisabled(false);
-    if (isManualButton) triggerButton.textContent = "Manual Process";
-    triggerButton.title = (response && response.message) || "Could not queue the selected automation.";
-    setOrderProcessorResult(triggerButton, triggerButton.title, "error");
+    const message = (response && response.message) || "Could not queue the selected automation.";
+    if (surfacePageErrors) {
+      if (isManualButton) triggerButton.textContent = "Manual Process";
+      triggerButton.title = message;
+      setOrderProcessorResult(triggerButton, message, "error");
+    }
+    return { ...(response || {}), success: false, message };
   }).catch(() => {
     setOrderProcessorControlsDisabled(false);
-    if (isManualButton) triggerButton.textContent = "Manual Process";
-    triggerButton.title = "Could not queue the selected automation. Confirm the local Automation app is running, then try again.";
-    setOrderProcessorResult(triggerButton, triggerButton.title, "error");
+    const message = "Could not queue the selected automation. Confirm the local Automation app is running, then try again.";
+    if (surfacePageErrors) {
+      if (isManualButton) triggerButton.textContent = "Manual Process";
+      triggerButton.title = message;
+      setOrderProcessorResult(triggerButton, message, "error");
+    }
+    return { success: false, message };
   });
 }
 
