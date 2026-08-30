@@ -22,6 +22,9 @@ _SAFE_UNTRACKED_SOURCE_ROOTS = (
     "docs/",
     "crm-order-dark-mode-extension/",
 )
+_SAFE_UNTRACKED_SOURCE_PATHS = {
+    "shipping_bypasser_product_color_mappings.json",
+}
 _SAFE_UNTRACKED_SOURCE_EXTENSIONS = {
     ".bat",
     ".cmd",
@@ -94,7 +97,10 @@ def _safe_untracked_source_path(path):
     lowered = normalized.lower()
     if not normalized or normalized.startswith("/") or ":" in normalized:
         return False
-    if not any(lowered.startswith(root) for root in _SAFE_UNTRACKED_SOURCE_ROOTS):
+    if (
+        lowered not in _SAFE_UNTRACKED_SOURCE_PATHS
+        and not any(lowered.startswith(root) for root in _SAFE_UNTRACKED_SOURCE_ROOTS)
+    ):
         return False
     basename = lowered.rsplit("/", 1)[-1]
     if any(marker in basename for marker in _SENSITIVE_UNTRACKED_NAME_MARKERS):

@@ -41,6 +41,7 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - `safe_sync.py` - non-destructive Git fetch/fast-forward startup.
 - `slack_message_rotation.py` - alternating Slack message state logic.
 - `config.example.py` - safe template for local runtime settings.
+- `shipping_bypasser_product_color_mappings.json` - editable CRM-to-SanMar product and color mappings used by Shipping Bypasser.
 - `docs/` - fuller system guide and CRM automation notes.
 - `tests/` - regression tests for CRM batch/address behavior.
 
@@ -87,6 +88,10 @@ This repo intentionally does not commit real credentials, browser sessions, logs
 
 For hidden startup on Windows, use `start_server_hidden.vbs`; it now performs Safe Sync & Start. For macOS and Android/Tailscale onboarding, follow [`docs/MAC_AND_TABLET_SETUP.md`](docs/MAC_AND_TABLET_SETUP.md).
 A direct `python server.py` launch also performs the same safe startup check. Uncommitted, ahead, or diverged work is never overwritten; the app starts locked and explains what must be resolved.
+
+## Shipping Bypasser Product/Color Mappings
+
+Use **Settings → Shipping mappings** to add an exact CRM product/color to SanMar product/color mapping. Each CRM product appears once and contains its own color list. Advanced fields support the SanMar inventory/pricing button, expected style IDs, and report labels. The same values remain directly editable in `shipping_bypasser_product_color_mappings.json`; malformed JSON and duplicate product/color entries fail with a specific error instead of being silently ignored.
 
 ## Runtime Files
 

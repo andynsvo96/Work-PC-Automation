@@ -1,0 +1,319 @@
+{
+  "_instructions": [
+    "This is the Shipping Bypasser's editable CRM-to-SanMar product/color list.",
+    "Keep each crm_product_id unique. Add all of that product's color mappings to its colors list.",
+    "IDs are matched case-insensitively; spaces, slashes, hyphens, and punctuation in color IDs are ignored.",
+    "sanmar_color_id should be the exact color label shown by SanMar.",
+    "Most additions need only the four ID fields shown in _example_product.",
+    "click_inventory_button, sanmar_expected_product_ids, and handler are optional advanced settings.",
+    "Restart the automation server after editing this file. Invalid or duplicate entries produce a clear startup error.",
+    "Copy _example_product into products and replace its placeholder values when adding a product."
+  ],
+  "_example_product": {
+    "crm_product_id": "CRM_STYLE_HERE",
+    "sanmar_product_id": "SANMAR_STYLE_HERE",
+    "colors": [
+      {
+        "crm_color_id": "CRM COLOR HERE",
+        "sanmar_color_id": "Exact SanMar Color Here"
+      }
+    ]
+  },
+  "products": [
+    {
+      "crm_product_id": "3001C",
+      "sanmar_product_id": "3001",
+      "sanmar_expected_product_ids": [
+        "BC3001"
+      ],
+      "click_inventory_button": true,
+      "colors": []
+    },
+    {
+      "crm_product_id": "1012BE",
+      "sanmar_product_id": "BC1012",
+      "sanmar_expected_product_ids": [
+        "BC1012"
+      ],
+      "click_inventory_button": true,
+      "colors": []
+    },
+    {
+      "crm_product_id": "G500VL",
+      "sanmar_product_id": "5V00L",
+      "sanmar_expected_product_ids": [
+        "5V00L"
+      ],
+      "click_inventory_button": false,
+      "handler": "Gildan",
+      "colors": []
+    },
+    {
+      "crm_product_id": "4528",
+      "sanmar_product_id": "4528M",
+      "sanmar_expected_product_ids": [
+        "4528M",
+        "4528"
+      ],
+      "click_inventory_button": false,
+      "handler": "Jerzees",
+      "colors": [
+        {
+          "crm_color_id": "TRUE NAVY",
+          "sanmar_color_id": "J. Navy"
+        }
+      ]
+    },
+    {
+      "crm_product_id": "3330",
+      "sanmar_product_id": "RS3330",
+      "sanmar_expected_product_ids": [
+        "RS3330",
+        "3330"
+      ],
+      "click_inventory_button": true,
+      "handler": "Rabbit Skins",
+      "colors": [
+        {
+          "crm_color_id": "WHITE SOLID/ BLACK",
+          "sanmar_color_id": "White/ Black"
+        }
+      ]
+    },
+    {
+      "crm_product_id": "RS3330",
+      "sanmar_product_id": "RS3330",
+      "sanmar_expected_product_ids": [
+        "RS3330"
+      ],
+      "click_inventory_button": true,
+      "handler": "Rabbit Skins",
+      "colors": [
+        {
+          "crm_color_id": "WHITE SOLID/ BLACK",
+          "sanmar_color_id": "White/ Black"
+        }
+      ]
+    },
+    {
+      "crm_product_id": "BG936",
+      "sanmar_product_id": "BG936",
+      "colors": [
+        {
+          "crm_color_id": "FOREST GRN",
+          "sanmar_color_id": "Forest Green"
+        },
+        {
+          "crm_color_id": "RIVER BL NV",
+          "sanmar_color_id": "River Blue Navy"
+        }
+      ]
+    },
+    {
+      "crm_product_id": "DM136L",
+      "sanmar_product_id": "DM136L",
+      "colors": [
+        {
+          "crm_color_id": "BLACK FR/GY FR",
+          "sanmar_color_id": "Black Frost/ Grey Frost"
+        },
+        {
+          "crm_color_id": "BLACK/BLACK FROST",
+          "sanmar_color_id": "Black/ Black Frost"
+        },
+        {
+          "crm_color_id": "BLACK/WHITE",
+          "sanmar_color_id": "Black/ White"
+        },
+        {
+          "crm_color_id": "FUCHSIA FR/GYFR",
+          "sanmar_color_id": "Fuchsia Frost/ Grey Frost"
+        },
+        {
+          "crm_color_id": "GREY FROST/ WHITE",
+          "sanmar_color_id": "Grey Frost/ White"
+        },
+        {
+          "crm_color_id": "HE DSTY PCH/WH",
+          "sanmar_color_id": "Heather Dusty Peach/ White"
+        },
+        {
+          "crm_color_id": "NAVY FROST/ GREY FROST",
+          "sanmar_color_id": "Navy Frost/ Grey Frost"
+        },
+        {
+          "crm_color_id": "PURPLE FROST/ GREY FROST",
+          "sanmar_color_id": "Purple Frost/ Grey Frost"
+        },
+        {
+          "crm_color_id": "RED FROST GREY FROST",
+          "sanmar_color_id": "Red Frost/ Grey Frost"
+        },
+        {
+          "crm_color_id": "ROYAL FR/GY FR",
+          "sanmar_color_id": "Royal Frost/ Grey Frost"
+        }
+      ]
+    },
+    {
+      "crm_product_id": "J325",
+      "sanmar_product_id": "J325",
+      "colors": [
+        {
+          "crm_color_id": "BTL GREY",
+          "sanmar_color_id": "Battleship Grey"
+        },
+        {
+          "crm_color_id": "BATLSHP GREY",
+          "sanmar_color_id": "Battleship Grey"
+        },
+        {
+          "crm_color_id": "BATTLE GREY",
+          "sanmar_color_id": "Battleship Grey"
+        },
+        {
+          "crm_color_id": "BATTLESHIP GREY",
+          "sanmar_color_id": "Battleship Grey"
+        },
+        {
+          "crm_color_id": "BLACK CHAR HTH",
+          "sanmar_color_id": "Black Charcoal Heather"
+        },
+        {
+          "crm_color_id": "DS BL NAVY",
+          "sanmar_color_id": "Dress Blue Navy"
+        },
+        {
+          "crm_color_id": "DRESS BLUE NAVY",
+          "sanmar_color_id": "Dress Blue Navy"
+        }
+      ]
+    },
+    {
+      "crm_product_id": "JST60",
+      "sanmar_product_id": "JST60",
+      "colors": [
+        {
+          "crm_color_id": "GRAPH GREY/BLK",
+          "sanmar_color_id": "Graphite/ Black"
+        }
+      ]
+    },
+    {
+      "crm_product_id": "LST402",
+      "sanmar_product_id": "LST402",
+      "colors": [
+        {
+          "crm_color_id": "BLACK TRIAD SOLID",
+          "sanmar_color_id": "Black Triad Solid"
+        },
+        {
+          "crm_color_id": "BLACK TRIAD SLD",
+          "sanmar_color_id": "Black Triad Solid"
+        },
+        {
+          "crm_color_id": "DARK GREY HTHR",
+          "sanmar_color_id": "Dark Grey Heather"
+        },
+        {
+          "crm_color_id": "DK GREY HTHR",
+          "sanmar_color_id": "Dark Grey Heather"
+        },
+        {
+          "crm_color_id": "LIGHT GREY HTHR",
+          "sanmar_color_id": "Light Grey Heather"
+        },
+        {
+          "crm_color_id": "LT GREY HTHR",
+          "sanmar_color_id": "Light Grey Heather"
+        },
+        {
+          "crm_color_id": "PINK RASPBERRY HTHR",
+          "sanmar_color_id": "Pink Raspberry Heather"
+        },
+        {
+          "crm_color_id": "PINK RASP HTHR",
+          "sanmar_color_id": "Pink Raspberry Heather"
+        },
+        {
+          "crm_color_id": "PNK RASPBERRY HTHR",
+          "sanmar_color_id": "Pink Raspberry Heather"
+        },
+        {
+          "crm_color_id": "POND BLUE HTHR",
+          "sanmar_color_id": "Pond Blue Heather"
+        },
+        {
+          "crm_color_id": "POND BLU HTHR",
+          "sanmar_color_id": "Pond Blue Heather"
+        }
+      ]
+    },
+    {
+      "crm_product_id": "ST404",
+      "sanmar_product_id": "ST404",
+      "colors": [
+        {
+          "crm_color_id": "BLACK TRIAD SO",
+          "sanmar_color_id": "Black Triad Solid"
+        },
+        {
+          "crm_color_id": "BLACK TRIAD SLD",
+          "sanmar_color_id": "Black Triad Solid"
+        },
+        {
+          "crm_color_id": "BLACK TRIAD SOLID",
+          "sanmar_color_id": "Black Triad Solid"
+        }
+      ]
+    },
+    {
+      "crm_product_id": "STC13",
+      "sanmar_product_id": "STC13",
+      "colors": [
+        {
+          "crm_color_id": "BLACK/WHITE",
+          "sanmar_color_id": "Black/ White"
+        },
+        {
+          "crm_color_id": "T.ROYAL/WHITE",
+          "sanmar_color_id": "True Royal/ White"
+        },
+        {
+          "crm_color_id": "TRUE ROYAL/WHITE",
+          "sanmar_color_id": "True Royal/ White"
+        },
+        {
+          "crm_color_id": "TRUE NAVY/GOLD",
+          "sanmar_color_id": "True Navy/ Gold"
+        },
+        {
+          "crm_color_id": "TRUE NAVY/WHIT",
+          "sanmar_color_id": "True Navy/ White"
+        },
+        {
+          "crm_color_id": "TRUE NAVY/WHITE",
+          "sanmar_color_id": "True Navy/ White"
+        },
+        {
+          "crm_color_id": "TRUE RED/WHITE",
+          "sanmar_color_id": "True Red/ White"
+        },
+        {
+          "crm_color_id": "WHITE/BLACK",
+          "sanmar_color_id": "White/ Black"
+        }
+      ]
+    },
+    {
+      "crm_product_id": "K700",
+      "sanmar_product_id": "K700",
+      "colors": [
+        {
+          "crm_color_id": "RIVER BL NV",
+          "sanmar_color_id": "River Blue Navy"
+        }
+      ]
+    }
+  ]
+}

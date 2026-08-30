@@ -132,6 +132,29 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .settings-form-grid>.settings-panel-card{margin:0}
 .settings-connections-note{margin:0 0 16px;color:#64748b;font-size:12px;line-height:1.5}
 .settings-empty-search{display:none;margin:10px 0;padding:14px;border:1px dashed #cbd5e1;border-radius:10px;color:#64748b;font-size:12px;text-align:center}
+.shipping-mapping-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.shipping-mapping-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.shipping-mapping-status{margin:0 0 14px;padding:10px 12px;border:1px solid #dbe3ef;border-radius:9px;background:#f8fafc;color:#64748b;font-size:12px}
+.shipping-mapping-status.dirty{border-color:#fcd34d;background:#fffbeb;color:#92400e}
+.shipping-mapping-status.error{border-color:#fecaca;background:#fef2f2;color:#b91c1c}
+.shipping-mapping-list{display:flex;flex-direction:column;gap:12px}
+.shipping-mapping-product{padding:16px;border:1px solid #dbe3ef;border-radius:11px;background:#f8fafc}
+.shipping-mapping-product-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:13px}
+.shipping-mapping-product-title{font-size:14px;font-weight:800;color:#0f172a}
+.shipping-mapping-product-subtitle{margin-top:3px;color:#64748b;font-size:11px}
+.shipping-mapping-id-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.shipping-mapping-id-grid label,.shipping-mapping-color-row label,.shipping-mapping-advanced label{display:block;color:#475569;font-size:11px;font-weight:750}
+.shipping-mapping-id-grid input,.shipping-mapping-color-row input,.shipping-mapping-advanced input[type='text']{width:100%;margin-top:5px}
+.shipping-mapping-colors{margin-top:14px;padding-top:13px;border-top:1px solid #dbe3ef}
+.shipping-mapping-colors-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.shipping-mapping-colors-head strong{font-size:12px;color:#334155}
+.shipping-mapping-color-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:9px;align-items:end;margin-top:8px}
+.shipping-mapping-advanced{margin-top:12px}
+.shipping-mapping-advanced summary{cursor:pointer;color:#475569;font-size:11px;font-weight:750}
+.shipping-mapping-advanced-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:10px}
+.shipping-mapping-check{display:flex!important;align-items:center;gap:8px;padding-top:23px}
+.shipping-mapping-check input{width:auto!important;margin:0!important}
+.shipping-mapping-empty{padding:24px;border:1px dashed #cbd5e1;border-radius:10px;color:#64748b;text-align:center;font-size:12px}
 .field{border-top:1px solid #eef2f7;padding-top:8px;margin-top:8px}
 .field label{font-weight:600;font-size:13px;display:block;margin-bottom:4px}
 .field input[type=text],.field input[type=number],.field input[type=time],.field textarea,.field select,select.select{width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;background:#fff}
@@ -590,6 +613,19 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 :root[data-theme='dark'] .settings-health-text,
 :root[data-theme='dark'] .settings-task-note,
 :root[data-theme='dark'] .settings-connections-note{color:#9d9d9d}
+:root[data-theme='dark'] .shipping-mapping-status,
+:root[data-theme='dark'] .shipping-mapping-product{background:#2d2d30;border-color:#3c3c3c}
+:root[data-theme='dark'] .shipping-mapping-status{color:#b8b8b8}
+:root[data-theme='dark'] .shipping-mapping-status.dirty{background:#3d321d;border-color:#8a6d1f;color:#f6d365}
+:root[data-theme='dark'] .shipping-mapping-status.error{background:#3b2527;border-color:#8f3a3e;color:#f48771}
+:root[data-theme='dark'] .shipping-mapping-product-title{color:#f0f0f0}
+:root[data-theme='dark'] .shipping-mapping-product-subtitle,
+:root[data-theme='dark'] .shipping-mapping-id-grid label,
+:root[data-theme='dark'] .shipping-mapping-color-row label,
+:root[data-theme='dark'] .shipping-mapping-advanced label,
+:root[data-theme='dark'] .shipping-mapping-advanced summary{color:#b8b8b8}
+:root[data-theme='dark'] .shipping-mapping-colors{border-color:#3c3c3c}
+:root[data-theme='dark'] .shipping-mapping-colors-head strong{color:#d4d4d4}
 :root[data-theme='dark'] .settings-save-state{background:#20382b;border-color:#2f6b46;color:#89d185}
 :root[data-theme='dark'] .settings-save-state.saving{background:#04395e;border-color:#007acc;color:#4fc1ff}
 :root[data-theme='dark'] .settings-save-state.error{background:#3b2527;border-color:#8f3a3e;color:#f48771}
@@ -636,6 +672,7 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 @media (max-width:980px){.settings-shell{grid-template-columns:1fr}.settings-sidebar{border-right:0;border-bottom:1px solid #e2e8f0}.settings-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.settings-health{margin-top:0}.settings-main{padding:24px}}
 @media (max-width:760px){.metrics,.desktop-metrics-grid,.processing-report-metrics,.work-timer-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}.work-plan-days{grid-template-columns:repeat(2,minmax(120px,1fr))}}
 @media (max-width:760px){.settings-page-header{align-items:flex-start;flex-direction:column}.settings-page-actions{width:100%;justify-content:flex-start}.settings-overview-grid,.settings-form-grid{grid-template-columns:1fr}.settings-overview-card.wide{grid-column:auto}.settings-task-grid{grid-template-columns:1fr}.settings-nav{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:760px){.shipping-mapping-id-grid,.shipping-mapping-advanced-grid{grid-template-columns:1fr}.shipping-mapping-color-row{grid-template-columns:1fr}.shipping-mapping-color-row button{justify-self:start}}
 @media (max-width:760px){.salesforce-worker-row{grid-template-columns:1fr}.salesforce-worker-actions{justify-content:flex-start}.salesforce-worker-heading{flex-direction:column}.salesforce-worker-heading-actions{justify-content:flex-start}}
 @media (max-width:760px){.page-heading,.system-section-heading{align-items:flex-start;flex-direction:column}.latest-run-meta{grid-template-columns:1fr 1fr}.system-overview-grid{grid-template-columns:1fr}.workspace-nav{margin-left:-2px;margin-right:-2px}.tab-bar{flex-wrap:nowrap;overflow-x:auto;padding-bottom:3px}.control-target{margin-left:0;flex:0 0 auto}}
 @media (max-width:520px){.work-hours-title-actions{width:100%;justify-content:flex-end}.work-cap-quick-setting{justify-content:flex-end}.work-timer-grid{grid-template-columns:1fr}.work-plan-days{grid-template-columns:1fr 1fr}.work-timer-value{font-size:30px}}
@@ -1600,6 +1637,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
         <button class='settings-nav-btn active' type='button' data-settings-target='overview' data-search='overview summary common tasks setup status' onclick="showSettingsSection('overview')"><span class='settings-nav-icon'>＋</span><span>Overview</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='connections' data-search='connections profiles setup login paycom crm slack sanmar salesforce' onclick="showSettingsSection('connections')"><span class='settings-nav-icon'>◎</span><span>Connections</span><span class='settings-nav-badge'>5</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='crm' data-search='crm automation links reports lists batch workers browser retry credentials dry run' onclick="showSettingsSection('crm')"><span class='settings-nav-icon'>▤</span><span>CRM automation</span></button>
+        <button class='settings-nav-btn' type='button' data-settings-target='shipping-mappings' data-search='shipping bypasser mappings crm sanmar products colors ids aliases' onclick="showSettingsSection('shipping-mappings')"><span class='settings-nav-icon'>↔</span><span>Shipping mappings</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='work' data-search='work paycom weekly hours cap clock in out sync break schedule pin' onclick="showSettingsSection('work')"><span class='settings-nav-icon'>◷</span><span>Work &amp; Paycom</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='slack' data-search='slack messages channel clock in out lunch return day' onclick="showSettingsSection('slack')"><span class='settings-nav-icon'>▢</span><span>Slack messages</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='system' data-search='system hardware computer cpu memory ram workers auto detect manual' onclick="showSettingsSection('system')"><span class='settings-nav-icon'>⚙</span><span>System &amp; workers</span></button>
@@ -1701,6 +1739,25 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
         <div class='settings-panel-card'><div id='crmFields'></div></div>
       </section>
 
+      <section class='settings-section' data-settings-section='shipping-mappings'>
+        <div class='settings-section-heading'>
+          <div><h2>Shipping Bypasser mappings</h2><p>Edit CRM product/color IDs and their exact SanMar product/color matches.</p></div>
+          <details class='section-note'><summary>Mapping help</summary><div class='section-note-body'><p>Keep each CRM product ID unique. Put every special color for that product in its Colors list. SanMar color values should match the visible SanMar label exactly. Save changes before running Shipping Bypasser.</p></div></details>
+        </div>
+        <div class='settings-panel-card'>
+          <div class='shipping-mapping-toolbar'>
+            <div><strong>Product and color mappings</strong><div class='muted'>These entries are stored separately from normal application settings.</div></div>
+            <div class='shipping-mapping-actions'>
+              <button class='secondary tiny' type='button' onclick='loadShippingBypassMappings(true, this)'>Reload</button>
+              <button class='secondary tiny' type='button' onclick='addShippingMappingProduct()'>Add product</button>
+              <button class='tiny' id='shippingMappingSaveBtn' type='button' onclick='saveShippingBypassMappings(this)'>Save mappings</button>
+            </div>
+          </div>
+          <div class='shipping-mapping-status' id='shippingMappingStatus' role='status' aria-live='polite'>Loading mappings…</div>
+          <div class='shipping-mapping-list' id='shippingMappingList'></div>
+        </div>
+      </section>
+
       <section class='settings-section' data-settings-section='work'>
         <div class='settings-section-heading'>
           <div><h2>Work &amp; Paycom</h2><p>Set weekly hour rules, sync behavior, and Paycom automation options.</p></div>
@@ -1786,6 +1843,9 @@ let dismissedActionFeedbackMessage = null;
 let queueDragTaskId = null;
 let settingsSaveTimer = null;
 let settingsSavePromise = Promise.resolve();
+let shippingBypassMappings = [];
+let shippingBypassMappingsLoaded = false;
+let shippingBypassMappingsDirty = false;
 const SETTINGS_SECTION_STORAGE_KEY = 'automation.settings.section';
 let activeSettingsSection = 'overview';
 let desktopMetricsAutoRefresh = true;
@@ -4426,6 +4486,7 @@ function setActiveTab(tabName) {
   if (isSettings) {
     restoreSettingsSection();
     loadConfig();
+    loadShippingBypassMappings(false);
     loadSalesforceWorkerSetupStatus(false);
   }
   if (isSystem) {
@@ -9315,6 +9376,224 @@ async function loadStatus(setStatusText = true) {
   }
 }
 
+function setShippingMappingStatus(message, state = '') {
+  const status = document.getElementById('shippingMappingStatus');
+  if (!status) return;
+  status.textContent = String(message || '');
+  status.classList.toggle('dirty', state === 'dirty');
+  status.classList.toggle('error', state === 'error');
+}
+
+function markShippingMappingsDirty() {
+  shippingBypassMappingsDirty = true;
+  setShippingMappingStatus('Unsaved changes. Save mappings before running Shipping Bypasser.', 'dirty');
+}
+
+function normalizeShippingMappingProduct(item) {
+  const source = item && typeof item === 'object' ? item : {};
+  const normalized = {
+    crm_product_id: String(source.crm_product_id || ''),
+    sanmar_product_id: String(source.sanmar_product_id || ''),
+    colors: Array.isArray(source.colors) ? source.colors.map((color) => ({
+      crm_color_id: String(color && color.crm_color_id || ''),
+      sanmar_color_id: String(color && color.sanmar_color_id || ''),
+    })) : [],
+  };
+  if (Array.isArray(source.sanmar_expected_product_ids)) {
+    normalized.sanmar_expected_product_ids = source.sanmar_expected_product_ids.map((value) => String(value));
+  }
+  if (Object.prototype.hasOwnProperty.call(source, 'click_inventory_button')) {
+    normalized.click_inventory_button = Boolean(source.click_inventory_button);
+  }
+  if (String(source.handler || '').trim()) normalized.handler = String(source.handler);
+  return normalized;
+}
+
+function renderShippingBypassMappings() {
+  const root = document.getElementById('shippingMappingList');
+  if (!root) return;
+  if (!shippingBypassMappings.length) {
+    root.innerHTML = "<div class='shipping-mapping-empty'>No product mappings yet. Choose Add product to create the first one.</div>";
+    return;
+  }
+  root.innerHTML = shippingBypassMappings.map((product, productIndex) => {
+    const crmProduct = String(product.crm_product_id || '');
+    const sanmarProduct = String(product.sanmar_product_id || '');
+    const expectedIds = Array.isArray(product.sanmar_expected_product_ids)
+      ? product.sanmar_expected_product_ids.join(', ')
+      : '';
+    const colorRows = (product.colors || []).map((color, colorIndex) => `
+      <div class='shipping-mapping-color-row'>
+        <label>CRM color ID<input type='text' autocomplete='off' value='${esc(color.crm_color_id || '')}' oninput='updateShippingMappingColor(${productIndex}, ${colorIndex}, "crm_color_id", this.value)'></label>
+        <label>SanMar color ID / exact label<input type='text' autocomplete='off' value='${esc(color.sanmar_color_id || '')}' oninput='updateShippingMappingColor(${productIndex}, ${colorIndex}, "sanmar_color_id", this.value)'></label>
+        <button class='danger tiny' type='button' onclick='removeShippingMappingColor(${productIndex}, ${colorIndex})'>Remove</button>
+      </div>
+    `).join('');
+    return `
+      <div class='shipping-mapping-product'>
+        <div class='shipping-mapping-product-head'>
+          <div><div class='shipping-mapping-product-title'>${esc(crmProduct || `New product ${productIndex + 1}`)}</div><div class='shipping-mapping-product-subtitle'>CRM → SanMar product mapping</div></div>
+          <button class='danger tiny' type='button' onclick='removeShippingMappingProduct(${productIndex})'>Remove product</button>
+        </div>
+        <div class='shipping-mapping-id-grid'>
+          <label>CRM product ID<input type='text' autocomplete='off' value='${esc(crmProduct)}' oninput='updateShippingMappingProduct(${productIndex}, "crm_product_id", this.value)'></label>
+          <label>SanMar product ID<input type='text' autocomplete='off' value='${esc(sanmarProduct)}' oninput='updateShippingMappingProduct(${productIndex}, "sanmar_product_id", this.value)'></label>
+        </div>
+        <div class='shipping-mapping-colors'>
+          <div class='shipping-mapping-colors-head'><strong>Unique color mappings (${(product.colors || []).length})</strong><button class='secondary tiny' type='button' onclick='addShippingMappingColor(${productIndex})'>Add color</button></div>
+          ${colorRows || "<div class='muted'>No special colors for this product. Product-only mappings are allowed.</div>"}
+        </div>
+        <details class='shipping-mapping-advanced'>
+          <summary>Advanced product options</summary>
+          <div class='shipping-mapping-advanced-grid'>
+            <label>Expected SanMar product IDs<input type='text' value='${esc(expectedIds)}' placeholder='Comma-separated; defaults to SanMar product ID' oninput='updateShippingMappingExpectedIds(${productIndex}, this.value)'></label>
+            <label>Report handler label<input type='text' value='${esc(product.handler || '')}' placeholder='Optional' oninput='updateShippingMappingHandler(${productIndex}, this.value)'></label>
+            <label class='shipping-mapping-check'><input type='checkbox' ${product.click_inventory_button ? 'checked' : ''} onchange='updateShippingMappingInventoryButton(${productIndex}, this.checked)'> Click “Check inventory and pricing”</label>
+          </div>
+        </details>
+      </div>
+    `;
+  }).join('');
+}
+
+function updateShippingMappingProduct(productIndex, key, value) {
+  const product = shippingBypassMappings[productIndex];
+  if (!product || !['crm_product_id', 'sanmar_product_id'].includes(key)) return;
+  product[key] = String(value || '');
+  markShippingMappingsDirty();
+}
+
+function updateShippingMappingColor(productIndex, colorIndex, key, value) {
+  const product = shippingBypassMappings[productIndex];
+  const color = product && Array.isArray(product.colors) ? product.colors[colorIndex] : null;
+  if (!color || !['crm_color_id', 'sanmar_color_id'].includes(key)) return;
+  color[key] = String(value || '');
+  markShippingMappingsDirty();
+}
+
+function updateShippingMappingExpectedIds(productIndex, value) {
+  const product = shippingBypassMappings[productIndex];
+  if (!product) return;
+  const values = String(value || '').split(/[\n,]+/).map((item) => item.trim()).filter(Boolean);
+  if (values.length) product.sanmar_expected_product_ids = values;
+  else delete product.sanmar_expected_product_ids;
+  markShippingMappingsDirty();
+}
+
+function updateShippingMappingHandler(productIndex, value) {
+  const product = shippingBypassMappings[productIndex];
+  if (!product) return;
+  const normalized = String(value || '').trim();
+  if (normalized) product.handler = normalized;
+  else delete product.handler;
+  markShippingMappingsDirty();
+}
+
+function updateShippingMappingInventoryButton(productIndex, checked) {
+  const product = shippingBypassMappings[productIndex];
+  if (!product) return;
+  product.click_inventory_button = Boolean(checked);
+  markShippingMappingsDirty();
+}
+
+function addShippingMappingProduct() {
+  shippingBypassMappings.push({crm_product_id: '', sanmar_product_id: '', colors: []});
+  markShippingMappingsDirty();
+  renderShippingBypassMappings();
+  const cards = document.querySelectorAll('.shipping-mapping-product');
+  const lastCard = cards.length ? cards[cards.length - 1] : null;
+  if (lastCard) {
+    lastCard.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+    const input = lastCard.querySelector('input');
+    if (input) input.focus();
+  }
+}
+
+function removeShippingMappingProduct(productIndex) {
+  if (!shippingBypassMappings[productIndex]) return;
+  shippingBypassMappings.splice(productIndex, 1);
+  markShippingMappingsDirty();
+  renderShippingBypassMappings();
+}
+
+function addShippingMappingColor(productIndex) {
+  const product = shippingBypassMappings[productIndex];
+  if (!product) return;
+  if (!Array.isArray(product.colors)) product.colors = [];
+  product.colors.push({crm_color_id: '', sanmar_color_id: ''});
+  markShippingMappingsDirty();
+  renderShippingBypassMappings();
+  const card = document.querySelectorAll('.shipping-mapping-product')[productIndex];
+  const rows = card ? card.querySelectorAll('.shipping-mapping-color-row') : [];
+  const lastRow = rows.length ? rows[rows.length - 1] : null;
+  const input = lastRow ? lastRow.querySelector('input') : null;
+  if (input) input.focus();
+}
+
+function removeShippingMappingColor(productIndex, colorIndex) {
+  const product = shippingBypassMappings[productIndex];
+  if (!product || !Array.isArray(product.colors) || !product.colors[colorIndex]) return;
+  product.colors.splice(colorIndex, 1);
+  markShippingMappingsDirty();
+  renderShippingBypassMappings();
+}
+
+async function loadShippingBypassMappings(showFeedback = false, button = null) {
+  if (showFeedback && shippingBypassMappingsDirty && !window.confirm('Discard unsaved mapping changes and reload?')) {
+    return false;
+  }
+  const load = async () => {
+    setShippingMappingStatus('Loading product and color mappings…');
+    try {
+      const payload = await api('/api/shipping-bypasser-mappings');
+      shippingBypassMappings = Array.isArray(payload.products)
+        ? payload.products.map(normalizeShippingMappingProduct)
+        : [];
+      shippingBypassMappingsLoaded = true;
+      shippingBypassMappingsDirty = false;
+      renderShippingBypassMappings();
+      setShippingMappingStatus(`${payload.product_count || 0} product(s) and ${payload.color_count || 0} unique color mapping(s) loaded.`);
+      if (showFeedback) setStatus('Shipping Bypasser mappings reloaded.', 'settings');
+      return true;
+    } catch (error) {
+      shippingBypassMappingsLoaded = false;
+      setShippingMappingStatus(error.message || 'Mappings could not be loaded.', 'error');
+      if (showFeedback) setStatus('Mapping load failed: ' + error.message, 'settings');
+      return false;
+    }
+  };
+  return button ? withButtonBusy(button, 'Loading…', load) : load();
+}
+
+async function saveShippingBypassMappings(button = null) {
+  const save = async () => {
+    setShippingMappingStatus('Validating and saving mappings…');
+    try {
+      const payload = await api('/api/shipping-bypasser-mappings', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({products: shippingBypassMappings}),
+      });
+      shippingBypassMappings = Array.isArray(payload.products)
+        ? payload.products.map(normalizeShippingMappingProduct)
+        : [];
+      shippingBypassMappingsLoaded = true;
+      shippingBypassMappingsDirty = false;
+      renderShippingBypassMappings();
+      setShippingMappingStatus(`${payload.product_count || 0} product(s) and ${payload.color_count || 0} unique color mapping(s) saved.`);
+      setStatus(payload.message || 'Shipping Bypasser mappings saved.', 'settings');
+      setSettingsSaveState('All changes saved');
+      return true;
+    } catch (error) {
+      setShippingMappingStatus(error.message || 'Mappings could not be saved.', 'error');
+      setStatus('Mapping save failed: ' + error.message, 'settings');
+      setSettingsSaveState('Mapping save failed', 'error');
+      return false;
+    }
+  };
+  return button ? withButtonBusy(button, 'Saving…', save) : save();
+}
+
 async function loadConfig() {
   setSettingsHealth('Loading configuration', 'Reading settings from this computer.');
   try {
@@ -9356,7 +9635,8 @@ async function reloadSettingsPage(button = null) {
     await loadCrmAddressStatus(false);
     await loadSalesforceWorkerSetupStatus(false);
     const loaded = await loadConfig();
-    if (loaded) setSettingsSaveState('All changes saved');
+    const mappingsLoaded = await loadShippingBypassMappings(false);
+    if (loaded && mappingsLoaded) setSettingsSaveState('All changes saved');
   });
 }
 

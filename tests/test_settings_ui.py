@@ -9,7 +9,16 @@ class SettingsUiStructureTests(unittest.TestCase):
         cls.html = (Path(__file__).resolve().parents[1] / "ui_panel.html").read_text(encoding="utf-8")
 
     def test_settings_categories_are_present(self):
-        expected = {"overview", "connections", "crm", "work", "slack", "system", "advanced"}
+        expected = {
+            "overview",
+            "connections",
+            "crm",
+            "shipping-mappings",
+            "work",
+            "slack",
+            "system",
+            "advanced",
+        }
         sections = set(re.findall(r"<section[^>]+data-settings-section=['\"]([^'\"]+)", self.html))
         targets = set(re.findall(r"<button[^>]+data-settings-target=['\"]([^'\"]+)", self.html))
         self.assertEqual(sections, expected)
@@ -20,6 +29,9 @@ class SettingsUiStructureTests(unittest.TestCase):
             "settingsStatusBox",
             "crmPreferenceFields",
             "crmFields",
+            "shippingMappingStatus",
+            "shippingMappingList",
+            "shippingMappingSaveBtn",
             "workFields",
             "paycomFields",
             "slackFields",
@@ -54,6 +66,22 @@ class SettingsUiStructureTests(unittest.TestCase):
         ):
             with self.subTest(function_name=function_name):
                 self.assertIn(f"function {function_name}(", self.html)
+
+    def test_shipping_bypasser_mappings_have_a_dedicated_editor(self):
+        self.assertIn("data-settings-target='shipping-mappings'", self.html)
+        self.assertIn("data-settings-section='shipping-mappings'", self.html)
+        self.assertIn("CRM product ID", self.html)
+        self.assertIn("SanMar product ID", self.html)
+        self.assertIn("CRM color ID", self.html)
+        self.assertIn("SanMar color ID / exact label", self.html)
+        for function_name in (
+            "loadShippingBypassMappings",
+            "saveShippingBypassMappings",
+            "addShippingMappingProduct",
+            "addShippingMappingColor",
+        ):
+            self.assertIn(f"function {function_name}(", self.html)
+        self.assertIn("/api/shipping-bypasser-mappings", self.html)
 
     def test_connection_cards_use_container_responsive_columns(self):
         self.assertRegex(

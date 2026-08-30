@@ -1,4 +1,6 @@
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -12,6 +14,43 @@ for path in (ROOT, WORKERS_DIR):
         sys.path.insert(0, path_text)
 
 import crm_shipping_bypasser  # noqa: E402
+import shipping_bypasser_mappings  # noqa: E402
+
+
+class ShippingBypassProductColorMappingTests(unittest.TestCase):
+    def test_repository_mapping_file_supplies_product_and_color_overrides(self):
+        self.assertEqual(
+            crm_shipping_bypasser.SANMAR_PRODUCT_SEARCH_OVERRIDES["G500VL"]["search_id"],
+            "5V00L",
+        )
+        self.assertEqual(
+            crm_shipping_bypasser.SANMAR_PRODUCT_COLOR_ALIASES[("ST404", "BLACKTRIADSO")],
+            ["Black Triad Solid"],
+        )
+
+    def test_user_mapping_normalizes_product_and_color_ids(self):
+        payload = {
+            "products": [
+                {
+                    "crm_product_id": "test-100",
+                    "sanmar_product_id": "sm-200",
+                    "colors": [
+                        {
+                            "crm_color_id": "Blue / White",
+                            "sanmar_color_id": "Blue/ White",
+                        }
+                    ],
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "mappings.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            products, colors = shipping_bypasser_mappings.build_runtime_indexes(str(path))
+
+        self.assertEqual(products["TEST-100"]["search_id"], "SM-200")
+        self.assertEqual(colors[("TEST100", "BLUEWHITE")], ["Blue/ White"])
 
 
 class ShippingAddressRadioTests(unittest.TestCase):

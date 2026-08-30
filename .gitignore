@@ -43,6 +43,7 @@ auto_splitter_*.json
 copyright_cancel_*.json
 product_separator_*.json
 shipping_bypasser_*.json
+!shipping_bypasser_product_color_mappings.json
 *_result.json
 debug_*.png
 crm_state_corrupt_*.json

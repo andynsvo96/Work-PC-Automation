@@ -63,6 +63,7 @@ from crm_validate_address import (
 )
 from crm_order_goods import _wait_for_order_goods_page_ready
 from runtime_paths import SCREENSHOTS_DIR, state_file
+from shipping_bypasser_mappings import build_runtime_indexes
 
 configure_console_utf8()
 
@@ -131,20 +132,7 @@ SANMAR_COMBO_SIZE_ALIASES = {
     "4X/5X": "4/5X",
     "4XL/5XL": "4/5X",
 }
-SANMAR_PRODUCT_SEARCH_OVERRIDES = {
-    # Bella+Canvas product info pages can require the blue inventory button.
-    # CRM 3001C maps to SanMar BC3001; searching 3001 lands on the correct result family.
-    "3001C": {"search_id": "3001", "click_inventory_button": True, "expected_style_keys": ["BC3001"]},
-    # CRM's custom 1012BE style maps to the standard SanMar Bella+Canvas BC1012 style.
-    "1012BE": {"search_id": "BC1012", "click_inventory_button": True, "expected_style_keys": ["BC1012"]},
-    # Gildan's women's Heavy Cotton V-neck uses an irregular SanMar style ID.
-    "G500VL": {
-        "search_id": "5V00L",
-        "click_inventory_button": False,
-        "expected_style_keys": ["5V00L"],
-        "handler": "Gildan",
-    },
-}
+SANMAR_PRODUCT_SEARCH_OVERRIDES, SANMAR_PRODUCT_COLOR_ALIASES = build_runtime_indexes()
 SANMAR_BELLA_CANVAS_STYLE_IDS = {
     "BC100B", "BC1010", "BC1012", "BC1019", "BC108", "BC1080",
     "BC1200", "BC1201", "BC1501", "BC3001", "BC3001B",
@@ -206,58 +194,6 @@ SANMAR_COLOR_ALIASES = {
     "KELLYGREEN": ["Kelly"],
     "SAFETYGREEN": ["S. Green"],
     "SAFETYORANGE": ["S. Orange"],
-}
-SANMAR_PRODUCT_COLOR_ALIASES = {
-    ("4528", "TRUENAVY"): ["J. Navy"],
-    ("3330", "WHITESOLIDBLACK"): ["White/ Black"],
-    ("BG936", "FORESTGRN"): ["Forest Green"],
-    ("BG936", "RIVERBLNV"): ["River Blue Navy"],
-    ("RS3330", "WHITESOLIDBLACK"): ["White/ Black"],
-    # CRM abbreviates several DM136L color components differently from SanMar.
-    ("DM136L", "BLACKFRGYFR"): ["Black Frost/ Grey Frost"],
-    ("DM136L", "BLACKBLACKFROST"): ["Black/ Black Frost"],
-    ("DM136L", "BLACKWHITE"): ["Black/ White"],
-    ("DM136L", "FUCHSIAFRGYFR"): ["Fuchsia Frost/ Grey Frost"],
-    ("DM136L", "GREYFROSTWHITE"): ["Grey Frost/ White"],
-    ("DM136L", "HEDSTYPCHWH"): ["Heather Dusty Peach/ White"],
-    ("DM136L", "NAVYFROSTGREYFROST"): ["Navy Frost/ Grey Frost"],
-    ("DM136L", "PURPLEFROSTGREYFROST"): ["Purple Frost/ Grey Frost"],
-    ("DM136L", "REDFROSTGREYFROST"): ["Red Frost/ Grey Frost"],
-    ("DM136L", "ROYALFRGYFR"): ["Royal Frost/ Grey Frost"],
-    ("J325", "BTLGREY"): ["Battleship Grey"],
-    ("J325", "BATLSHPGREY"): ["Battleship Grey"],
-    ("J325", "BATTLEGREY"): ["Battleship Grey"],
-    ("J325", "BATTLESHIPGREY"): ["Battleship Grey"],
-    ("J325", "BLACKCHARHTH"): ["Black Charcoal Heather"],
-    ("J325", "DSBLNAVY"): ["Dress Blue Navy"],
-    ("J325", "DRESSBLUENAVY"): ["Dress Blue Navy"],
-    # CRM shortens both components of SanMar's JST60 label.
-    ("JST60", "GRAPHGREYBLK"): ["Graphite/ Black"],
-    ("LST402", "BLACKTRIADSOLID"): ["Black Triad Solid"],
-    ("LST402", "BLACKTRIADSLD"): ["Black Triad Solid"],
-    ("LST402", "DARKGREYHTHR"): ["Dark Grey Heather"],
-    ("LST402", "DKGREYHTHR"): ["Dark Grey Heather"],
-    ("LST402", "LIGHTGREYHTHR"): ["Light Grey Heather"],
-    ("LST402", "LTGREYHTHR"): ["Light Grey Heather"],
-    ("LST402", "PINKRASPBERRYHTHR"): ["Pink Raspberry Heather"],
-    ("LST402", "PINKRASPHTHR"): ["Pink Raspberry Heather"],
-    ("LST402", "PNKRASPBERRYHTHR"): ["Pink Raspberry Heather"],
-    ("LST402", "PONDBLUEHTHR"): ["Pond Blue Heather"],
-    ("LST402", "PONDBLUHTHR"): ["Pond Blue Heather"],
-    # CRM truncates ST404's SanMar color label to "Black Triad So".
-    ("ST404", "BLACKTRIADSO"): ["Black Triad Solid"],
-    ("ST404", "BLACKTRIADSLD"): ["Black Triad Solid"],
-    ("ST404", "BLACKTRIADSOLID"): ["Black Triad Solid"],
-    # CRM omits SanMar's slash spacing and truncates some STC13 labels.
-    ("STC13", "BLACKWHITE"): ["Black/ White"],
-    ("STC13", "TROYALWHITE"): ["True Royal/ White"],
-    ("STC13", "TRUEROYALWHITE"): ["True Royal/ White"],
-    ("STC13", "TRUENAVYGOLD"): ["True Navy/ Gold"],
-    ("STC13", "TRUENAVYWHIT"): ["True Navy/ White"],
-    ("STC13", "TRUENAVYWHITE"): ["True Navy/ White"],
-    ("STC13", "TRUEREDWHITE"): ["True Red/ White"],
-    ("STC13", "WHITEBLACK"): ["White/ Black"],
-    ("K700", "RIVERBLNV"): ["River Blue Navy"],
 }
 SANMAR_KNOWN_COLOR_NAMES = (
     "Deep Red/ White",

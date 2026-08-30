@@ -67,6 +67,11 @@ from routes.connectivity_routes import register_connectivity_routes
 from routes.system_routes import register_system_routes
 from routes.work_routes import register_work_routes
 from safe_sync import publish_repository_update
+from shipping_bypasser_mappings import (
+    load_mapping_document,
+    mapping_counts,
+    save_mapping_products,
+)
 from workers.salesforce_verification import (
     cancel_request as cancel_salesforce_verification_request,
     list_pending_requests as list_pending_salesforce_verification_requests,
@@ -14582,6 +14587,50 @@ def api_config_set():
     updates = data.get("values")
     ok, msg = update_config_values(updates)
     return jsonify({"success": ok, "message": msg}), (200 if ok else 500)
+
+
+@app.route("/api/shipping-bypasser-mappings", methods=["GET"])
+def api_shipping_bypasser_mappings_get():
+    try:
+        document = load_mapping_document()
+        product_count, color_count = mapping_counts(document)
+        return jsonify(
+            {
+                "success": True,
+                "products": document["products"],
+                "product_count": product_count,
+                "color_count": color_count,
+            }
+        )
+    except Exception as exc:
+        logger.exception("Could not load Shipping Bypasser mappings")
+        return jsonify({"success": False, "message": str(exc)}), 500
+
+
+@app.route("/api/shipping-bypasser-mappings", methods=["POST"])
+def api_shipping_bypasser_mappings_set():
+    data = request.get_json(silent=True) or {}
+    products = data.get("products")
+    try:
+        document = save_mapping_products(products)
+        product_count, color_count = mapping_counts(document)
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    except Exception as exc:
+        logger.exception("Could not save Shipping Bypasser mappings")
+        return jsonify({"success": False, "message": str(exc)}), 500
+    return jsonify(
+        {
+            "success": True,
+            "message": (
+                f"Shipping Bypasser mappings saved: {product_count} product(s), "
+                f"{color_count} color mapping(s)."
+            ),
+            "products": document["products"],
+            "product_count": product_count,
+            "color_count": color_count,
+        }
+    )
 
 def _build_local_work_status_payload():
     with state_lock:

@@ -119,7 +119,13 @@ class SafeSyncTests(unittest.TestCase):
     def test_safe_untracked_source_path_rejects_sensitive_and_runtime_files(self):
         self.assertTrue(safe_sync._safe_untracked_source_path("workers/new_worker.py"))
         self.assertTrue(safe_sync._safe_untracked_source_path("tests/test_new_worker.py"))
+        self.assertTrue(
+            safe_sync._safe_untracked_source_path(
+                "shipping_bypasser_product_color_mappings.json"
+            )
+        )
         self.assertFalse(safe_sync._safe_untracked_source_path("new_worker.py"))
+        self.assertFalse(safe_sync._safe_untracked_source_path("other_root_file.json"))
         self.assertFalse(safe_sync._safe_untracked_source_path("workers/session-token.json"))
         self.assertFalse(safe_sync._safe_untracked_source_path("runtime/state.json"))
 
