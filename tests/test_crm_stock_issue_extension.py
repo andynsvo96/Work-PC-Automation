@@ -402,7 +402,7 @@ class StockIssueExtensionSourceContractTests(unittest.TestCase):
         shared_worker = (ROOT / "workers" / "crm_copyright_cancel.py").read_text(encoding="utf-8")
         self.assertIn("_insert_exact_stock_extension_template(driver)", stock_worker)
         self.assertIn("(?:STOCK|DAYS|COLOR|SIZE)", shared_worker)
-        self.assertEqual(manifest["version"], "1.5.0")
+        self.assertEqual(manifest["version"], "1.5.1")
 
 
 if __name__ == "__main__":

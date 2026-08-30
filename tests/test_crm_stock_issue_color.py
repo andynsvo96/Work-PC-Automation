@@ -138,7 +138,9 @@ class StockIssueColorSourceContractTests(unittest.TestCase):
         self.assertIn("sizes: structuredData.sizes", bridge)
         self.assertIn("colors: message.colors", background)
         self.assertIn("sizes: message.sizes", background)
-        self.assertEqual(manifest["version"], "1.5.0")
+        self.assertIn("{ surfacePageErrors: false }", content)
+        self.assertIn("if (response && response.success)", content)
+        self.assertEqual(manifest["version"], "1.5.1")
 
 
 if __name__ == "__main__":

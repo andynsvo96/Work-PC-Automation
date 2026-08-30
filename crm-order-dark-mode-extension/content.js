@@ -892,6 +892,8 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
   queue.textContent = "Queue task";
   Object.assign(back.style, { padding: "7px 11px", cursor: "pointer" });
   Object.assign(queue.style, { padding: "7px 11px", borderRadius: "3px", color: "#fff" });
+  let submitting = false;
+  let submissionError = "";
 
   const refresh = () => {
     const selectedCheckboxes = checkboxes.filter((checkbox) => checkbox.checked);
@@ -908,20 +910,30 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
     );
     if (productsMissingSizes) errors.push("Select at least one affected size for every selected product.");
     if (!inputValidation.valid) errors.push(inputValidation.message);
-    const enabled = selected > 0 && !productsMissingSizes && inputValidation.valid;
-    validation.textContent = errors.join(" ");
+    if (submissionError) errors.push(submissionError);
+    const enabled = !submitting && selected > 0 && !productsMissingSizes && inputValidation.valid;
+    validation.textContent = submitting ? `Sending ${automation.label} to the Automation queue…` : errors.join(" ");
+    validation.style.color = submitting ? "#334155" : "#b91c1c";
     detailInput.setAttribute("aria-invalid", String(!inputValidation.valid));
+    detailInput.disabled = submitting;
+    back.disabled = submitting;
     queue.disabled = !enabled;
     queue.setAttribute("aria-disabled", String(!enabled));
+    queue.textContent = submitting ? "Queuing…" : "Queue task";
     queue.style.setProperty("background", enabled ? "#15803d" : "#9ca3af", "important");
     queue.style.setProperty("border", `1px solid ${enabled ? "#166534" : "#6b7280"}`, "important");
     queue.style.setProperty("cursor", enabled ? "pointer" : "not-allowed", "important");
   };
-  checkboxes.forEach((checkbox) => checkbox.addEventListener("change", refresh));
-  sizeCheckboxesByProduct.forEach((choices) => choices.forEach((choice) => choice.addEventListener("change", refresh)));
-  detailInput.addEventListener("input", refresh);
-  back.addEventListener("click", () => overlay.remove());
+  const refreshAfterEdit = () => {
+    submissionError = "";
+    refresh();
+  };
+  checkboxes.forEach((checkbox) => checkbox.addEventListener("change", refreshAfterEdit));
+  sizeCheckboxesByProduct.forEach((choices) => choices.forEach((choice) => choice.addEventListener("change", refreshAfterEdit)));
+  detailInput.addEventListener("input", refreshAfterEdit);
+  back.addEventListener("click", () => { if (!submitting) overlay.remove(); });
   queue.addEventListener("click", () => {
+    if (submitting) return;
     const selectedProducts = checkboxes
       .filter((checkbox) => checkbox.checked)
       .map((checkbox) => {
@@ -944,16 +956,34 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
       refresh();
       return;
     }
-    overlay.remove();
     const structuredData = isColorSuggestion
       ? { colors: inputValidation.colors, products: selectedProducts }
       : isSizeSuggestion
       ? { sizes: inputValidation.sizes, products: selectedProducts }
       : { days: inputValidation.days, products: selectedProducts };
-    queueManualOrderAutomation(automation, triggerButton, autoProcessButton, "", structuredData);
+    submissionError = "";
+    submitting = true;
+    refresh();
+    queueManualOrderAutomation(
+      automation,
+      triggerButton,
+      autoProcessButton,
+      "",
+      structuredData,
+      { surfacePageErrors: false }
+    ).then((response) => {
+      if (response && response.success) {
+        overlay.remove();
+        return;
+      }
+      submitting = false;
+      submissionError = (response && response.message) || "Could not queue the selected automation.";
+      refresh();
+      detailInput.focus();
+    });
   });
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
-  overlay.addEventListener("keydown", (event) => { if (event.key === "Escape") overlay.remove(); });
+  overlay.addEventListener("click", (event) => { if (!submitting && event.target === overlay) overlay.remove(); });
+  overlay.addEventListener("keydown", (event) => { if (!submitting && event.key === "Escape") overlay.remove(); });
   actions.append(back, queue);
   dialog.append(actions);
   refresh();
