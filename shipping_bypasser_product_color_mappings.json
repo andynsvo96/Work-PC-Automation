@@ -314,6 +314,40 @@
           "sanmar_color_id": "River Blue Navy"
         }
       ]
+    },
+    {
+      "crm_product_id": "ST512",
+      "sanmar_product_id": "ST512",
+      "colors": [
+        {
+          "crm_color_id": "DpRd/Wht",
+          "sanmar_color_id": "Deep Red/ White"
+        },
+        {
+          "crm_color_id": "Blk/White",
+          "sanmar_color_id": "Black/ White"
+        },
+        {
+          "crm_color_id": "FrGn/White",
+          "sanmar_color_id": "Forest Green/ White"
+        },
+        {
+          "crm_color_id": "Mar/White",
+          "sanmar_color_id": "Maroon/ White"
+        },
+        {
+          "crm_color_id": "Purple/Wh",
+          "sanmar_color_id": "Purple/ White"
+        },
+        {
+          "crm_color_id": "TRy/White",
+          "sanmar_color_id": "True Royal/ White"
+        },
+        {
+          "crm_color_id": "TrNv/White",
+          "sanmar_color_id": "True Navy/ White"
+        }
+      ]
     }
   ]
 }
