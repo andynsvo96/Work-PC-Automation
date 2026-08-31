@@ -544,6 +544,17 @@ def _planned_stock_routing(stock_summary, subcontractor):
             "reason": "stock_ordered_vendor_po_unknown",
             "subcontractor": subcontractor,
         }
+    # Every concrete Manual Order row must follow its design to the new split
+    # order.  Subcontractor routing can add a notification, but it must never
+    # replace the PO copy: otherwise CRM sees the split tab as unstocked and can
+    # order the same garments again.
+    if stock_summary.get("transfer_records"):
+        return {
+            "action": "copy_to_split_orders",
+            "subcontractor": subcontractor,
+            "notify_mach6_cancelled": bool(is_mach6 and stock_summary.get("cancelled_channel_rows")),
+            "message": "<original order URL> cancelled" if is_mach6 and stock_summary.get("cancelled_channel_rows") else "",
+        }
     header_only_ordered_tabs = stock_summary.get("header_only_ordered_tabs") or []
     if not is_subcontractor:
         if header_only_ordered_tabs and not stock_summary.get("transfer_records"):
@@ -1371,13 +1382,28 @@ def _quote_fee_rows(driver):
         return _quote_scope(
             driver,
             """
-            const containers = [
-              q.orderFees,
-              q.fees,
-              op.orderFees,
-              op.fees
-            ].filter((rows) => Array.isArray(rows));
-            const rows = containers.find((items) => items.length) || [];
+            const containers = [q.orderFees, q.fees, op.orderFees, op.fees];
+            const nodes = Array.from(document.querySelectorAll('*'));
+            for (const el of nodes) {
+              let scope = null;
+              try { scope = angular.element(el).scope && angular.element(el).scope(); } catch (err) {}
+              for (let hops = 0; scope && hops < 8; scope = scope.$parent, hops++) {
+                const controller = scope.OrderFeesController || scope.orderFeesController || null;
+                const order = controller && controller.order;
+                let resource = null;
+                try { resource = order && typeof order.getResource === 'function' ? order.getResource() : null; } catch (err) {}
+                containers.push(
+                  order && order.orderFees,
+                  order && order.fees,
+                  resource && resource.orderFees,
+                  resource && resource.fees,
+                  scope.order && scope.order.orderFees,
+                  scope.order && scope.order.fees
+                );
+              }
+            }
+            const arrays = containers.filter((rows) => Array.isArray(rows));
+            const rows = arrays.find((items) => items.length) || [];
             return rows.map((fee) => ({
               feeId: fee.feeId || fee.id || '',
               name: fee.name || fee.feeName || '',
@@ -1457,6 +1483,10 @@ def _add_quote_fee(driver, fee_label, amount, fallback_fee_id=None, fallback_cod
         function feeContainers() {
           const containers = [];
           const seen = new Set();
+          function addOrderContainers(order, label) {
+            addContainer(order, 'orderFees', label + '.orderFees', containers, seen);
+            addContainer(order, 'fees', label + '.fees', containers, seen);
+          }
           addContainer(q, 'orderFees', 'quote.orderFees', containers, seen);
           addContainer(q, 'fees', 'quote.fees', containers, seen);
           addContainer(op, 'orderFees', 'option.orderFees', containers, seen);
@@ -1467,17 +1497,29 @@ def _add_quote_fee(driver, fee_label, amount, fallback_fee_id=None, fallback_cod
             try { scope = angular.element(el).scope && angular.element(el).scope(); } catch (err) {}
             for (let hops = 0; scope && hops < 8; scope = scope.$parent, hops++) {
               const controller = scope.OrderFeesController || scope.orderFeesController || null;
-              addContainer(controller && controller.order, 'orderFees', 'controller.orderFees', containers, seen);
-              addContainer(controller && controller.order, 'fees', 'controller.fees', containers, seen);
-              addContainer(scope.order, 'orderFees', 'scope.orderFees', containers, seen);
-              addContainer(scope.order, 'fees', 'scope.fees', containers, seen);
+              const order = controller && controller.order;
+              let resource = null;
+              try { resource = order && typeof order.getResource === 'function' ? order.getResource() : null; } catch (err) {}
+              addOrderContainers(order, 'controller.order');
+              addOrderContainers(resource, 'controller.resource');
+              addOrderContainers(scope.order, 'scope.order');
             }
           }
           return containers;
         }
         const containers = feeContainers();
-        const target = containers.find((item) => item.owner[item.prop].length);
-        if (!target) throw new Error('No quote fee row was created');
+        let target = containers.find((item) => item.owner[item.prop].length);
+        let source = 'crm_add_fee';
+        if (!target) {
+          // Some copied-quote pages render the fee form but their Add Fee
+          // handler does not append to the quote option.  The option is the
+          // object serialized by saveQuote(), so create the same fee row
+          // directly on it, just as shippingPrice is assigned above.
+          if (!Array.isArray(op.orderFees)) op.orderFees = [];
+          op.orderFees.push({crudAction: 'c'});
+          target = {owner: op, prop: 'orderFees', label: 'option.orderFees'};
+          source = 'direct_quote_option_fallback';
+        }
         const fees = target.owner[target.prop];
         const definition = findFeeDefinition() || {};
         const fee = fees[fees.length - 1];
@@ -1488,7 +1530,7 @@ def _add_quote_fee(driver, fee_label, amount, fallback_fee_id=None, fallback_cod
         fee.amount = amount;
         fee.crudAction = fee.crudAction || 'c';
         runInAngular(s, () => {});
-        return {feeId: fee.feeId || '', name: fee.name || '', code: fee.code || '', amount: fee.amount || '', source: target.label};
+        return {feeId: fee.feeId || '', name: fee.name || '', code: fee.code || '', amount: fee.amount || '', source: target.label, creation: source};
         """,
         fee_label,
         _signed_money_text(amount).replace("$", ""),
@@ -1809,7 +1851,14 @@ def _prepare_and_save_split_quote(
             modal_error = _visible_crm_error_message(driver)
             if modal_error:
                 raise RecoverableCrmError(f"CRM error while preparing split quote: {modal_error}")
-            promo_discount_fee = _add_discount_fee_to_split_quote(driver, split.get("promo_credit", "0.00"))
+            # CRM drops copied-quote fee rows during quote-to-order conversion.
+            # Defer the promo until the resulting order exists, then use the
+            # same persisted order-fee form used for Refund fees.
+            promo_discount_fee = {
+                "skipped": True,
+                "reason": "deferred_to_split_order",
+                "amount": _money_text(split.get("promo_credit", "0.00")),
+            }
             modal_error = _visible_crm_error_message(driver)
             if modal_error:
                 raise RecoverableCrmError(f"CRM error while preparing split quote: {modal_error}")
@@ -2320,6 +2369,67 @@ def _finalize_split_quote_and_wait_for_order(driver, payment_type, transaction_i
     return _convert_unpaid_split_quote_and_wait_for_order(driver)
 
 
+def _finalize_split_quote_with_order_discount(driver, payment_type, transaction_id, promo_credit):
+    """Convert a split, persist its Discount, then record the discounted payment.
+
+    A promo-bearing quote must be converted without payment first. CRM does not
+    retain fee rows added to the copied quote, and recording payment before the
+    order-level Discount would overstate Paid and leave a negative balance.
+    """
+    promo_amount = Decimal(str(promo_credit or "0")).copy_abs().quantize(Decimal("0.01"))
+    if promo_amount == Decimal("0.00"):
+        order_id = _finalize_split_quote_and_wait_for_order(driver, payment_type, transaction_id)
+        _open_order_scope_with_reload(
+            driver,
+            _order_url(order_id=order_id),
+            order_id=order_id,
+            label=f"new split order {order_id}",
+        )
+        totals = _read_order_totals(driver)
+        payment_verification = (
+            _verify_paid_split_order_totals(totals)
+            if transaction_id
+            else {"passed": True, "skipped": True, "reason": "original_order_unpaid"}
+        )
+        return order_id, {"skipped": True, "reason": "no_promo_credit", "amount": "0.00"}, totals, payment_verification
+
+    order_id = _convert_unpaid_split_quote_and_wait_for_order(driver)
+    order_url = _order_url(order_id=order_id)
+    _open_order_scope_with_reload(
+        driver,
+        order_url,
+        order_id=order_id,
+        label=f"new split order {order_id} before Discount",
+    )
+    promo_discount_fee = _add_discount_fee_to_split_order(driver, promo_amount)
+    _open_order_scope_with_reload(
+        driver,
+        order_url,
+        order_id=order_id,
+        label=f"new split order {order_id} after Discount",
+    )
+    totals = _read_order_totals(driver)
+    if transaction_id:
+        payment_verification = _record_split_payment_on_order(
+            driver,
+            order_id,
+            _transaction_tag_for_payment_type(payment_type),
+            transaction_id,
+            totals["grand_total"],
+            expected_grand_total=totals["grand_total"],
+        )
+        _open_order_scope_with_reload(
+            driver,
+            order_url,
+            order_id=order_id,
+            label=f"paid discounted split order {order_id}",
+        )
+        totals = _read_order_totals(driver)
+    else:
+        payment_verification = _verify_order_payment_allocation(totals, Decimal("0.00"))
+    return order_id, promo_discount_fee, totals, payment_verification
+
+
 def _create_split_order_in_worker(
     split,
     original_order_id,
@@ -2351,7 +2461,7 @@ def _create_split_order_in_worker(
             f"worker original CRM order before split {split['split_index']}",
         )
         _wait_for_order_scope(driver, order_id=original_order_id)
-        configured, promo_discount_fee, saved_quote = _prepare_and_save_split_quote(
+        configured, _deferred_promo_discount, saved_quote = _prepare_and_save_split_quote(
             driver,
             original_order_url,
             original_order_id,
@@ -2359,18 +2469,13 @@ def _create_split_order_in_worker(
             split,
             original_state,
         )
-        new_order_id = _finalize_split_quote_and_wait_for_order(driver, payment_type, transaction_id)
-        _open_order_scope_with_reload(
-            driver,
-            _order_url(order_id=new_order_id),
-            order_id=new_order_id,
-            label=f"new split order {new_order_id}",
-        )
-        totals = _read_order_totals(driver)
-        payment_verification = (
-            _verify_paid_split_order_totals(totals)
-            if transaction_id
-            else {"passed": True, "skipped": True, "reason": "original_order_unpaid"}
+        new_order_id, promo_discount_fee, totals, payment_verification = (
+            _finalize_split_quote_with_order_discount(
+                driver,
+                payment_type,
+                transaction_id,
+                split.get("promo_credit", "0.00"),
+            )
         )
         return {
             "split_index": split["split_index"],
@@ -2480,6 +2585,23 @@ def _existing_original_refund_fee_amount(driver):
         if "refund" in label:
             refund_amounts.append(_parse_money(fee.get("amount")).copy_abs())
     return sum(refund_amounts, Decimal("0.00")).quantize(Decimal("0.01"))
+
+
+def _resolve_original_refund_fee_amount(scan, original_state, existing_refund_amount, resume_existing_order_ids, split_total):
+    refund_amount = Decimal(
+        _money_text(
+            (scan or {}).get("totals", {}).get("subtotal_before_tax")
+            or (original_state or {}).get("subtotal")
+            or (scan or {}).get("totals", {}).get("subtotal")
+            or "0"
+        )
+    )
+    existing_refund_amount = _parse_money(existing_refund_amount).copy_abs().quantize(Decimal("0.01"))
+    if refund_amount == Decimal("0.00") and existing_refund_amount > Decimal("0.00"):
+        return existing_refund_amount
+    if refund_amount == Decimal("0.00") and resume_existing_order_ids:
+        return Decimal(split_total).quantize(Decimal("0.01"))
+    return refund_amount.quantize(Decimal("0.01"))
 
 
 def _order_fee_rows(driver):
@@ -2688,6 +2810,63 @@ def _add_discount_fee_to_split_order(driver, promo_credit):
     )
 
 
+def _reconcile_existing_split_payment_after_discount(driver, order_id, totals, note):
+    """Correct a resumed split whose payment was recorded before its Discount.
+
+    This records only a CRM bookkeeping Refund transaction. It never uses the
+    payment-provider refund control. The arithmetic must prove that the current
+    negative balance is exactly the payment overage introduced by applying the
+    missing Discount, and the reloaded order must finish fully balanced.
+    """
+    totals = totals if isinstance(totals, dict) else {}
+    grand_total = _parse_money(totals.get("grand_total"))
+    paid = _parse_money(totals.get("paid"))
+    balance_due = _parse_money(totals.get("balance_due"))
+    if paid == Decimal("0.00"):
+        return {"skipped": True, "reason": "split_order_unpaid", "amount": "0.00"}
+    if (
+        (paid - grand_total).copy_abs() <= SPLIT_TOTAL_TOLERANCE
+        and balance_due.copy_abs() <= SPLIT_TOTAL_TOLERANCE
+    ):
+        return {"skipped": True, "reason": "already_balanced", "amount": "0.00"}
+
+    overpayment = (paid - grand_total).quantize(Decimal("0.01"))
+    if (
+        overpayment <= Decimal("0.00")
+        or (balance_due + overpayment).copy_abs() > SPLIT_TOTAL_TOLERANCE
+    ):
+        raise SplitterError(
+            f"Existing split order {order_id} payment correction was blocked: "
+            f"Grand Total ${_money_text(grand_total)}, Paid ${_money_text(paid)}, "
+            f"Balance Due {_signed_money_text(balance_due)}."
+        )
+
+    _open_record_transaction(driver, quote=False)
+    _save_transaction_modal_with_amount(
+        driver,
+        "Refund",
+        note,
+        amount=-overpayment,
+        validate_refund=False,
+    )
+    time.sleep(2)
+    order_url = _order_url(order_id=order_id)
+    _open_order_scope_with_reload(
+        driver,
+        order_url,
+        order_id=order_id,
+        label=f"balanced recovered split order {order_id}",
+    )
+    verified_totals = _read_order_totals(driver)
+    verification = _verify_order_payment_allocation(verified_totals, grand_total)
+    return {
+        "skipped": False,
+        "amount": _money_text(overpayment),
+        "note": note,
+        "verification": verification,
+    }
+
+
 def _design_name_set(designs):
     return {
         _clean_text(design.get("design_name")).lower()
@@ -2723,6 +2902,17 @@ def _inspect_existing_split_order(driver, split_order_id, plan, used_split_index
     split = matches[0]
     promo_discount_fee = _add_discount_fee_to_split_order(driver, split.get("promo_credit", "0.00"))
     totals = _read_order_totals(driver)
+    payment_correction = _reconcile_existing_split_payment_after_discount(
+        driver,
+        split_order_id,
+        totals,
+        (
+            f"promo {split.get('promo_code')} allocated from {split.get('sales_note')}"
+            if _clean_text(split.get("promo_code"))
+            else f"promo allocated from {split.get('sales_note')}"
+        ),
+    )
+    totals = _read_order_totals(driver)
     return {
         "split_index": split["split_index"],
         "order_id": split_order_id,
@@ -2735,6 +2925,7 @@ def _inspect_existing_split_order(driver, split_order_id, plan, used_split_index
         "promo_code": split.get("promo_code", ""),
         "stock_transfer_records": split.get("stock_transfer_records", []),
         "promo_discount_fee": promo_discount_fee,
+        "promo_payment_correction": payment_correction,
         "quote_save": None,
         "configure_result": {"existing_order_id": split_order_id, "matched_by": "design_names"},
         "totals": totals,
@@ -2839,12 +3030,25 @@ def _copy_stock_records_to_split_orders(driver, split_orders, login_wait_seconds
             raise SplitterError(
                 f"Could not copy ordered stock records to split order {order_id}: {exc}"
             ) from exc
+        _open_order_scope_with_reload(
+            driver,
+            order_url,
+            order_id=order_id,
+            label=f"split order {order_id} stock-copy verification",
+        )
+        verification = _product_separator._verify_manual_order_records_visible_in_dom(driver, matched_records)
+        if not verification.get("verified"):
+            raise SplitterError(
+                f"Stock PO copy verification failed for split order {order_id}: "
+                f"{verification.get('missing_records') or 'matching Manual Order rows were not visible'}."
+            )
         results.append(
             {
                 "split_index": split_order.get("split_index"),
                 "order_id": order_id,
                 "records": matched_records,
                 "recording": recording,
+                "verification": verification,
             }
         )
     return {"attempted": bool(results), "orders": results}
@@ -4224,7 +4428,7 @@ def run_split_order(
                         order_id=resolved_order_id,
                         label=f"original CRM order before split {split['split_index']}",
                     )
-                    configured, promo_discount_fee, saved_quote = _prepare_and_save_split_quote(
+                    configured, _deferred_promo_discount, saved_quote = _prepare_and_save_split_quote(
                         driver,
                         target_url,
                         resolved_order_id,
@@ -4232,26 +4436,13 @@ def run_split_order(
                         split,
                         original_state,
                     )
-                    new_order_id = _finalize_split_quote_and_wait_for_order(
-                        driver,
-                        payment_type,
-                        "" if retain_original else transaction_id,
-                    )
-                    _open_order_scope_with_reload(
-                        driver,
-                        _order_url(order_id=new_order_id),
-                        order_id=new_order_id,
-                        label=f"new split order {new_order_id}",
-                    )
-                    totals = _read_order_totals(driver)
-                    payment_verification = (
-                        _verify_paid_split_order_totals(totals)
-                        if transaction_id and not retain_original
-                        else {
-                            "passed": True,
-                            "skipped": True,
-                            "reason": "deferred_proportional_allocation" if retain_original else "original_order_unpaid",
-                        }
+                    new_order_id, promo_discount_fee, totals, payment_verification = (
+                        _finalize_split_quote_with_order_discount(
+                            driver,
+                            payment_type,
+                            "" if retain_original else transaction_id,
+                            split.get("promo_credit", "0.00"),
+                        )
                     )
                     split_total += Decimal(totals["grand_total"])
                     split_orders.append(
@@ -4448,22 +4639,40 @@ def run_split_order(
                     "difference": _money_text(split_total_delta),
                     "message": split_total_mismatch_warning,
                 }
+                _write_split_progress_checkpoint(
+                    result_file,
+                    report,
+                    split_orders,
+                    resolved_order_id,
+                    target_url,
+                    expected_tab_count,
+                    divisions,
+                    started,
+                    stage="total_verification_failed",
+                )
+                raise SplitterError(
+                    f"{split_total_mismatch_warning} Original refund and cancellation were blocked."
+                )
             elif split_total_delta:
                 report["split_total_rounding_delta"] = _money_text(split_total_delta)
 
-            refund_amount = Decimal(
-                _money_text(
-                    scan.get("totals", {}).get("subtotal_before_tax")
-                    or original_state.get("subtotal")
-                    or scan.get("totals", {}).get("subtotal")
-                    or "0"
-                )
+            # A resumed run can arrive after the original Refund fee has
+            # zeroed its subtotal. Reopen the original before reading that fee;
+            # the driver is otherwise still on the final split order here.
+            _open_order_scope_with_reload(
+                driver,
+                target_url,
+                order_id=resolved_order_id,
+                label="original CRM order refund-fee recovery check",
             )
             existing_refund_amount = _existing_original_refund_fee_amount(driver)
-            if refund_amount == Decimal("0.00") and existing_refund_amount > Decimal("0.00"):
-                refund_amount = existing_refund_amount
-            elif refund_amount == Decimal("0.00") and resume_existing_order_ids:
-                refund_amount = split_total.quantize(Decimal("0.01"))
+            refund_amount = _resolve_original_refund_fee_amount(
+                scan,
+                original_state,
+                existing_refund_amount,
+                resume_existing_order_ids,
+                split_total,
+            )
             if retain_original:
                 original_finalization = {
                     "retained_original": True,
@@ -4516,7 +4725,7 @@ def run_split_order(
                     resolved_order_id,
                     progress=original_cleanup_progress,
                 )
-            if stock_routing.get("action") == "slack_mach6_cancelled":
+            if stock_routing.get("notify_mach6_cancelled") or stock_routing.get("action") == "slack_mach6_cancelled":
                 report["stock_cancel_slack"] = _send_mach6_stock_cancel_slack(target_url, dry_run=False)
 
             report.update(
@@ -4643,9 +4852,76 @@ def run_split_order(
         _cleanup_parallel_profiles(worker_profiles)
 
 
+def run_inspect_order(
+    order_id=None,
+    order_url=None,
+    login_wait_seconds=0,
+    attach_browser=False,
+    debugger_address="127.0.0.1:9222",
+    visible=False,
+    result_file=None,
+):
+    """Read an order's current CRM state without making any changes."""
+    started = time.monotonic()
+    resolved_order_id = _extract_order_id(order_id=order_id, order_url=order_url)
+    target_url = _order_url(order_id=order_id, order_url=order_url)
+    if not target_url:
+        _write_result(False, "Order ID or CRM order URL is required for inspect_order.", result_file=result_file, action="inspect_order")
+        return 2
+
+    driver = None
+    try:
+        profile = _profile_path()
+        if attach_browser:
+            driver = build_attached_chrome_driver(debugger_address=debugger_address)
+            driver.set_script_timeout(max(PROCESSOR_ACTION_TIMEOUT, AUTO_SPLITTER_SCRIPT_TIMEOUT_SECONDS))
+        else:
+            kill_stale_chrome(profile, profile_label="CRM order inspector")
+            driver = _build_splitter_driver(profile, visible=visible)
+        safe_get_with_partial_load(driver, target_url, "CRM order inspection")
+        _handle_login_if_needed(driver, target_url, login_wait_seconds=login_wait_seconds)
+        _switch_to_crm_app_frame(driver)
+        scan = _scan_original_order(driver)
+        live_state = _get_order_live_state(driver)
+        cancelled = _original_order_is_cancelled(driver)
+        report = dict(scan)
+        report["live_state"] = live_state
+        report["cancelled"] = cancelled
+        _write_result(
+            True,
+            f"Read-only inspection complete for order {resolved_order_id}. No CRM changes were made.",
+            result_file=result_file,
+            action="inspect_order",
+            dry_run=True,
+            target_order_id=resolved_order_id,
+            order_url=target_url,
+            report=report,
+            duration_seconds=round(time.monotonic() - started, 2),
+        )
+        return 0
+    except Exception as err:
+        if driver is not None:
+            safe_take_screenshot(driver, "inspect_order_error")
+        _write_result(
+            False,
+            f"Read-only order inspection failed: {err}",
+            result_file=result_file,
+            action="inspect_order",
+            dry_run=True,
+            target_order_id=resolved_order_id,
+            order_url=target_url,
+            error_type=type(err).__name__,
+            duration_seconds=round(time.monotonic() - started, 2),
+        )
+        return 1
+    finally:
+        if not attach_browser:
+            safe_driver_quit(driver, profile_path=_profile_path())
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="CRM processor automation worker.")
-    parser.add_argument("--action", choices=["smoke_test", "process_order", "process_batch", "split_order"], default="smoke_test")
+    parser.add_argument("--action", choices=["smoke_test", "process_order", "process_batch", "split_order", "inspect_order"], default="smoke_test")
     parser.add_argument("--order-id", default="")
     parser.add_argument("--order-url", default="")
     parser.add_argument("--list-url", default="")
@@ -4691,6 +4967,16 @@ def main(argv=None):
             result_file=args.result_file,
             resume_existing_order_ids=args.resume_existing_order_id,
             parallel_workers=args.parallel_workers,
+        )
+    if args.action == "inspect_order":
+        return run_inspect_order(
+            order_id=args.order_id,
+            order_url=args.order_url,
+            login_wait_seconds=args.login_wait_seconds,
+            attach_browser=args.attach_browser,
+            debugger_address=args.debugger_address,
+            visible=args.visible,
+            result_file=args.result_file,
         )
     _write_result(False, f"Unsupported action: {args.action}", result_file=args.result_file)
     return 2

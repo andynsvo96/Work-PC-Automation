@@ -5227,6 +5227,17 @@ class CrmAutoSplitterTests(unittest.TestCase):
 
         self.assertEqual(original_grand_total, crm_auto_splitter.Decimal("445.11"))
 
+    def test_resume_reuses_existing_original_refund_fee_instead_of_split_grand_total(self):
+        amount = crm_auto_splitter._resolve_original_refund_fee_amount(
+            {"totals": {"subtotal_before_tax": "0.00", "subtotal": "0.00"}},
+            {"subtotal": "0.00"},
+            crm_auto_splitter.Decimal("1319.97"),
+            ["5131757", "5131772"],
+            crm_auto_splitter.Decimal("1402.79"),
+        )
+
+        self.assertEqual(amount, crm_auto_splitter.Decimal("1319.97"))
+
     def test_auto_divisions_use_fewest_orders_with_ten_tab_limit(self):
         cases = {
             12: (2, [6, 6]),
@@ -5735,6 +5746,47 @@ class CrmAutoSplitterTests(unittest.TestCase):
             fallback_code="discount",
         )
 
+    def test_resumed_split_reconciles_only_proven_discount_overpayment(self):
+        driver = mock.Mock()
+        after = {"grand_total": "762.95", "paid": "762.95", "balance_due": "0.00"}
+        with mock.patch.object(crm_auto_splitter, "_open_record_transaction") as open_transaction, \
+             mock.patch.object(crm_auto_splitter, "_save_transaction_modal_with_amount") as save_transaction, \
+             mock.patch.object(crm_auto_splitter, "_open_order_scope_with_reload"), \
+             mock.patch.object(crm_auto_splitter, "_read_order_totals", return_value=after), \
+             mock.patch.object(crm_auto_splitter.time, "sleep"):
+            result = crm_auto_splitter._reconcile_existing_split_payment_after_discount(
+                driver,
+                "5131757",
+                {"grand_total": "762.95", "paid": "816.11", "balance_due": "-53.16"},
+                "promo q5g4ucgs allocated from transferred from 5122887",
+            )
+
+        open_transaction.assert_called_once_with(driver, quote=False)
+        save_transaction.assert_called_once_with(
+            driver,
+            "Refund",
+            "promo q5g4ucgs allocated from transferred from 5122887",
+            amount=crm_auto_splitter.Decimal("-53.16"),
+            validate_refund=False,
+        )
+        self.assertFalse(result["skipped"])
+        self.assertEqual(result["amount"], "53.16")
+        self.assertTrue(result["verification"]["passed"])
+
+    def test_mach6_stock_with_pos_is_copied_and_also_notified(self):
+        routing = crm_auto_splitter._planned_stock_routing(
+            {
+                "stock_ordered": True,
+                "transfer_records": [{"vendor": "S&S Activewear", "po": "H-Test-SS01"}],
+                "cancelled_channel_rows": [{"vendor": "S&S Activewear", "po": "H-Test-SS01"}],
+                "unknown_ordered_tabs": [],
+            },
+            subcontractor="Mach 6 Manufacturing (CA)",
+        )
+
+        self.assertEqual(routing["action"], "copy_to_split_orders")
+        self.assertTrue(routing["notify_mach6_cancelled"])
+
     def test_discount_fee_uses_visible_discount_form_with_allocated_amount(self):
         driver = mock.Mock()
         driver.execute_script.return_value = True
@@ -5753,7 +5805,42 @@ class CrmAutoSplitterTests(unittest.TestCase):
         self.assertEqual(label, "Discount")
         self.assertEqual(amount, "-1.67")
 
-    def test_new_split_applies_quote_discount_before_recording_payment(self):
+    def test_quote_fee_lookup_includes_order_fee_controller_resource(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = []
+
+        crm_auto_splitter._quote_fee_rows(driver)
+
+        script = driver.execute_script.call_args.args[0]
+        self.assertIn("typeof order.getResource === 'function'", script)
+        self.assertIn("resource && resource.orderFees", script)
+
+    def test_quote_fee_creation_falls_back_to_quote_option_model(self):
+        driver = mock.Mock()
+        with mock.patch.object(crm_auto_splitter, "_quote_fee_already_present", return_value=False), \
+             mock.patch.object(crm_auto_splitter, "_click_add_fee", return_value=True), \
+             mock.patch.object(crm_auto_splitter.time, "sleep"):
+            driver.execute_script.return_value = {
+                "feeId": 1,
+                "name": "Discount",
+                "code": "discount",
+                "amount": "-50.00",
+                "source": "option.orderFees",
+                "creation": "direct_quote_option_fallback",
+            }
+            result = crm_auto_splitter._add_quote_fee(
+                driver,
+                "Discount",
+                crm_auto_splitter.Decimal("-50.00"),
+                fallback_code="discount",
+            )
+
+        script = driver.execute_script.call_args.args[0]
+        self.assertIn("if (!Array.isArray(op.orderFees)) op.orderFees = []", script)
+        self.assertIn("op.orderFees.push({crudAction: 'c'})", script)
+        self.assertEqual(result["fee"]["creation"], "direct_quote_option_fallback")
+
+    def test_new_split_applies_order_discount_before_recording_payment(self):
         events = []
         driver = mock.Mock()
         split = {
@@ -5788,7 +5875,7 @@ class CrmAutoSplitterTests(unittest.TestCase):
                 mock.patch.object(
                     crm_auto_splitter,
                     "_add_discount_fee_to_split_quote",
-                    side_effect=lambda *args, **kwargs: events.append("quote_discount") or {"skipped": False},
+                    side_effect=lambda *args, **kwargs: events.append("unexpected_quote_discount") or {"skipped": False},
                 )
             )
             stack.enter_context(
@@ -5801,8 +5888,8 @@ class CrmAutoSplitterTests(unittest.TestCase):
             stack.enter_context(
                 mock.patch.object(
                     crm_auto_splitter,
-                    "_record_split_payment_and_wait_for_order",
-                    side_effect=lambda *args, **kwargs: events.append("record_payment") or "4678000",
+                    "_convert_unpaid_split_quote_and_wait_for_order",
+                    side_effect=lambda *args, **kwargs: events.append("convert_unpaid") or "4678000",
                 )
             )
             stack.enter_context(
@@ -5813,7 +5900,18 @@ class CrmAutoSplitterTests(unittest.TestCase):
                 )
             )
             post_order_discount = stack.enter_context(
-                mock.patch.object(crm_auto_splitter, "_add_discount_fee_to_split_order")
+                mock.patch.object(
+                    crm_auto_splitter,
+                    "_add_discount_fee_to_split_order",
+                    side_effect=lambda *args, **kwargs: events.append("order_discount") or {"skipped": False},
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    crm_auto_splitter,
+                    "_record_split_payment_on_order",
+                    side_effect=lambda *args, **kwargs: events.append("record_payment") or {"passed": True},
+                )
             )
 
             result = crm_auto_splitter._create_split_order_in_worker(
@@ -5828,9 +5926,11 @@ class CrmAutoSplitterTests(unittest.TestCase):
             )
 
         self.assertEqual(result["order_id"], "4678000")
-        self.assertLess(events.index("quote_discount"), events.index("save_quote"))
-        self.assertLess(events.index("save_quote"), events.index("record_payment"))
-        post_order_discount.assert_not_called()
+        self.assertNotIn("unexpected_quote_discount", events)
+        self.assertLess(events.index("save_quote"), events.index("convert_unpaid"))
+        self.assertLess(events.index("convert_unpaid"), events.index("order_discount"))
+        self.assertLess(events.index("order_discount"), events.index("record_payment"))
+        post_order_discount.assert_called_once()
 
     @mock.patch.object(crm_auto_splitter, "safe_driver_quit")
     @mock.patch.object(crm_auto_splitter, "_extract_process_batch_order_ids")
