@@ -3398,33 +3398,6 @@ def _click_viewport_point(driver, x, y):
         clicked = True
     except Exception:
         pass
-    if os.name == "nt":
-        try:
-            metrics = driver.execute_script(
-                """
-                return {
-                  screenX: window.screenX,
-                  screenY: window.screenY,
-                  outerWidth: window.outerWidth,
-                  outerHeight: window.outerHeight,
-                  innerWidth: window.innerWidth,
-                  innerHeight: window.innerHeight
-                };
-                """
-            )
-            border_x = max(0, (float(metrics.get("outerWidth") or 0) - float(metrics.get("innerWidth") or 0)) / 2)
-            chrome_y = max(0, float(metrics.get("outerHeight") or 0) - float(metrics.get("innerHeight") or 0) - border_x)
-            screen_x = int(round(float(metrics.get("screenX") or 0) + border_x + x))
-            screen_y = int(round(float(metrics.get("screenY") or 0) + chrome_y + y))
-            user32 = ctypes.windll.user32
-            user32.SetCursorPos(screen_x, screen_y)
-            time.sleep(0.05)
-            user32.mouse_event(0x0002, 0, 0, 0, 0)
-            time.sleep(0.05)
-            user32.mouse_event(0x0004, 0, 0, 0, 0)
-            clicked = True
-        except Exception:
-            pass
     return clicked
 
 
