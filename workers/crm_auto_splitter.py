@@ -4919,9 +4919,171 @@ def run_inspect_order(
             safe_driver_quit(driver, profile_path=_profile_path())
 
 
+def run_repair_existing_split_completion(
+    order_id=None,
+    order_url=None,
+    split_order_ids=None,
+    login_wait_seconds=0,
+    visible=False,
+    result_file=None,
+):
+    """Finish stock transfer and original cleanup for already-created split orders."""
+    started = time.monotonic()
+    resolved_order_id = _extract_order_id(order_id=order_id, order_url=order_url)
+    target_url = _order_url(order_id=order_id, order_url=order_url)
+    split_order_ids = [str(value or "").strip() for value in (split_order_ids or []) if str(value or "").strip()]
+    if not target_url or len(split_order_ids) < 2:
+        _write_result(
+            False,
+            "An original order and at least two existing split order IDs are required.",
+            result_file=result_file,
+            action="repair_existing_split_completion",
+        )
+        return 2
+
+    driver = None
+    report = {"original_order_id": resolved_order_id, "split_order_ids": split_order_ids}
+    try:
+        profile = _profile_path()
+        kill_stale_chrome(profile, profile_label="CRM split completion repair")
+        driver = _build_splitter_driver(profile, visible=visible)
+        safe_get_with_partial_load(driver, target_url, "original CRM order for split completion repair")
+        _handle_login_if_needed(driver, target_url, login_wait_seconds=login_wait_seconds)
+        _switch_to_crm_app_frame(driver)
+        original_scan = _scan_original_order(driver)
+        original_state = _get_order_live_state(driver)
+
+        promo_amount = _parse_money(original_scan.get("totals", {}).get("promo")).copy_abs()
+        plan = _build_split_plan(
+            original_scan.get("designs") or [],
+            len(split_order_ids),
+            resolved_order_id or "UNKNOWN",
+            shipping_amount=_parse_money(original_scan.get("totals", {}).get("shipping")),
+            promo_amount=promo_amount,
+            promo_code=original_scan.get("totals", {}).get("promo_code", ""),
+        )
+        expected_by_ids = {
+            frozenset(str(value) for value in split.get("keep_design_ids") or []): split
+            for split in plan
+        }
+        matched_orders = []
+        split_total = Decimal("0.00")
+        discount_total = Decimal("0.00")
+        seen_design_ids = set()
+        inspections = []
+        for split_order_id in split_order_ids:
+            split_url = _order_url(order_id=split_order_id)
+            _open_order_scope_with_reload(driver, split_url, order_id=split_order_id, label=f"existing split order {split_order_id}")
+            split_scan = _scan_original_order(driver)
+            split_state = _get_order_live_state(driver)
+            if _original_order_is_cancelled(driver):
+                raise SplitterError(f"Intended split order {split_order_id} is cancelled.")
+            actual_ids = frozenset(str(item.get("design_id") or "") for item in split_scan.get("designs") or [])
+            split = expected_by_ids.get(actual_ids)
+            if split is None:
+                raise SplitterError(f"Split order {split_order_id} does not exactly match one expected design range.")
+            overlap = seen_design_ids.intersection(actual_ids)
+            if overlap:
+                raise SplitterError(f"Split order {split_order_id} duplicates design IDs already found: {sorted(overlap)}.")
+            seen_design_ids.update(actual_ids)
+            discount = sum(
+                (_parse_money(fee.get("amount")).copy_abs() for fee in split_state.get("order_fees") or []
+                 if "discount" in _clean_text(fee.get("name")).lower()),
+                Decimal("0.00"),
+            )
+            expected_discount = _parse_money(split.get("promo_credit"))
+            if discount != expected_discount:
+                raise SplitterError(
+                    f"Split order {split_order_id} has Discount {discount}, expected {expected_discount}."
+                )
+            grand_total = _parse_money(split_scan.get("totals", {}).get("grand_total"))
+            paid = _parse_money(split_scan.get("totals", {}).get("paid"))
+            due = _parse_money(split_scan.get("totals", {}).get("balance_due"))
+            if paid != grand_total or due != Decimal("0.00"):
+                raise SplitterError(
+                    f"Split order {split_order_id} is not balanced: grand {grand_total}, paid {paid}, due {due}."
+                )
+            split_total += grand_total
+            discount_total += discount
+            matched_orders.append({
+                "split_index": split.get("split_index"),
+                "order_id": split_order_id,
+                "stock_transfer_records": split.get("stock_transfer_records") or [],
+            })
+            inspections.append({
+                "order_id": split_order_id,
+                "split_index": split.get("split_index"),
+                "design_count": len(actual_ids),
+                "grand_total": _money_text(grand_total),
+                "paid": _money_text(paid),
+                "discount": _money_text(discount),
+            })
+
+        expected_design_ids = set().union(*expected_by_ids.keys())
+        if seen_design_ids != expected_design_ids:
+            raise SplitterError("Existing split orders do not cover every original design exactly once.")
+        if discount_total != promo_amount:
+            raise SplitterError(f"Split discounts total {discount_total}, but original promo is {promo_amount}.")
+
+        report["split_inspections"] = sorted(inspections, key=lambda item: int(item.get("split_index") or 0))
+        report["split_total"] = _money_text(split_total)
+        report["discount_total"] = _money_text(discount_total)
+        report["stock_transfer"] = _copy_stock_records_to_split_orders(
+            driver,
+            matched_orders,
+            login_wait_seconds=login_wait_seconds,
+        )
+
+        _open_order_scope_with_reload(driver, target_url, order_id=resolved_order_id, label="original order finalization")
+        original_paid = _parse_money(original_state.get("amount_paid") or original_scan.get("totals", {}).get("paid"))
+        refund_fees = [
+            _parse_money(fee.get("amount")).copy_abs()
+            for fee in original_state.get("order_fees") or []
+            if "refund" in _clean_text(fee.get("name")).lower()
+        ]
+        if not refund_fees:
+            raise SplitterError("Original order has no Refund fee to verify; stopping before financial cleanup.")
+        refund_amount = sum(refund_fees, Decimal("0.00"))
+        transfer_note = f"transferred to {_format_order_list(split_order_ids)}"
+        report["original_finalization"] = _finalize_original_order_after_split(
+            driver,
+            payment_detected=original_paid > Decimal("0.00"),
+            refund_amount=refund_amount,
+            original_grand_total=original_paid,
+            transfer_note=transfer_note,
+            original_order_id=resolved_order_id,
+        )
+        report["original_paid"] = _money_text(original_paid)
+        report["split_rounding_difference"] = _money_text(original_paid - split_total)
+        _write_result(
+            True,
+            f"Existing split completion repair finished for original order {resolved_order_id}.",
+            result_file=result_file,
+            action="repair_existing_split_completion",
+            report=report,
+            duration_seconds=round(time.monotonic() - started, 2),
+        )
+        return 0
+    except Exception as err:
+        if driver is not None:
+            safe_take_screenshot(driver, "repair_existing_split_completion_error")
+        _write_result(
+            False,
+            f"Existing split completion repair failed: {err}",
+            result_file=result_file,
+            action="repair_existing_split_completion",
+            report=report,
+            error_type=type(err).__name__,
+            duration_seconds=round(time.monotonic() - started, 2),
+        )
+        return 1
+    finally:
+        safe_driver_quit(driver, profile_path=_profile_path())
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="CRM processor automation worker.")
-    parser.add_argument("--action", choices=["smoke_test", "process_order", "process_batch", "split_order", "inspect_order"], default="smoke_test")
+    parser.add_argument("--action", choices=["smoke_test", "process_order", "process_batch", "split_order", "inspect_order", "repair_existing_split_completion"], default="smoke_test")
     parser.add_argument("--order-id", default="")
     parser.add_argument("--order-url", default="")
     parser.add_argument("--list-url", default="")
@@ -4942,6 +5104,12 @@ def main(argv=None):
         action="append",
         default=[],
         help="Existing split order ID to count as already completed before creating remaining split orders. Repeat for multiple orders.",
+    )
+    parser.add_argument(
+        "--split-order-id",
+        action="append",
+        default=[],
+        help="Existing intended split order ID for targeted completion repair. Repeat for multiple orders.",
     )
     args = parser.parse_args(argv)
 
@@ -4975,6 +5143,15 @@ def main(argv=None):
             login_wait_seconds=args.login_wait_seconds,
             attach_browser=args.attach_browser,
             debugger_address=args.debugger_address,
+            visible=args.visible,
+            result_file=args.result_file,
+        )
+    if args.action == "repair_existing_split_completion":
+        return run_repair_existing_split_completion(
+            order_id=args.order_id,
+            order_url=args.order_url,
+            split_order_ids=args.split_order_id,
+            login_wait_seconds=args.login_wait_seconds,
             visible=args.visible,
             result_file=args.result_file,
         )
