@@ -3018,12 +3018,23 @@ def _copy_stock_records_to_split_orders(driver, split_orders, login_wait_seconds
         )
         new_scan = _scan_original_order(driver)
         matched_records = _records_with_new_tab_matches(records, new_scan)
+        existing_designs = {
+            int(design.get("tab_number") or 0): design
+            for design in new_scan.get("designs") or []
+        }
+        missing_records = []
+        for record in matched_records:
+            design = existing_designs.get(int(record.get("target_tab_number") or 0), {})
+            rows = (design.get("stock") or {}).get("manual_order_rows") or []
+            expected_po = _clean_text(record.get("po")).lower()
+            if not any(_clean_text(row.get("po")).lower() == expected_po for row in rows):
+                missing_records.append(record)
         try:
             recording = _product_separator._record_separator_manual_orders(
                 driver,
                 order_id,
                 order_url,
-                {"manual_order_records": matched_records},
+                {"manual_order_records": missing_records},
                 login_wait_seconds=login_wait_seconds,
             )
         except Exception as exc:
@@ -3047,6 +3058,7 @@ def _copy_stock_records_to_split_orders(driver, split_orders, login_wait_seconds
                 "split_index": split_order.get("split_index"),
                 "order_id": order_id,
                 "records": matched_records,
+                "already_present_count": len(matched_records) - len(missing_records),
                 "recording": recording,
                 "verification": verification,
             }
@@ -3550,6 +3562,7 @@ def _original_transaction_control_is_interactable(driver):
                 !el.disabled && el.getAttribute('aria-disabled') !== 'true';
             });
             if (!control) return false;
+            control.scrollIntoView({block: 'center', inline: 'nearest'});
             const rect = control.getBoundingClientRect();
             const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
             return !!top && (top === control || control.contains(top));
