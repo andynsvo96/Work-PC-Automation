@@ -1406,7 +1406,7 @@ def _add_quote_fee(driver, fee_label, amount, fallback_fee_id=None, fallback_cod
     if _quote_fee_already_present(driver, fee_label, amount):
         return {"skipped": True, "reason": "already_present", "fee_label": fee_label, "amount": _money_text(amount)}
 
-    if not _click_add_fee(driver, fee_label):
+    if not _click_add_fee(driver, fee_label, amount):
         raise SplitterError(f"Could not click Add Fee for quote {fee_label}.")
     time.sleep(0.5)
     result = _quote_scope(
@@ -2509,7 +2509,80 @@ def _order_fee_already_present(driver, fee_label, amount):
     return False
 
 
-def _click_add_fee(driver, target_label):
+def _click_add_fee(driver, target_label, amount=None):
+    """Add a fee through CRM's visible fee form when it is available.
+
+    The CRM fee widget keeps the selected fee and amount in the form until
+    ``Add Fee`` is clicked.  Calling its ``ng-click`` handler directly skips
+    that form state on some quote pages, leaving no fee row to save.  Use the
+    same visible Discount form an operator uses first, then retain the legacy
+    ng-click and text-button fallbacks for older CRM layouts.
+    """
+    form_clicked = bool(
+        driver.execute_script(
+            """
+            const targetLabel = String(arguments[0] || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+            const requestedAmount = arguments[1];
+            const forbidden = /\\b(refund|issue\\s+refund|refund\\s+payment)\\b/i;
+            const visible = (el) => {
+              if (!el) return false;
+              const rect = el.getBoundingClientRect();
+              const style = window.getComputedStyle ? window.getComputedStyle(el) : {};
+              return rect.width > 0 && rect.height > 0 && style.display !== 'none' &&
+                style.visibility !== 'hidden' && !el.closest('[hidden],[aria-hidden="true"]');
+            };
+            const text = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+            const discountSelect = Array.from(document.querySelectorAll('select')).find((select) =>
+              visible(select) && Array.from(select.options || []).some((option) => text(option.text) === targetLabel)
+            );
+            if (!discountSelect) return false;
+
+            const option = Array.from(discountSelect.options).find((item) => text(item.text) === targetLabel);
+            if (!option) return false;
+            discountSelect.value = option.value;
+            discountSelect.dispatchEvent(new Event('input', {bubbles: true}));
+            discountSelect.dispatchEvent(new Event('change', {bubbles: true}));
+
+            let form = discountSelect;
+            for (let hops = 0; form && hops < 6; form = form.parentElement, hops++) {
+              const hasAddFee = Array.from(form.querySelectorAll('button,a,input[type=button],input[type=submit]')).some((el) =>
+                visible(el) && text(el.innerText || el.value) === 'add fee'
+              );
+              if (hasAddFee) break;
+            }
+            if (!form) return false;
+
+            if (requestedAmount !== null && requestedAmount !== undefined && requestedAmount !== '') {
+              const amountInput = Array.from(form.querySelectorAll('input')).find((input) => {
+                const type = String(input.type || 'text').toLowerCase();
+                return visible(input) && !input.disabled && !['hidden', 'checkbox', 'radio', 'button', 'submit'].includes(type);
+              });
+              if (amountInput) {
+                const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+                if (descriptor && descriptor.set) descriptor.set.call(amountInput, String(requestedAmount));
+                else amountInput.value = String(requestedAmount);
+                amountInput.dispatchEvent(new Event('input', {bubbles: true}));
+                amountInput.dispatchEvent(new Event('change', {bubbles: true}));
+                amountInput.dispatchEvent(new Event('blur', {bubbles: true}));
+              }
+            }
+
+            const button = Array.from(form.querySelectorAll('button,a,input[type=button],input[type=submit]')).find((el) => {
+              const label = (el.innerText || el.value || '').replace(/\\s+/g, ' ').trim();
+              return visible(el) && !el.disabled && el.getAttribute('disabled') === null &&
+                text(label) === 'add fee' && !forbidden.test(label);
+            });
+            if (!button) return false;
+            button.scrollIntoView({block: 'center', inline: 'center'});
+            button.click();
+            return true;
+            """,
+            target_label,
+            _signed_money_text(amount).replace("$", "") if amount is not None else "",
+        )
+    )
+    if form_clicked:
+        return True
     clicked = _click_ng_button(driver, "OrderFeesController.order.addFee(null, OrderFeesController.availableFees[0])", "add fee")
     if clicked:
         return True
@@ -2539,7 +2612,7 @@ def _add_order_fee(driver, fee_label, amount, fallback_fee_id=None, fallback_cod
 
     _order_scope(driver, "runInAngular(s, () => s.editModeOn()); return true;")
     time.sleep(0.5)
-    if not _click_add_fee(driver, fee_label):
+    if not _click_add_fee(driver, fee_label, amount):
         raise SplitterError(f"Could not click Add Fee for {fee_label}.")
     time.sleep(0.5)
     result = _order_scope(

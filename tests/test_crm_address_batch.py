@@ -5735,6 +5735,24 @@ class CrmAutoSplitterTests(unittest.TestCase):
             fallback_code="discount",
         )
 
+    def test_discount_fee_uses_visible_discount_form_with_allocated_amount(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = True
+
+        clicked = crm_auto_splitter._click_add_fee(
+            driver,
+            "Discount",
+            crm_auto_splitter.Decimal("-1.67"),
+        )
+
+        self.assertTrue(clicked)
+        script, label, amount = driver.execute_script.call_args.args
+        self.assertIn("discountSelect.value = option.value", script)
+        self.assertIn("amountInput.dispatchEvent(new Event('change'", script)
+        self.assertIn("text(label) === 'add fee'", script)
+        self.assertEqual(label, "Discount")
+        self.assertEqual(amount, "-1.67")
+
     def test_new_split_applies_quote_discount_before_recording_payment(self):
         events = []
         driver = mock.Mock()
