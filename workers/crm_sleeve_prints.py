@@ -647,6 +647,14 @@ def _replace_additional_request_placeholders(driver, request_text, cost_text, in
         function escapeRegExp(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
         const counts = Object.fromEntries(Object.keys(replacements).map((key) => [key, 0]));
         const seenDocuments = new Set();
+        function allElements(root, out = []) {
+          if (!root || !root.querySelectorAll) return out;
+          for (const element of Array.from(root.querySelectorAll('*'))) {
+            out.push(element);
+            if (element.shadowRoot) allElements(element.shadowRoot, out);
+          }
+          return out;
+        }
         function textNodes(root) {
           if (!root) return [];
           const doc = root.ownerDocument || document;
@@ -710,7 +718,7 @@ def _replace_additional_request_placeholders(driver, request_text, cost_text, in
             }
           } catch (error) {}
           if (doc.body) replaceRoot(doc.body);
-          for (const frame of Array.from(doc.querySelectorAll('iframe')).filter(visible)) {
+          for (const frame of allElements(doc).filter((element) => (element.tagName || '').toLowerCase() === 'iframe' && visible(element))) {
             try { inspectDocument(frame.contentDocument || (frame.contentWindow && frame.contentWindow.document)); } catch (error) {}
           }
         }
