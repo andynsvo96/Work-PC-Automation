@@ -513,6 +513,8 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
   dialog.append(title, explanation);
 
   const choices = [];
+  const priceOverrides = { ink: null, embroidery: null };
+  const priceErrors = { ink: "", embroidery: "" };
   for (const tab of discoveredTabs) {
     const card = document.createElement("fieldset");
     Object.assign(card.style, { margin: "0 0 10px", padding: "11px", border: "1px solid #cbd5e1", borderRadius: "4px" });
@@ -544,45 +546,46 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
         select.append(option);
       });
       Object.assign(select.style, { display: "block", width: "100%", marginTop: "4px", padding: "6px", boxSizing: "border-box" });
-      sleeveLabel.append(select);
+      const priceWrap = document.createElement("span");
+      priceWrap.hidden = true;
+      Object.assign(priceWrap.style, { display: "block", marginTop: "8px", fontWeight: "400" });
+      const priceCaption = document.createElement("span");
+      Object.assign(priceCaption.style, { display: "block", color: "#334155", fontSize: "12px" });
+      const priceInput = document.createElement("input");
+      priceInput.type = "text";
+      priceInput.inputMode = "decimal";
+      priceInput.setAttribute("aria-label", `Price per sleeve for ${side} sleeve on tab ${tab.tabNumber}`);
+      Object.assign(priceInput.style, { display: "block", width: "100%", marginTop: "4px", padding: "6px", boxSizing: "border-box" });
+      priceInput.addEventListener("input", () => {
+        const method = select.value;
+        if (!method) return;
+        const parsed = sleevePrintCleanPrice(priceInput.value);
+        if (parsed.valid) {
+          priceOverrides[method] = parsed.value;
+          priceErrors[method] = "";
+        } else {
+          priceErrors[method] = parsed.message;
+        }
+        refresh(priceInput);
+      });
+      priceWrap.append(priceCaption, priceInput);
+      sleeveLabel.append(select, priceWrap);
       sleeveGrid.append(sleeveLabel);
-      sleeves[side] = select;
+      sleeves[side] = { select, priceWrap, priceCaption, priceInput };
     }
     include.addEventListener("change", () => {
-      Object.values(sleeves).forEach((select) => {
+      Object.values(sleeves).forEach(({ select, priceInput }) => {
         select.disabled = !include.checked;
+        priceInput.disabled = !include.checked;
         if (!include.checked) select.value = "";
       });
       refresh();
     });
-    Object.values(sleeves).forEach((select) => select.addEventListener("change", refresh));
+    Object.values(sleeves).forEach(({ select }) => select.addEventListener("change", () => refresh()));
     card.append(sleeveGrid);
     dialog.append(card);
     choices.push({ tab, include, sleeves });
   }
-
-  const pricing = document.createElement("div");
-  Object.assign(pricing.style, { marginTop: "14px", padding: "10px", background: "#f8fafc", borderRadius: "4px" });
-  const inkLine = document.createElement("div");
-  const embroideryLine = document.createElement("div");
-  const inkCustom = document.createElement("input");
-  const embroideryCustom = document.createElement("input");
-  for (const input of [inkCustom, embroideryCustom]) {
-    input.type = "text";
-    input.inputMode = "decimal";
-    input.placeholder = "Custom price";
-    Object.assign(input.style, { width: "112px", marginLeft: "8px", padding: "5px", boxSizing: "border-box" });
-    input.addEventListener("input", refresh);
-  }
-  const inkWrap = document.createElement("label");
-  inkWrap.style.display = "block";
-  inkWrap.append(inkLine, inkCustom);
-  const embroideryWrap = document.createElement("label");
-  embroideryWrap.style.display = "block";
-  embroideryWrap.style.marginTop = "8px";
-  embroideryWrap.append(embroideryLine, embroideryCustom);
-  pricing.append(inkWrap, embroideryWrap);
-  dialog.append(pricing);
 
   const validation = document.createElement("div");
   validation.setAttribute("role", "status");
@@ -609,24 +612,35 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
     return choices.filter(({ include }) => include.checked).map(({ tab, sleeves }) => ({
       tab_number: tab.tabNumber,
       quantity: tab.quantity,
-      left: sleeves.left.value,
-      right: sleeves.right.value
+      left: sleeves.left.select.value,
+      right: sleeves.right.select.value
     })).filter((selection) => selection.left || selection.right);
   }
 
-  function refresh() {
+  function refresh(sourcePriceInput = null) {
     const selected = selections();
-    const inkCustomPrice = sleevePrintCleanPrice(inkCustom.value);
-    const embroideryCustomPrice = sleevePrintCleanPrice(embroideryCustom.value);
+    const inkCustomPrice = { valid: !priceErrors.ink, value: priceOverrides.ink, message: priceErrors.ink };
+    const embroideryCustomPrice = { valid: !priceErrors.embroidery, value: priceOverrides.embroidery, message: priceErrors.embroidery };
     const summary = sleevePrintSelectionSummary(selected, tabs, inkCustomPrice, embroideryCustomPrice);
-    inkWrap.hidden = !summary.inkQuantity;
-    embroideryWrap.hidden = !summary.embroideryQuantity;
-    inkLine.textContent = summary.inkQuantity
-      ? `Ink prints: ${sleevePrintCurrency(summary.inkPrice)} per sleeve (${summary.inkQuantity} garments; calculated ${sleevePrintCurrency(summary.calculatedInkPrice)}).`
-      : "";
-    embroideryLine.textContent = summary.embroideryQuantity
-      ? `Embroidery: ${sleevePrintCurrency(summary.embroideryPrice)} per sleeve (${summary.embroideryQuantity} garments).`
-      : "";
+    for (const { sleeves } of choices) {
+      for (const side of ["left", "right"]) {
+        const { select, priceWrap, priceCaption, priceInput } = sleeves[side];
+        const method = select.value;
+        const price = method === "ink" ? summary.inkPrice : method === "embroidery" ? summary.embroideryPrice : null;
+        const invalidMessage = method ? priceErrors[method] : "";
+        priceWrap.hidden = !method;
+        priceInput.disabled = select.disabled || !method;
+        if (method) {
+          priceCaption.textContent = method === "ink"
+            ? `Price per sleeve — calculated from ${summary.inkQuantity} ink-print garment${summary.inkQuantity === 1 ? "" : "s"}; shared across all ink sleeves.`
+            : `Price per sleeve — shared across all embroidery sleeves.`;
+          if (price !== null && (!invalidMessage || priceInput !== sourcePriceInput)) {
+            priceInput.value = Number(price).toFixed(2);
+          }
+          priceInput.style.border = invalidMessage ? "1px solid #b91c1c" : "1px solid #94a3b8";
+        }
+      }
+    }
     const errors = [];
     if (!selected.length) errors.push("Choose at least one sleeve request.");
     if (summary.inkQuantity && !inkCustomPrice.valid) errors.push(`Ink: ${inkCustomPrice.message}`);
@@ -653,8 +667,8 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
     refresh();
     queueManualOrderAutomation(automation, triggerButton, autoProcessButton, "", {
       sleeves: state.selected,
-      ink_price: state.inkCustomPrice.value,
-      embroidery_price: state.embroideryCustomPrice.value
+      ink_price: priceOverrides.ink,
+      embroidery_price: priceOverrides.embroidery
     }, { surfacePageErrors: false }).then((response) => {
       if (response && response.success) {
         overlay.remove();

@@ -1,5 +1,6 @@
 import unittest
 from decimal import Decimal
+from pathlib import Path
 
 from workers import crm_sleeve_prints
 
@@ -113,6 +114,22 @@ class SleevePrintsPricingTests(unittest.TestCase):
         note = "Sleeve prints\nPriced at $5.00 per sleeve\nEmailed Txted"
         self.assertTrue(crm_sleeve_prints._crm_note_exists({"sales_notes": f"Earlier note\n{note}"}, note))
         self.assertFalse(crm_sleeve_prints._crm_note_exists({"sales_notes": "Earlier note"}, note))
+
+
+class SleevePrintsExtensionUiTests(unittest.TestCase):
+    def test_sleeve_prints_is_a_manual_process_with_inline_prefilled_prices(self):
+        content = (
+            Path(__file__).resolve().parents[1] / "crm-order-dark-mode-extension" / "content.js"
+        ).read_text(encoding="utf-8")
+
+        manual_start = content.index("const MANUAL_ORDER_AUTOMATIONS")
+        reachout_start = content.index("const REACHOUT_ORDER_AUTOMATIONS")
+        self.assertIn('key: "sleeve_prints", label: "Sleeve Prints"', content[manual_start:reachout_start])
+        self.assertNotIn('key: "sleeve_prints", label: "Sleeve Prints"', content[reachout_start:content.index("const STOCK_ISSUE_AUTOMATIONS")])
+        self.assertIn("const priceWrap = document.createElement", content)
+        self.assertIn("Price per sleeve — calculated from", content)
+        self.assertIn("priceInput.value = Number(price).toFixed(2)", content)
+        self.assertNotIn("const pricing = document.createElement", content)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CRM Order Assistant",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "description": "CRM order tools with queued single-order automations and reliable Salesforce tab reuse.",
   "permissions": ["storage", "tabs", "webNavigation"],
   "host_permissions": [
