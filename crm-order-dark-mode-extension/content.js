@@ -54,7 +54,8 @@ const MANUAL_ORDER_AUTOMATIONS = [
   { key: "auto_splitter", label: "Auto Splitter" },
   { key: "order_goods", label: "Order Goods" },
   { key: "shipping_bypasser", label: "Shipping Bypasser" },
-  { key: "push_back", label: "Push Back" }
+  { key: "push_back", label: "Push Back" },
+  { key: "sleeve_prints", label: "Sleeve Prints" }
 ];
 
 const CANCEL_ORDER_AUTOMATIONS = [
@@ -68,8 +69,7 @@ const REACHOUT_ORDER_AUTOMATIONS = [
   { key: "complicated_emb_to_hdd", label: "Complicated EMB to HDD" },
   { key: "oversize_emb_to_hdd", label: "Oversize EMB to HDD" },
   { key: "copyright_removal", label: "Copyright Removal", requiresReason: true },
-  { key: "copyright_reachout", label: "Copyright - Reachout", requiresReason: true },
-  { key: "sleeve_prints", label: "Sleeve Prints" }
+  { key: "copyright_reachout", label: "Copyright - Reachout", requiresReason: true }
 ];
 
 const STOCK_ISSUE_AUTOMATIONS = [
@@ -1380,7 +1380,14 @@ function ensureManualOrderProcessorControl(autoProcessButton) {
     control = createOrderProcessMenuControl({
       controlId: "crm-order-manual-process-control", buttonId: "crm-order-manual-process-button", label: "Manual Process",
       title: "Choose one automation to run for this order only.", color: "#475569", border: "#334155",
-      automations: MANUAL_ORDER_AUTOMATIONS, needsConfirmation: false
+      automations: MANUAL_ORDER_AUTOMATIONS, needsConfirmation: false,
+      onSelect: (automation, triggerButton, autoProcessButton) => {
+        if (automation.key === "sleeve_prints") {
+          showSleevePrintsDialog(automation, triggerButton, autoProcessButton);
+          return;
+        }
+        queueManualOrderAutomation(automation, triggerButton, autoProcessButton);
+      }
     });
     control.style.marginLeft = "4px";
   }
@@ -1423,14 +1430,7 @@ function ensureSingleOrderSheetScannerControls() {
   ensureConfirmedOrderControl({
     controlId: "crm-order-reachout-control", buttonId: "crm-order-reachout-button", label: "Reachout",
     title: "Choose a customer-reachout workflow for this order.", color: "#15803d", border: "#166534",
-    automations: REACHOUT_ORDER_AUTOMATIONS, anchor: findAddAccountButton(),
-    onSelect: (automation, triggerButton, autoProcessButton) => {
-      if (automation.key === "sleeve_prints") {
-        showSleevePrintsDialog(automation, triggerButton, autoProcessButton);
-        return;
-      }
-      showOrderAutomationConfirmation(automation, triggerButton, autoProcessButton);
-    }
+    automations: REACHOUT_ORDER_AUTOMATIONS, anchor: findAddAccountButton()
   });
   ensureConfirmedOrderControl({
     controlId: "crm-order-stock-issue-control", buttonId: "crm-order-stock-issue-button", label: "Stock Issue",
