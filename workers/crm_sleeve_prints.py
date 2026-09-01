@@ -647,25 +647,51 @@ def _replace_additional_request_placeholders(driver, request_text, cost_text, in
         function escapeRegExp(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
         const counts = Object.fromEntries(Object.keys(replacements).map((key) => [key, 0]));
         const seenDocuments = new Set();
-        function replaceRoot(root) {
-          if (!root) return;
+        function textNodes(root) {
+          if (!root) return [];
           const doc = root.ownerDocument || document;
           const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
           const nodes = [];
-          while (walker.nextNode()) nodes.push(walker.currentNode);
+          while (walker.nextNode()) {
+            const node = walker.currentNode;
+            const tag = String(node.parentElement && node.parentElement.tagName || '').toLowerCase();
+            if (tag !== 'script' && tag !== 'style') nodes.push(node);
+          }
+          return nodes;
+        }
+        function textPosition(nodes, position) {
+          let remaining = Math.max(0, Number(position) || 0);
           for (const node of nodes) {
-            let value = String(node.nodeValue || '');
-            let changed = false;
-            for (const [placeholder, replacement] of Object.entries(replacements)) {
-              const pattern = new RegExp(escapeRegExp(placeholder), 'gi');
-              const matches = value.match(pattern) || [];
-              if (matches.length) {
-                counts[placeholder] += matches.length;
-                value = value.replace(pattern, String(replacement));
-                changed = true;
-              }
+            const length = String(node.nodeValue || '').length;
+            if (remaining <= length) return {node, offset: remaining};
+            remaining -= length;
+          }
+          const last = nodes[nodes.length - 1];
+          return last ? {node: last, offset: String(last.nodeValue || '').length} : null;
+        }
+        function replaceRoot(root) {
+          if (!root) return;
+          const doc = root.ownerDocument || document;
+          for (const [placeholder, replacement] of Object.entries(replacements)) {
+            const nodes = textNodes(root);
+            const combined = nodes.map((node) => String(node.nodeValue || '')).join('');
+            const pattern = new RegExp(escapeRegExp(placeholder), 'gi');
+            const matches = [];
+            let match = null;
+            while ((match = pattern.exec(combined)) !== null) {
+              matches.push({start: match.index, end: match.index + match[0].length});
             }
-            if (changed) node.nodeValue = value;
+            for (const found of matches.reverse()) {
+              const start = textPosition(nodes, found.start);
+              const end = textPosition(nodes, found.end);
+              if (!start || !end) continue;
+              const range = doc.createRange();
+              range.setStart(start.node, start.offset);
+              range.setEnd(end.node, end.offset);
+              range.deleteContents();
+              range.insertNode(doc.createTextNode(String(replacement)));
+              counts[placeholder] += 1;
+            }
           }
           try { root.dispatchEvent(new Event('input', {bubbles: true})); root.dispatchEvent(new Event('change', {bubbles: true})); } catch (error) {}
         }
@@ -693,8 +719,11 @@ def _replace_additional_request_placeholders(driver, request_text, cost_text, in
         """,
         replacements,
     ) or {}
-    if int(result.get(REQUEST_PLACEHOLDER) or 0) != 2:
-        raise SleevePrintsError(f"Salesforce template must contain exactly two {REQUEST_PLACEHOLDER} placeholders.")
+    request_count = int(result.get(REQUEST_PLACEHOLDER) or 0)
+    if request_count < 2:
+        raise SleevePrintsError(
+            f"Salesforce template must contain two {REQUEST_PLACEHOLDER} placeholders; only {request_count} were found."
+        )
     for placeholder in (COST_PLACEHOLDER, INVOICE_LINK_PLACEHOLDER):
         if int(result.get(placeholder) or 0) < 1:
             raise SleevePrintsError(f"Salesforce template body does not contain {placeholder}.")
@@ -740,9 +769,11 @@ def _prepare_and_send_salesforce_email(driver, crm_handle, order_id, customer_em
         raise SleevePrintsError(f"Salesforce email still contains unresolved placeholders: {', '.join(unresolved)}.")
     if str(order_id) not in final_subject:
         raise SleevePrintsError("Salesforce email subject did not retain the CRM order number.")
-    for expected in (request_text, cost_text, invoice_link):
+    if final_body.casefold().count(request_text.casefold()) < 2:
+        raise SleevePrintsError("Salesforce email body did not retain both Sleeve Prints request replacements.")
+    for expected in (cost_text, invoice_link):
         if expected.casefold() not in final_body.casefold():
-            raise SleevePrintsError("Salesforce email body did not retain the Sleeve Prints request, cost, and invoice link.")
+            raise SleevePrintsError("Salesforce email body did not retain the Sleeve Prints cost and invoice link.")
     recipients = _verify_final_recipients(driver, customer_email)
     if dry_run:
         return {

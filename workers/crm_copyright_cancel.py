@@ -3804,13 +3804,25 @@ def _confirm_salesforce_template_insert(driver):
             saw_warning = True
         insert = result.get("insert") if isinstance(result, dict) else None
         if insert is not None:
-            if not _click_element_center(driver, insert):
+            clicked = _click_element_center(driver, insert)
+            if not clicked:
                 try:
                     driver.execute_script("arguments[0].click();", insert)
+                    clicked = True
                 except Exception:
                     pass
-            time.sleep(1)
-            return True
+            if not clicked:
+                time.sleep(0.4)
+                continue
+            # Do not report success until the confirmation itself has closed.
+            # Salesforce can leave the compose body visible behind this modal,
+            # which otherwise makes downstream template checks falsely pass.
+            close_deadline = time.monotonic() + 3
+            while time.monotonic() < close_deadline:
+                if "inserting this template will overwrite the current email" not in _visible_text(driver).lower():
+                    return True
+                time.sleep(0.25)
+            continue
         if saw_warning:
             time.sleep(0.4)
             continue
