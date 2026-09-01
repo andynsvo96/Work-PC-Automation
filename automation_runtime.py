@@ -70,6 +70,12 @@ MAILTO_CLICK_GUARD_SCRIPT = r"""
   function shouldBlock(target) {
     const interactive = closestInteractive(target);
     if (!interactive) return false;
+    // A workflow can deliberately opt in to a single CRM control when it has
+    // its own safety checks for the resulting dialog.  This is used to open
+    // the invoice dialog only long enough to copy its View Invoice link and
+    // then cancel it; it never authorizes a mailto link or the dialog's Send
+    // action.
+    if (interactive.dataset && interactive.dataset.automationAllowClick === "true") return false;
     const href = String(interactive.getAttribute && interactive.getAttribute("href") || "");
     if (/^\s*mailto:/i.test(href)) return true;
     if (!CRM_HOST_RE.test(window.location.hostname || "")) return false;
