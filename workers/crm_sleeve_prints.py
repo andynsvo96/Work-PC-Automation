@@ -522,6 +522,9 @@ def _capture_view_invoice_link(driver):
     shared._activate_crm_context(driver)
     if not shared._click_exact_visible_text(driver, "send invoice"):
         raise SleevePrintsError("CRM Send Invoice button was not found.")
+    # The legacy CRM renders its invoice Bootstrap modal in the parent page,
+    # outside the app iframe that contains the Send Invoice control.
+    driver.switch_to.default_content()
     deadline = time.monotonic() + 20
     href = ""
     while time.monotonic() < deadline:
@@ -566,6 +569,7 @@ def _capture_view_invoice_link(driver):
     )
     if not cancelled:
         raise SleevePrintsError("CRM View Invoice link was found, but the invoice popup Cancel button was not found.")
+    shared._activate_crm_context(driver)
     return href
 
 
