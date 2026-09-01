@@ -550,12 +550,15 @@ def _capture_view_invoice_link(driver):
     )
     if not opened:
         raise SleevePrintsError("CRM Send Invoice button was not found.")
-    # The legacy CRM renders its invoice Bootstrap modal in the parent page,
-    # outside the app iframe that contains the Send Invoice control.
-    driver.switch_to.default_content()
+    # The legacy CRM currently renders this modal inside its app iframe.  Some
+    # deployments place it in the parent document, so check the active CRM
+    # context first and then fall back to the parent without clicking Send a
+    # second time.
     deadline = time.monotonic() + 20
     href = ""
+    link_context = ""
     while time.monotonic() < deadline:
+        shared._activate_crm_context(driver)
         href = str(driver.execute_script(
             r"""
             function visible(el) {
@@ -572,10 +575,34 @@ def _capture_view_invoice_link(driver):
             """
         ) or "").strip()
         if href:
+            link_context = "crm"
+            break
+        driver.switch_to.default_content()
+        href = str(driver.execute_script(
+            r"""
+            function visible(el) {
+              const rect = el.getBoundingClientRect();
+              const style = window.getComputedStyle(el);
+              return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+            }
+            const links = Array.from(document.querySelectorAll('a[href]')).filter((link) => visible(link));
+            const view = links.find((link) => {
+              const href = String(link.href || '');
+              return /order-invoice/i.test(href) && !/\.pdf(?:$|[?#])/i.test(href);
+            });
+            return view ? String(view.href || '') : '';
+            """
+        ) or "").strip()
+        if href:
+            link_context = "parent"
             break
         time.sleep(0.4)
     if not href or ".pdf" in href.lower():
         raise SleevePrintsError("CRM invoice popup did not expose a non-PDF View Invoice link.")
+    if link_context == "crm":
+        shared._activate_crm_context(driver)
+    else:
+        driver.switch_to.default_content()
     cancelled = driver.execute_script(
         r"""
         function clean(value) { return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase(); }
