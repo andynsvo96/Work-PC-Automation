@@ -523,58 +523,46 @@ def _capture_view_invoice_link(driver):
     if not shared._click_exact_visible_text(driver, "send invoice"):
         raise SleevePrintsError("CRM Send Invoice button was not found.")
     deadline = time.monotonic() + 20
-    invoice_state = None
+    href = ""
     while time.monotonic() < deadline:
-        invoice_state = driver.execute_script(
+        href = str(driver.execute_script(
             r"""
-            function clean(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
             function visible(el) {
               const rect = el.getBoundingClientRect();
               const style = window.getComputedStyle(el);
               return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
             }
-            function hasCancel(el) {
-              return Array.from(el.querySelectorAll('button,a,input,[role=button]')).some((button) => {
-                const text = clean(button.value || button.innerText || button.textContent || button.getAttribute('aria-label')).toLowerCase();
-                return visible(button) && text === 'cancel';
-              });
-            }
-            const dialogs = Array.from(document.querySelectorAll('[role=dialog], .modal, .modal-dialog, .modal-content, .uiModal, div'))
-              .filter((el) => visible(el) && hasCancel(el) && /view\s+invoice/i.test(el.innerText || el.textContent || '') && /download\s+pdf\s+invoice/i.test(el.innerText || el.textContent || ''))
-              .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
-            const dialog = dialogs[0];
-            if (!dialog) return null;
-            const links = Array.from(dialog.querySelectorAll('a[href]')).filter((link) => visible(link));
+            const links = Array.from(document.querySelectorAll('a[href]')).filter((link) => visible(link));
             const view = links.find((link) => {
               const href = String(link.href || '');
-              const text = clean(`${link.innerText || ''} ${(link.parentElement && link.parentElement.innerText) || ''}`).toLowerCase();
-              return /order-invoice/i.test(href) && !/\.pdf(?:$|[?#])/i.test(href) && /view\s+invoice/i.test(text);
-            }) || links.find((link) => /order-invoice/i.test(String(link.href || '')) && !/\.pdf(?:$|[?#])/i.test(String(link.href || '')));
-            return {href: view ? String(view.href || '') : '', dialog};
+              return /order-invoice/i.test(href) && !/\.pdf(?:$|[?#])/i.test(href);
+            });
+            return view ? String(view.href || '') : '';
             """
-        )
-        if invoice_state and invoice_state.get("href"):
+        ) or "").strip()
+        if href:
             break
         time.sleep(0.4)
-    href = str((invoice_state or {}).get("href") or "").strip()
     if not href or ".pdf" in href.lower():
         raise SleevePrintsError("CRM invoice popup did not expose a non-PDF View Invoice link.")
     cancelled = driver.execute_script(
         r"""
-        const dialog = arguments[0];
         function clean(value) { return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase(); }
         function visible(el) {
           const rect = el.getBoundingClientRect(); const style = window.getComputedStyle(el);
           return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
         }
-        if (!dialog || !dialog.isConnected) return false;
-        const button = Array.from(dialog.querySelectorAll('button,a,input,[role=button]'))
-          .find((el) => visible(el) && clean(el.value || el.innerText || el.textContent || el.getAttribute('aria-label')) === 'cancel');
-        if (!button) return false;
-        button.click();
-        return true;
+        const invoiceHref = arguments[0];
+        const dialogs = Array.from(document.querySelectorAll('[role=dialog], .modal, .modal-dialog, .modal-content, .uiModal, div'))
+          .filter((el) => visible(el) && Array.from(el.querySelectorAll('a[href]')).some((link) => String(link.href || '') === invoiceHref));
+        for (const dialog of dialogs.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)) {
+          const button = Array.from(dialog.querySelectorAll('button,a,input,[role=button]'))
+            .find((el) => visible(el) && clean(el.value || el.innerText || el.textContent || el.getAttribute('aria-label')) === 'cancel');
+          if (button) { button.click(); return true; }
+        }
+        return false;
         """,
-        invoice_state.get("dialog"),
+        href,
     )
     if not cancelled:
         raise SleevePrintsError("CRM View Invoice link was found, but the invoice popup Cancel button was not found.")
