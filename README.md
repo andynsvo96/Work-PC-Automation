@@ -11,7 +11,7 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - Calculates auto clock-out timing against a configurable weekly hour cap.
 - Sends Slack start/end/lunch/custom status messages.
 - Rotates day-specific Slack messages.
-- Runs CRM automation workers for address validation, stock unlocks, rush goods ordering, auto-splitting, shipping bypasses, push-back handling, and queue-driven issue processing.
+- Runs CRM automation workers for address validation, stock unlocks, rush goods ordering, auto-splitting, shipping bypasses, push-back handling, Sleeve Prints reachouts, and queue-driven issue processing.
 - Scans supported queue rows for cancellation, reachout, auto-split, and manual stock-order workflows.
 - Provides a local web UI and HTTP API for manual controls and external triggers.
 - Records automation results in a shared audit log.

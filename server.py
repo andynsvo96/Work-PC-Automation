@@ -129,6 +129,7 @@ CRM_MASS_EMAILER_SCRIPT = os.path.join(WORKERS_DIR, "crm_copyright_cancel.py")
 CRM_STOCK_ISSUE_EXTENSION_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_extension.py")
 CRM_STOCK_ISSUE_COLOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_color.py")
 CRM_STOCK_ISSUE_SIZE_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_size.py")
+CRM_SLEEVE_PRINTS_SCRIPT = os.path.join(WORKERS_DIR, "crm_sleeve_prints.py")
 SLACK_SCRIPT_TIMEOUT_SECONDS = 150
 BROWSER_WORKER_FILENAMES = frozenset(
     {
@@ -146,6 +147,7 @@ BROWSER_WORKER_FILENAMES = frozenset(
         os.path.basename(CRM_STOCK_ISSUE_EXTENSION_SCRIPT),
         os.path.basename(CRM_STOCK_ISSUE_COLOR_SCRIPT),
         os.path.basename(CRM_STOCK_ISSUE_SIZE_SCRIPT),
+        os.path.basename(CRM_SLEEVE_PRINTS_SCRIPT),
     }
 )
 CRM_VISIBLE_FLAG_WORKER_FILENAMES = BROWSER_WORKER_FILENAMES - {
@@ -12315,6 +12317,62 @@ CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["stock_issue_extension"] = {
         order_id,
         (request_data or {}).get("days"),
         (request_data or {}).get("products"),
+        progress_callback=progress_callback,
+    ),
+}
+
+
+def _normalize_sleeve_prints_request(data):
+    from workers.crm_sleeve_prints import normalize_request
+
+    payload = data if isinstance(data, dict) else {}
+    return normalize_request(
+        payload.get("sleeves"),
+        payload.get("ink_price"),
+        payload.get("embroidery_price"),
+    )
+
+
+def run_crm_sleeve_prints_queued(order_id, sleeves, ink_price=None, embroidery_price=None, progress_callback=None):
+    """Run the dedicated Sleeve Prints workflow for one CRM order."""
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    if not normalized_order_id:
+        return False, "Open a CRM order with a valid 7-digit order number first.", {}
+    if not crm_lock.acquire(blocking=False):
+        return False, "A CRM automation run is already in progress.", {}
+    try:
+        from workers.crm_sleeve_prints import run_sleeve_prints_order
+
+        return run_sleeve_prints_order(
+            normalized_order_id,
+            sleeves,
+            ink_price,
+            embroidery_price,
+            dry_run=False,
+            progress_callback=progress_callback,
+        )
+    finally:
+        crm_lock.release()
+
+
+CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["sleeve_prints"] = {
+    "label": "Sleeve Prints",
+    "task_type": "crm.sleeve_prints",
+    "status_fn": get_crm_extension_order_status_payload,
+    "structured_request": True,
+    "request_validator": _normalize_sleeve_prints_request,
+    "task_arguments": lambda order_id, _reason="", request_data=None: {
+        "order_id": order_id,
+        "sleeves": list((request_data or {}).get("sleeves") or []),
+        "ink_price": (request_data or {}).get("ink_price"),
+        "embroidery_price": (request_data or {}).get("embroidery_price"),
+        "dry_run": False,
+    },
+    "runner": lambda order_id, _reason="", request_data=None, progress_callback=None: run_crm_sleeve_prints_queued(
+        order_id,
+        (request_data or {}).get("sleeves"),
+        (request_data or {}).get("ink_price"),
+        (request_data or {}).get("embroidery_price"),
         progress_callback=progress_callback,
     ),
 }

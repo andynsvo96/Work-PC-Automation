@@ -68,7 +68,8 @@ const REACHOUT_ORDER_AUTOMATIONS = [
   { key: "complicated_emb_to_hdd", label: "Complicated EMB to HDD" },
   { key: "oversize_emb_to_hdd", label: "Oversize EMB to HDD" },
   { key: "copyright_removal", label: "Copyright Removal", requiresReason: true },
-  { key: "copyright_reachout", label: "Copyright - Reachout", requiresReason: true }
+  { key: "copyright_reachout", label: "Copyright - Reachout", requiresReason: true },
+  { key: "sleeve_prints", label: "Sleeve Prints" }
 ];
 
 const STOCK_ISSUE_AUTOMATIONS = [
@@ -443,6 +444,230 @@ function clickStockIssueDesignTab(tabNumber) {
 
 function stockIssueDelay(milliseconds) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function sleevePrintCurrency(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `$${number.toFixed(2)}` : "$0.00";
+}
+
+function sleevePrintInkPrice(quantity) {
+  if (quantity >= 100) return 5;
+  if (quantity >= 20) return 6;
+  if (quantity >= 10) return 7;
+  return 8;
+}
+
+function sleevePrintCleanPrice(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return { valid: true, value: null, message: "" };
+  if (!/^\d+(?:\.\d{1,2})?$/.test(text)) {
+    return { valid: false, value: null, message: "Enter a dollar amount with no more than two decimals." };
+  }
+  const valueAsNumber = Number(text);
+  if (!Number.isFinite(valueAsNumber) || valueAsNumber < 0 || valueAsNumber > 1000) {
+    return { valid: false, value: null, message: "Enter a custom price from $0.00 through $1,000.00." };
+  }
+  return { valid: true, value: valueAsNumber, message: "" };
+}
+
+function sleevePrintSelectionSummary(selections, tabs, customInkPrice, customEmbroideryPrice) {
+  const inkTabs = selections.filter((selection) => selection.left === "ink" || selection.right === "ink");
+  const embroideryTabs = selections.filter((selection) => selection.left === "embroidery" || selection.right === "embroidery");
+  const inkQuantity = inkTabs.reduce((total, selection) => total + Number(tabs.get(selection.tab_number)?.quantity || 0), 0);
+  const embroideryQuantity = embroideryTabs.reduce((total, selection) => total + Number(tabs.get(selection.tab_number)?.quantity || 0), 0);
+  const calculatedInkPrice = inkQuantity ? sleevePrintInkPrice(inkQuantity) : null;
+  const inkPrice = calculatedInkPrice === null ? null : (customInkPrice.value ?? calculatedInkPrice);
+  const embroideryPrice = embroideryQuantity ? (customEmbroideryPrice.value ?? 15) : null;
+  return { inkTabs, embroideryTabs, inkQuantity, embroideryQuantity, calculatedInkPrice, inkPrice, embroideryPrice };
+}
+
+function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
+  const discoveredTabs = visibleStockIssueDesignTabs();
+  if (!discoveredTabs.length) {
+    setOrderProcessorResult(triggerButton, "Could not detect any design tabs and quantities for Sleeve Prints.", "error");
+    return;
+  }
+  const tabs = new Map(discoveredTabs.map((tab) => [tab.tabNumber, tab]));
+  document.getElementById("crm-sleeve-prints-dialog")?.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "crm-sleeve-prints-dialog";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", "Configure Sleeve Prints");
+  Object.assign(overlay.style, {
+    position: "fixed", zIndex: "2147483647", inset: "0", display: "flex", alignItems: "center", justifyContent: "center",
+    padding: "20px", background: "rgba(15,23,42,.56)", font: "14px system-ui, sans-serif"
+  });
+  const dialog = document.createElement("div");
+  Object.assign(dialog.style, {
+    width: "min(620px, 100%)", maxHeight: "min(760px, calc(100vh - 40px))", overflowY: "auto", padding: "20px",
+    borderRadius: "7px", color: "#0f172a", background: "#fff", boxShadow: "0 20px 45px rgba(15,23,42,.34)"
+  });
+  const title = document.createElement("div");
+  title.textContent = "Sleeve Prints";
+  Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "6px" });
+  const explanation = document.createElement("p");
+  explanation.textContent = "Select the design tabs and choose the request for each sleeve. Ink pricing uses the combined quantity of tabs that have at least one ink-print sleeve.";
+  Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
+  dialog.append(title, explanation);
+
+  const choices = [];
+  for (const tab of discoveredTabs) {
+    const card = document.createElement("fieldset");
+    Object.assign(card.style, { margin: "0 0 10px", padding: "11px", border: "1px solid #cbd5e1", borderRadius: "4px" });
+    const heading = document.createElement("label");
+    heading.style.fontWeight = "700";
+    const include = document.createElement("input");
+    include.type = "checkbox";
+    include.setAttribute("aria-label", `Include design tab ${tab.tabNumber}`);
+    heading.append(include, document.createTextNode(` Tab ${tab.tabNumber} — Qty: ${tab.quantity}`));
+    card.append(heading);
+    const sleeveGrid = document.createElement("div");
+    Object.assign(sleeveGrid.style, { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px", marginTop: "10px", paddingLeft: "22px" });
+    const sleeves = {};
+    for (const side of ["left", "right"]) {
+      const sleeveLabel = document.createElement("label");
+      sleeveLabel.textContent = `Sleeve ${side[0].toUpperCase()}${side.slice(1)}`;
+      sleeveLabel.style.fontWeight = "600";
+      const select = document.createElement("select");
+      select.disabled = true;
+      select.setAttribute("aria-label", `Sleeve ${side} method for tab ${tab.tabNumber}`);
+      [
+        ["", "No sleeve request"],
+        ["ink", "Ink print"],
+        ["embroidery", "Embroidery"]
+      ].forEach(([value, label]) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        select.append(option);
+      });
+      Object.assign(select.style, { display: "block", width: "100%", marginTop: "4px", padding: "6px", boxSizing: "border-box" });
+      sleeveLabel.append(select);
+      sleeveGrid.append(sleeveLabel);
+      sleeves[side] = select;
+    }
+    include.addEventListener("change", () => {
+      Object.values(sleeves).forEach((select) => {
+        select.disabled = !include.checked;
+        if (!include.checked) select.value = "";
+      });
+      refresh();
+    });
+    Object.values(sleeves).forEach((select) => select.addEventListener("change", refresh));
+    card.append(sleeveGrid);
+    dialog.append(card);
+    choices.push({ tab, include, sleeves });
+  }
+
+  const pricing = document.createElement("div");
+  Object.assign(pricing.style, { marginTop: "14px", padding: "10px", background: "#f8fafc", borderRadius: "4px" });
+  const inkLine = document.createElement("div");
+  const embroideryLine = document.createElement("div");
+  const inkCustom = document.createElement("input");
+  const embroideryCustom = document.createElement("input");
+  for (const input of [inkCustom, embroideryCustom]) {
+    input.type = "text";
+    input.inputMode = "decimal";
+    input.placeholder = "Custom price";
+    Object.assign(input.style, { width: "112px", marginLeft: "8px", padding: "5px", boxSizing: "border-box" });
+    input.addEventListener("input", refresh);
+  }
+  const inkWrap = document.createElement("label");
+  inkWrap.style.display = "block";
+  inkWrap.append(inkLine, inkCustom);
+  const embroideryWrap = document.createElement("label");
+  embroideryWrap.style.display = "block";
+  embroideryWrap.style.marginTop = "8px";
+  embroideryWrap.append(embroideryLine, embroideryCustom);
+  pricing.append(inkWrap, embroideryWrap);
+  dialog.append(pricing);
+
+  const validation = document.createElement("div");
+  validation.setAttribute("role", "status");
+  validation.setAttribute("aria-live", "polite");
+  Object.assign(validation.style, { minHeight: "20px", marginTop: "10px", color: "#b91c1c", fontWeight: "600" });
+  dialog.append(validation);
+  const actions = document.createElement("div");
+  Object.assign(actions.style, { display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "12px" });
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.textContent = "Back";
+  const queue = document.createElement("button");
+  queue.type = "button";
+  queue.textContent = "Queue task";
+  Object.assign(cancel.style, { padding: "7px 11px", cursor: "pointer" });
+  Object.assign(queue.style, { padding: "7px 11px", borderRadius: "3px", color: "#fff" });
+  actions.append(cancel, queue);
+  dialog.append(actions);
+  overlay.append(dialog);
+  document.body.append(overlay);
+  let submitting = false;
+
+  function selections() {
+    return choices.filter(({ include }) => include.checked).map(({ tab, sleeves }) => ({
+      tab_number: tab.tabNumber,
+      quantity: tab.quantity,
+      left: sleeves.left.value,
+      right: sleeves.right.value
+    })).filter((selection) => selection.left || selection.right);
+  }
+
+  function refresh() {
+    const selected = selections();
+    const inkCustomPrice = sleevePrintCleanPrice(inkCustom.value);
+    const embroideryCustomPrice = sleevePrintCleanPrice(embroideryCustom.value);
+    const summary = sleevePrintSelectionSummary(selected, tabs, inkCustomPrice, embroideryCustomPrice);
+    inkWrap.hidden = !summary.inkQuantity;
+    embroideryWrap.hidden = !summary.embroideryQuantity;
+    inkLine.textContent = summary.inkQuantity
+      ? `Ink prints: ${sleevePrintCurrency(summary.inkPrice)} per sleeve (${summary.inkQuantity} garments; calculated ${sleevePrintCurrency(summary.calculatedInkPrice)}).`
+      : "";
+    embroideryLine.textContent = summary.embroideryQuantity
+      ? `Embroidery: ${sleevePrintCurrency(summary.embroideryPrice)} per sleeve (${summary.embroideryQuantity} garments).`
+      : "";
+    const errors = [];
+    if (!selected.length) errors.push("Choose at least one sleeve request.");
+    if (summary.inkQuantity && !inkCustomPrice.valid) errors.push(`Ink: ${inkCustomPrice.message}`);
+    if (summary.embroideryQuantity && !embroideryCustomPrice.valid) errors.push(`Embroidery: ${embroideryCustomPrice.message}`);
+    const valid = selected.length
+      && (!summary.inkQuantity || inkCustomPrice.valid)
+      && (!summary.embroideryQuantity || embroideryCustomPrice.valid)
+      && !submitting;
+    validation.textContent = submitting ? "Sending Sleeve Prints to the Automation queue…" : errors.join(" ");
+    validation.style.color = submitting ? "#334155" : "#b91c1c";
+    queue.disabled = !valid;
+    queue.setAttribute("aria-disabled", String(!valid));
+    queue.style.setProperty("background", valid ? "#15803d" : "#9ca3af", "important");
+    queue.style.setProperty("border", `1px solid ${valid ? "#166534" : "#6b7280"}`, "important");
+    queue.style.setProperty("cursor", valid ? "pointer" : "not-allowed", "important");
+    return { selected, inkCustomPrice, embroideryCustomPrice, valid };
+  }
+
+  cancel.addEventListener("click", () => { if (!submitting) overlay.remove(); });
+  queue.addEventListener("click", () => {
+    const state = refresh();
+    if (!state.valid) return;
+    submitting = true;
+    refresh();
+    queueManualOrderAutomation(automation, triggerButton, autoProcessButton, "", {
+      sleeves: state.selected,
+      ink_price: state.inkCustomPrice.value,
+      embroidery_price: state.embroideryCustomPrice.value
+    }, { surfacePageErrors: false }).then((response) => {
+      if (response && response.success) {
+        overlay.remove();
+        return;
+      }
+      submitting = false;
+      validation.textContent = (response && response.message) || "Could not queue Sleeve Prints.";
+      validation.style.color = "#b91c1c";
+      refresh();
+    });
+  });
+  overlay.addEventListener("click", (event) => { if (!submitting && event.target === overlay) overlay.remove(); });
+  refresh();
 }
 
 function stockIssueDetectedSizes(block, rawLines, text) {
@@ -1198,7 +1423,14 @@ function ensureSingleOrderSheetScannerControls() {
   ensureConfirmedOrderControl({
     controlId: "crm-order-reachout-control", buttonId: "crm-order-reachout-button", label: "Reachout",
     title: "Choose a customer-reachout workflow for this order.", color: "#15803d", border: "#166534",
-    automations: REACHOUT_ORDER_AUTOMATIONS, anchor: findAddAccountButton()
+    automations: REACHOUT_ORDER_AUTOMATIONS, anchor: findAddAccountButton(),
+    onSelect: (automation, triggerButton, autoProcessButton) => {
+      if (automation.key === "sleeve_prints") {
+        showSleevePrintsDialog(automation, triggerButton, autoProcessButton);
+        return;
+      }
+      showOrderAutomationConfirmation(automation, triggerButton, autoProcessButton);
+    }
   });
   ensureConfirmedOrderControl({
     controlId: "crm-order-stock-issue-control", buttonId: "crm-order-stock-issue-button", label: "Stock Issue",

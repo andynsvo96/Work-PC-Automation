@@ -117,11 +117,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message.type === "crm-order-automation:manual-start") {
     startLocalManualOrderProcessing(message.orderId, message.automation, message.reason, {
-      days: message.days,
-      colors: message.colors,
-      sizes: message.sizes,
-      products: message.products
-    })
+        days: message.days,
+        colors: message.colors,
+        sizes: message.sizes,
+        products: message.products,
+        sleeves: message.sleeves,
+        ink_price: message.ink_price,
+        embroidery_price: message.embroidery_price
+      })
       .then(sendResponse)
       .catch((error) => sendResponse({ success: false, message: error.message || "Could not queue manual processing." }));
     return true;

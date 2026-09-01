@@ -77,7 +77,10 @@ export async function startLocalManualOrderProcessing(orderId, automation, reaso
       days: structuredData.days,
       colors: structuredData.colors,
       sizes: structuredData.sizes,
-      products: structuredData.products
+      products: structuredData.products,
+      sleeves: structuredData.sleeves,
+      ink_price: structuredData.ink_price,
+      embroidery_price: structuredData.embroidery_price
     })
   });
 }

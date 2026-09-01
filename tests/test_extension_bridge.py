@@ -461,6 +461,58 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
                 self.assertFalse(response.get_json()["success"])
                 enqueue.assert_not_called()
 
+    def test_sleeve_prints_queues_per_tab_sleeve_requests_and_custom_prices(self):
+        sleeves = [
+            {"tab_number": 1, "quantity": 5, "left": "ink", "right": ""},
+            {"tab_number": 2, "quantity": 20, "left": "ink", "right": "embroidery"},
+        ]
+        with mock.patch(
+            "server.enqueue_automation",
+            return_value=(True, "Sleeve Prints queued.", {"id": "sleeve-1", "status": "queued"}),
+        ) as enqueue:
+            response = self.client.post(
+                "/api/extension/bridge/process-order/manual",
+                json={
+                    "order_id": "5043020",
+                    "automation": "sleeve_prints",
+                    "sleeves": sleeves,
+                    "ink_price": "5",
+                    "embroidery_price": "15",
+                },
+                headers={"Origin": self.ORIGIN},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.get_json()["success"])
+        self.assertEqual(enqueue.call_args.kwargs["task_type"], "crm.sleeve_prints")
+        arguments = enqueue.call_args.kwargs["task_arguments"]
+        self.assertEqual(arguments["order_id"], "5043020")
+        self.assertEqual(arguments["sleeves"], sleeves)
+        self.assertEqual(arguments["ink_price"], "5.00")
+        self.assertEqual(arguments["embroidery_price"], "15.00")
+        self.assertFalse(arguments["dry_run"])
+
+    def test_sleeve_prints_rejects_invalid_or_empty_sleeve_requests(self):
+        invalid_payloads = [
+            {"sleeves": []},
+            {"sleeves": [{"tab_number": 1, "quantity": 1, "left": "", "right": ""}]},
+            {"sleeves": [{"tab_number": 1, "quantity": 1, "left": "screenprint", "right": ""}]},
+            {"sleeves": [{"tab_number": 1, "quantity": 1, "left": "ink", "right": ""}], "embroidery_price": "15"},
+        ]
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload), mock.patch("server.enqueue_automation") as enqueue:
+                response = self.client.post(
+                    "/api/extension/bridge/process-order/manual",
+                    json={"order_id": "5043020", "automation": "sleeve_prints", **payload},
+                    headers={"Origin": self.ORIGIN},
+                    environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+                )
+
+            self.assertEqual(response.status_code, 409)
+            self.assertFalse(response.get_json()["success"])
+            enqueue.assert_not_called()
+
     def test_stock_issue_color_queues_normalized_colors_and_products(self):
         products = [{
             "tab_number": 1,
