@@ -632,7 +632,7 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
         // rule, so explicitly collapse the price wrapper when no sleeve has
         // been requested.
         priceWrap.hidden = !method;
-        priceWrap.style.display = method ? "block" : "none";
+        priceWrap.style.setProperty("display", method ? "block" : "none", "important");
         priceInput.disabled = select.disabled || !method;
         if (method) {
           priceCaption.textContent = method === "ink"
