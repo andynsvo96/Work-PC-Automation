@@ -628,7 +628,11 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
         const method = select.value;
         const price = method === "ink" ? summary.inkPrice : method === "embroidery" ? summary.embroideryPrice : null;
         const invalidMessage = method ? priceErrors[method] : "";
+        // Some CRM styles override the browser's default [hidden] display
+        // rule, so explicitly collapse the price wrapper when no sleeve has
+        // been requested.
         priceWrap.hidden = !method;
+        priceWrap.style.display = method ? "block" : "none";
         priceInput.disabled = select.disabled || !method;
         if (method) {
           priceCaption.textContent = method === "ink"
