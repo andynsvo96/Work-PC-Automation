@@ -684,7 +684,8 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
       refresh();
     });
   });
-  overlay.addEventListener("click", (event) => { if (!submitting && event.target === overlay) overlay.remove(); });
+  // Keep this form open until the user explicitly goes Back or queues the task.
+  // A stray click on the page backdrop must not discard the selections.
   refresh();
 }
 
@@ -1225,8 +1226,8 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
       detailInput.focus();
     });
   });
-  overlay.addEventListener("click", (event) => { if (!submitting && event.target === overlay) overlay.remove(); });
-  overlay.addEventListener("keydown", (event) => { if (!submitting && event.key === "Escape") overlay.remove(); });
+  // This dialog is intentionally non-dismissible via the backdrop or Escape.
+  // Back is the explicit way to abandon the configured request.
   actions.append(back, queue);
   dialog.append(actions);
   refresh();
@@ -1329,8 +1330,7 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
     queueManualOrderAutomation(automation, triggerButton, autoProcessButton, reason);
   });
   reasonInput?.addEventListener("input", refreshContinueButtonState);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
-  overlay.addEventListener("keydown", (event) => { if (event.key === "Escape") overlay.remove(); });
+  // Keep the confirmation open until the user clicks Back or queues the task.
   actions.append(cancel, continueButton);
   dialog.append(actions);
   overlay.append(dialog);

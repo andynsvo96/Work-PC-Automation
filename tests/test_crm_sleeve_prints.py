@@ -131,6 +131,22 @@ class SleevePrintsExtensionUiTests(unittest.TestCase):
         self.assertIn("priceInput.value = Number(price).toFixed(2)", content)
         self.assertNotIn("const pricing = document.createElement", content)
 
+    def test_extension_configuration_dialogs_require_an_explicit_back_action_to_close(self):
+        content = (
+            Path(__file__).resolve().parents[1] / "crm-order-dark-mode-extension" / "content.js"
+        ).read_text(encoding="utf-8")
+
+        dialog_sections = [
+            content[content.index("function showSleevePrintsDialog"):content.index("function stockIssueDetectedSizes")],
+            content[content.index("function showStockIssueProductDialog"):content.index("async function startStockIssueExtensionSelection")],
+            content[content.index("function showOrderAutomationConfirmation"):content.index("function createOrderProcessMenuControl")],
+        ]
+
+        for section in dialog_sections:
+            self.assertNotIn("event.target === overlay", section)
+            self.assertNotIn('event.key === "Escape"', section)
+            self.assertIn('textContent = "Back"', section)
+
 
 if __name__ == "__main__":
     unittest.main()
