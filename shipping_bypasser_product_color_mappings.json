@@ -348,6 +348,40 @@
           "sanmar_color_id": "True Navy/ White"
         }
       ]
+    },
+    {
+      "crm_product_id": "ST446",
+      "sanmar_product_id": "ST446",
+      "colors": [
+        {
+          "crm_color_id": "Blk/White",
+          "sanmar_color_id": "Black/ White"
+        },
+        {
+          "crm_color_id": "DpOr/White",
+          "sanmar_color_id": "Deep Orange/ White"
+        },
+        {
+          "crm_color_id": "DpRd/Whit",
+          "sanmar_color_id": "Deep Red/ White"
+        },
+        {
+          "crm_color_id": "FrGn/White",
+          "sanmar_color_id": "Forest Green/ White"
+        },
+        {
+          "crm_color_id": "Mar/White",
+          "sanmar_color_id": "Maroon/ White"
+        },
+        {
+          "crm_color_id": "TRy/White",
+          "sanmar_color_id": "True Royal/ White"
+        },
+        {
+          "crm_color_id": "TNv/White",
+          "sanmar_color_id": "True Navy/ White"
+        }
+      ]
     }
   ]
 }
