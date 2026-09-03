@@ -2534,6 +2534,21 @@ return warehouseRows.map((row) => ({ warehouse: row.warehouse, stock: row.stock 
     return rows if isinstance(rows, list) else []
 
 
+def _sanmar_inventory_has_size_data(rows):
+    """Return whether SanMar has rendered at least one warehouse size row.
+
+    During a product/color transition SanMar briefly leaves the warehouse names
+    on screen while the size cells are empty. Treating those placeholder rows
+    as inventory makes every requested size look like zero stock.
+    """
+    return any(
+        isinstance(row, dict)
+        and isinstance(row.get("stock"), dict)
+        and bool(row["stock"])
+        for row in rows if isinstance(rows, list)
+    )
+
+
 def _wait_for_sanmar_inventory(driver, search_id, timeout=12):
     deadline = time.time() + timeout
     last_rows = []
@@ -2542,7 +2557,7 @@ def _wait_for_sanmar_inventory(driver, search_id, timeout=12):
             rows = _sanmar_inventory(driver)
         except Exception:
             rows = []
-        if rows:
+        if _sanmar_inventory_has_size_data(rows):
             return rows
         last_rows = rows
         try:

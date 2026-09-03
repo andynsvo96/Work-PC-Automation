@@ -73,6 +73,22 @@ class ShippingBypassColorConfirmationTests(unittest.TestCase):
         self.assertIn("Carolina\\ Blue", confirmation_pattern)
 
 
+class ShippingBypassInventoryReadinessTests(unittest.TestCase):
+    def test_empty_warehouse_placeholders_are_not_inventory(self):
+        self.assertFalse(
+            crm_shipping_bypasser._sanmar_inventory_has_size_data(
+                [{"warehouse": "Robbinsville, NJ", "stock": {}}]
+            )
+        )
+
+    def test_zero_stock_cells_are_still_valid_inventory(self):
+        self.assertTrue(
+            crm_shipping_bypasser._sanmar_inventory_has_size_data(
+                [{"warehouse": "Robbinsville, NJ", "stock": {"S": 0, "M": 0}}]
+            )
+        )
+
+
 class ShippingAddressRadioTests(unittest.TestCase):
     def test_waits_for_delayed_address_radio(self):
         driver = mock.Mock()
