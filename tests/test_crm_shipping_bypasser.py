@@ -27,9 +27,17 @@ class ShippingBypassProductColorMappingTests(unittest.TestCase):
             crm_shipping_bypasser.SANMAR_PRODUCT_COLOR_ALIASES[("ST404", "BLACKTRIADSO")],
             ["Black Triad Solid"],
         )
-        self.assertEqual(
-            crm_shipping_bypasser.SANMAR_PRODUCT_COLOR_ALIASES[("OG160", "BKTPHTHR")],
-            ["Blacktop Heather"],
+
+    def test_blacktop_heather_uses_generic_color_abbreviation_matching(self):
+        self.assertTrue(
+            crm_shipping_bypasser._sanmar_color_keys_match(
+                "Blacktop Heather",
+                "BktpHthr",
+            )
+        )
+        self.assertNotIn(
+            ("OG160", "BKTPHTHR"),
+            crm_shipping_bypasser.SANMAR_PRODUCT_COLOR_ALIASES,
         )
 
     def test_user_mapping_normalizes_product_and_color_ids(self):
@@ -58,6 +66,21 @@ class ShippingBypassProductColorMappingTests(unittest.TestCase):
 
 
 class ShippingBypassColorConfirmationTests(unittest.TestCase):
+    def test_already_selected_drawer_color_does_not_retrigger_navigation(self):
+        driver = mock.Mock()
+
+        with (
+            mock.patch.object(
+                crm_shipping_bypasser,
+                "_sanmar_selected_color_label",
+                return_value="Graphite Heather",
+            ),
+            mock.patch.object(crm_shipping_bypasser, "_ensure_sanmar_inventory_view", return_value=True),
+        ):
+            crm_shipping_bypasser._select_sanmar_color(driver, "Graphite Heather")
+
+        driver.execute_script.assert_not_called()
+
     def test_new_sanmar_selected_label_confirms_color(self):
         driver = mock.Mock()
         driver.execute_script.return_value = {"success": True}
@@ -66,7 +89,7 @@ class ShippingBypassColorConfirmationTests(unittest.TestCase):
             mock.patch.object(
                 crm_shipping_bypasser,
                 "_sanmar_selected_color_label",
-                return_value="Carolina Blue",
+                side_effect=["", "Carolina Blue"],
             ),
             mock.patch.object(crm_shipping_bypasser, "_ensure_sanmar_inventory_view", return_value=True),
             mock.patch.object(crm_shipping_bypasser.time, "sleep"),

@@ -3469,12 +3469,36 @@ class ShippingBypasserTests(unittest.TestCase):
             side_effect=[False, True],
         ), mock.patch.object(
             crm_shipping_bypasser,
+            "_sanmar_inventory_drawer_visible",
+            return_value=False,
+        ), mock.patch.object(
+            crm_shipping_bypasser,
             "_click_sanmar_inventory_pricing_button",
             return_value=True,
         ) as click_gate, mock.patch.object(crm_shipping_bypasser.time, "sleep"):
             self.assertTrue(crm_shipping_bypasser._ensure_sanmar_inventory_view(driver))
 
         click_gate.assert_called_once_with(driver, timeout=1)
+
+    def test_sanmar_inventory_view_does_not_reclick_gate_while_drawer_loads(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = "5000 Check inventory and pricing"
+
+        with mock.patch.object(
+            crm_shipping_bypasser,
+            "_sanmar_inventory_controls_visible",
+            side_effect=[False, True],
+        ), mock.patch.object(
+            crm_shipping_bypasser,
+            "_sanmar_inventory_drawer_visible",
+            return_value=True,
+        ), mock.patch.object(
+            crm_shipping_bypasser,
+            "_click_sanmar_inventory_pricing_button",
+        ) as click_gate, mock.patch.object(crm_shipping_bypasser.time, "sleep"):
+            self.assertTrue(crm_shipping_bypasser._ensure_sanmar_inventory_view(driver))
+
+        click_gate.assert_not_called()
 
     def test_sanmar_auth_state_confirms_cart_without_login_form(self):
         self.assertTrue(

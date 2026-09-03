@@ -201,6 +201,7 @@ SANMAR_KNOWN_COLOR_NAMES = (
 )
 SANMAR_CRM_COLOR_WORD_ALIASES = {
     "BLACK": ("BLK",),
+    "BLACKTOP": ("BKTP",),
     "CHARCOAL": ("CH", "CHAR", "CHRCL"),
     "DEEP": ("DP",),
     "HEATHER": ("HTH", "HTHR", "HTR"),
@@ -1401,7 +1402,7 @@ function isVisible(node) {
   }
   return true;
 }
-const visibleDrawer = Array.from(document.querySelectorAll('#offcanvas-drawer.show, #offcanvas-drawer[aria-modal="true"]'))
+const visibleDrawer = Array.from(document.querySelectorAll('#offcanvas-drawer.show'))
   .find(isVisible);
 if (visibleDrawer) {
   const selected = visibleDrawer.querySelector('[data-testid="pdp-header-color-selected"] p');
@@ -2026,7 +2027,7 @@ function isVisible(node) {
   }
   return true;
 }
-const visibleDrawer = Array.from(document.querySelectorAll('#offcanvas-drawer.show, #offcanvas-drawer[aria-modal="true"]'))
+const visibleDrawer = Array.from(document.querySelectorAll('#offcanvas-drawer.show'))
   .find(isVisible);
 if (visibleDrawer) {
   const drawerGrid = visibleDrawer.querySelector('#inventory-grid-form table.inventory-grid');
@@ -2051,8 +2052,48 @@ return Boolean(hasInventoryText && hasQuantityInputs);
 
 
 def _click_sanmar_inventory_pricing_button(driver, timeout=1):
+    script = r"""
+function isVisible(node) {
+  if (!node) return false;
+  const rect = node.getBoundingClientRect();
+  if ((rect.width || 0) <= 0 || (rect.height || 0) <= 0) return false;
+  for (let current = node; current; current = current.parentElement) {
+    const style = window.getComputedStyle(current);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+  }
+  return true;
+}
+const openDrawer = Array.from(document.querySelectorAll('#offcanvas-drawer.show'))
+  .find(isVisible);
+if (openDrawer) return false;
+const button = Array.from(document.querySelectorAll('[data-testid="pdp-check-inventory-drawer-button"]'))
+  .find(isVisible);
+if (!button) return false;
+button.scrollIntoView({ block: 'center', inline: 'center' });
+button.click();
+return true;
+"""
     try:
+        if driver.execute_script(script):
+            time.sleep(0.8)
+            return True
         return bool(_click_sanmar_text_control(driver, r"Check\s+inventory\s+and\s+pricing", timeout=timeout))
+    except Exception:
+        return False
+
+
+def _sanmar_inventory_drawer_visible(driver):
+    script = r"""
+const drawers = Array.from(document.querySelectorAll('#offcanvas-drawer.show'));
+return drawers.some((node) => {
+  const rect = node.getBoundingClientRect();
+  if ((rect.width || 0) <= 0 || (rect.height || 0) <= 0) return false;
+  const style = window.getComputedStyle(node);
+  return style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse';
+});
+"""
+    try:
+        return bool(driver.execute_script(script))
     except Exception:
         return False
 
@@ -2080,9 +2121,12 @@ function hasStyleToken(text, wanted) {
   const escaped = String(wanted || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(^|[^A-Z0-9])${escaped}([^A-Z0-9]|$)`, 'i').test(String(text || ''));
 }
-const selector = 'h1,h2,h3,[class*="product"],[class*="style"],[data-testid*="product"],a,span,p,div';
+const visibleDrawer = Array.from(document.querySelectorAll('#offcanvas-drawer.show'))
+  .find(isVisible);
+const root = visibleDrawer || document;
+const selector = '[data-testid="pdp-drawer-product-style-number-text"],h1,h2,h3,[class*="product"],[class*="style"],[data-testid*="product"],a,span,p,div';
 const candidates = [];
-for (const node of Array.from(document.querySelectorAll(selector)).filter(isVisible)) {
+for (const node of Array.from(root.querySelectorAll(selector)).filter(isVisible)) {
   const text = normalize(node.innerText || node.textContent || node.value || node.getAttribute('aria-label'));
   if (!text || text.length > 180) continue;
   const keyed = key(text);
@@ -2182,6 +2226,9 @@ def _ensure_sanmar_inventory_view(driver, force_click=False):
             text = _normalize_text(driver.execute_script("return String(document.body && (document.body.innerText || document.body.textContent) || '');"))
         except Exception:
             text = ""
+        if _sanmar_inventory_drawer_visible(driver):
+            time.sleep(0.4)
+            continue
         if force_click or re.search(r"Check\s+inventory\s+and\s+pricing", text, flags=re.I):
             if _click_sanmar_inventory_pricing_button(driver, timeout=1):
                 clicked_inventory_gate = True
@@ -2254,6 +2301,10 @@ def _select_sanmar_color(driver, color, product=None):
     wanted_keys = _sanmar_color_match_keys(color, product=product)
     if not wanted_keys:
         raise RuntimeError("CRM stock color was not detected.")
+    current_color = _sanmar_selected_color_label(driver)
+    if current_color and _cart_color_matches(current_color, color, product=product):
+        _ensure_sanmar_inventory_view(driver, force_click=False)
+        return
     word_aliases = _sanmar_color_word_aliases()
     script = r"""
 const wantedKeys = Array.isArray(arguments[0]) ? arguments[0] : [];
@@ -2357,7 +2408,7 @@ function isVisible(node) {
   }
   return true;
 }
-const visibleDrawer = Array.from(document.querySelectorAll('#offcanvas-drawer.show, #offcanvas-drawer[aria-modal="true"]'))
+const visibleDrawer = Array.from(document.querySelectorAll('#offcanvas-drawer.show'))
   .find(isVisible);
 const drawerColorNodes = visibleDrawer
   ? Array.from(visibleDrawer.querySelectorAll('[data-testid="pdp-color-link-option"]')).filter(isVisible)
@@ -2495,8 +2546,11 @@ function cleanSize(value) {
   if (xMatch) return `${xMatch[1].length}XL`;
   return compact;
 }
+const visibleDrawer = Array.from(document.querySelectorAll('#offcanvas-drawer.show'))
+  .find(isVisible);
+const inventoryRoot = visibleDrawer || document;
 const warehouseRows = [];
-for (const tr of Array.from(document.querySelectorAll('tr')).filter(isVisible)) {
+for (const tr of Array.from(inventoryRoot.querySelectorAll('tr')).filter(isVisible)) {
   const text = normalize(tr.innerText || tr.textContent);
   const warehouse = warehouseFromText(text);
   if (!warehouse) continue;
@@ -2519,7 +2573,7 @@ function nearestWarehouse(y) {
   }
   return bestDistance <= 12 ? best : null;
 }
-for (const table of Array.from(document.querySelectorAll('table')).filter(isVisible)) {
+for (const table of Array.from(inventoryRoot.querySelectorAll('table')).filter(isVisible)) {
   if (!table.querySelector('input:not([type="hidden"])')) continue;
   const headerCells = Array.from(table.querySelectorAll('[data-testid="inventory-size-row"] [data-testid="inventory-size-value-cell"], thead th, tr.headings td, tr.headings th, th.size-header, td.size-header'))
     .filter(isVisible)
@@ -3320,8 +3374,11 @@ function cleanSize(value) {
   if (xMatch) return `${xMatch[1].length}XL`;
   return compact;
 }
+const visibleDrawer = Array.from(document.querySelectorAll('#offcanvas-drawer.show'))
+  .find(isVisible);
+const inventoryRoot = visibleDrawer || document;
 let targetY = null;
-for (const tr of Array.from(document.querySelectorAll('tr')).filter(isVisible)) {
+for (const tr of Array.from(inventoryRoot.querySelectorAll('tr')).filter(isVisible)) {
   const rowText = normalize(tr.innerText || tr.textContent);
   if (!hasWarehouseText(rowText)) continue;
   const rect = tr.getBoundingClientRect();
@@ -3329,7 +3386,7 @@ for (const tr of Array.from(document.querySelectorAll('tr')).filter(isVisible)) 
   break;
 }
 if (targetY === null) {
-  for (const node of Array.from(document.querySelectorAll('body *')).filter(isVisible)) {
+  for (const node of Array.from(inventoryRoot.querySelectorAll('*')).filter(isVisible)) {
     const text = normalize(node.innerText || node.textContent);
     if (!hasWarehouseText(text)) continue;
     const rect = node.getBoundingClientRect();
@@ -3339,7 +3396,7 @@ if (targetY === null) {
 }
 if (targetY === null) return { success: false, message: `Warehouse row not found: ${warehouse}` };
 const candidates = [];
-for (const table of Array.from(document.querySelectorAll('table')).filter(isVisible)) {
+for (const table of Array.from(inventoryRoot.querySelectorAll('table')).filter(isVisible)) {
   if (!table.querySelector('input:not([type="hidden"])')) continue;
   const headerCells = Array.from(table.querySelectorAll('[data-testid="inventory-size-row"] [data-testid="inventory-size-value-cell"], thead th, tr.headings td, tr.headings th, th.size-header, td.size-header'))
     .filter(isVisible)
