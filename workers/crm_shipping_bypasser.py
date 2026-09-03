@@ -1401,6 +1401,15 @@ function isVisible(node) {
   }
   return true;
 }
+const selectedMarkers = Array.from(document.querySelectorAll('p,span,div,strong')).filter((node) => (
+  isVisible(node) && normalize(node.innerText || node.textContent) === 'Selected:'
+));
+for (const marker of selectedMarkers) {
+  const selectedValue = normalize(
+    (marker.nextElementSibling && (marker.nextElementSibling.innerText || marker.nextElementSibling.textContent)) || ''
+  );
+  if (selectedValue && selectedValue.length <= 120) return selectedValue;
+}
 const selectors = [
   '.color-selected',
   '[class*="color-selected"]',
@@ -1414,7 +1423,7 @@ for (const selector of selectors) {
       removable.remove();
     }
     const text = normalize(clone.innerText || clone.textContent || node.getAttribute('aria-label') || '');
-    const match = text.match(/Color\s+selected\s*:?\s*(.+?)(?:\s+Show\s+all\s+colors|\s+Show\s+less\s+colors|$)/i);
+    const match = text.match(/(?:Color\s+)?Selected\s*:?\s*(.+?)(?:\s+Show\s+all\s+colors|\s+Show\s+less\s+colors|$)/i);
     if (match && normalize(match[1])) return normalize(match[1]);
     const imageLabel = normalize((node.querySelector('img') || {}).alt || '');
     if (imageLabel) return imageLabel;
@@ -2366,9 +2375,13 @@ return { success: true };
         raise RuntimeError(f"SanMar color '{color}' was not found.")
     selected_labels = _sanmar_color_label_options(color, product=product)
     selected_pattern = "|".join(re.escape(label) for label in selected_labels)
-    text = _wait_for_text(driver, rf"Color\s+selected:\s*{selected_pattern}|Color\s+selected:.*{selected_pattern}", timeout=8)
+    text = _wait_for_text(
+        driver,
+        rf"(?:Color\s+)?Selected\s*:\s*{selected_pattern}|(?:Color\s+)?Selected\s*:.*{selected_pattern}",
+        timeout=8,
+    )
     if not text and any(key in {"NAVY", "ROYAL"} for key in wanted_keys):
-        text = _wait_for_text(driver, r"Color\s+selected:.*(Navy|Royal)", timeout=3)
+        text = _wait_for_text(driver, r"(?:Color\s+)?Selected\s*:.*(Navy|Royal)", timeout=3)
     if not text:
         selected_color = _sanmar_selected_color_label(driver)
         if selected_color and _cart_color_matches(selected_color, color, product=product):

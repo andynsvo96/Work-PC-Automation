@@ -27,6 +27,10 @@ class ShippingBypassProductColorMappingTests(unittest.TestCase):
             crm_shipping_bypasser.SANMAR_PRODUCT_COLOR_ALIASES[("ST404", "BLACKTRIADSO")],
             ["Black Triad Solid"],
         )
+        self.assertEqual(
+            crm_shipping_bypasser.SANMAR_PRODUCT_COLOR_ALIASES[("OG160", "BKTPHTHR")],
+            ["Blacktop Heather"],
+        )
 
     def test_user_mapping_normalizes_product_and_color_ids(self):
         payload = {
@@ -51,6 +55,22 @@ class ShippingBypassProductColorMappingTests(unittest.TestCase):
 
         self.assertEqual(products["TEST-100"]["search_id"], "SM-200")
         self.assertEqual(colors[("TEST100", "BLUEWHITE")], ["Blue/ White"])
+
+
+class ShippingBypassColorConfirmationTests(unittest.TestCase):
+    def test_new_sanmar_selected_label_confirms_color(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = {"success": True}
+
+        with (
+            mock.patch.object(crm_shipping_bypasser, "_wait_for_text", return_value="Selected: Carolina Blue") as wait_for_text,
+            mock.patch.object(crm_shipping_bypasser.time, "sleep"),
+        ):
+            crm_shipping_bypasser._select_sanmar_color(driver, "Carolina Blue")
+
+        confirmation_pattern = wait_for_text.call_args.args[1]
+        self.assertIn(r"(?:Color\s+)?Selected", confirmation_pattern)
+        self.assertIn("Carolina\\ Blue", confirmation_pattern)
 
 
 class ShippingAddressRadioTests(unittest.TestCase):
