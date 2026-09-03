@@ -20,7 +20,6 @@ ensure_project_root_on_path()
 
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 
 from automation_runtime import (
     SCRIPT_DIR,
@@ -2242,30 +2241,77 @@ def _ensure_sanmar_inventory_view(driver, force_click=False):
 
 
 def _search_sanmar_product(driver, search_id, click_inventory_button=False, expected_style_keys=None):
-    input_el = None
+    search_script = r"""
+const value = String(arguments[0] || '').trim();
+function isVisible(node) {
+  if (!node || node.disabled || node.readOnly) return false;
+  const rect = node.getBoundingClientRect();
+  if ((rect.width || 0) <= 0 || (rect.height || 0) <= 0) return false;
+  for (let current = node; current; current = current.parentElement) {
+    const style = window.getComputedStyle(current);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+  }
+  return true;
+}
+const preferredSelectors = [
+  '#offcanvas-drawer.show #search-widget-input',
+  '#offcanvas-drawer.show [data-testid="search-app-main-search-input"]',
+  '[data-testid="search-app-main-search-input"]',
+  'input[placeholder*="Style" i]',
+  'input[placeholder*="Product" i]',
+  'input[placeholder*="PMS" i]',
+];
+const candidates = [];
+const seen = new Set();
+for (let selectorIndex = 0; selectorIndex < preferredSelectors.length; selectorIndex += 1) {
+  for (const input of Array.from(document.querySelectorAll(preferredSelectors[selectorIndex]))) {
+    if (seen.has(input) || !isVisible(input)) continue;
+    seen.add(input);
+    const rect = input.getBoundingClientRect();
+    candidates.push({
+      input,
+      score: selectorIndex * 100000 + Math.max(0, rect.top) + Math.max(0, rect.left),
+    });
+  }
+}
+candidates.sort((a, b) => a.score - b.score);
+if (!value || !candidates.length) return { success: false, reason: 'input_not_found' };
+const input = candidates[0].input;
+const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+input.focus();
+if (setter && setter.set) setter.set.call(input, value);
+else input.value = value;
+input.dispatchEvent(new Event('input', { bubbles: true }));
+input.dispatchEvent(new Event('change', { bubbles: true }));
+const form = input.closest('form');
+const submit = form && form.querySelector('[data-testid="search-app-submit-button"],button[type="submit"],input[type="submit"]');
+if (form && typeof form.requestSubmit === 'function') {
+  form.requestSubmit(submit || undefined);
+  return { success: true, method: 'requestSubmit', placeholder: input.getAttribute('placeholder') || '' };
+}
+if (submit) {
+  submit.click();
+  return { success: true, method: 'click', placeholder: input.getAttribute('placeholder') || '' };
+}
+input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+return { success: true, method: 'enter', placeholder: input.getAttribute('placeholder') || '' };
+"""
+    search_result = None
     deadline = time.time() + 12
-    while time.time() < deadline and input_el is None:
+    last_search_error = None
+    while time.time() < deadline:
         try:
-            inputs = driver.find_elements(
-                By.CSS_SELECTOR,
-                "#offcanvas-drawer.show #search-widget-input, "
-                "#offcanvas-drawer.show [data-testid='search-app-main-search-input']",
-            )
-            inputs += driver.find_elements(By.CSS_SELECTOR, "input")
-            for item in inputs:
-                placeholder = str(item.get_attribute("placeholder") or "")
-                if item.is_displayed() and ("product" in placeholder.lower() or "style" in placeholder.lower() or "pms" in placeholder.lower()):
-                    input_el = item
-                    break
-        except Exception:
-            pass
-        if input_el is None:
-            time.sleep(0.2)
-    if input_el is None:
-        raise RuntimeError("SanMar search input was not found.")
-    input_el.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
-    input_el.send_keys(search_id)
-    input_el.send_keys(Keys.ENTER)
+            search_result = driver.execute_script(search_script, search_id)
+        except Exception as exc:
+            last_search_error = exc
+            search_result = None
+        if isinstance(search_result, dict) and search_result.get("success"):
+            break
+        time.sleep(0.2)
+    if not isinstance(search_result, dict) or not search_result.get("success"):
+        detail = f": {last_search_error}" if last_search_error is not None else ""
+        raise RuntimeError(f"SanMar search input was not found or could not be submitted for {search_id}{detail}.")
     deadline = time.time() + 20
     expected_keys = [_upper_key(key) for key in (expected_style_keys or [search_id]) if _upper_key(key)]
     last_product_page_error = None

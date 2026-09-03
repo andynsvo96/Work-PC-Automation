@@ -114,6 +114,27 @@ class ShippingBypassColorConfirmationTests(unittest.TestCase):
         self.assertIn('[data-testid="pdp-drawer-product-color"]', script)
 
 
+class ShippingBypassProductSearchTests(unittest.TestCase):
+    def test_product_search_submits_new_drawer_form_without_selenium_keystrokes(self):
+        driver = mock.Mock()
+        driver.current_url = "https://www.sanmar.com/p/example?text=PC54#drawer"
+        driver.execute_script.side_effect = [
+            {"success": True, "method": "requestSubmit"},
+            "PC54 Check inventory and pricing",
+        ]
+
+        with (
+            mock.patch.object(crm_shipping_bypasser, "_ensure_sanmar_inventory_view", return_value=True),
+            mock.patch.object(crm_shipping_bypasser, "_assert_sanmar_active_style", return_value=True),
+        ):
+            self.assertTrue(crm_shipping_bypasser._search_sanmar_product(driver, "PC54"))
+
+        search_script = driver.execute_script.call_args_list[0].args[0]
+        self.assertIn("#offcanvas-drawer.show #search-widget-input", search_script)
+        self.assertIn("form.requestSubmit", search_script)
+        driver.find_elements.assert_not_called()
+
+
 class ShippingBypassInventoryReadinessTests(unittest.TestCase):
     def test_inventory_reader_supports_new_drawer_grid_cells(self):
         driver = mock.Mock()
