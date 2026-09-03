@@ -63,17 +63,62 @@ class ShippingBypassColorConfirmationTests(unittest.TestCase):
         driver.execute_script.return_value = {"success": True}
 
         with (
-            mock.patch.object(crm_shipping_bypasser, "_wait_for_text", return_value="Selected: Carolina Blue") as wait_for_text,
+            mock.patch.object(
+                crm_shipping_bypasser,
+                "_sanmar_selected_color_label",
+                return_value="Carolina Blue",
+            ),
+            mock.patch.object(crm_shipping_bypasser, "_ensure_sanmar_inventory_view", return_value=True),
             mock.patch.object(crm_shipping_bypasser.time, "sleep"),
         ):
             crm_shipping_bypasser._select_sanmar_color(driver, "Carolina Blue")
 
-        confirmation_pattern = wait_for_text.call_args.args[1]
-        self.assertIn(r"(?:Color\s+)?Selected", confirmation_pattern)
-        self.assertIn("Carolina\\ Blue", confirmation_pattern)
+        selection_script = driver.execute_script.call_args.args[0]
+        self.assertIn('[data-testid="pdp-color-link-option"]', selection_script)
+        self.assertIn("visibleDrawer.contains(best.node)", selection_script)
+        self.assertIn("best.node.click()", selection_script)
+
+    def test_selected_color_reader_prefers_new_drawer_header(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = "Graphite Heather"
+
+        self.assertEqual(
+            crm_shipping_bypasser._sanmar_selected_color_label(driver),
+            "Graphite Heather",
+        )
+        script = driver.execute_script.call_args.args[0]
+        self.assertIn('[data-testid="pdp-header-color-selected"] p', script)
+        self.assertIn('[data-testid="pdp-drawer-product-color"]', script)
 
 
 class ShippingBypassInventoryReadinessTests(unittest.TestCase):
+    def test_inventory_reader_supports_new_drawer_grid_cells(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = [
+            {"warehouse": "Robbinsville, NJ", "stock": {"S": 964}}
+        ]
+
+        rows = crm_shipping_bypasser._sanmar_inventory(driver)
+
+        self.assertEqual(rows[0]["stock"]["S"], 964)
+        script = driver.execute_script.call_args.args[0]
+        self.assertIn('[data-testid="inventory-size-value-cell"]', script)
+        self.assertIn('[data-testid="inventory-warehouse-input-cell"][data-available]', script)
+
+    def test_quantity_filler_supports_new_drawer_grid_cells(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = {"success": True}
+
+        with mock.patch.object(crm_shipping_bypasser.time, "sleep"):
+            crm_shipping_bypasser._fill_sanmar_quantities(
+                driver,
+                "Robbinsville, NJ",
+                {"S": 2},
+            )
+
+        script = driver.execute_script.call_args.args[0]
+        self.assertIn('[data-testid="inventory-size-value-cell"]', script)
+
     def test_empty_warehouse_placeholders_are_not_inventory(self):
         self.assertFalse(
             crm_shipping_bypasser._sanmar_inventory_has_size_data(

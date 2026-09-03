@@ -1401,6 +1401,17 @@ function isVisible(node) {
   }
   return true;
 }
+const visibleDrawer = Array.from(document.querySelectorAll('#offcanvas-drawer.show, #offcanvas-drawer[aria-modal="true"]'))
+  .find(isVisible);
+if (visibleDrawer) {
+  const selected = visibleDrawer.querySelector('[data-testid="pdp-header-color-selected"] p');
+  const selectedText = normalize(selected && (selected.innerText || selected.textContent));
+  if (selectedText) return selectedText;
+  const productColor = visibleDrawer.querySelector('[data-testid="pdp-drawer-product-color"]');
+  const productColorText = normalize(productColor && (productColor.innerText || productColor.textContent))
+    .replace(/^Color\s*:\s*/i, '');
+  if (productColorText) return productColorText;
+}
 const selectedMarkers = Array.from(document.querySelectorAll('p,span,div,strong')).filter((node) => (
   isVisible(node) && normalize(node.innerText || node.textContent) === 'Selected:'
 ));
@@ -2015,8 +2026,21 @@ function isVisible(node) {
   }
   return true;
 }
+const visibleDrawer = Array.from(document.querySelectorAll('#offcanvas-drawer.show, #offcanvas-drawer[aria-modal="true"]'))
+  .find(isVisible);
+if (visibleDrawer) {
+  const drawerGrid = visibleDrawer.querySelector('#inventory-grid-form table.inventory-grid');
+  const hasDrawerSizes = drawerGrid && drawerGrid.querySelector(
+    '[data-testid="inventory-size-row"] [data-testid="inventory-size-value-cell"]'
+  );
+  const hasDrawerWarehouse = drawerGrid && drawerGrid.querySelector('[data-testid="inventory-warehouse-row"]');
+  const hasDrawerInputs = drawerGrid && Array.from(drawerGrid.querySelectorAll(
+    '[data-testid="inventory-warehouse-input-cell"]'
+  )).some(isVisible);
+  if (drawerGrid && isVisible(drawerGrid) && hasDrawerSizes && hasDrawerWarehouse && hasDrawerInputs) return true;
+}
 const text = String(document.body && (document.body.innerText || document.body.textContent) || '');
-const hasInventoryText = /Color\s+selected|Add\s+to\s+shopping\s+box|Warehouse/i.test(text);
+const hasInventoryText = /Color\s+selected|Pricing\s+and\s+Warehouses|Add\s+to\s+shopping\s+box|Warehouse/i.test(text);
 const hasQuantityInputs = Array.from(document.querySelectorAll('table input:not([type="hidden"])')).some(isVisible);
 return Boolean(hasInventoryText && hasQuantityInputs);
 """
@@ -2175,7 +2199,12 @@ def _search_sanmar_product(driver, search_id, click_inventory_button=False, expe
     deadline = time.time() + 12
     while time.time() < deadline and input_el is None:
         try:
-            inputs = driver.find_elements(By.CSS_SELECTOR, "input")
+            inputs = driver.find_elements(
+                By.CSS_SELECTOR,
+                "#offcanvas-drawer.show #search-widget-input, "
+                "#offcanvas-drawer.show [data-testid='search-app-main-search-input']",
+            )
+            inputs += driver.find_elements(By.CSS_SELECTOR, "input")
             for item in inputs:
                 placeholder = str(item.get_attribute("placeholder") or "")
                 if item.is_displayed() and ("product" in placeholder.lower() or "style" in placeholder.lower() or "pms" in placeholder.lower()):
@@ -2200,7 +2229,7 @@ def _search_sanmar_product(driver, search_id, click_inventory_button=False, expe
         except Exception:
             text = ""
             url = ""
-        product_page = bool(re.search(r"Inventory\s+and\s+Pricing|Color\s+selected|Add\s+to\s+shopping\s+box|Check\s+inventory\s+and\s+pricing", text, flags=re.I))
+        product_page = bool(re.search(r"Inventory\s+and\s+Pricing|Pricing\s+and\s+Warehouses|(?:Color\s+)?Selected\s*:|Add\s+to\s+shopping\s+box|Check\s+inventory\s+and\s+pricing", text, flags=re.I))
         cart_page = bool(re.search(r"My\s+Shopping\s+Box|Shopping\s+Details|Continue\s+Checkout", text, flags=re.I))
         page_key = _upper_key(f"{text} {url}")
         expected_seen = any(key in page_key for key in expected_keys) if expected_keys else True
@@ -2328,7 +2357,14 @@ function isVisible(node) {
   }
   return true;
 }
-const nodes = Array.from(document.querySelectorAll('button,a,label,span,div,input')).filter(isVisible);
+const visibleDrawer = Array.from(document.querySelectorAll('#offcanvas-drawer.show, #offcanvas-drawer[aria-modal="true"]'))
+  .find(isVisible);
+const drawerColorNodes = visibleDrawer
+  ? Array.from(visibleDrawer.querySelectorAll('[data-testid="pdp-color-link-option"]')).filter(isVisible)
+  : [];
+const nodes = drawerColorNodes.length
+  ? drawerColorNodes
+  : Array.from(document.querySelectorAll('button,a,label,span,div,input')).filter(isVisible);
 let best = null;
 for (const node of nodes) {
   const text = node.getAttribute('title') || node.getAttribute('aria-label') || node.value || node.innerText || node.textContent || '';
@@ -2346,6 +2382,12 @@ for (const node of nodes) {
 }
 if (!best) return { success: false };
 best.node.scrollIntoView({ block: 'center', inline: 'center' });
+if (visibleDrawer && visibleDrawer.contains(best.node)) {
+  // Use SanMar's drawer click handler so its reactive inventory state follows
+  // the color change. A forced href navigation drops the #drawer state.
+  best.node.click();
+  return { success: true, drawer: true };
+}
 const href = best.node && best.node.tagName && String(best.node.tagName).toLowerCase() === 'a'
   ? best.node.getAttribute('href')
   : '';
@@ -2373,26 +2415,23 @@ return { success: true };
         if last_error is not None:
             raise RuntimeError(f"SanMar color '{color}' was not found: {last_error}")
         raise RuntimeError(f"SanMar color '{color}' was not found.")
-    selected_labels = _sanmar_color_label_options(color, product=product)
-    selected_pattern = "|".join(re.escape(label) for label in selected_labels)
-    text = _wait_for_text(
-        driver,
-        rf"(?:Color\s+)?Selected\s*:\s*{selected_pattern}|(?:Color\s+)?Selected\s*:.*{selected_pattern}",
-        timeout=8,
-    )
-    if not text and any(key in {"NAVY", "ROYAL"} for key in wanted_keys):
-        text = _wait_for_text(driver, r"(?:Color\s+)?Selected\s*:.*(Navy|Royal)", timeout=3)
-    if not text:
+    confirmation_deadline = time.time() + 12
+    selected_color = ""
+    while time.time() < confirmation_deadline:
         selected_color = _sanmar_selected_color_label(driver)
         if selected_color and _cart_color_matches(selected_color, color, product=product):
+            try:
+                _ensure_sanmar_inventory_view(driver, force_click=False)
+            except Exception:
+                pass
             time.sleep(0.7)
             return
-        if selected_color:
-            raise RuntimeError(
-                f"SanMar selected color '{selected_color}' did not match CRM color '{color}'."
-            )
-        raise RuntimeError(f"SanMar did not confirm selected color '{color}'.")
-    time.sleep(0.7)
+        time.sleep(0.3)
+    if selected_color:
+        raise RuntimeError(
+            f"SanMar selected color '{selected_color}' did not match CRM color '{color}'."
+        )
+    raise RuntimeError(f"SanMar did not confirm selected color '{color}'.")
 
 
 def _sanmar_inventory(driver):
@@ -2482,7 +2521,7 @@ function nearestWarehouse(y) {
 }
 for (const table of Array.from(document.querySelectorAll('table')).filter(isVisible)) {
   if (!table.querySelector('input:not([type="hidden"])')) continue;
-  const headerCells = Array.from(table.querySelectorAll('thead th, tr.headings td, tr.headings th, th.size-header, td.size-header'))
+  const headerCells = Array.from(table.querySelectorAll('[data-testid="inventory-size-row"] [data-testid="inventory-size-value-cell"], thead th, tr.headings td, tr.headings th, th.size-header, td.size-header'))
     .filter(isVisible)
     .map((cell) => {
       const rect = cell.getBoundingClientRect();
@@ -2522,7 +2561,10 @@ for (const table of Array.from(document.querySelectorAll('table')).filter(isVisi
       if (!sizePattern.test(size)) continue;
       const cell = nearestCellForHeader(cells, headerCell);
       if (!cell) continue;
-      const raw = normalize(cell.innerText || cell.textContent).replace(/,/g, '');
+      const stockInput = cell.querySelector('[data-testid="inventory-warehouse-input-cell"][data-available]');
+      const raw = normalize(
+        (stockInput && stockInput.getAttribute('data-available')) || cell.innerText || cell.textContent
+      ).replace(/,/g, '');
       const numberMatch = raw.match(/\d+/);
       warehouse.stock[size] = numberMatch ? Number(numberMatch[0]) : 0;
     }
@@ -3299,7 +3341,7 @@ if (targetY === null) return { success: false, message: `Warehouse row not found
 const candidates = [];
 for (const table of Array.from(document.querySelectorAll('table')).filter(isVisible)) {
   if (!table.querySelector('input:not([type="hidden"])')) continue;
-  const headerCells = Array.from(table.querySelectorAll('thead th, tr.headings td, tr.headings th, th.size-header, td.size-header'))
+  const headerCells = Array.from(table.querySelectorAll('[data-testid="inventory-size-row"] [data-testid="inventory-size-value-cell"], thead th, tr.headings td, tr.headings th, th.size-header, td.size-header'))
     .filter(isVisible)
     .map((cell) => {
       const rect = cell.getBoundingClientRect();
