@@ -57,6 +57,30 @@ class WorkRouteScheduleTests(unittest.TestCase):
         self.assertEqual(captured["repeat_interval_minutes"], 12)
         self.assertIn("Repeat every 12 minutes", captured["advanced_summary"])
 
+    def test_communications_schedule_queues_selected_work_action(self):
+        app, captured = self._app_with_captured_queue()
+        response = app.test_client().post(
+            "/communications/schedule",
+            json={"action": "work_in", "scheduled_time": "2026-08-07T08:30:00"},
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(captured["label"], "Work In")
+        self.assertEqual(captured["queue_mode"], "scheduled")
+        self.assertEqual(captured["scheduled_for"], "2026-08-07T08:30:00")
+        self.assertEqual(captured["task_type"], "communications.work")
+
+    def test_work_in_accepts_scheduled_queue_controls(self):
+        app, captured = self._app_with_captured_queue()
+        response = app.test_client().post(
+            "/work/in",
+            json={"advanced_mode": "scheduled", "scheduled_time": "2026-08-07T08:30:00"},
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(captured["queue_mode"], "scheduled")
+        self.assertEqual(captured["scheduled_for"], "2026-08-07T08:30:00")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -718,7 +718,7 @@ button.icon-btn{min-height:34px;padding:7px 12px;border-radius:8px;background:va
 .rough-big-time{margin:4px 0 1px;font:800 clamp(24px,2.3vw,31px)/1.1 Consolas,'Courier New',monospace;letter-spacing:.03em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .rough-progress-block{margin-top:14px}.rough-gauge-labels{display:flex;justify-content:space-between;color:var(--rough-muted);font-size:9px}.rough-progress{height:8px;margin-top:7px;border-radius:99px;background:var(--rough-divider);overflow:hidden}.rough-progress>span{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#2563eb,#38bdf8);transition:width .35s ease}
 .rough-divider{height:1px;margin:15px 0;background:var(--rough-divider)}
-.rough-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.rough-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.communications-schedule-panel{width:min(100%,440px);margin:12px 0 0 auto;padding:10px 11px;border:1px solid var(--rough-border);border-radius:9px;background:var(--rough-card-alt)}.communications-schedule-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.communications-schedule-head b{font-size:11px}.communications-schedule-controls{display:grid;grid-template-columns:minmax(0,1fr) 112px auto;gap:7px}.communications-schedule-controls select,.communications-schedule-controls input{min-width:0;padding:8px;border:1px solid #55555d;border-radius:7px;background:var(--rough-shell);color:var(--rough-text);font-size:11px}.communications-schedule-controls button{min-height:34px;padding:7px 10px;font-size:11px}
 .rough-actions button{min-height:34px;border-radius:8px;font-size:12px;font-weight:650}
 .rough-action-popover,.rough-history-details,.rough-advanced-details{position:relative}
 .rough-action-popover>summary,.rough-history-details>summary,.rough-advanced-details>summary{list-style:none;display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:7px 12px;border:1px solid #55555d;border-radius:8px;background:var(--rough-card-alt);color:var(--rough-text);font-size:12px;font-weight:650;cursor:pointer}
@@ -903,6 +903,19 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
           </div>
         </details>
         <button class='secondary' onclick="callEndpoint('/work/cancel-schedule', this, 'Canceling...')">Cancel auto-out</button>
+      </div>
+      <div class='communications-schedule-panel'>
+        <div class='communications-schedule-head'><b>Schedule automation</b><span class='rough-pill gray'>Runs once</span></div>
+        <div class='communications-schedule-controls'>
+          <select id='communicationScheduleAction' aria-label='Communication automation to schedule'>
+            <option value='work_in'>Work in</option>
+            <option value='work_out'>Work out</option>
+            <option value='lunch'>Start lunch</option>
+          </select>
+          <input id='communicationScheduledTimeInput' type='time' step='60' aria-label='Scheduled time'>
+          <button class='secondary' type='button' onclick='scheduleCommunicationAutomation(this)'>Schedule</button>
+        </div>
+        <div class='muted' id='communicationScheduleSummaryText' style='margin-top:7px'>Choose an automation and time; it will wait in Queue until then.</div>
       </div>
     </section>
 
@@ -9657,6 +9670,49 @@ async function callEndpoint(path, button = null, busyLabel = 'Automation underwa
 async function toggleCommunicationWorkday(button = null) {
   const active = workHoursStatusPayload ? liveWorkHoursSnapshot(workHoursStatusPayload).isActive : false;
   await callEndpoint(active ? '/work/out' : '/work/in', button, active ? 'Clocking out...' : 'Clocking in...');
+}
+
+function communicationScheduleDateTime(timeValue) {
+  return resolveCrmProcessingScheduledDateTime(timeValue);
+}
+
+async function scheduleCommunicationAutomation(button = null) {
+  return withButtonBusy(button, 'Scheduling...', async () => {
+    const actionInput = document.getElementById('communicationScheduleAction');
+    const timeInput = document.getElementById('communicationScheduledTimeInput');
+    const summary = document.getElementById('communicationScheduleSummaryText');
+    const action = String(actionInput && actionInput.value || '').trim();
+    const timeValue = String(timeInput && timeInput.value || '').trim();
+    const actionLabels = { work_in: 'Work in', work_out: 'Work out', lunch: 'Start lunch' };
+    if (!actionLabels[action]) {
+      setStatus('Choose a communication automation to schedule.');
+      return;
+    }
+    const scheduled = communicationScheduleDateTime(timeValue);
+    if (!scheduled) {
+      setStatus('Choose a valid time before scheduling.');
+      return;
+    }
+
+    let resultMsg = '';
+    try {
+      const d = await api('/communications/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          scheduled_time: formatCrmProcessingLocalDateTime(scheduled),
+        }),
+      });
+      resultMsg = d.message || `${actionLabels[action]} scheduled.`;
+      if (summary) summary.textContent = `${actionLabels[action]} is scheduled for ${fmtDateTime(formatCrmProcessingLocalDateTime(scheduled))}. You can cancel it or retry a failed run from Queue.`;
+    } catch (e) {
+      resultMsg = `Could not schedule ${actionLabels[action]}: ${e.message}`;
+    }
+    await loadQueue(false);
+    const status = await loadStatus(false);
+    setStatus(resultMsg + ' | ' + status.summary);
+  });
 }
 
 async function updateManualAutoOutTime(button = null) {

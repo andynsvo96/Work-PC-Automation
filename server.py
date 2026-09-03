@@ -2475,14 +2475,19 @@ _QUEUE_ORDER_LABEL_RE = re.compile(r"\border\s+\d{7}\b", re.IGNORECASE)
 
 
 def _automation_queue_task_is_retryable_order(task):
-    """Limit in-place retry to unfinished CRM work with an order-level scope."""
+    """Allow safe retries for unfinished communications and targeted CRM work."""
     if not isinstance(task, dict):
         return False
     if str(task.get("status") or "").strip().lower() not in {"failed", "canceled"}:
         return False
+    task_type = str(task.get("task_type") or "").strip().lower()
+    # Communications tasks are single, user-initiated actions.  Retrying a
+    # failed or canceled one uses the original in-memory callable and puts it
+    # back into the same queue, just like the Processing retry control.
+    if task_type.startswith("communications."):
+        return callable(task.get("fn"))
     if str(task.get("queue_mode") or "normal").strip().lower() != "normal":
         return False
-    task_type = str(task.get("task_type") or "").strip().lower()
     if task_type == "crm.processing":
         context = task.get("result_context") if isinstance(task.get("result_context"), dict) else {}
         return bool(_crm_processing_retry_plan(context.get("report")))
@@ -2941,9 +2946,9 @@ def retry_automation_queue_task(task_id):
             )
         else:
             if not _automation_queue_task_is_retryable_order(task):
-                return False, "Only canceled or failed CRM tasks with a safe retry scope can be retried."
+                return False, "Only canceled or failed Communications tasks and CRM tasks with a safe retry scope can be retried."
             if not callable(task.get("fn")):
-                return False, "The original order task is no longer available to retry safely."
+                return False, "The original task is no longer available to retry safely."
             retry_context = {
                 "retry_count": retry_count,
                 "retrying": True,
@@ -2951,16 +2956,27 @@ def retry_automation_queue_task(task_id):
                 "previous_result_context": existing_context,
                 "retry_requested_at": _automation_queue_now_iso(),
             }
-            success_message = (
-                f"Retry {retry_count} queued for {task.get('label') or 'the order task'}; "
-                "completed CRM work will be detected and skipped."
-            )
+            if str(task.get("task_type") or "").strip().lower().startswith("communications."):
+                success_message = f"Retry {retry_count} queued for {task.get('label') or 'the communication task'}."
+            else:
+                success_message = (
+                    f"Retry {retry_count} queued for {task.get('label') or 'the order task'}; "
+                    "completed CRM work will be detected and skipped."
+                )
         task["status"] = "queued"
         task["success"] = None
         task["cancel_requested"] = False
         task["started_at"] = None
         task["completed_at"] = None
         task["duration_seconds"] = None
+        task["idle_reason"] = None
+        task["next_run_at"] = None
+        if str(task.get("task_type") or "").strip().lower().startswith("communications."):
+            # A retry is a fresh, immediate attempt rather than a second pass
+            # at the original scheduled time.
+            task["queue_mode"] = "normal"
+            task["scheduled_for"] = None
+            task["advanced_summary"] = None
         task["message"] = "Retry waiting in queue."
         task["activated_at"] = _automation_queue_now_iso()
         task["result_context"] = retry_context

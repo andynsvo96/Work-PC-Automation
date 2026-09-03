@@ -119,13 +119,42 @@ def register_work_routes(
         failure_status = 503 if getattr(g, "home_automation_request", False) else 500
         return jsonify(payload), (202 if ok else failure_status)
 
+    def _communications_request_options():
+        data = request.get_json(silent=True) if request.method == "POST" else None
+        data = data if isinstance(data, dict) else {}
+        return {
+            "advanced_mode": _first_present(
+                data.get("advanced_mode"), data.get("advancedMode"), data.get("queue_mode"), data.get("queueMode"),
+                request.args.get("advanced_mode"), request.args.get("advancedMode"), request.args.get("queue_mode"), request.args.get("queueMode"),
+            ),
+            "scheduled_time": _first_present(
+                data.get("scheduled_time"), data.get("scheduledTime"), data.get("scheduled_for"), data.get("scheduledFor"),
+                request.args.get("scheduled_time"), request.args.get("scheduledTime"), request.args.get("scheduled_for"), request.args.get("scheduledFor"),
+            ),
+        }
+
+    def _communications_queue_options(options, label):
+        options = options if isinstance(options, dict) else {}
+        mode = str(options.get("advanced_mode") or "").strip().lower()
+        signature = {"type": "communications", "action": str(label or "Automation"), "advanced_mode": mode or "normal"}
+        if mode != "scheduled":
+            return {"automation_signature": signature}
+        scheduled = str(options.get("scheduled_time") or "").strip()
+        signature["scheduled_time"] = scheduled
+        return {
+            "automation_signature": signature,
+            "queue_mode": "scheduled",
+            "scheduled_for": scheduled,
+            "advanced_summary": f"Scheduled for {_crm_processing_schedule_label(scheduled)}",
+        }
+
     @app.route("/clock/in", methods=["POST", "GET"])
     def clock_in():
-        return _queue_response("Paycom Clock In", "Communications", lambda: run_clock("in", dry_run=False))
+        return _queue_response("Paycom Clock In", "Communications", lambda: run_clock("in", dry_run=False), queue_options=_communications_queue_options(_communications_request_options(), "Paycom Clock In"))
 
     @app.route("/clock/out", methods=["POST", "GET"])
     def clock_out():
-        return _queue_response("Paycom Clock Out", "Communications", lambda: run_clock("out", dry_run=False))
+        return _queue_response("Paycom Clock Out", "Communications", lambda: run_clock("out", dry_run=False), queue_options=_communications_queue_options(_communications_request_options(), "Paycom Clock Out"))
 
     @app.route("/clock/test/in", methods=["POST", "GET"])
     def clock_test_in():
@@ -158,11 +187,11 @@ def register_work_routes(
 
     @app.route("/slack/in", methods=["POST", "GET"])
     def slack_in():
-        return _queue_response("Slack In", "Communications", lambda: run_slack("in"))
+        return _queue_response("Slack In", "Communications", lambda: run_slack("in"), queue_options=_communications_queue_options(_communications_request_options(), "Slack In"))
 
     @app.route("/slack/out", methods=["POST", "GET"])
     def slack_out():
-        return _queue_response("Slack Out", "Communications", lambda: run_slack("out"))
+        return _queue_response("Slack Out", "Communications", lambda: run_slack("out"), queue_options=_communications_queue_options(_communications_request_options(), "Slack Out"))
 
     @app.route("/slack/lunch", methods=["POST", "GET"])
     def slack_lunch():
@@ -178,6 +207,7 @@ def register_work_routes(
             "Development" if use_test_url else "Communications",
             lambda: start_slack_lunch_break(force_test_url=use_test_url),
             lambda: {"success": True, "lunch": get_slack_lunch_payload()},
+            queue_options=_communications_queue_options(_communications_request_options(), label),
         )
 
     @app.route("/slack/lunch/status", methods=["GET"])
@@ -192,15 +222,41 @@ def register_work_routes(
 
     @app.route("/work/in", methods=["POST", "GET"])
     def work_in():
-        return _queue_response("Work In", "Communications", lambda: run_work("in", automatic=False))
+        return _queue_response("Work In", "Communications", lambda: run_work("in", automatic=False), queue_options=_communications_queue_options(_communications_request_options(), "Work In"))
 
     @app.route("/work/out", methods=["POST", "GET"])
     def work_out():
-        return _queue_response("Work Out", "Communications", lambda: run_work("out", automatic=False))
+        return _queue_response("Work Out", "Communications", lambda: run_work("out", automatic=False), queue_options=_communications_queue_options(_communications_request_options(), "Work Out"))
 
     @app.route("/work/sync", methods=["POST", "GET"])
     def work_sync():
-        return _queue_response("Sync Paycom Hours", "Communications", run_work_sync)
+        return _queue_response("Sync Paycom Hours", "Communications", run_work_sync, queue_options=_communications_queue_options(_communications_request_options(), "Sync Paycom Hours"))
+
+    @app.route("/communications/schedule", methods=["POST"])
+    def communications_schedule():
+        data = request.get_json(silent=True) or {}
+        action = str(data.get("action") or "").strip().lower()
+        schedule_options = _communications_request_options()
+        schedule_options["advanced_mode"] = "scheduled"
+        scheduled_time = str(schedule_options.get("scheduled_time") or "").strip()
+        if not scheduled_time:
+            return jsonify({"success": False, "message": "Choose a time before scheduling a communication automation."}), 400
+        actions = {
+            "work_in": ("Work In", lambda: run_work("in", automatic=False)),
+            "work_out": ("Work Out", lambda: run_work("out", automatic=False)),
+            "lunch": ("Slack Lunch Start", lambda: start_slack_lunch_break(force_test_url=False)),
+        }
+        selected = actions.get(action)
+        if not selected:
+            return jsonify({"success": False, "message": "Choose Work in, Work out, or Start lunch to schedule."}), 400
+        label, fn = selected
+        return _queue_response(
+            label,
+            "Communications",
+            fn,
+            (lambda: {"success": True, "lunch": get_slack_lunch_payload()}) if action == "lunch" else None,
+            queue_options=_communications_queue_options(schedule_options, label),
+        )
 
     @app.route("/work/schedule", methods=["POST", "GET"])
     def work_schedule():

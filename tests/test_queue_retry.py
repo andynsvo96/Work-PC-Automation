@@ -63,6 +63,60 @@ class LocalQueueRetryTests(unittest.TestCase):
         self.assertEqual(task["status"], "canceled")
         self.assertTrue(payload["retryable"])
 
+    def test_failed_communications_task_can_retry_in_same_queue_entry(self):
+        task = {
+            "id": "work-in-task-1",
+            "label": "Work In",
+            "category": "Communications",
+            "status": "failed",
+            "queue_mode": "normal",
+            "task_type": "communications.work",
+            "task_arguments": {"action": "in", "automatic": False},
+            "fn": lambda: (True, "Clocked in."),
+            "success": False,
+            "cancel_requested": False,
+            "result_context": {},
+        }
+        with mock.patch.object(server, "automation_queue_tasks", [task]):
+            self.assertTrue(server._automation_queue_task_is_retryable_order(task))
+            ok, message = server.retry_automation_queue_task(task["id"])
+
+        self.assertTrue(ok)
+        self.assertIn("Work In", message)
+        self.assertEqual(task["status"], "queued")
+        self.assertTrue(task["result_context"]["retrying"])
+
+    def test_completed_communications_task_is_not_retryable(self):
+        task = {
+            "id": "work-in-complete",
+            "label": "Work In",
+            "status": "completed",
+            "queue_mode": "normal",
+            "task_type": "communications.work",
+            "fn": lambda: (True, "Clocked in."),
+        }
+        self.assertFalse(server._automation_queue_task_is_retryable_order(task))
+
+    def test_failed_scheduled_communications_task_retries_immediately(self):
+        task = {
+            "id": "scheduled-lunch-task",
+            "label": "Slack Lunch Start",
+            "status": "failed",
+            "queue_mode": "scheduled",
+            "scheduled_for": "2026-08-07T12:00:00",
+            "task_type": "communications.slack_lunch",
+            "fn": lambda: (True, "Lunch started."),
+            "result_context": {},
+        }
+        with mock.patch.object(server, "automation_queue_tasks", [task]):
+            self.assertTrue(server._automation_queue_task_is_retryable_order(task))
+            ok, _message = server.retry_automation_queue_task(task["id"])
+
+        self.assertTrue(ok)
+        self.assertEqual(task["status"], "queued")
+        self.assertEqual(task["queue_mode"], "normal")
+        self.assertIsNone(task["scheduled_for"])
+
     def test_main_retry_plan_contains_only_failed_order_rows(self):
         report = {
             "step_results": [
