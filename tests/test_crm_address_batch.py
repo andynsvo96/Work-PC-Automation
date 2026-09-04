@@ -3555,6 +3555,16 @@ class ShippingBypasserTests(unittest.TestCase):
         self.assertFalse(options["click_inventory_button"])
         self.assertEqual(options["handler"], "A4")
 
+    def test_a4_n5293_uses_exact_sanmar_style_mapping(self):
+        options = crm_shipping_bypasser._sanmar_search_options_for_product(
+            {"product_id": "N5293", "is_a4": False}
+        )
+
+        self.assertEqual(options["search_id"], "A4N5293")
+        self.assertFalse(options["click_inventory_button"])
+        self.assertEqual(options["handler"], "A4")
+        self.assertEqual(options["expected_style_keys"], ["A4N5293"])
+
     def test_jerzees_search_adds_sanmar_m_suffix(self):
         options = crm_shipping_bypasser._sanmar_search_options_for_product(
             {"product_id": "562", "product_name": "Jerzees NuBlend Crewneck Sweatshirt"}

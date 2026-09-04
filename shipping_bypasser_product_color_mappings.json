@@ -21,6 +21,16 @@
   },
   "products": [
     {
+      "crm_product_id": "N5293",
+      "sanmar_product_id": "A4N5293",
+      "sanmar_expected_product_ids": [
+        "A4N5293"
+      ],
+      "click_inventory_button": false,
+      "handler": "A4",
+      "colors": []
+    },
+    {
       "crm_product_id": "3001C",
       "sanmar_product_id": "3001",
       "sanmar_expected_product_ids": [
