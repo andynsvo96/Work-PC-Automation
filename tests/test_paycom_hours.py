@@ -1,5 +1,6 @@
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -11,6 +12,21 @@ import paycom_hours
 
 
 class PaycomHoursTests(unittest.TestCase):
+    def test_second_open_punch_replaces_morning_out_and_preserves_paid_hours(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = [{
+            "date_label": "Mon 09/07", "hours": 2.55,
+            "clock_in": "07:04 AM", "clock_out": "09:37 AM",
+            "punches": [
+                {"clock_in": "07:04 AM", "clock_out": "09:37 AM"},
+                {"clock_in": "12:11 PM", "clock_out": None},
+            ],
+        }]
+        row = paycom_hours.extract_day_rows_from_timesheet(driver)[0]
+        self.assertEqual(row["clock_in"], "12:11 PM")
+        self.assertIsNone(row["clock_out"])
+        self.assertEqual(row["hours"], 2.55)
+
     def test_open_shift_uses_zero_completed_hours_baseline(self):
         rows = [
             {
