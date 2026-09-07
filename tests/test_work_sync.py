@@ -41,7 +41,7 @@ class WorkSyncTests(unittest.TestCase):
         self.assertEqual(state["active_shift"]["clock_in_at"], "2026-09-07T12:11:00")
         self.assertEqual(state["days"]["2026-09-07"]["paid_hours"], 2.55)
         self.assertIsNone(state["days"]["2026-09-07"]["clock_out_at"])
-        self.assertTrue(server._active_shift_is_open_for_auto_out(state["active_shift"], now=now, state=state)[0])
+        self.assertTrue(server._active_shift_open_status(state, state["active_shift"], now=now)[0])
         self.assertFalse(server._infer_active_shift_from_paycom_rows(state, now)[0])
 
     def test_manual_sync_imports_open_paycom_punch_and_recomputes_cap_schedule(self):

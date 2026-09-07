@@ -11,6 +11,29 @@ import paycom_hours
 
 
 class PaycomHoursTests(unittest.TestCase):
+    def test_timesheet_split_shift_and_weekly_footer(self):
+        import json
+        import subprocess
+        class Driver:
+            def execute_script(self, script):
+                table = [
+                    ["Date", "Pay Code", "IN", "Allocation", "OUT", "IN", "Allocation", "OUT", "Hours", "Total Hours"],
+                    ["Mon 09/07", "", "07:04 AM", "320", "09:37 AM", "12:11 PM", "320", "??", "2.55", "2.55"],
+                    ["Sat 09/12", "", "", "", "", "", "", "", "", ""],
+                    ["", "", "", "", "", "", "", "Weekly Totals", "12.18", ""],
+                ]
+                harness = "const rows = " + json.dumps(table) + ";" + """
+const document = {querySelectorAll: () => [{getClientRects: () => [1],
+  querySelectorAll: () => rows.map(row => ({querySelectorAll: () => row.map(text => ({innerText: text, textContent: text}))}))}]};
+"""
+                output = subprocess.check_output(["node", "-e", harness + "console.log(JSON.stringify((function(){" + script + "})()));"], text=True)
+                return json.loads(output)
+        rows = paycom_hours.extract_day_rows_from_timesheet(Driver())
+        monday = next(row for row in rows if row["date_label"] == "Mon 09/07")
+        self.assertEqual(monday["segments"], [{"clock_in": "07:04 AM", "clock_out": "09:37 AM"}, {"clock_in": "12:11 PM", "clock_out": None}])
+        self.assertEqual(paycom_hours.extract_completed_week_hours_from_day_rows(rows), (2.55, 1, 1))
+        self.assertIsNone(next(row for row in rows if row["date_label"] == "Sat 09/12")["hours"])
+
     def test_open_shift_uses_zero_completed_hours_baseline(self):
         rows = [
             {

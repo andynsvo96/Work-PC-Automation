@@ -5486,9 +5486,9 @@ function updateCommunicationDashboard(snapshot) {
   setText('communicationTodayTimer', formatWorkTimer(todayHours));
   setText('communicationTimelineDate', today.toLocaleDateString([], {weekday: 'long', month: 'short', day: 'numeric'}));
   setText('communicationStartTime', snapshot.isActive ? fmtTime(snapshot.active && snapshot.active.clock_in_at) : (todayEntry.clock_in_at ? fmtTime(todayEntry.clock_in_at) : 'Not started'));
-  setText('communicationStartNote', snapshot.isActive ? (savedToday > 0 ? `Back on the clock ? ${formatWorkHoursMinutes(savedToday)} completed earlier` : 'Workday is active') : (todayEntry.clock_out_at ? `Finished ${fmtTime(todayEntry.clock_out_at)}` : 'Start when you are ready'));
+  setText('communicationStartNote', snapshot.isActive ? (savedToday > 0 ? `Back on the clock - ${formatWorkHoursMinutes(savedToday)} completed earlier` : 'Workday is active') : (todayEntry.clock_out_at ? `Finished ${fmtTime(todayEntry.clock_out_at)}` : 'Start when you are ready'));
   const lastSyncText = snapshot.state && snapshot.state.last_sync_at ? ` • Last synced ${fmtTime(snapshot.state.last_sync_at)}` : '';
-  setText('communicationWorkdaySummary', snapshot.isActive ? `${savedToday > 0 ? "Clocked back in" : "Clocked in"} at ${fmtTime(snapshot.active && snapshot.active.clock_in_at)}${savedToday > 0 ? ` ? ${formatWorkHoursMinutes(savedToday)} completed earlier; time off excluded` : ""}${lastSyncText}` : (todayEntry.clock_out_at ? `Workday completed at ${fmtTime(todayEntry.clock_out_at)}${lastSyncText}` : 'Your workday has not started'));
+  setText('communicationWorkdaySummary', snapshot.isActive ? `${savedToday > 0 ? "Clocked back in" : "Clocked in"} at ${fmtTime(snapshot.active && snapshot.active.clock_in_at)}${savedToday > 0 ? ` - ${formatWorkHoursMinutes(savedToday)} completed earlier; time off excluded` : ""}${lastSyncText}` : (todayEntry.clock_out_at ? `Workday completed at ${fmtTime(todayEntry.clock_out_at)}${lastSyncText}` : 'Your workday has not started'));
   const percentage = snapshot.capped && snapshot.capHours > 0 ? Math.max(0, Math.min(100, (snapshot.accumulatedHours / snapshot.capHours) * 100)) : 0;
   setText('communicationWeekProgressText', snapshot.capped ? `${Math.round(percentage)}% of ${formatWorkHoursCompact(snapshot.capHours)} weekly goal` : 'Weekly cap is disabled');
 
