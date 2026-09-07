@@ -726,6 +726,8 @@ button.icon-btn{min-height:34px;padding:7px 12px;border-radius:8px;background:va
 .rough-popover-panel{position:absolute;left:0;top:calc(100% + 7px);z-index:10;display:grid;gap:8px;width:250px;padding:12px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card);box-shadow:0 16px 34px rgba(0,0,0,.3)}
 .rough-popover-panel input{box-sizing:border-box;width:100%}
 .rough-actions>.rough-action-popover>summary{box-sizing:border-box;min-height:34px;padding:8px 12px;line-height:16px}
+.communication-advanced-control{margin-left:auto}
+.communication-advanced-control>.communication-advanced-panel{left:auto;right:0}
 .communication-advanced-panel{width:280px;max-width:calc(100vw - 60px);max-height:65vh;overflow-y:auto}
 .communication-advanced-panel .communications-schedule-controls{margin-left:0;flex-wrap:wrap}
 .communication-advanced-panel input[type=checkbox]{width:auto}
@@ -901,6 +903,15 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
         <button id='communicationWorkToggleBtn' onclick='toggleCommunicationWorkday(this)'>Work in</button>
         <button class='secondary' id='slackLunchToggleBtn' onclick='toggleSlackLunch(this)'>Start lunch</button>
         <details class='rough-action-popover'>
+          <summary>Change auto-out</summary>
+          <div class='rough-popover-panel'>
+            <label for='manualAutoOutTime' class='muted'>Today’s auto-out time</label>
+            <input id='manualAutoOutTime' type='time' step='60'>
+            <button class='secondary' onclick='updateManualAutoOutTime(this)'>Update time</button>
+          </div>
+        </details>
+        <button class='secondary' onclick="callEndpoint('/work/cancel-schedule', this, 'Canceling...')">Cancel auto-out</button>
+        <details class='rough-action-popover communication-advanced-control'>
           <summary id='communicationAdvancedSummary'>Advanced scheduling</summary>
           <div class='rough-popover-panel communication-advanced-panel'>
             <strong>Schedule at a clock time</strong>
@@ -926,15 +937,6 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
             <p class='muted'>Separate from the weekly auto-out cap; an earlier auto-out still applies. Work Out includes the usual Slack update. View or cancel this target in the queue. Keep the server running; queue schedules do not survive a restart.</p>
           </div>
         </details>
-        <details class='rough-action-popover'>
-          <summary>Change auto-out</summary>
-          <div class='rough-popover-panel'>
-            <label for='manualAutoOutTime' class='muted'>Today’s auto-out time</label>
-            <input id='manualAutoOutTime' type='time' step='60'>
-            <button class='secondary' onclick='updateManualAutoOutTime(this)'>Update time</button>
-          </div>
-        </details>
-        <button class='secondary' onclick="callEndpoint('/work/cancel-schedule', this, 'Canceling...')">Cancel auto-out</button>
       </div>
     </section>
 
