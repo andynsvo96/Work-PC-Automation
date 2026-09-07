@@ -725,6 +725,12 @@ button.icon-btn{min-height:34px;padding:7px 12px;border-radius:8px;background:va
 .rough-action-popover>summary::-webkit-details-marker,.rough-history-details>summary::-webkit-details-marker,.rough-advanced-details>summary::-webkit-details-marker{display:none}
 .rough-popover-panel{position:absolute;left:0;top:calc(100% + 7px);z-index:10;display:grid;gap:8px;width:250px;padding:12px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card);box-shadow:0 16px 34px rgba(0,0,0,.3)}
 .rough-popover-panel input{box-sizing:border-box;width:100%}
+.rough-actions>.rough-action-popover>summary{box-sizing:border-box;min-height:34px;padding:8px 12px;line-height:16px}
+.communication-advanced-panel{width:280px;max-width:calc(100vw - 60px);max-height:65vh;overflow-y:auto}
+.communication-advanced-panel .communications-schedule-controls{margin-left:0;flex-wrap:wrap}
+.communication-advanced-panel input[type=checkbox]{width:auto}
+.communication-advanced-panel p{margin:0;line-height:1.45}
+.communication-advanced-panel select{width:100%;min-width:0}
 .rough-timeline{display:grid}.rough-event{position:relative;display:grid;grid-template-columns:70px 18px 1fr;gap:8px;min-height:50px}.rough-event:after{content:'';position:absolute;left:78px;top:20px;bottom:-4px;width:1px;background:var(--rough-divider)}.rough-event:last-child:after{display:none}.rough-event-time{padding-top:4px;color:var(--rough-muted);font-size:10px;text-align:right}.rough-event-mark{position:relative;z-index:1;margin-top:3px;width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px #25372d}.rough-event-mark.future{background:#3b82f6;box-shadow:0 0 0 4px #173a5e}.rough-event-title{font-size:12px;font-weight:700}.rough-event-note{margin-top:3px;color:var(--rough-muted);font-size:10px;line-height:1.35}
 .rough-message{padding:12px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card-alt)}.rough-message strong{font-size:11px}.rough-message p{margin:6px 0 0;font-size:12px}
 .rough-weekly-card,.communications-bottom-grid,.processing-history-card,.processing-tool-health-card,.system-overview-row,.system-activity-card{margin-top:14px}
@@ -895,8 +901,17 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
         <button id='communicationWorkToggleBtn' onclick='toggleCommunicationWorkday(this)'>Work in</button>
         <button class='secondary' id='slackLunchToggleBtn' onclick='toggleSlackLunch(this)'>Start lunch</button>
         <details class='rough-action-popover'>
-          <summary>Clock out at hours</summary>
-          <div class='rough-popover-panel'>
+          <summary id='communicationAdvancedSummary'>Advanced scheduling</summary>
+          <div class='rough-popover-panel communication-advanced-panel'>
+            <strong>Schedule at a clock time</strong>
+            <div class='communications-schedule-controls'>
+              <label class='check'><input type='checkbox' id='communicationScheduledToggle' onchange='syncCommunicationScheduleControls()'> Scheduled</label>
+              <label for='communicationScheduledTimeInput' class='muted'>At</label>
+              <input id='communicationScheduledTimeInput' type='time' step='60' onchange='syncCommunicationScheduleControls()' disabled>
+            </div>
+            <p class='muted'>Enable Scheduled and choose a time, then click Clock in, Clock out, or Start lunch. Turn it off to run those actions immediately.</p>
+            <div class='rough-divider' style='margin:4px 0'></div>
+            <strong>Clock out at paid hours</strong>
             <label for='workHoursTargetScope'>Paid-hours total</label>
             <select id='workHoursTargetScope' onchange='resetWorkHoursTargetPreview()'>
               <option value='today'>Today’s work hours</option>
@@ -920,11 +935,6 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
           </div>
         </details>
         <button class='secondary' onclick="callEndpoint('/work/cancel-schedule', this, 'Canceling...')">Cancel auto-out</button>
-        <div class='communications-schedule-controls'>
-          <label class='check'><input type='checkbox' id='communicationScheduledToggle' onchange='syncCommunicationScheduleControls()'> Scheduled</label>
-          <label for='communicationScheduledTimeInput' class='muted'>At</label>
-          <input id='communicationScheduledTimeInput' type='time' step='60' onchange='syncCommunicationScheduleControls()' disabled>
-        </div>
       </div>
     </section>
 
@@ -9694,6 +9704,10 @@ function syncCommunicationScheduleControls() {
   const toggle = document.getElementById('communicationScheduledToggle');
   const timeInput = document.getElementById('communicationScheduledTimeInput');
   if (timeInput) timeInput.disabled = !Boolean(toggle && toggle.checked);
+  const summary = document.getElementById('communicationAdvancedSummary');
+  if (summary) summary.textContent = toggle && toggle.checked
+    ? `Scheduled${timeInput && timeInput.value ? ' ' + timeInput.value : ' — choose time'}`
+    : 'Advanced scheduling';
 }
 
 function communicationSchedulePayload() {
