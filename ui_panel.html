@@ -895,6 +895,23 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
         <button id='communicationWorkToggleBtn' onclick='toggleCommunicationWorkday(this)'>Work in</button>
         <button class='secondary' id='slackLunchToggleBtn' onclick='toggleSlackLunch(this)'>Start lunch</button>
         <details class='rough-action-popover'>
+          <summary>Clock out at hours</summary>
+          <div class='rough-popover-panel'>
+            <label for='workHoursTargetScope'>Paid-hours total</label>
+            <select id='workHoursTargetScope' onchange='resetWorkHoursTargetPreview()'>
+              <option value='today'>Today’s work hours</option>
+              <option value='week'>Total week work hours</option>
+            </select>
+            <label for='workHoursTargetValue'>Target hours (6.5 = 6h 30m)</label>
+            <input id='workHoursTargetValue' type='number' min='0.01' step='0.01' value='6' oninput='resetWorkHoursTargetPreview()'>
+            <p class='muted' id='workHoursTargetHelp'>Today includes paid time completed earlier today plus this shift. This week includes saved weekly paid hours plus this shift.</p>
+            <button class='secondary' onclick='previewWorkHoursTarget(this)'>Calculate clock-out</button>
+            <p class='muted' id='workHoursTargetPreview' aria-live='polite'>Calculate to preview the time and unpaid break.</p>
+            <button id='workHoursTargetSchedule' disabled onclick='scheduleWorkHoursTarget(this)'>Schedule Work Out</button>
+            <p class='muted'>Separate from the weekly auto-out cap; an earlier auto-out still applies. Work Out includes the usual Slack update. View or cancel this target in the queue. Keep the server running; queue schedules do not survive a restart.</p>
+          </div>
+        </details>
+        <details class='rough-action-popover'>
           <summary>Change auto-out</summary>
           <div class='rough-popover-panel'>
             <label for='manualAutoOutTime' class='muted'>Today’s auto-out time</label>
@@ -9712,6 +9729,43 @@ async function callCommunicationAutomation(path, button, busyLabel, payload = {}
     const status = await loadStatus(false);
     setStatus(resultMsg + ' | ' + status.summary);
   });
+}
+
+let workHoursTargetRevision = 0;
+function resetWorkHoursTargetPreview() {
+  workHoursTargetRevision += 1;
+  document.getElementById('workHoursTargetSchedule').disabled = true;
+  document.getElementById('workHoursTargetPreview').textContent = 'Calculate to preview the time and unpaid break.';
+}
+
+function workHoursTargetPayload() {
+  return {
+    scope: document.getElementById('workHoursTargetScope').value,
+    target_hours: Number(document.getElementById('workHoursTargetValue').value),
+  };
+}
+
+async function previewWorkHoursTarget(button) {
+  resetWorkHoursTargetPreview();
+  const revision = workHoursTargetRevision;
+  await withButtonBusy(button, 'Calculating...', async () => {
+    try {
+      const d = await api('/work/hours-target', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(workHoursTargetPayload()),
+      });
+      if (revision !== workHoursTargetRevision) return;
+      document.getElementById('workHoursTargetPreview').textContent = `${d.message} About ${Math.ceil(d.remaining_minutes)} minutes remaining; ${d.break_minutes} minutes unpaid break included. Based on the latest synced hours.`;
+      document.getElementById('workHoursTargetSchedule').disabled = false;
+    } catch (e) {
+      if (revision === workHoursTargetRevision) document.getElementById('workHoursTargetPreview').textContent = e.message;
+    }
+  });
+}
+
+async function scheduleWorkHoursTarget(button) {
+  await callCommunicationAutomation('/work/hours-target', button, 'Scheduling...', { ...workHoursTargetPayload(), schedule: true });
+  resetWorkHoursTargetPreview();
 }
 
 async function updateManualAutoOutTime(button = null) {

@@ -8,7 +8,7 @@ from routes.work_routes import register_work_routes
 
 
 class WorkRouteScheduleTests(unittest.TestCase):
-    def _app_with_captured_queue(self):
+    def _app_with_captured_queue(self, **overrides):
         app = Flask(__name__)
         captured = {}
 
@@ -29,8 +29,32 @@ class WorkRouteScheduleTests(unittest.TestCase):
             get_crm_mass_emailer_status_payload=lambda: {"state": {}, "runtime": {}, "running": False},
             get_crm_processing_state_payload=lambda: {"state": {}},
         )
+        kwargs.update(overrides)
         register_work_routes(app, **kwargs)
         return app, captured
+
+    def test_hours_target_preview_and_schedule(self):
+        preview = {"success": True, "scope": "week", "target_hours": 35,
+                   "scheduled_for": "2026-09-07T14:30:00", "clock_in_at": "2026-09-07T08:00:00",
+                   "message": "35 paid hours this week"}
+        run = mock.Mock()
+        app, captured = self._app_with_captured_queue(preview_work_hours_target=mock.Mock(return_value=preview), run_work=run)
+        client = app.test_client()
+        response = client.post("/work/hours-target", json={"scope": "week", "target_hours": 35})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured, {})
+        response = client.post("/work/hours-target", json={"scope": "week", "target_hours": 35, "schedule": True})
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(captured["scheduled_for"], preview["scheduled_for"])
+        self.assertEqual(captured["queue_mode"], "scheduled")
+        captured["fn"]()
+        run.assert_called_once_with("out", automatic=False, expected_clock_in_at=preview["clock_in_at"])
+
+    def test_invalid_hours_target_does_not_queue(self):
+        app, captured = self._app_with_captured_queue(preview_work_hours_target=mock.Mock(return_value={"success": False, "message": "Already reached"}))
+        response = app.test_client().post("/work/hours-target", json={"scope": "today", "target_hours": 2, "schedule": True})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(captured, {})
 
     def test_sheet_scanner_accepts_scheduled_queue_controls(self):
         app, captured = self._app_with_captured_queue()

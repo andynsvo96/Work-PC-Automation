@@ -3981,6 +3981,51 @@ def _parse_manual_auto_clock_out_datetime(raw_value, active_shift, now=None):
         )
     return parsed_dt, ""
 
+def preview_work_hours_target(scope, target_hours):
+    """Resolve a one-time paid-hours target without changing the weekly cap timer."""
+    now = datetime.now()
+    try:
+        target = float(target_hours)
+    except (TypeError, ValueError):
+        target = 0
+    if scope not in ("today", "week") or not math.isfinite(target) or target <= 0:
+        return {"success": False, "message": "Choose Today or This week and a positive paid-hours target."}
+    with state_lock:
+        state = load_work_state(now)
+        active = state.get("active_shift") or {}
+        allowed, reason = _active_shift_open_status(state, active, now=now)
+        if not allowed:
+            return {"success": False, "message": reason}
+        clock_in = datetime.fromisoformat(active["clock_in_at"])
+        if scope == "today" and clock_in.date() != now.date():
+            return {"success": False, "message": "Today's target requires a shift started today."}
+        day = (state.get("days") or {}).get(now.date().isoformat()) or {}
+        baseline = max(0.0, _safe_float(
+            state.get("total_paid_hours") if scope == "week" else day.get("paid_hours", day.get("paycom_hours")), 0.0
+        ))
+        gross_now = max(0.0, (now - clock_in).total_seconds() / 3600)
+        if target <= baseline + _paid_hours_for_gross_shift(gross_now):
+            return {"success": False, "message": "That paid-hours target has already been reached. Choose a higher target."}
+        needed = target - baseline
+        gross_target = _gross_hours_for_paid_target(needed)
+        due = clock_in + timedelta(hours=gross_target)
+        # After the deduction, a target at/below the threshold may be reached a second time.
+        if due <= now:
+            gross_target = needed + max(0.0, WORK_CLOCK_BREAK_MINUTES / 60.0)
+            due = clock_in + timedelta(hours=gross_target)
+        if due <= now or due > clock_in + timedelta(hours=_max_auto_clock_out_horizon_hours()):
+            return {"success": False, "message": "Target is outside the active shift's scheduling limit."}
+        if scope == "today" and due.date() != now.date():
+            return {"success": False, "message": "Today's target cannot be reached before midnight."}
+        return {
+            "success": True, "scope": scope, "target_hours": target,
+            "scheduled_for": due.isoformat(), "clock_in_at": active["clock_in_at"],
+            "remaining_minutes": (due - now).total_seconds() / 60,
+            "break_minutes": round(_break_hours_for_gross_shift(gross_target) * 60),
+            "message": f"Work Out at {target:g} paid hours {'today' if scope == 'today' else 'this week'}: {_format_auto_clock_out_label(due, now=now)}.",
+        }
+
+
 def _compute_auto_out_for_active_shift(state, now=None):
     if now is None:
         now = datetime.now()
@@ -12657,7 +12702,7 @@ def queue_crm_extension_manual_order_run(order_id, automation_key, reason="", re
     return ok, message, task
 
 
-def run_work(action, automatic=False):
+def run_work(action, automatic=False, expected_clock_in_at=None):
     mode = "automatic" if automatic else "manual"
     automation_name = f"work.{action}.{mode}"
 
@@ -12678,6 +12723,13 @@ def run_work(action, automatic=False):
             state = load_work_state(now)
             active_shift = state.get("active_shift")
             total_paid = _safe_float(state.get("total_paid_hours"))
+
+        if expected_clock_in_at is not None:
+            if action != "out" or (active_shift or {}).get("clock_in_at") != expected_clock_in_at:
+                return _finish(False, "Scheduled hours target skipped: the original shift is no longer active.")
+            allowed, reason = _active_shift_open_status(state, active_shift, now=now)
+            if not allowed:
+                return _finish(False, reason)
 
         if action == "in":
             if active_shift:
@@ -14768,6 +14820,7 @@ register_work_routes(
     run_work_sync=run_work_sync,
     schedule_auto_clock_out_from_active_shift=schedule_auto_clock_out_from_active_shift,
     update_manual_auto_clock_out_schedule=update_manual_auto_clock_out_schedule,
+    preview_work_hours_target=preview_work_hours_target,
     clear_auto_clock_out_schedule=clear_auto_clock_out_schedule,
     get_work_status_payload=get_work_status_payload,
     start_crm_run=start_crm_run,

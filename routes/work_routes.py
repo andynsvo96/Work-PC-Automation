@@ -24,6 +24,7 @@ def register_work_routes(
     run_work_sync,
     schedule_auto_clock_out_from_active_shift,
     update_manual_auto_clock_out_schedule,
+    preview_work_hours_target,
     clear_auto_clock_out_schedule,
     get_work_status_payload,
     start_crm_run,
@@ -236,6 +237,29 @@ def register_work_routes(
     def work_schedule():
         ok, msg = schedule_auto_clock_out_from_active_shift()
         return jsonify({"success": ok, "message": msg}), (200 if ok else 500)
+
+    @app.route("/work/hours-target", methods=["POST"])
+    def work_hours_target():
+        data = request.get_json(silent=True)
+        data = data if isinstance(data, dict) else {}
+        preview = preview_work_hours_target(data.get("scope"), data.get("target_hours"))
+        if not preview.get("success"):
+            return jsonify(preview), 400
+        if not is_trueish(data.get("schedule")):
+            return jsonify(preview)
+        clock_in_at = preview["clock_in_at"]
+        return _queue_response(
+            "Work Out hours target", "Communications",
+            lambda: run_work("out", automatic=False, expected_clock_in_at=clock_in_at),
+            queue_details=preview["message"],
+            task_type="communications.work_hours_target",
+            task_arguments={"scope": preview["scope"], "target_hours": preview["target_hours"], "expected_clock_in_at": clock_in_at},
+            queue_options={
+                "queue_mode": "scheduled", "scheduled_for": preview["scheduled_for"],
+                "advanced_summary": preview["message"],
+                "automation_signature": {"type": "work_hours_target", "clock_in_at": clock_in_at, "scope": preview["scope"], "target_hours": preview["target_hours"]},
+            },
+        )
 
     @app.route("/work/update-schedule", methods=["POST", "GET"])
     def work_update_schedule():
