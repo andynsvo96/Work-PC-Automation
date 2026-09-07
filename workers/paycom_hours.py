@@ -483,7 +483,6 @@ const ensureEntry = (dateText) => {
       hours: null,
       clock_in: null,
       clock_out: null,
-      punches: [],
       pay_code: null,
       shift_hours_sum: 0,
       has_total_hours: false,
@@ -535,10 +534,6 @@ for (const table of Array.from(document.querySelectorAll('table'))) {
         const cells = Array.from(rows[r].querySelectorAll('td,th')).map(c => clean(c.innerText || c.textContent));
         if (!cells.length) continue;
         const dateText = clean(cells[dateIdx] || '');
-        if (/weekly totals?|week totals?/i.test(cells.join(' '))) {
-          currentDateText = '';
-          continue;
-        }
         if (dayRe.test(dateText)) {
           currentDateText = dateText;
         } else if (!currentDateText) {
@@ -581,13 +576,6 @@ for (const table of Array.from(document.querySelectorAll('table'))) {
         if (!dayRe.test(dateText) && !hasCarryData) continue;
 
         const rec = ensureEntry(currentDateText);
-        for (let i = 0; i < inIdxs.length; i++) {
-          const punchIn = clean(cells[inIdxs[i]] || '');
-          const punchOut = clean(cells[outIdxs[i]] || '');
-          if (looksLikeClock(punchIn) && !isMissingPunch(punchIn)) {
-            rec.punches.push({clock_in: punchIn, clock_out: looksLikeClock(punchOut) && !isMissingPunch(punchOut) ? punchOut : null});
-          }
-        }
 
         if (totalHrs !== null) {
           rec.hours = totalHrs;
@@ -636,7 +624,6 @@ for (const rec of outByDate.values()) {
     clock_in: rec.clock_in,
     clock_out: rec.clock_out,
     pay_code: rec.pay_code,
-    punches: rec.punches,
   });
 }
 return output;
@@ -714,7 +701,6 @@ return output;
 
         entry = {
             "date_label": date_label,
-            "punches": row.get("punches") if isinstance(row.get("punches"), list) else [],
             "hours": hours,
             "clock_in": clock_in,
             "clock_out": clock_out,
@@ -736,7 +722,6 @@ return output;
             continue
 
         existing_clock_in = existing.get("clock_in")
-        existing["punches"].extend(entry["punches"])
         existing_clock_out = existing.get("clock_out")
         incoming_clock_in = entry.get("clock_in")
         incoming_clock_out = entry.get("clock_out")
@@ -820,14 +805,6 @@ return output;
 
     ordered_days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
     result = list(dedup.values())
-    for entry in result:
-        punches = [p for p in entry["punches"] if isinstance(p, dict) and _parse_clock_minutes(p.get("clock_in")) is not None]
-        if punches:
-            latest = max(punches, key=lambda p: _parse_clock_minutes(p["clock_in"]))
-            if _parse_clock_minutes(latest.get("clock_out")) is None:
-                # A previous OUT belongs to a completed segment, not the new IN.
-                entry["clock_in"] = latest["clock_in"]
-                entry["clock_out"] = None
     result.sort(key=lambda e: ordered_days.index(e["date_label"][:3]) if e.get("date_label", "")[:3] in ordered_days else 99)
     return result
 

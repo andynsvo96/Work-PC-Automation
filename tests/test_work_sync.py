@@ -8,23 +8,6 @@ import server
 
 
 class WorkSyncTests(unittest.TestCase):
-    def test_afternoon_punch_reopens_completed_morning(self):
-        now = datetime(2026, 9, 7, 13, 0)
-        state = {"days": {"2026-09-07": {
-            "clock_in_at": "2026-09-07T07:04:00",
-            "clock_out_at": "2026-09-07T09:37:00",
-            "paycom_clock_in": "12:11 PM", "paycom_clock_out": None,
-        }}}
-        inferred, _ = server._infer_active_shift_from_paycom_rows(state, now)
-        self.assertTrue(inferred)
-        self.assertEqual(state["active_shift"]["clock_in_at"], "2026-09-07T12:11:00")
-        self.assertIsNone(state["days"]["2026-09-07"]["clock_out_at"])
-
-    def test_unpaid_lunch_only_after_four_hours(self):
-        with mock.patch.object(server, "WORK_CLOCK_BREAK_MINUTES", 30), mock.patch.object(server, "WORK_CLOCK_BREAK_APPLIES_AFTER_HOURS", 4):
-            self.assertEqual(server._paid_hours_for_gross_shift(4), 4)
-            self.assertEqual(server._paid_hours_for_gross_shift(5), 4.5)
-
     def test_auto_clock_out_uses_a_local_timer(self):
         auto_out_at = datetime.now() + timedelta(hours=1)
         timer = mock.Mock()

@@ -3690,26 +3690,12 @@ def _merge_paycom_day_rows_into_state(state, day_rows):
         except Exception:
             paycom_hours = None
         entry["paycom_hours"] = paycom_hours
-        if paycom_hours is not None:
-            entry["paid_hours"] = paycom_hours
 
         paycom_in = row.get("clock_in")
         paycom_out = row.get("clock_out")
         paycom_code = row.get("pay_code")
         entry["paycom_clock_in"] = _clean_paycom_punch_value(paycom_in)
         entry["paycom_clock_out"] = _clean_paycom_punch_value(paycom_out)
-        if isinstance(row.get("punches"), list):
-            entry["paycom_punches"] = row["punches"]
-            if row["punches"] and day_key == datetime.now().date().isoformat():
-                latest_in = _parse_paycom_clock_time_to_iso(day_key, entry["paycom_clock_in"])
-                latest_out = _parse_paycom_clock_time_to_iso(day_key, entry["paycom_clock_out"])
-                if latest_in:
-                    entry["clock_in_at"] = latest_in
-                    entry["clock_out_at"] = latest_out
-                    active = state.get("active_shift") or {}
-                    active_in = str(active.get("clock_in_at") or "")
-                    if active.get("date") == day_key and (latest_out or active_in[:16] != latest_in[:16]):
-                        state["active_shift"] = None
         entry["paycom_pay_code"] = str(paycom_code).strip() if paycom_code else None
         entry["paycom_is_flex"] = bool(row.get("is_flex"))
         entry["paycom_is_possible_pto"] = bool(row.get("is_possible_pto"))
@@ -3803,15 +3789,14 @@ def _infer_active_shift_from_paycom_rows(state, now=None):
         return False, "No Paycom clock-in time found for today."
     if paycom_out and _parse_paycom_clock_time_to_iso(today_key, paycom_out):
         return False, "Paycom row already has clock-out time."
+    if today.get("clock_out_at"):
+        return False, "Local row already has clock-out time."
+
     clock_in_iso = _parse_paycom_clock_time_to_iso(today_key, paycom_in)
     if not clock_in_iso:
         return False, f"Could not parse Paycom clock-in time '{paycom_in}'."
-    if today.get("clock_out_at"):
-        if str(today["clock_out_at"]) >= clock_in_iso:
-            return False, "Local row already has clock-out time."
-        today["clock_out_at"] = None
 
-    today["clock_in_at"] = clock_in_iso
+    today["clock_in_at"] = today.get("clock_in_at") or clock_in_iso
     days[today_key] = today
     state["days"] = days
     state["active_shift"] = {
