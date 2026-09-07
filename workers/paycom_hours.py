@@ -410,7 +410,7 @@ def extract_completed_week_hours_from_day_rows(day_rows):
 
         clock_in = _normalize_text(row.get("clock_in", ""))
         clock_out = _normalize_text(row.get("clock_out", ""))
-        if clock_in and not _is_missing_punch_marker(clock_in) and (
+        if any(segment.get("clock_in") and not segment.get("clock_out") for segment in row.get("segments", [])) or clock_in and not _is_missing_punch_marker(clock_in) and (
             not clock_out or _is_missing_punch_marker(clock_out)
         ):
             open_shift_count += 1
@@ -483,6 +483,7 @@ const ensureEntry = (dateText) => {
       hours: null,
       clock_in: null,
       clock_out: null,
+      segments: [],
       pay_code: null,
       shift_hours_sum: 0,
       has_total_hours: false,
@@ -534,6 +535,7 @@ for (const table of Array.from(document.querySelectorAll('table'))) {
         const cells = Array.from(rows[r].querySelectorAll('td,th')).map(c => clean(c.innerText || c.textContent));
         if (!cells.length) continue;
         const dateText = clean(cells[dateIdx] || '');
+        if (cells.some(cell => /weekly totals?/i.test(cell))) { currentDateText = ''; continue; }
         if (dayRe.test(dateText)) {
           currentDateText = dateText;
         } else if (!currentDateText) {
@@ -558,6 +560,12 @@ for (const table of Array.from(document.querySelectorAll('table'))) {
           }
         }
 
+        const segments = inIdxs.map((idx, i) => {
+          const start = clean(cells[idx] || '');
+          const end = clean(cells[outIdxs[i]] || '');
+          return looksLikeClock(start) && !isMissingPunch(start)
+            ? {clock_in: start, clock_out: looksLikeClock(end) && !isMissingPunch(end) ? end : null} : null;
+        }).filter(Boolean);
         const pc = payCodeIdx >= 0 ? clean(cells[payCodeIdx] || '') : '';
         let totalHrs = totalHoursIdx >= 0 ? parseNum(cells[totalHoursIdx] || '') : null;
         let shiftHrs = hoursIdx >= 0 ? parseNum(cells[hoursIdx] || '') : null;
@@ -576,6 +584,9 @@ for (const table of Array.from(document.querySelectorAll('table'))) {
         if (!dayRe.test(dateText) && !hasCarryData) continue;
 
         const rec = ensureEntry(currentDateText);
+        for (const segment of segments) {
+          if (!rec.segments.some(s => s.clock_in === segment.clock_in && s.clock_out === segment.clock_out)) rec.segments.push(segment);
+        }
 
         if (totalHrs !== null) {
           rec.hours = totalHrs;
@@ -623,6 +634,7 @@ for (const rec of outByDate.values()) {
     hours: rec.hours,
     clock_in: rec.clock_in,
     clock_out: rec.clock_out,
+    segments: rec.segments,
     pay_code: rec.pay_code,
   });
 }
@@ -704,6 +716,7 @@ return output;
             "hours": hours,
             "clock_in": clock_in,
             "clock_out": clock_out,
+            **({"segments": row["segments"]} if isinstance(row.get("segments"), list) else {}),
             "pay_code": pay_code,
             "is_flex": bool(is_flex),
             "is_possible_pto": bool(
@@ -721,6 +734,9 @@ return output;
             dedup[date_label] = entry
             continue
 
+        if "segments" in entry:
+            saved_segments = existing.setdefault("segments", [])
+            saved_segments.extend(segment for segment in entry["segments"] if segment not in saved_segments)
         existing_clock_in = existing.get("clock_in")
         existing_clock_out = existing.get("clock_out")
         incoming_clock_in = entry.get("clock_in")
@@ -919,6 +935,7 @@ def _compute_week_from_recent_punches(punch_rows, today=None):
         if row["kind"] == "in":
             if not entry["clock_in"]:
                 entry["clock_in"] = row["time"]
+            entry.setdefault("segments", []).append({"clock_in": row["time"], "clock_out": None})
             open_in = row
             continue
 
@@ -952,6 +969,10 @@ def _compute_week_from_recent_punches(punch_rows, today=None):
         )
         if not in_entry["clock_in"]:
             in_entry["clock_in"] = open_in["time"]
+        for segment in reversed(in_entry.get("segments", [])):
+            if segment["clock_in"] == open_in["time"] and not segment["clock_out"]:
+                segment["clock_out"] = row["time"]
+                break
         in_entry["clock_out"] = row["time"]
         in_entry["hours"] = round(float(in_entry["hours"] or 0.0) + paid_hours, 2)
         open_in = None

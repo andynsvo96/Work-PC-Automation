@@ -24,6 +24,26 @@ class WorkSyncTests(unittest.TestCase):
         self.assertTrue(timer.daemon)
         timer.start.assert_called_once_with()
 
+    def test_split_shift_replaces_stale_morning_timer(self):
+        now = datetime(2026, 9, 7, 13)
+        state = server._new_work_state(now.date())
+        state["total_paid_hours"] = 12.18
+        state["days"]["2026-09-07"] = {"clock_out_at": "2026-09-07T09:37:00", "paid_hours": 99}
+        state["active_shift"] = {"date": "2026-09-07", "clock_in_at": "2026-09-07T07:04:00"}
+        server._merge_paycom_day_rows_into_state(state, [{
+            "date_label": "Mon 09/07", "hours": 2.55,
+            "clock_in": "07:04 AM", "clock_out": "09:37 AM",
+            "segments": [{"clock_in": "07:04 AM", "clock_out": "09:37 AM"},
+                         {"clock_in": "12:11 PM", "clock_out": None}],
+        }])
+        changed, _ = server._infer_active_shift_from_paycom_rows(state, now)
+        self.assertTrue(changed)
+        self.assertEqual(state["active_shift"]["clock_in_at"], "2026-09-07T12:11:00")
+        self.assertEqual(state["days"]["2026-09-07"]["paid_hours"], 2.55)
+        self.assertIsNone(state["days"]["2026-09-07"]["clock_out_at"])
+        self.assertTrue(server._active_shift_is_open_for_auto_out(state["active_shift"], now=now, state=state)[0])
+        self.assertFalse(server._infer_active_shift_from_paycom_rows(state, now)[0])
+
     def test_manual_sync_imports_open_paycom_punch_and_recomputes_cap_schedule(self):
         today = datetime.now().date()
         day_label = today.strftime("%a %m/%d")

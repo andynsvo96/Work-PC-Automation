@@ -3506,7 +3506,7 @@ def _active_shift_open_status(state, active_shift, now=None):
         return False, "Auto clock-out skipped because the local shift is already clocked out."
 
     paycom_out = _clean_paycom_punch_value(day_entry.get("paycom_clock_out"))
-    if paycom_out and _parse_paycom_clock_time_to_iso(shift_day.isoformat(), paycom_out):
+    if paycom_out and (_parse_paycom_clock_time_to_iso(shift_day.isoformat(), paycom_out) or "") >= clock_in_iso:
         return False, "Auto clock-out skipped because Paycom already shows a clock-out time."
 
     return True, ""
@@ -3696,6 +3696,15 @@ def _merge_paycom_day_rows_into_state(state, day_rows):
         paycom_code = row.get("pay_code")
         entry["paycom_clock_in"] = _clean_paycom_punch_value(paycom_in)
         entry["paycom_clock_out"] = _clean_paycom_punch_value(paycom_out)
+        if isinstance(row.get("segments"), list):
+            entry["paycom_segments"] = row["segments"]
+            if row["segments"] and not row["segments"][-1].get("clock_out"):
+                entry["paycom_clock_out"] = None
+        else:
+            entry.pop("paycom_segments", None)
+        # A successful sync supplies the authoritative completed daily total.
+        if paycom_hours is not None:
+            entry["paid_hours"] = paycom_hours
         entry["paycom_pay_code"] = str(paycom_code).strip() if paycom_code else None
         entry["paycom_is_flex"] = bool(row.get("is_flex"))
         entry["paycom_is_possible_pto"] = bool(row.get("is_possible_pto"))
@@ -3774,29 +3783,42 @@ def _infer_active_shift_from_paycom_rows(state, now=None):
     if now is None:
         now = datetime.now()
 
-    if state.get("active_shift"):
-        return False, "Active shift already exists."
-
     days = state.get("days") if isinstance(state.get("days"), dict) else {}
     today_key = now.date().isoformat()
     today = days.get(today_key) if isinstance(days.get(today_key), dict) else None
     if not today:
         return False, "No Paycom row for today."
 
-    paycom_in = _clean_paycom_punch_value(today.get("paycom_clock_in"))
-    paycom_out = _clean_paycom_punch_value(today.get("paycom_clock_out"))
-    if not paycom_in:
-        return False, "No Paycom clock-in time found for today."
-    if paycom_out and _parse_paycom_clock_time_to_iso(today_key, paycom_out):
-        return False, "Paycom row already has clock-out time."
-    if today.get("clock_out_at"):
-        return False, "Local row already has clock-out time."
-
+    segments = today.get("paycom_segments")
+    active = state.get("active_shift") or {}
+    if isinstance(segments, list) and segments:
+        latest = segments[-1]
+        paycom_in = _clean_paycom_punch_value(latest.get("clock_in"))
+        paycom_out = _clean_paycom_punch_value(latest.get("clock_out"))
+    else:
+        if active:
+            return False, "Active shift already exists."
+        paycom_in = _clean_paycom_punch_value(today.get("paycom_clock_in"))
+        paycom_out = _clean_paycom_punch_value(today.get("paycom_clock_out"))
     clock_in_iso = _parse_paycom_clock_time_to_iso(today_key, paycom_in)
     if not clock_in_iso:
-        return False, f"Could not parse Paycom clock-in time '{paycom_in}'."
-
-    today["clock_in_at"] = today.get("clock_in_at") or clock_in_iso
+        return False, "No valid Paycom clock-in time found for today."
+    out_iso = _parse_paycom_clock_time_to_iso(today_key, paycom_out)
+    # Do not overwrite a newer local punch with an older sync snapshot.
+    if active and str(active.get("clock_in_at") or "") > (out_iso or clock_in_iso):
+        return False, "Local clock-in is newer than Paycom."
+    if out_iso:
+        if active and active.get("date") == today_key:
+            state["active_shift"] = None
+            _cancel_auto_clock_timer_locked()
+        today["clock_out_at"] = out_iso
+        return False, "Paycom row already has clock-out time."
+    if today.get("clock_out_at") and str(today["clock_out_at"]) >= clock_in_iso:
+        return False, "Local row already has clock-out time."
+    if active and active.get("clock_in_at") == clock_in_iso:
+        return False, "Active shift already matches Paycom."
+    today["clock_out_at"] = None
+    today["clock_in_at"] = clock_in_iso
     days[today_key] = today
     state["days"] = days
     state["active_shift"] = {
@@ -12826,12 +12848,12 @@ def run_work(action, automatic=False):
                 gross = max(0.0, (now - clock_in_dt).total_seconds() / 3600.0)
                 paid = _paid_hours_for_gross_shift(gross)
 
-            prev_paid = _safe_float(day_entry.get("paid_hours"), 0.0)
+            prev_paid = _safe_float(day_entry.get("paid_hours", day_entry.get("paycom_hours")), 0.0)
             day_entry["clock_in_at"] = clock_in_iso
             day_entry["clock_out_at"] = now.isoformat()
             day_entry["break_minutes"] = WORK_CLOCK_BREAK_MINUTES
             day_entry["gross_hours"] = round(gross, 2)
-            day_entry["paid_hours"] = round(paid, 2)
+            day_entry["paid_hours"] = round(prev_paid + paid, 2)
             if active.get("auto_clock_out_at"):
                 day_entry["auto_clock_out_at"] = active.get("auto_clock_out_at")
             state["days"][day_key] = day_entry
@@ -12905,7 +12927,7 @@ def run_work_sync():
             state = load_work_state()
             _record_sync_result(state, ok, msg, hours if ok else None)
             merged_days = _merge_paycom_day_rows_into_state(state, day_rows) if ok else 0
-            if ok and not state.get("active_shift"):
+            if ok:
                 inferred_active, inferred_note = _infer_active_shift_from_paycom_rows(state)
             has_active_shift = bool(state.get("active_shift"))
             save_work_state(state)
