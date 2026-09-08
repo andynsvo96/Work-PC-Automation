@@ -1,4 +1,7 @@
 import unittest
+import json
+import subprocess
+from unittest.mock import patch
 from decimal import Decimal
 from pathlib import Path
 
@@ -28,7 +31,7 @@ class SleevePrintsRequestTests(unittest.TestCase):
                     {"tab_number": 1, "quantity": 1, "left": "", "right": "embroidery"},
                 ]
             )
-        with self.assertRaisesRegex(crm_sleeve_prints.SleevePrintsError, "without an embroidery sleeve"):
+        with self.assertRaisesRegex(crm_sleeve_prints.SleevePrintsError, "without an embroidery area"):
             crm_sleeve_prints.normalize_request(
                 [{"tab_number": 1, "quantity": 1, "left": "ink", "right": ""}],
                 embroidery_price="15.00",
@@ -36,6 +39,62 @@ class SleevePrintsRequestTests(unittest.TestCase):
 
 
 class SleevePrintsPricingTests(unittest.TestCase):
+    def test_side_only_and_all_four_areas_share_tier_and_charge_each_area(self):
+        request = crm_sleeve_prints.normalize_request([
+            {"tab_number": 1, "quantity": 1, "side_left": "ink", "side_right": "embroidery"},
+            {"tab_number": 2, "quantity": 1, "left": "ink", "right": "embroidery",
+             "side_left": "ink", "side_right": "embroidery"},
+        ])
+        state = {"designs": [
+            {"tab_number": 1, "quantity": 10, "print_areas": []},
+            {"tab_number": 2, "quantity": 10, "print_areas": [{"method": "Screen Printing"}]},
+        ]}
+        plan = crm_sleeve_prints._build_live_plan(request, state)
+        self.assertEqual(plan["ink_quantity"], 20)
+        self.assertEqual(plan["ink_price"], Decimal("6.00"))
+        self.assertEqual([s["surcharge"] for s in plan["selections"]], [Decimal("21"), Decimal("42")])
+        custom = crm_sleeve_prints._build_live_plan({**request, "ink_price": "4.50", "embroidery_price": "12"}, state)
+        self.assertEqual(custom["selections"][1]["surcharge"], Decimal("33.00"))
+        with self.assertRaisesRegex(crm_sleeve_prints.SleevePrintsError, "Side Right.*unsupported"):
+            crm_sleeve_prints.normalize_request([{"tab_number": 1, "quantity": 10, "side_right": "invalid"}])
+
+    def test_side_and_mixed_wording(self):
+        side = [{"side_left": "ink", "side_right": "embroidery"}]
+        self.assertEqual(crm_sleeve_prints.format_sales_note(side, Decimal("6"), Decimal("15")),
+                         "Side prints and embroidery\nPriced at $6.00 for ink prints and $15.00 for embroidery per side\nEmailed Txted")
+        self.assertEqual(crm_sleeve_prints._format_request_text([{"side_right": "embroidery"}]), "side embroidery")
+        self.assertEqual(crm_sleeve_prints._format_request_text([{"left": "ink", "side_right": "embroidery"}]),
+                         "sleeve prints and side embroidery")
+        self.assertIn("per area", crm_sleeve_prints.format_sales_note(
+            [{"left": "ink", "side_left": "ink"}], Decimal("6"), None))
+
+    def test_crm_mutation_creates_exact_side_templates_and_updates_price(self):
+        request = crm_sleeve_prints.normalize_request([
+            {"tab_number": 1, "quantity": 10, "side_left": "ink", "side_right": "embroidery"}])
+        plan = crm_sleeve_prints._build_live_plan(request, {"designs": [
+            {"tab_number": 1, "quantity": 10, "print_areas": [{"method": "Screen Printing"}]}]})
+        with patch.object(crm_sleeve_prints.shared, "_order_scope", return_value={}) as scope:
+            crm_sleeve_prints._apply_crm_sleeve_changes(None, plan, "Side test")
+        script, payload = scope.call_args.args[1:]
+        harness = '''
+const r = { designs: [{ printAreas: [], designItems: [{ splitIntoSizes: 0, pricePerPiece: '10.00' }] }] };
+const s = {
+  editMode: true,
+  STATICS: { printAreaTemplates: ['Sleeve Left','Sleeve Right','Side Left','Side Right'].map(description => ({description})),
+             printMethods: ['HD Digital','Screen Printing','Embroidery'].map(description => ({description})) },
+  addPrintArea: design => design.printAreas.push({}),
+  updateAreaTemplate: (area, template) => area.description = template.description,
+  updateAreaMethod: (area, method) => area.methodDescription = method.description
+};
+const runInAngular = (scope, action) => action();
+const result = new Function('s', 'r', 'runInAngular', 'return function() {' + SCRIPT + '}')(s, r, runInAngular)(PAYLOAD);
+process.stdout.write(JSON.stringify({result, order:r}));
+'''.replace('SCRIPT', json.dumps(script)).replace('PAYLOAD', json.dumps(payload))
+        result = json.loads(subprocess.check_output(['node', '-e', harness], text=True))
+        self.assertEqual([(a['description'], a['method']) for a in result['result']['added_areas']],
+                         [('Side Left', 'Screen Printing'), ('Side Right', 'Embroidery')])
+        self.assertEqual(result['order']['designs'][0]['designItems'][0]['pricePerPiece'], '32.00')
+
     def test_ink_pricing_tiers_include_exact_100_quantity_boundary(self):
         self.assertEqual(crm_sleeve_prints._ink_price_for_quantity(1), Decimal("8.00"))
         self.assertEqual(crm_sleeve_prints._ink_price_for_quantity(10), Decimal("7.00"))
@@ -117,6 +176,20 @@ class SleevePrintsPricingTests(unittest.TestCase):
 
 
 class SleevePrintsExtensionUiTests(unittest.TestCase):
+    def test_browser_pricing_counts_side_only_tabs_and_mixed_tabs_once(self):
+        content = (Path(__file__).resolve().parents[1] / "crm-order-dark-mode-extension" / "content.js").read_text(encoding="utf-8")
+        functions = content[content.index("const EXTRA_PRINT_AREAS"):content.index("function showSleevePrintsDialog")]
+        result = subprocess.check_output(['node', '-e', functions + '''
+const selections = [{tab_number:1, side_left:'ink', side_right:'ink'},
+                    {tab_number:2, left:'ink', side_left:'ink', side_right:'embroidery'}];
+const tabs = new Map([[1,{quantity:10}],[2,{quantity:10}]]);
+process.stdout.write(JSON.stringify(sleevePrintSelectionSummary(selections,tabs,{value:null},{value:null})));
+'''], text=True)
+        summary = json.loads(result)
+        self.assertEqual(summary['inkQuantity'], 20)
+        self.assertEqual(summary['inkPrice'], 6)
+        self.assertEqual(summary['embroideryPrice'], 15)
+
     def test_sleeve_prints_is_a_manual_process_with_inline_prefilled_prices(self):
         content = (
             Path(__file__).resolve().parents[1] / "crm-order-dark-mode-extension" / "content.js"
@@ -124,10 +197,10 @@ class SleevePrintsExtensionUiTests(unittest.TestCase):
 
         manual_start = content.index("const MANUAL_ORDER_AUTOMATIONS")
         reachout_start = content.index("const REACHOUT_ORDER_AUTOMATIONS")
-        self.assertIn('key: "sleeve_prints", label: "Sleeve Prints"', content[manual_start:reachout_start])
-        self.assertNotIn('key: "sleeve_prints", label: "Sleeve Prints"', content[reachout_start:content.index("const STOCK_ISSUE_AUTOMATIONS")])
+        self.assertIn('key: "sleeve_prints", label: "Extra Print Areas"', content[manual_start:reachout_start])
+        self.assertNotIn('key: "sleeve_prints", label: "Extra Print Areas"', content[reachout_start:content.index("const STOCK_ISSUE_AUTOMATIONS")])
         self.assertIn("const priceWrap = document.createElement", content)
-        self.assertIn("Price per sleeve — calculated from", content)
+        self.assertIn("Price per area — calculated from", content)
         self.assertIn("priceInput.value = Number(price).toFixed(2)", content)
         self.assertNotIn("const pricing = document.createElement", content)
 

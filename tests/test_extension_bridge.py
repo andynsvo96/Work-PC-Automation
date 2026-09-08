@@ -464,7 +464,8 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
     def test_sleeve_prints_queues_per_tab_sleeve_requests_and_custom_prices(self):
         sleeves = [
             {"tab_number": 1, "quantity": 5, "left": "ink", "right": ""},
-            {"tab_number": 2, "quantity": 20, "left": "ink", "right": "embroidery"},
+            {"tab_number": 2, "quantity": 20, "left": "ink", "right": "embroidery",
+             "side_left": "ink", "side_right": "embroidery"},
         ]
         with mock.patch(
             "server.enqueue_automation",
@@ -488,7 +489,9 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         self.assertEqual(enqueue.call_args.kwargs["task_type"], "crm.sleeve_prints")
         arguments = enqueue.call_args.kwargs["task_arguments"]
         self.assertEqual(arguments["order_id"], "5043020")
-        self.assertEqual(arguments["sleeves"], sleeves)
+        self.assertEqual(arguments["sleeves"], [
+            {"side_left": "", "side_right": "", **selection} for selection in sleeves
+        ])
         self.assertEqual(arguments["ink_price"], "5.00")
         self.assertEqual(arguments["embroidery_price"], "15.00")
         self.assertFalse(arguments["dry_run"])

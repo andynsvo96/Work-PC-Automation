@@ -12417,7 +12417,7 @@ def _normalize_sleeve_prints_request(data):
 
 
 def run_crm_sleeve_prints_queued(order_id, sleeves, ink_price=None, embroidery_price=None, progress_callback=None):
-    """Run the dedicated Sleeve Prints workflow for one CRM order."""
+    """Run the dedicated Extra Print Areas workflow for one CRM order."""
     normalized_order_id = _normalize_crm_single_order_id(order_id)
     if not normalized_order_id:
         return False, "Open a CRM order with a valid 7-digit order number first.", {}
@@ -12439,7 +12439,7 @@ def run_crm_sleeve_prints_queued(order_id, sleeves, ink_price=None, embroidery_p
 
 
 CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["sleeve_prints"] = {
-    "label": "Sleeve Prints",
+    "label": "Extra Print Areas",
     "task_type": "crm.sleeve_prints",
     "status_fn": get_crm_extension_order_status_payload,
     "structured_request": True,

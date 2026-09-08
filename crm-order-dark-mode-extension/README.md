@@ -11,6 +11,14 @@ Private Manifest V3 extension for the Automation project's CRM order pages. It p
 
 The preference is stored locally in that Chrome profile. Removing or reloading the extension keeps the preference unless Chrome extension data is cleared.
 
+After updating, restart the local Automation app, reload the extension at `chrome://extensions`, and refresh open CRM order pages.
+
+## Extra Print Areas
+
+Under **Manual Process → Extra Print Areas**, select design tabs and independently choose **Ink print** or **Embroidery** for **Sleeve Left**, **Sleeve Right**, **Side Left**, and **Side Right**. Leave unused areas at **No area request**.
+
+Ink pricing uses the combined garment quantity of selected tabs with at least one ink area, counting each tab once: $8 for 1–9, $7 for 10–19, $6 for 20–99, and $5 for 100+. Embroidery defaults to $15. Each selected area adds its price per garment; custom prices are shared across areas using the same method. The worker checks live CRM quantities, adds the corresponding CRM areas, updates prices and sales notes, and sends the Salesforce Additional Requests email with the invoice link. Request wording reflects sleeve, side, or combined selections.
+
 ## Salesforce tab reuse
 
 Clicking a Salesforce link in CRM navigates an existing Salesforce tab instead of opening a duplicate. The search includes every normal Chrome window in the current browser profile; if the reused tab is in another window, that window and tab are focused. If no Salesforce tab is open, the link opens normally in a new tab.

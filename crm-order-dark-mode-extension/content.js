@@ -55,7 +55,7 @@ const MANUAL_ORDER_AUTOMATIONS = [
   { key: "order_goods", label: "Order Goods" },
   { key: "shipping_bypasser", label: "Shipping Bypasser" },
   { key: "push_back", label: "Push Back" },
-  { key: "sleeve_prints", label: "Sleeve Prints" }
+  { key: "sleeve_prints", label: "Extra Print Areas" }
 ];
 
 const CANCEL_ORDER_AUTOMATIONS = [
@@ -446,6 +446,8 @@ function stockIssueDelay(milliseconds) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
+const EXTRA_PRINT_AREAS = { left: "Sleeve Left", right: "Sleeve Right", side_left: "Side Left", side_right: "Side Right" };
+
 function sleevePrintCurrency(value) {
   const number = Number(value);
   return Number.isFinite(number) ? `$${number.toFixed(2)}` : "$0.00";
@@ -472,8 +474,8 @@ function sleevePrintCleanPrice(value) {
 }
 
 function sleevePrintSelectionSummary(selections, tabs, customInkPrice, customEmbroideryPrice) {
-  const inkTabs = selections.filter((selection) => selection.left === "ink" || selection.right === "ink");
-  const embroideryTabs = selections.filter((selection) => selection.left === "embroidery" || selection.right === "embroidery");
+  const inkTabs = selections.filter((selection) => Object.keys(EXTRA_PRINT_AREAS).some((area) => selection[area] === "ink"));
+  const embroideryTabs = selections.filter((selection) => Object.keys(EXTRA_PRINT_AREAS).some((area) => selection[area] === "embroidery"));
   const inkQuantity = inkTabs.reduce((total, selection) => total + Number(tabs.get(selection.tab_number)?.quantity || 0), 0);
   const embroideryQuantity = embroideryTabs.reduce((total, selection) => total + Number(tabs.get(selection.tab_number)?.quantity || 0), 0);
   const calculatedInkPrice = inkQuantity ? sleevePrintInkPrice(inkQuantity) : null;
@@ -485,7 +487,7 @@ function sleevePrintSelectionSummary(selections, tabs, customInkPrice, customEmb
 function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
   const discoveredTabs = visibleStockIssueDesignTabs();
   if (!discoveredTabs.length) {
-    setOrderProcessorResult(triggerButton, "Could not detect any design tabs and quantities for Sleeve Prints.", "error");
+    setOrderProcessorResult(triggerButton, "Could not detect any design tabs and quantities for Extra Print Areas.", "error");
     return;
   }
   const tabs = new Map(discoveredTabs.map((tab) => [tab.tabNumber, tab]));
@@ -494,7 +496,7 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
   overlay.id = "crm-sleeve-prints-dialog";
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
-  overlay.setAttribute("aria-label", "Configure Sleeve Prints");
+  overlay.setAttribute("aria-label", "Configure Extra Print Areas");
   Object.assign(overlay.style, {
     position: "fixed", zIndex: "2147483647", inset: "0", display: "flex", alignItems: "center", justifyContent: "center",
     padding: "20px", background: "rgba(15,23,42,.56)", font: "14px system-ui, sans-serif"
@@ -505,10 +507,10 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
     borderRadius: "7px", color: "#0f172a", background: "#fff", boxShadow: "0 20px 45px rgba(15,23,42,.34)"
   });
   const title = document.createElement("div");
-  title.textContent = "Sleeve Prints";
+  title.textContent = "Extra Print Areas";
   Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "6px" });
   const explanation = document.createElement("p");
-  explanation.textContent = "Select the design tabs and choose the request for each sleeve. Ink pricing uses the combined quantity of tabs that have at least one ink-print sleeve.";
+  explanation.textContent = "Select the design tabs and choose the request for each print area. Ink pricing uses the combined quantity of tabs that have at least one ink-print area.";
   Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
   dialog.append(title, explanation);
 
@@ -528,15 +530,15 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
     const sleeveGrid = document.createElement("div");
     Object.assign(sleeveGrid.style, { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px", marginTop: "10px", paddingLeft: "22px" });
     const sleeves = {};
-    for (const side of ["left", "right"]) {
+    for (const side of Object.keys(EXTRA_PRINT_AREAS)) {
       const sleeveLabel = document.createElement("label");
-      sleeveLabel.textContent = `Sleeve ${side[0].toUpperCase()}${side.slice(1)}`;
+      sleeveLabel.textContent = EXTRA_PRINT_AREAS[side];
       sleeveLabel.style.fontWeight = "600";
       const select = document.createElement("select");
       select.disabled = true;
-      select.setAttribute("aria-label", `Sleeve ${side} method for tab ${tab.tabNumber}`);
+      select.setAttribute("aria-label", `${EXTRA_PRINT_AREAS[side]} method for tab ${tab.tabNumber}`);
       [
-        ["", "No sleeve request"],
+        ["", "No area request"],
         ["ink", "Ink print"],
         ["embroidery", "Embroidery"]
       ].forEach(([value, label]) => {
@@ -554,7 +556,7 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
       const priceInput = document.createElement("input");
       priceInput.type = "text";
       priceInput.inputMode = "decimal";
-      priceInput.setAttribute("aria-label", `Price per sleeve for ${side} sleeve on tab ${tab.tabNumber}`);
+      priceInput.setAttribute("aria-label", `Price per area for ${EXTRA_PRINT_AREAS[side]} on tab ${tab.tabNumber}`);
       Object.assign(priceInput.style, { display: "block", width: "100%", marginTop: "4px", padding: "6px", boxSizing: "border-box" });
       priceInput.addEventListener("input", () => {
         const method = select.value;
@@ -613,8 +615,10 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
       tab_number: tab.tabNumber,
       quantity: tab.quantity,
       left: sleeves.left.select.value,
-      right: sleeves.right.select.value
-    })).filter((selection) => selection.left || selection.right);
+      right: sleeves.right.select.value,
+      side_left: sleeves.side_left.select.value,
+      side_right: sleeves.side_right.select.value
+    })).filter((selection) => Object.keys(EXTRA_PRINT_AREAS).some((area) => selection[area]));
   }
 
   function refresh(sourcePriceInput = null) {
@@ -623,21 +627,21 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
     const embroideryCustomPrice = { valid: !priceErrors.embroidery, value: priceOverrides.embroidery, message: priceErrors.embroidery };
     const summary = sleevePrintSelectionSummary(selected, tabs, inkCustomPrice, embroideryCustomPrice);
     for (const { sleeves } of choices) {
-      for (const side of ["left", "right"]) {
+      for (const side of Object.keys(EXTRA_PRINT_AREAS)) {
         const { select, priceWrap, priceCaption, priceInput } = sleeves[side];
         const method = select.value;
         const price = method === "ink" ? summary.inkPrice : method === "embroidery" ? summary.embroideryPrice : null;
         const invalidMessage = method ? priceErrors[method] : "";
         // Some CRM styles override the browser's default [hidden] display
-        // rule, so explicitly collapse the price wrapper when no sleeve has
+        // rule, so explicitly collapse the price wrapper when no area has
         // been requested.
         priceWrap.hidden = !method;
         priceWrap.style.setProperty("display", method ? "block" : "none", "important");
         priceInput.disabled = select.disabled || !method;
         if (method) {
           priceCaption.textContent = method === "ink"
-            ? `Price per sleeve — calculated from ${summary.inkQuantity} ink-print garment${summary.inkQuantity === 1 ? "" : "s"}; shared across all ink sleeves.`
-            : `Price per sleeve — shared across all embroidery sleeves.`;
+            ? `Price per area — calculated from ${summary.inkQuantity} ink-print garment${summary.inkQuantity === 1 ? "" : "s"}; shared across all ink areas.`
+            : `Price per area — shared across all embroidery areas.`;
           if (price !== null && (!invalidMessage || priceInput !== sourcePriceInput)) {
             priceInput.value = Number(price).toFixed(2);
           }
@@ -646,14 +650,14 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
       }
     }
     const errors = [];
-    if (!selected.length) errors.push("Choose at least one sleeve request.");
+    if (!selected.length) errors.push("Choose at least one print-area request.");
     if (summary.inkQuantity && !inkCustomPrice.valid) errors.push(`Ink: ${inkCustomPrice.message}`);
     if (summary.embroideryQuantity && !embroideryCustomPrice.valid) errors.push(`Embroidery: ${embroideryCustomPrice.message}`);
     const valid = selected.length
       && (!summary.inkQuantity || inkCustomPrice.valid)
       && (!summary.embroideryQuantity || embroideryCustomPrice.valid)
       && !submitting;
-    validation.textContent = submitting ? "Sending Sleeve Prints to the Automation queue…" : errors.join(" ");
+    validation.textContent = submitting ? "Sending Extra Print Areas to the Automation queue…" : errors.join(" ");
     validation.style.color = submitting ? "#334155" : "#b91c1c";
     queue.disabled = !valid;
     queue.setAttribute("aria-disabled", String(!valid));
@@ -679,7 +683,7 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
         return;
       }
       submitting = false;
-      validation.textContent = (response && response.message) || "Could not queue Sleeve Prints.";
+      validation.textContent = (response && response.message) || "Could not queue Extra Print Areas.";
       validation.style.color = "#b91c1c";
       refresh();
     });

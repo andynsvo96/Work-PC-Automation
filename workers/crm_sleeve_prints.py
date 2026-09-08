@@ -1,7 +1,7 @@
-"""Single-order Sleeve Prints reachout workflow.
+"""Single-order Extra Print Areas reachout workflow.
 
 The Chrome extension supplies the selected design tabs and a requested method for
-each sleeve.  This worker applies the CRM changes once, collects the View Invoice
+each print area.  This worker applies the CRM changes once, collects the View Invoice
 link without sending the CRM invoice, then sends the Salesforce Additional
 Requests email.
 """
@@ -26,7 +26,7 @@ from crm_stock_issue_extension import _verify_final_recipients
 
 AUTOMATION_KEY = "sleeve_prints"
 AUTOMATION_NAME = "crm.sleeve_prints"
-DISPLAY_NAME = "Sleeve Prints"
+DISPLAY_NAME = "Extra Print Areas"
 SALESFORCE_TEMPLATE = str(
     getattr(config_module, "SALESFORCE_SLEEVE_PRINTS_TEMPLATE", "[AUTO] Additional Requests")
     or "[AUTO] Additional Requests"
@@ -37,13 +37,14 @@ COST_PLACEHOLDER = "[COST]"
 INVOICE_LINK_PLACEHOLDER = "[INVOICE_LINK]"
 INK = "ink"
 EMBROIDERY = "embroidery"
-SLEEVE_SIDES = ("left", "right")
+PRINT_AREAS = {"left": "Sleeve Left", "right": "Sleeve Right", "side_left": "Side Left", "side_right": "Side Right"}
+SLEEVE_SIDES = tuple(PRINT_AREAS)
 MONEY_QUANTUM = Decimal("0.01")
 MAX_SLEEVE_PRICE = Decimal("1000.00")
 
 
 class SleevePrintsError(RuntimeError):
-    """Raised when the Sleeve Prints workflow cannot safely continue."""
+    """Raised when the Extra Print Areas workflow cannot safely continue."""
 
     def __init__(self, message, result=None):
         super().__init__(message)
@@ -108,7 +109,7 @@ def _ink_price_for_quantity(quantity):
 
 def normalize_request(sleeves, ink_price=None, embroidery_price=None):
     if not isinstance(sleeves, list) or not sleeves:
-        raise SleevePrintsError("Select at least one design tab and sleeve request.")
+        raise SleevePrintsError("Select at least one design tab and print-area request.")
     if len(sleeves) > 100:
         raise SleevePrintsError("Select no more than 100 design tabs.")
     normalized = []
@@ -117,7 +118,7 @@ def normalize_request(sleeves, ink_price=None, embroidery_price=None):
     any_embroidery = False
     for raw in sleeves:
         if not isinstance(raw, dict):
-            raise SleevePrintsError("Each sleeve selection must be a valid design-tab record.")
+            raise SleevePrintsError("Each print-area selection must be a valid design-tab record.")
         tab_number = _whole_number(raw.get("tab_number"), "Design tab number", maximum=1000)
         if tab_number in seen_tabs:
             raise SleevePrintsError(f"Design tab {tab_number} was selected more than once.")
@@ -127,19 +128,19 @@ def normalize_request(sleeves, ink_price=None, embroidery_price=None):
         for side in SLEEVE_SIDES:
             method = str(raw.get(side) or "").strip().lower()
             if method not in {"", INK, EMBROIDERY}:
-                raise SleevePrintsError(f"Design tab {tab_number} {side} sleeve has an unsupported method.")
+                raise SleevePrintsError(f"Design tab {tab_number} {PRINT_AREAS[side]} has an unsupported method.")
             selection[side] = method
             any_ink = any_ink or method == INK
             any_embroidery = any_embroidery or method == EMBROIDERY
-        if not selection["left"] and not selection["right"]:
+        if not any(selection[area] for area in PRINT_AREAS):
             raise SleevePrintsError(f"Choose an ink-print or embroidery request for design tab {tab_number}.")
         normalized.append(selection)
     custom_ink = _money(ink_price, "Custom ink-print price")
     custom_embroidery = _money(embroidery_price, "Custom embroidery price")
     if custom_ink is not None and not any_ink:
-        raise SleevePrintsError("A custom ink-print price was supplied without an ink-print sleeve.")
+        raise SleevePrintsError("A custom ink-print price was supplied without an ink-print area.")
     if custom_embroidery is not None and not any_embroidery:
-        raise SleevePrintsError("A custom embroidery price was supplied without an embroidery sleeve.")
+        raise SleevePrintsError("A custom embroidery price was supplied without an embroidery area.")
     return {
         "sleeves": normalized,
         "ink_price": None if custom_ink is None else f"{custom_ink:.2f}",
@@ -155,33 +156,41 @@ def _request_flags(sleeves):
     }
 
 
+def _area_family(sleeves, method=None):
+    sleeve = any(selection.get(area) and (method is None or selection.get(area) == method)
+                 for selection in sleeves for area in ("left", "right"))
+    side = any(selection.get(area) and (method is None or selection.get(area) == method)
+               for selection in sleeves for area in ("side_left", "side_right"))
+    return "sleeve and side" if sleeve and side else "side" if side else "sleeve"
+
+
 def _format_request_text(sleeves):
     flags = _request_flags(sleeves)
     if flags["ink"] and flags["embroidery"]:
-        return "sleeve print and embroidery"
-    if flags["ink"]:
-        return "sleeve prints"
-    return "sleeve embroidery"
+        if _area_family(sleeves, INK) == _area_family(sleeves, EMBROIDERY):
+            return f"{_area_family(sleeves)} print and embroidery"
+        return f"{_area_family(sleeves, INK)} prints and {_area_family(sleeves, EMBROIDERY)} embroidery"
+    return f"{_area_family(sleeves)} {'prints' if flags['ink'] else 'embroidery'}"
 
 
 def _format_cost_text(sleeves, ink_price, embroidery_price):
     flags = _request_flags(sleeves)
     if flags["ink"] and flags["embroidery"]:
-        return f"{_money_text(ink_price)} for sleeve prints and {_money_text(embroidery_price)} for embroidery"
+        return f"{_money_text(ink_price)} for {_area_family(sleeves, INK)} prints and {_money_text(embroidery_price)} for embroidery"
     return _money_text(ink_price if flags["ink"] else embroidery_price)
 
 
 def format_sales_note(sleeves, ink_price, embroidery_price):
     flags = _request_flags(sleeves)
+    family = _area_family(sleeves)
+    unit = "area" if family == "sleeve and side" else family
+    title = _format_request_text(sleeves).capitalize()
     if flags["ink"] and flags["embroidery"]:
-        return (
-            "Sleeve prints and embroidery\n"
-            f"Priced at {_money_text(ink_price)} for ink prints and {_money_text(embroidery_price)} for embroidery per sleeve\n"
-            "Emailed Txted"
-        )
-    if flags["ink"]:
-        return f"Sleeve prints\nPriced at {_money_text(ink_price)} per sleeve\nEmailed Txted"
-    return f"Sleeve embroidery\nPriced at {_money_text(embroidery_price)} per sleeve\nEmailed Txted"
+        title = title.replace(" print and embroidery", " prints and embroidery")
+        cost = f"{_money_text(ink_price)} for ink prints and {_money_text(embroidery_price)} for embroidery"
+    else:
+        cost = _money_text(ink_price if flags["ink"] else embroidery_price)
+    return f"{title}\nPriced at {cost} per {unit}\nEmailed Txted"
 
 
 def _read_crm_sleeve_state(driver):
@@ -263,7 +272,7 @@ def _build_live_plan(request, state):
         if len(existing_ink) > 1:
             ink_method = "HD Digital"
             warnings.append(
-                f"Tab {tab_number} has both HD Digital and Screen Printing areas; Sleeve Prints used HD Digital."
+                f"Tab {tab_number} has both HD Digital and Screen Printing areas; Extra Print Areas used HD Digital."
             )
         elif "screen printing" in existing_ink:
             ink_method = "Screen Printing"
@@ -279,7 +288,7 @@ def _build_live_plan(request, state):
     ink_quantity = sum(
         int(selection["quantity"])
         for selection in selections
-        if selection.get("left") == INK or selection.get("right") == INK
+        if any(selection.get(area) == INK for area in PRINT_AREAS)
     )
     ink_price = _money(request.get("ink_price"), "Custom ink-print price") if flags["ink"] else None
     if ink_price is None and flags["ink"]:
@@ -315,12 +324,15 @@ def _apply_crm_sleeve_changes(driver, plan, sales_note):
                 "tab_number": selection["tab_number"],
                 "left": selection["left"],
                 "right": selection["right"],
+                "side_left": selection["side_left"],
+                "side_right": selection["side_right"],
                 "ink_method": selection["ink_method"],
                 "surcharge": f"{selection['surcharge']:.2f}",
             }
             for selection in plan["selections"]
         ],
         "sales_note": sales_note,
+        "area_names": PRINT_AREAS,
     }
     result = shared._order_scope(
         driver,
@@ -396,11 +408,11 @@ def _apply_crm_sleeve_changes(driver, plan, sales_note):
           for (const selection of request.selections) {
             const designIndex = Number(selection.tab_number) - 1;
             const design = (r.designs || [])[designIndex];
-            if (!design) throw new Error(`Design tab ${selection.tab_number} was not found while applying Sleeve Prints.`);
-            for (const side of ['left', 'right']) {
+            if (!design) throw new Error(`Design tab ${selection.tab_number} was not found while applying Extra Print Areas.`);
+            for (const side of Object.keys(request.area_names)) {
               const requested = selection[side];
               if (!requested) continue;
-              const description = side === 'left' ? 'Sleeve Left' : 'Sleeve Right';
+              const description = request.area_names[side];
               const expectedMethod = requested === 'embroidery' ? 'Embroidery' : selection.ink_method;
               const existing = existingArea(design, description);
               if (existing) {
@@ -510,11 +522,11 @@ def _verify_crm_sleeve_changes(driver, sales_note, mutation):
         expected_prices,
     ) or {}
     if not verification.get("note_saved"):
-        raise SleevePrintsError("CRM saved the order, but the Sleeve Prints Sales Note was not confirmed afterward.")
+        raise SleevePrintsError("CRM saved the order, but the Extra Print Areas Sales Note was not confirmed afterward.")
     if verification.get("missing_areas"):
-        raise SleevePrintsError(f"CRM saved the order, but these Sleeve Print Areas were not confirmed: {verification['missing_areas']}")
+        raise SleevePrintsError(f"CRM saved the order, but these Extra Print Areas were not confirmed: {verification['missing_areas']}")
     if verification.get("incorrect_prices"):
-        raise SleevePrintsError(f"CRM saved the order, but these Sleeve prices were not confirmed: {verification['incorrect_prices']}")
+        raise SleevePrintsError(f"CRM saved the order, but these Extra Print Area prices were not confirmed: {verification['incorrect_prices']}")
     return verification
 
 
@@ -778,10 +790,10 @@ def _prepare_and_send_salesforce_email(driver, crm_handle, order_id, customer_em
     if str(order_id) not in final_subject:
         raise SleevePrintsError("Salesforce email subject did not retain the CRM order number.")
     if final_body.casefold().count(request_text.casefold()) < 2:
-        raise SleevePrintsError("Salesforce email body did not retain both Sleeve Prints request replacements.")
+        raise SleevePrintsError("Salesforce email body did not retain both Extra Print Areas request replacements.")
     for expected in (cost_text, invoice_link):
         if expected.casefold() not in final_body.casefold():
-            raise SleevePrintsError("Salesforce email body did not retain the Sleeve Prints cost and invoice link.")
+            raise SleevePrintsError("Salesforce email body did not retain the Extra Print Areas cost and invoice link.")
     recipients = _verify_final_recipients(driver, customer_email)
     if dry_run:
         return {
@@ -828,7 +840,7 @@ def process_sleeve_prints_order(
         result["stages"].append({"key": key, "success": True, "details": details})
 
     try:
-        begin("browser_start", f"Opening CRM order {order_id} for Sleeve Prints.")
+        begin("browser_start", f"Opening CRM order {order_id} for Extra Print Areas.")
         driver = shared._open_driver(visible=visible, attach_browser=attach_browser, debugger_address=debugger_address)
         order_url = shared.PROCESSOR_ORDER_URL_TEMPLATE.format(order_id=order_id)
         shared.safe_get_with_partial_load(driver, order_url, f"CRM order {order_id}")
@@ -839,7 +851,7 @@ def process_sleeve_prints_order(
         contact = shared._wait_for_crm_contact_info(driver, order_id=order_id)
         complete("crm_order_verification", {"customer_email": contact["email"]})
 
-        begin("crm_order_update", "Adding Sleeve Print Areas, pricing, and Sales Notes.")
+        begin("crm_order_update", "Adding Extra Print Areas, pricing, and Sales Notes.")
         before_state = _read_crm_sleeve_state(driver)
         plan = _build_live_plan(request, before_state)
         sales_note = format_sales_note(plan["selections"], plan["ink_price"], plan["embroidery_price"])
@@ -890,19 +902,19 @@ def process_sleeve_prints_order(
         result["error_type"] = type(exc).__name__
         result["error"] = str(exc)
         result["stages"].append({"key": stage, "success": False, "message": str(exc)})
-        raise SleevePrintsError(f"Sleeve Prints stopped at {stage}: {exc}", result=result) from exc
+        raise SleevePrintsError(f"Extra Print Areas stopped at {stage}: {exc}", result=result) from exc
     finally:
         if driver is not None and not attach_browser:
             shared.safe_driver_quit(driver, profile_path=shared._profile_path())
 
 
 def run_sleeve_prints_order(order_id, sleeves, ink_price=None, embroidery_price=None, **kwargs):
-    """Queue-friendly Sleeve Prints result tuple."""
+    """Queue-friendly Extra Print Areas result tuple."""
     try:
         result = process_sleeve_prints_order(order_id, sleeves, ink_price, embroidery_price, **kwargs)
         warning = ""
         if result.get("warnings"):
             warning = " Warning: " + " ".join(result["warnings"])
-        return True, f"Sleeve Prints completed for order {result['order_id']}.{warning}", result
+        return True, f"Extra Print Areas completed for order {result['order_id']}.{warning}", result
     except SleevePrintsError as exc:
         return False, str(exc), exc.result
