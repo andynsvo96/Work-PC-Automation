@@ -91,6 +91,7 @@ from workers.crm_auto_splitter import (
     _clean_text,
     _click_ng_button,
     _get_order_live_state,
+    _is_cancel_order_status,
     _handle_login_if_needed,
     _money_text,
     _open_record_transaction,
@@ -8454,6 +8455,41 @@ def _refund_via_transaction_modal(driver, amount, note, dry_run, click_refund_bu
     }
 
 
+def _verify_persisted_cancellation(driver, order_id):
+    """Confirm cancellation from the current status heading after a fresh load."""
+    try:
+        # Allow the status request to settle before discarding the current page.
+        time.sleep(2)
+        driver.refresh()
+        _activate_crm_context(driver)
+        _wait_for_order_scope(driver, order_id=order_id, timeout=30)
+        deadline = time.monotonic() + 15
+        status = ""
+        while time.monotonic() < deadline:
+            status = _clean_text(driver.execute_script("""
+                const headings = Array.from(document.querySelectorAll('#order-info-panel h3'))
+                  .filter(el => el.getClientRects().length &&
+                    window.getComputedStyle(el).visibility !== 'hidden');
+                return headings.length === 1 ? headings[0].innerText : '';
+            """))
+            if status:
+                break
+            time.sleep(0.5)
+        if not _is_cancel_order_status(status):
+            raise CopyrightCancelError(
+                f"Cancellation unconfirmed for order {order_id} after reload. "
+                f"Current status: {status or 'unreadable'}. Workflow stopped."
+            )
+    except CopyrightCancelError:
+        raise
+    except Exception as exc:
+        raise CopyrightCancelError(
+            f"Cancellation unconfirmed for order {order_id}: could not verify the saved status. "
+            "Workflow stopped."
+        ) from exc
+    return {"verified": True, "status": status, "reloaded": True}
+
+
 def _cancel_and_refund_crm_order(driver, crm_handle, order_id, dry_run, click_refund_button=True, payment=None, reason="", process=COPYRIGHT_CANCEL_PROCESS):
     driver.switch_to.window(crm_handle)
     _activate_crm_context(driver)
@@ -8507,6 +8543,8 @@ def _cancel_and_refund_crm_order(driver, crm_handle, order_id, dry_run, click_re
         else:
             _cancel_original_order(driver)
             cancel_result = {"cancelled": True, "dry_run": False}
+        if not dry_run:
+            cancel_result["verification"] = _verify_persisted_cancellation(driver, order_id)
         zero_charge = _zero_charge_cancel_refund_result(dry_run=dry_run)
         return {
             "payment": payment,
@@ -8554,6 +8592,7 @@ def _cancel_and_refund_crm_order(driver, crm_handle, order_id, dry_run, click_re
         else:
             _cancel_original_order(driver)
             cancel_result = {"cancelled": True, "dry_run": False}
+        cancel_result["verification"] = _verify_persisted_cancellation(driver, order_id)
         refund_fee_result = _add_refund_fee_to_original(driver, refund_fee_amount)
     if _requires_salesforce_refund_case(payment):
         refund_result = {

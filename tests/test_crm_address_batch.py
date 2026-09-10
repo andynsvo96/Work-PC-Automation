@@ -134,6 +134,48 @@ class CrmRecoverableErrorTests(unittest.TestCase):
 
 
 class CrmCopyrightCancelTests(unittest.TestCase):
+    def test_persisted_cancellation_reads_status_after_reload(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = "Cancel Order"
+        with mock.patch.object(crm_copyright_cancel, "_activate_crm_context"), \
+             mock.patch.object(crm_copyright_cancel, "_wait_for_order_scope") as wait, \
+             mock.patch.object(crm_copyright_cancel.time, "sleep"):
+            result = crm_copyright_cancel._verify_persisted_cancellation(driver, "5195416")
+        self.assertTrue(result["verified"])
+        driver.refresh.assert_called_once_with()
+        wait.assert_called_once_with(driver, order_id="5195416", timeout=30)
+        self.assertLess(driver.mock_calls.index(mock.call.refresh()),
+                        next(i for i, call in enumerate(driver.mock_calls) if call[0] == "execute_script"))
+
+    def test_persisted_cancellation_rejects_unchanged_or_unreadable_status(self):
+        for status in ("Unreviewed DesignStudio Order", ""):
+            with self.subTest(status=status):
+                driver = mock.Mock()
+                driver.execute_script.return_value = status
+                with mock.patch.object(crm_copyright_cancel, "_activate_crm_context"), \
+                     mock.patch.object(crm_copyright_cancel, "_wait_for_order_scope"), \
+                     mock.patch.object(crm_copyright_cancel.time, "sleep"), \
+                     mock.patch.object(crm_copyright_cancel.time, "monotonic", side_effect=[0, 1, 20]):
+                    with self.assertRaisesRegex(crm_copyright_cancel.CopyrightCancelError, "Cancellation unconfirmed"):
+                        crm_copyright_cancel._verify_persisted_cancellation(driver, "5195416")
+
+    def test_failed_cancellation_verification_blocks_refund_work(self):
+        driver = mock.Mock()
+        with ExitStack() as stack:
+            for name in ("_activate_crm_context", "_wait_for_order_scope", "_append_copyright_cancel_sales_note", "_cancel_original_order"):
+                stack.enter_context(mock.patch.object(crm_copyright_cancel, name))
+            stack.enter_context(mock.patch.object(crm_copyright_cancel, "_completed_stripe_refund_state", return_value={}))
+            stack.enter_context(mock.patch.object(crm_copyright_cancel, "_get_order_live_state", return_value={}))
+            stack.enter_context(mock.patch.object(crm_copyright_cancel, "_refund_fee_amount_from_order_state", return_value=182.84))
+            stack.enter_context(mock.patch.object(crm_copyright_cancel, "_crm_order_already_cancelled", return_value=False))
+            stack.enter_context(mock.patch.object(crm_copyright_cancel, "_verify_persisted_cancellation", side_effect=crm_copyright_cancel.CopyrightCancelError("Cancellation unconfirmed")))
+            fee = stack.enter_context(mock.patch.object(crm_copyright_cancel, "_add_refund_fee_to_original"))
+            refund = stack.enter_context(mock.patch.object(crm_copyright_cancel, "_refund_via_stripe_payment_modal"))
+            with self.assertRaisesRegex(crm_copyright_cancel.CopyrightCancelError, "Cancellation unconfirmed"):
+                crm_copyright_cancel._cancel_and_refund_crm_order(driver, "crm", "5195416", False, payment={"amount": "182.84"}, reason="test")
+            fee.assert_not_called()
+            refund.assert_not_called()
+
     def test_salesforce_saved_username_chooser_is_a_login_page(self):
         driver = mock.Mock(current_url="https://login.salesforce.com/")
         with mock.patch.object(
@@ -2225,6 +2267,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
              mock.patch.object(crm_copyright_cancel, "_get_order_live_state", return_value=state), \
              mock.patch.object(crm_copyright_cancel, "_crm_order_already_cancelled", return_value=False), \
              mock.patch.object(crm_copyright_cancel, "_cancel_original_order", return_value={"cancelled": True}) as mock_cancel, \
+             mock.patch.object(crm_copyright_cancel, "_verify_persisted_cancellation", return_value={"verified": True}), \
              mock.patch.object(
                  crm_copyright_cancel,
                  "_add_refund_fee_to_original",
@@ -2267,7 +2310,8 @@ class CrmCopyrightCancelTests(unittest.TestCase):
              ), \
              mock.patch.object(crm_copyright_cancel, "_get_order_live_state", return_value=state), \
              mock.patch.object(crm_copyright_cancel, "_crm_order_already_cancelled", return_value=True), \
-             mock.patch.object(crm_copyright_cancel, "_cancel_original_order") as mock_cancel:
+             mock.patch.object(crm_copyright_cancel, "_cancel_original_order") as mock_cancel, \
+             mock.patch.object(crm_copyright_cancel, "_verify_persisted_cancellation", return_value={"verified": True}):
             result = crm_copyright_cancel._cancel_and_refund_crm_order(
                 driver,
                 "crm-window",
