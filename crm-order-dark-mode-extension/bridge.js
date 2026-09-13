@@ -80,7 +80,8 @@ export async function startLocalManualOrderProcessing(orderId, automation, reaso
       products: structuredData.products,
       sleeves: structuredData.sleeves,
       ink_price: structuredData.ink_price,
-      embroidery_price: structuredData.embroidery_price
+      embroidery_price: structuredData.embroidery_price,
+      reverse_price: structuredData.reverse_price
     })
   });
 }

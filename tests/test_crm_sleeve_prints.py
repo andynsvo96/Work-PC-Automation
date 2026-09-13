@@ -201,7 +201,7 @@ process.stdout.write(JSON.stringify(sleevePrintSelectionSummary(selections,tabs,
         self.assertNotIn('key: "sleeve_prints", label: "Extra Print Areas"', content[reachout_start:content.index("const STOCK_ISSUE_AUTOMATIONS")])
         self.assertIn("const priceWrap = document.createElement", content)
         self.assertIn("Price per area — calculated from", content)
-        self.assertIn("priceInput.value = Number(price).toFixed(2)", content)
+        self.assertIn("priceInput.value = Number(price ??", content)
         self.assertNotIn("const pricing = document.createElement", content)
 
     def test_extension_configuration_dialogs_require_an_explicit_back_action_to_close(self):

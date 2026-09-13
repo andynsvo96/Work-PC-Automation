@@ -123,7 +123,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         products: message.products,
         sleeves: message.sleeves,
         ink_price: message.ink_price,
-        embroidery_price: message.embroidery_price
+        embroidery_price: message.embroidery_price,
+        reverse_price: message.reverse_price
       })
       .then(sendResponse)
       .catch((error) => sendResponse({ success: false, message: error.message || "Could not queue manual processing." }));

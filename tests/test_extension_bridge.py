@@ -496,6 +496,19 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         self.assertEqual(arguments["embroidery_price"], "15.00")
         self.assertFalse(arguments["dry_run"])
 
+    def test_reverse_prints_queues_shared_custom_price(self):
+        with mock.patch("server.enqueue_automation", return_value=(True, "Queued", {"id": "reverse-1", "status": "queued"})) as enqueue:
+            response = self.client.post(
+                "/api/extension/bridge/process-order/manual",
+                json={"order_id": "5043020", "automation": "sleeve_prints", "reverse_price": "4.25",
+                      "sleeves": [{"tab_number": 1, "quantity": 8, "reverse": "ink"},
+                                  {"tab_number": 2, "quantity": 2, "reverse": "ink"}]},
+                headers={"Origin": self.ORIGIN}, environ_overrides={"REMOTE_ADDR": "127.0.0.1"})
+        self.assertEqual(response.status_code, 202)
+        arguments = enqueue.call_args.kwargs["task_arguments"]
+        self.assertEqual(arguments["reverse_price"], "4.25")
+        self.assertEqual([x["reverse"] for x in arguments["sleeves"]], ["ink", "ink"])
+
     def test_sleeve_prints_rejects_invalid_or_empty_sleeve_requests(self):
         invalid_payloads = [
             {"sleeves": []},

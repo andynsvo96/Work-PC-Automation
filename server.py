@@ -12413,10 +12413,11 @@ def _normalize_sleeve_prints_request(data):
         payload.get("sleeves"),
         payload.get("ink_price"),
         payload.get("embroidery_price"),
+        payload.get("reverse_price"),
     )
 
 
-def run_crm_sleeve_prints_queued(order_id, sleeves, ink_price=None, embroidery_price=None, progress_callback=None):
+def run_crm_sleeve_prints_queued(order_id, sleeves, ink_price=None, embroidery_price=None, progress_callback=None, reverse_price=None):
     """Run the dedicated Extra Print Areas workflow for one CRM order."""
     normalized_order_id = _normalize_crm_single_order_id(order_id)
     if not normalized_order_id:
@@ -12431,6 +12432,7 @@ def run_crm_sleeve_prints_queued(order_id, sleeves, ink_price=None, embroidery_p
             sleeves,
             ink_price,
             embroidery_price,
+            reverse_price=reverse_price,
             dry_run=False,
             progress_callback=progress_callback,
         )
@@ -12449,6 +12451,7 @@ CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["sleeve_prints"] = {
         "sleeves": list((request_data or {}).get("sleeves") or []),
         "ink_price": (request_data or {}).get("ink_price"),
         "embroidery_price": (request_data or {}).get("embroidery_price"),
+        "reverse_price": (request_data or {}).get("reverse_price"),
         "dry_run": False,
     },
     "runner": lambda order_id, _reason="", request_data=None, progress_callback=None: run_crm_sleeve_prints_queued(
@@ -12457,6 +12460,7 @@ CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["sleeve_prints"] = {
         (request_data or {}).get("ink_price"),
         (request_data or {}).get("embroidery_price"),
         progress_callback=progress_callback,
+        reverse_price=(request_data or {}).get("reverse_price"),
     ),
 }
 

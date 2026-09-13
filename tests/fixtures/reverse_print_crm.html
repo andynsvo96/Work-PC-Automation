@@ -1,0 +1,82 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Isolated reverse-print CRM fixture</title>
+<style>body {font:14px system-ui} input,textarea {display:block;margin:8px} ul {background:#eee} .item {border:1px solid #ccc;padding:12px;margin:12px}</style>
+<main id="fixture"></main>
+<script>
+// Offline fixture: real input/click behavior with the models and selectors from
+// the supplied MHTML. Applying Style Sub deliberately changes the size columns.
+const resource = {id:'5209138', designs:[{
+  id:'original', designId:'art100', PO:'Original',
+  printAreas:[{description:'Front',printMethodDescription:'HD Digital'}, {description:'Back',printMethodDescription:'HD Digital'}],
+  designItems:[{
+    id:'product1',style:'ST5000',vendorName:'Sanmar',color:'Black/ Deep Red',label:'Reversible Mesh Tank',
+    splitIntoSizes:1,quantity:8,pricePerPiece:'33.09',
+    sizes:[{size:'M',quantity:5,pricePerPiece:'33.09'}, {size:'L',quantity:2,pricePerPiece:'33.09'}, {size:'XL',quantity:1,pricePerPiece:'33.09'}]
+  }, {
+    id:'product2',style:'ST5000',vendorName:'Sanmar',color:'White',label:'Reversible Mesh Tank',
+    splitIntoSizes:1,quantity:2,pricePerPiece:'33.09',
+    sizes:[{size:'M',quantity:2,pricePerPiece:'33.09'}]
+  }]
+}]};
+let activeIndex=0;
+window.events=[];
+const scope = {
+  order:{getResource:()=>resource},copyOrder:()=>{},editMode:false,
+  STATICS:{suppliers:[{id:1,value:'Sanmar'}]},
+  editModeOn(){this.editMode=true},
+  onDesignTabSelect(index){activeIndex=index;render()},
+  duplicateDesign(index){
+    const copy=JSON.parse(JSON.stringify(resource.designs[index]));
+    copy.id='clone'+resource.designs.length;
+    copy.designItems.forEach((item,i)=>item.id=copy.id+'item'+i);
+    resource.designs.push(copy);events.push('clone');
+  },
+  watchDesignChanges(){},watchItemQuantityChanges(){},watchItemChanges(){},watchSizeQuantityChanges(){},watchSizeChanges(){}
+};
+window.angular={element:el=>({scope:()=>el._scope||scope,isolateScope:()=>null})};
+function field(block, model, placeholder, value, update, picker=false) {
+  const input=document.createElement(placeholder==='Description'?'textarea':'input');
+  input.setAttribute('ng-model',model);input.placeholder=placeholder;input.value=value||'';block.append(input);
+  if (!picker) input.addEventListener('input',()=>update(input.value));
+  else {
+    const ul=document.createElement('ul');ul.setAttribute('typeahead-popup','');ul.style.display='none';block.append(ul);
+    input.addEventListener('input',()=>{
+      ul.replaceChildren();ul.style.display='block';
+      const suggestions=placeholder==='Enter Item'?['Style Sub','Style Sub Infant']:['Sanmar'];
+      for (const text of suggestions) {
+        const li=document.createElement('li'),a=document.createElement('a');a.href='#';a.textContent=text;
+        a.onclick=e=>{e.preventDefault();input.value=text;ul.style.display='none';events.push('pick:'+text);update(text)};
+        li.append(a);ul.append(li);
+      }
+    });
+  }
+  return input;
+}
+function render() {
+  const fixture=document.getElementById('fixture');fixture.replaceChildren();
+  resource.designs.forEach((design,index)=>{
+    const container=document.createElement('section');container.style.display=index===activeIndex?'block':'none';
+    container.append(document.createTextNode(design.PO));fixture.append(container);
+    design.designItems.forEach(item=>{
+      const block=document.createElement('div');block.className='item';
+      block.setAttribute('ng-repeat','($itemIndex, item) in design.designItems');
+      block._scope={...scope,item,design,formItem:{item,selectedCatalogItem:{label:item.label},selectedColor:{name:item.color}}};
+      container.append(block);
+      let chosen='';
+      field(block,'formItem.selectedCatalogItemStyle','Enter Item',item.style,value=>{chosen=value;apply.style.display='block'},true);
+      const apply=document.createElement('button');apply.textContent='Apply';apply.setAttribute('ng-click','changeDesignItem( formItem )');apply.style.display='none';
+      apply.onclick=()=>{
+        if(chosen!=='Style Sub')throw Error('Wrong Style Sub variant');
+        item.style='Style Sub';item.isStyleSub=1;item.styleSubs=[{vendor:'',style:'',color:'',description:''}];
+        item.sizes=['XS','S','M','L','XL','2XL'].map((size,i)=>({size,quantity:i===1?item.quantity:0,pricePerPiece:'33.09'}));
+        events.push('apply');render();
+      };block.append(apply);
+      if(item.isStyleSub) for(const [key,label] of [['vendor','Vendor Name'],['style','Style'],['color','Color'],['description','Description']]){
+        field(block,`formItem.item.styleSubs[0].${key}`,label,item.styleSubs[0][key],value=>item.styleSubs[0][key]=value,key==='vendor');
+      }
+    });
+  });
+}
+render();
+</script>

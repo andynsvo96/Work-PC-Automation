@@ -473,15 +473,18 @@ function sleevePrintCleanPrice(value) {
   return { valid: true, value: valueAsNumber, message: "" };
 }
 
-function sleevePrintSelectionSummary(selections, tabs, customInkPrice, customEmbroideryPrice) {
+function sleevePrintSelectionSummary(selections, tabs, customInkPrice, customEmbroideryPrice, customReversePrice = { value: null }) {
   const inkTabs = selections.filter((selection) => Object.keys(EXTRA_PRINT_AREAS).some((area) => selection[area] === "ink"));
   const embroideryTabs = selections.filter((selection) => Object.keys(EXTRA_PRINT_AREAS).some((area) => selection[area] === "embroidery"));
-  const inkQuantity = inkTabs.reduce((total, selection) => total + Number(tabs.get(selection.tab_number)?.quantity || 0), 0);
+  const reverseTabs = selections.filter((selection) => selection.reverse === "ink");
+  const pricedTabs = selections.filter((selection) => selection.reverse === "ink" || Object.keys(EXTRA_PRINT_AREAS).some((area) => selection[area] === "ink"));
+  const inkQuantity = pricedTabs.reduce((total, selection) => total + Number(tabs.get(selection.tab_number)?.quantity || 0), 0);
   const embroideryQuantity = embroideryTabs.reduce((total, selection) => total + Number(tabs.get(selection.tab_number)?.quantity || 0), 0);
   const calculatedInkPrice = inkQuantity ? sleevePrintInkPrice(inkQuantity) : null;
   const inkPrice = calculatedInkPrice === null ? null : (customInkPrice.value ?? calculatedInkPrice);
   const embroideryPrice = embroideryQuantity ? (customEmbroideryPrice.value ?? 15) : null;
-  return { inkTabs, embroideryTabs, inkQuantity, embroideryQuantity, calculatedInkPrice, inkPrice, embroideryPrice };
+  const reversePrice = reverseTabs.length ? (customReversePrice.value ?? calculatedInkPrice) : null;
+  return { inkTabs, embroideryTabs, reverseTabs, inkQuantity, embroideryQuantity, calculatedInkPrice, inkPrice, embroideryPrice, reversePrice };
 }
 
 function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
@@ -497,26 +500,39 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
   overlay.setAttribute("aria-label", "Configure Extra Print Areas");
-  Object.assign(overlay.style, {
-    position: "fixed", zIndex: "2147483647", inset: "0", display: "flex", alignItems: "center", justifyContent: "center",
-    padding: "20px", background: "rgba(15,23,42,.56)", font: "14px system-ui, sans-serif"
-  });
+  Object.assign(overlay.style, { position: "fixed", zIndex: "2147483647", inset: "0", display: "flex",
+    alignItems: "center", justifyContent: "center", padding: "20px", background: "rgba(15,23,42,.56)", font: "14px system-ui, sans-serif" });
   const dialog = document.createElement("div");
-  Object.assign(dialog.style, {
-    width: "min(620px, 100%)", maxHeight: "min(760px, calc(100vh - 40px))", overflowY: "auto", padding: "20px",
-    borderRadius: "7px", color: "#0f172a", background: "#fff", boxShadow: "0 20px 45px rgba(15,23,42,.34)"
-  });
+  Object.assign(dialog.style, { width: "min(620px, 100%)", maxHeight: "calc(100vh - 40px)", overflowY: "auto",
+    padding: "20px", borderRadius: "7px", color: "#0f172a", background: "#fff", boxShadow: "0 20px 45px rgba(15,23,42,.34)" });
   const title = document.createElement("div");
   title.textContent = "Extra Print Areas";
-  Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "6px" });
+  title.style.font = "700 17px system-ui, sans-serif";
   const explanation = document.createElement("p");
-  explanation.textContent = "Select the design tabs and choose the request for each print area. Ink pricing uses the combined quantity of tabs that have at least one ink-print area.";
-  Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
+  explanation.textContent = "Select tabs and one category per tab. Ink pricing uses the combined garment quantity of selected ink and reversible-print tabs.";
   dialog.append(title, explanation);
-
   const choices = [];
-  const priceOverrides = { ink: null, embroidery: null };
-  const priceErrors = { ink: "", embroidery: "" };
+  const priceOverrides = { ink: null, embroidery: null, reverse: null };
+  const priceErrors = { ink: "", embroidery: "", reverse: "" };
+  let submitting = false;
+
+  function selectControl(label, entries, parent) {
+    const wrap = document.createElement("label");
+    wrap.textContent = label;
+    const control = document.createElement("select");
+    control.setAttribute("aria-label", label);
+    Object.assign(control.style, { display: "block", width: "100%", padding: "6px", margin: "4px 0 10px" });
+    for (const [value, text] of entries) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      control.append(option);
+    }
+    wrap.append(control);
+    parent.append(wrap);
+    control.addEventListener("change", () => refresh());
+    return control;
+  }
   for (const tab of discoveredTabs) {
     const card = document.createElement("fieldset");
     Object.assign(card.style, { margin: "0 0 10px", padding: "11px", border: "1px solid #cbd5e1", borderRadius: "4px" });
@@ -526,74 +542,59 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
     include.type = "checkbox";
     include.setAttribute("aria-label", `Include design tab ${tab.tabNumber}`);
     heading.append(include, document.createTextNode(` Tab ${tab.tabNumber} — Qty: ${tab.quantity}`));
-    card.append(heading);
-    const sleeveGrid = document.createElement("div");
-    Object.assign(sleeveGrid.style, { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px", marginTop: "10px", paddingLeft: "22px" });
-    const sleeves = {};
-    for (const side of Object.keys(EXTRA_PRINT_AREAS)) {
-      const sleeveLabel = document.createElement("label");
-      sleeveLabel.textContent = EXTRA_PRINT_AREAS[side];
-      sleeveLabel.style.fontWeight = "600";
-      const select = document.createElement("select");
-      select.disabled = true;
-      select.setAttribute("aria-label", `${EXTRA_PRINT_AREAS[side]} method for tab ${tab.tabNumber}`);
-      [
-        ["", "No area request"],
-        ["ink", "Ink print"],
-        ["embroidery", "Embroidery"]
-      ].forEach(([value, label]) => {
-        const option = document.createElement("option");
-        option.value = value;
-        option.textContent = label;
-        select.append(option);
-      });
-      Object.assign(select.style, { display: "block", width: "100%", marginTop: "4px", padding: "6px", boxSizing: "border-box" });
-      const priceWrap = document.createElement("span");
-      priceWrap.hidden = true;
-      Object.assign(priceWrap.style, { display: "block", marginTop: "8px", fontWeight: "400" });
-      const priceCaption = document.createElement("span");
-      Object.assign(priceCaption.style, { display: "block", color: "#334155", fontSize: "12px" });
-      const priceInput = document.createElement("input");
-      priceInput.type = "text";
-      priceInput.inputMode = "decimal";
-      priceInput.setAttribute("aria-label", `Price per area for ${EXTRA_PRINT_AREAS[side]} on tab ${tab.tabNumber}`);
-      Object.assign(priceInput.style, { display: "block", width: "100%", marginTop: "4px", padding: "6px", boxSizing: "border-box" });
-      priceInput.addEventListener("input", () => {
-        const method = select.value;
-        if (!method) return;
-        const parsed = sleevePrintCleanPrice(priceInput.value);
-        if (parsed.valid) {
-          priceOverrides[method] = parsed.value;
-          priceErrors[method] = "";
-        } else {
-          priceErrors[method] = parsed.message;
-        }
-        refresh(priceInput);
-      });
-      priceWrap.append(priceCaption, priceInput);
-      sleeveLabel.append(select, priceWrap);
-      sleeveGrid.append(sleeveLabel);
-      sleeves[side] = { select, priceWrap, priceCaption, priceInput };
+    const details = document.createElement("div");
+    Object.assign(details.style, { marginTop: "10px", paddingLeft: "22px" });
+    const categories = document.createElement("div");
+    Object.assign(categories.style, { display: "flex", flexWrap: "wrap", gap: "12px", marginBottom: "12px" });
+    const choice = { tab, include, details, category: "", checks: {} };
+    for (const [key, label] of [["sleeve", "Sleeve Prints"], ["reverse", "Reversible Prints"], ["side", "Side Prints"]]) {
+      const wrap = document.createElement("label");
+      const check = document.createElement("input");
+      check.type = "checkbox";
+      check.setAttribute("aria-label", `${label} for tab ${tab.tabNumber}`);
+      check.addEventListener("change", () => { choice.category = check.checked ? key : ""; refresh(); });
+      choice.checks[key] = check;
+      wrap.append(check, document.createTextNode(label));
+      categories.append(wrap);
     }
+    details.append(categories);
+    const areaOptions = document.createElement("div");
+    choice.method = selectControl(`Print method for tab ${tab.tabNumber}`, [["ink", "Ink print"], ["embroidery", "Embroidery"]], areaOptions);
+    choice.location = selectControl(`Print location for tab ${tab.tabNumber}`, [["", "Select left, right, or both"], ["left", "Left"], ["right", "Right"], ["both", "Both"]], areaOptions);
+    choice.areaOptions = areaOptions;
+    const reverseHint = document.createElement("p");
+    reverseHint.textContent = "Ink only. One charge per garment for a front or back area; two charges for both.";
+    choice.reverseHint = reverseHint;
+    const priceWrap = document.createElement("label");
+    const priceCaption = document.createElement("span");
+    Object.assign(priceCaption.style, { display: "block", fontSize: "12px", color: "#334155" });
+    const priceInput = document.createElement("input");
+    priceInput.type = "text";
+    priceInput.inputMode = "decimal";
+    priceInput.setAttribute("aria-label", `Price per area for tab ${tab.tabNumber}`);
+    Object.assign(priceInput.style, { display: "block", width: "100%", padding: "6px", boxSizing: "border-box", marginTop: "4px" });
+    Object.assign(choice, { priceWrap, priceCaption, priceInput });
+    priceInput.addEventListener("input", () => {
+      const key = choice.category === "reverse" ? "reverse" : choice.method.value;
+      const parsed = sleevePrintCleanPrice(priceInput.value);
+      priceErrors[key] = parsed.message;
+      if (parsed.valid) priceOverrides[key] = parsed.value;
+      refresh(priceInput);
+    });
+    priceWrap.append(priceCaption, priceInput);
+    details.append(areaOptions, reverseHint, priceWrap);
     include.addEventListener("change", () => {
-      Object.values(sleeves).forEach(({ select, priceInput }) => {
-        select.disabled = !include.checked;
-        priceInput.disabled = !include.checked;
-        if (!include.checked) select.value = "";
-      });
+      if (!include.checked) { choice.category = ""; choice.location.value = ""; }
       refresh();
     });
-    Object.values(sleeves).forEach(({ select }) => select.addEventListener("change", () => refresh()));
-    card.append(sleeveGrid);
+    card.append(heading, details);
     dialog.append(card);
-    choices.push({ tab, include, sleeves });
+    choices.push(choice);
   }
-
   const validation = document.createElement("div");
   validation.setAttribute("role", "status");
   validation.setAttribute("aria-live", "polite");
-  Object.assign(validation.style, { minHeight: "20px", marginTop: "10px", color: "#b91c1c", fontWeight: "600" });
-  dialog.append(validation);
+  Object.assign(validation.style, { marginTop: "10px", color: "#b91c1c" });
   const actions = document.createElement("div");
   Object.assign(actions.style, { display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "12px" });
   const cancel = document.createElement("button");
@@ -602,94 +603,79 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
   const queue = document.createElement("button");
   queue.type = "button";
   queue.textContent = "Queue task";
-  Object.assign(cancel.style, { padding: "7px 11px", cursor: "pointer" });
-  Object.assign(queue.style, { padding: "7px 11px", borderRadius: "3px", color: "#fff" });
+  for (const button of [cancel, queue]) button.style.padding = "7px 11px";
+  queue.style.color = "#fff";
   actions.append(cancel, queue);
-  dialog.append(actions);
+  dialog.append(validation, actions);
   overlay.append(dialog);
   document.body.append(overlay);
-  let submitting = false;
-
-  function selections() {
-    return choices.filter(({ include }) => include.checked).map(({ tab, sleeves }) => ({
-      tab_number: tab.tabNumber,
-      quantity: tab.quantity,
-      left: sleeves.left.select.value,
-      right: sleeves.right.select.value,
-      side_left: sleeves.side_left.select.value,
-      side_right: sleeves.side_right.select.value
-    })).filter((selection) => Object.keys(EXTRA_PRINT_AREAS).some((area) => selection[area]));
-  }
 
   function refresh(sourcePriceInput = null) {
-    const selected = selections();
-    const inkCustomPrice = { valid: !priceErrors.ink, value: priceOverrides.ink, message: priceErrors.ink };
-    const embroideryCustomPrice = { valid: !priceErrors.embroidery, value: priceOverrides.embroidery, message: priceErrors.embroidery };
-    const summary = sleevePrintSelectionSummary(selected, tabs, inkCustomPrice, embroideryCustomPrice);
-    for (const { sleeves } of choices) {
-      for (const side of Object.keys(EXTRA_PRINT_AREAS)) {
-        const { select, priceWrap, priceCaption, priceInput } = sleeves[side];
-        const method = select.value;
-        const price = method === "ink" ? summary.inkPrice : method === "embroidery" ? summary.embroideryPrice : null;
-        const invalidMessage = method ? priceErrors[method] : "";
-        // Some CRM styles override the browser's default [hidden] display
-        // rule, so explicitly collapse the price wrapper when no area has
-        // been requested.
-        priceWrap.hidden = !method;
-        priceWrap.style.setProperty("display", method ? "block" : "none", "important");
-        priceInput.disabled = select.disabled || !method;
-        if (method) {
-          priceCaption.textContent = method === "ink"
-            ? `Price per area — calculated from ${summary.inkQuantity} ink-print garment${summary.inkQuantity === 1 ? "" : "s"}; shared across all ink areas.`
-            : `Price per area — shared across all embroidery areas.`;
-          if (price !== null && (!invalidMessage || priceInput !== sourcePriceInput)) {
-            priceInput.value = Number(price).toFixed(2);
-          }
-          priceInput.style.border = invalidMessage ? "1px solid #b91c1c" : "1px solid #94a3b8";
-        }
-      }
-    }
+    const selected = [];
     const errors = [];
+    for (const choice of choices) {
+      const { tab, include, category, method, location } = choice;
+      if (!include.checked) continue;
+      if (!category || (category !== "reverse" && !location.value)) {
+        errors.push(`Complete the category and location for tab ${tab.tabNumber}.`);
+        continue;
+      }
+      const selection = { tab_number: tab.tabNumber, quantity: tab.quantity };
+      if (category === "reverse") selection.reverse = "ink";
+      else for (const side of ["left", "right"]) {
+        if (location.value === side || location.value === "both") selection[category === "side" ? `side_${side}` : side] = method.value;
+      }
+      selected.push(selection);
+    }
+    const summary = sleevePrintSelectionSummary(selected, tabs, { value: priceOverrides.ink }, { value: priceOverrides.embroidery }, { value: priceOverrides.reverse });
+    const used = { ink: summary.inkTabs.length, embroidery: summary.embroideryTabs.length, reverse: summary.reverseTabs.length };
+    for (const choice of choices) {
+      const { include, category, checks, details, areaOptions, reverseHint, priceWrap, priceCaption, priceInput } = choice;
+      details.style.setProperty("display", include.checked ? "block" : "none", "important");
+      for (const [key, check] of Object.entries(checks)) { check.checked = category === key; check.disabled = submitting; }
+      areaOptions.style.setProperty("display", category && category !== "reverse" ? "block" : "none", "important");
+      reverseHint.style.setProperty("display", category === "reverse" ? "block" : "none", "important");
+      priceWrap.style.setProperty("display", category ? "block" : "none", "important");
+      const key = category === "reverse" ? "reverse" : choice.method.value;
+      const price = key === "reverse" ? summary.reversePrice : key === "ink" ? summary.inkPrice : summary.embroideryPrice;
+      priceCaption.textContent = key === "embroidery" ? "Price per area — shared across selected embroidery areas."
+        : `Price per area — calculated from ${summary.inkQuantity} selected ink-print garments; shared across selected ${key === "reverse" ? "reverse-print tabs" : "sleeve/side ink areas"}.`;
+      if (priceInput !== sourcePriceInput && !priceErrors[key]) priceInput.value = Number(price ?? (key === "embroidery" ? 15 : sleevePrintInkPrice(summary.inkQuantity))).toFixed(2);
+      priceInput.disabled = submitting;
+      include.disabled = submitting;
+      choice.method.disabled = submitting;
+      choice.location.disabled = submitting;
+    }
     if (!selected.length) errors.push("Choose at least one print-area request.");
-    if (summary.inkQuantity && !inkCustomPrice.valid) errors.push(`Ink: ${inkCustomPrice.message}`);
-    if (summary.embroideryQuantity && !embroideryCustomPrice.valid) errors.push(`Embroidery: ${embroideryCustomPrice.message}`);
-    const valid = selected.length
-      && (!summary.inkQuantity || inkCustomPrice.valid)
-      && (!summary.embroideryQuantity || embroideryCustomPrice.valid)
-      && !submitting;
+    for (const key of Object.keys(used)) if (used[key] && priceErrors[key]) errors.push(priceErrors[key]);
+    const valid = !errors.length && !submitting;
     validation.textContent = submitting ? "Sending Extra Print Areas to the Automation queue…" : errors.join(" ");
-    validation.style.color = submitting ? "#334155" : "#b91c1c";
     queue.disabled = !valid;
-    queue.setAttribute("aria-disabled", String(!valid));
     queue.style.setProperty("background", valid ? "#15803d" : "#9ca3af", "important");
-    queue.style.setProperty("border", `1px solid ${valid ? "#166534" : "#6b7280"}`, "important");
-    queue.style.setProperty("cursor", valid ? "pointer" : "not-allowed", "important");
-    return { selected, inkCustomPrice, embroideryCustomPrice, valid };
+    queue.style.cursor = valid ? "pointer" : "not-allowed";
+    return { selected, valid, used };
   }
-
   cancel.addEventListener("click", () => { if (!submitting) overlay.remove(); });
-  queue.addEventListener("click", () => {
+  queue.addEventListener("click", async () => {
     const state = refresh();
     if (!state.valid) return;
     submitting = true;
     refresh();
-    queueManualOrderAutomation(automation, triggerButton, autoProcessButton, "", {
-      sleeves: state.selected,
-      ink_price: priceOverrides.ink,
-      embroidery_price: priceOverrides.embroidery
-    }, { surfacePageErrors: false }).then((response) => {
-      if (response && response.success) {
-        overlay.remove();
-        return;
-      }
+    try {
+      const response = await queueManualOrderAutomation(automation, triggerButton, autoProcessButton, "", {
+        sleeves: state.selected,
+        ink_price: state.used.ink ? priceOverrides.ink : null,
+        embroidery_price: state.used.embroidery ? priceOverrides.embroidery : null,
+        reverse_price: state.used.reverse ? priceOverrides.reverse : null
+      }, { surfacePageErrors: false });
+      if (response && response.success) { overlay.remove(); return; }
+      throw new Error(response?.message || "Could not queue Extra Print Areas.");
+    } catch (error) {
       submitting = false;
-      validation.textContent = (response && response.message) || "Could not queue Extra Print Areas.";
-      validation.style.color = "#b91c1c";
       refresh();
-    });
+      validation.textContent = error.message;
+    }
   });
-  // Keep this form open until the user explicitly goes Back or queues the task.
-  // A stray click on the page backdrop must not discard the selections.
   refresh();
 }
 

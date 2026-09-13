@@ -15,9 +15,15 @@ After updating, restart the local Automation app, reload the extension at `chrom
 
 ## Extra Print Areas
 
-Under **Manual Process → Extra Print Areas**, select design tabs and independently choose **Ink print** or **Embroidery** for **Sleeve Left**, **Sleeve Right**, **Side Left**, and **Side Right**. Leave unused areas at **No area request**.
+Under **Manual Process → Extra Print Areas**, select design tabs and choose one category per tab: **Sleeve Prints**, **Reversible Prints**, or **Side Prints**. Sleeves and sides offer **Ink print / Embroidery**, followed by **Left / Right / Both**. Reversible prints are ink only and have no left/right selector.
 
-Ink pricing uses the combined garment quantity of selected tabs with at least one ink area, counting each tab once: $8 for 1–9, $7 for 10–19, $6 for 20–99, and $5 for 100+. Embroidery defaults to $15. Each selected area adds its price per garment; custom prices are shared across areas using the same method. The worker checks live CRM quantities, adds the corresponding CRM areas, updates prices and sales notes, and sends the Salesforce Additional Requests email with the invoice link. Request wording reflects sleeve, side, or combined selections.
+Ink pricing uses the combined garment quantity of selected tabs with an ink or reverse request, counting each original tab once: $8 for 1–9, $7 for 10–19, $6 for 20–99, and $5 for 100+. Embroidery defaults to $15. Custom sleeve/side ink prices are shared across those ink areas; the separate reverse-price override is shared across every selected reverse tab. Unselected tabs do not affect the tier.
+
+Reverse printing clones each selected original as **REVERSE-PRINT**, explicitly selects **Style Sub** and clicks **Apply** for each product, and selects the original vendor from its dropdown. Style and description are copied; two-color names are reversed and single colors retained. Quantities are restored by size label. The clone's unit price is the reverse price multiplied by its front/back area count (front or back: one charge; both: two). The original product prices are preserved. CRM carries over artwork and print methods.
+
+On retry, existing clones are inspected and completed fields are skipped. Ambiguous clone matches, unreadable vendor data, unsupported sizes, or unexpected print areas stop the task for review. CRM changes and sales notes are verified after saving, before the existing Salesforce Additional Requests email is sent with `reverse prints`, the per-area charge, and the invoice link. A local receipt prevents the same reverse-print email being sent again after a successful run; receipts are stored under the app's runtime state directory.
+
+After updating, restart the local Automation app, reload the extension, and refresh CRM order pages.
 
 ## Salesforce tab reuse
 

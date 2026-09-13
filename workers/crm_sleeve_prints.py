@@ -87,7 +87,7 @@ def _money(value, label, *, required=False):
         amount = Decimal(str(value).strip()).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
     except (InvalidOperation, ValueError):
         raise SleevePrintsError(f"{label} must be a dollar amount with no more than two decimals.") from None
-    if amount < 0 or amount > MAX_SLEEVE_PRICE:
+    if not amount.is_finite() or amount < 0 or amount > MAX_SLEEVE_PRICE:
         raise SleevePrintsError(f"{label} must be between $0.00 and ${MAX_SLEEVE_PRICE:.2f}.")
     return amount
 
@@ -107,7 +107,7 @@ def _ink_price_for_quantity(quantity):
     return Decimal("8.00")
 
 
-def normalize_request(sleeves, ink_price=None, embroidery_price=None):
+def normalize_request(sleeves, ink_price=None, embroidery_price=None, reverse_price=None):
     if not isinstance(sleeves, list) or not sleeves:
         raise SleevePrintsError("Select at least one design tab and print-area request.")
     if len(sleeves) > 100:
@@ -132,9 +132,19 @@ def normalize_request(sleeves, ink_price=None, embroidery_price=None):
             selection[side] = method
             any_ink = any_ink or method == INK
             any_embroidery = any_embroidery or method == EMBROIDERY
-        if not any(selection[area] for area in PRINT_AREAS):
+        reverse = raw.get("reverse", "")
+        if reverse not in ("", None, "ink"):
+            raise SleevePrintsError("Reverse printing supports ink only.")
+        if reverse:
+            if any(selection[area] for area in PRINT_AREAS):
+                raise SleevePrintsError("Choose only one extra-print category per reverse-print tab.")
+            selection["reverse"] = INK
+        if not reverse and not any(selection[area] for area in PRINT_AREAS):
             raise SleevePrintsError(f"Choose an ink-print or embroidery request for design tab {tab_number}.")
         normalized.append(selection)
+    custom_reverse = _money(reverse_price, "Custom reverse-print price")
+    if custom_reverse is not None and not any(x.get("reverse") for x in normalized):
+        raise SleevePrintsError("A custom reverse-print price was supplied without a reverse-print tab.")
     custom_ink = _money(ink_price, "Custom ink-print price")
     custom_embroidery = _money(embroidery_price, "Custom embroidery price")
     if custom_ink is not None and not any_ink:
@@ -143,6 +153,7 @@ def normalize_request(sleeves, ink_price=None, embroidery_price=None):
         raise SleevePrintsError("A custom embroidery price was supplied without an embroidery area.")
     return {
         "sleeves": normalized,
+        "reverse_price": None if custom_reverse is None else f"{custom_reverse:.2f}",
         "ink_price": None if custom_ink is None else f"{custom_ink:.2f}",
         "embroidery_price": None if custom_embroidery is None else f"{custom_embroidery:.2f}",
     }
@@ -165,6 +176,9 @@ def _area_family(sleeves, method=None):
 
 
 def _format_request_text(sleeves):
+    if any(x.get("reverse") for x in sleeves):
+        others = [x for x in sleeves if not x.get("reverse")]
+        return (_format_request_text(others) + " and " if others else "") + "reverse prints"
     flags = _request_flags(sleeves)
     if flags["ink"] and flags["embroidery"]:
         if _area_family(sleeves, INK) == _area_family(sleeves, EMBROIDERY):
@@ -173,14 +187,24 @@ def _format_request_text(sleeves):
     return f"{_area_family(sleeves)} {'prints' if flags['ink'] else 'embroidery'}"
 
 
-def _format_cost_text(sleeves, ink_price, embroidery_price):
+def _format_cost_text(sleeves, ink_price, embroidery_price, reverse_price=None):
+    if any(x.get("reverse") for x in sleeves):
+        others = [x for x in sleeves if not x.get("reverse")]
+        cost = _money_text(reverse_price)
+        if others:
+            return _format_cost_text(others, ink_price, embroidery_price) + f" and {cost} per area for reverse prints"
+        return cost + " per area"
     flags = _request_flags(sleeves)
     if flags["ink"] and flags["embroidery"]:
         return f"{_money_text(ink_price)} for {_area_family(sleeves, INK)} prints and {_money_text(embroidery_price)} for embroidery"
     return _money_text(ink_price if flags["ink"] else embroidery_price)
 
 
-def format_sales_note(sleeves, ink_price, embroidery_price):
+def format_sales_note(sleeves, ink_price, embroidery_price, reverse_price=None):
+    if any(x.get("reverse") for x in sleeves):
+        others = [x for x in sleeves if not x.get("reverse")]
+        note = f"Reverse prints\nPriced at {_money_text(reverse_price)} per area\nEmailed Txted"
+        return (format_sales_note(others, ink_price, embroidery_price) + "\n" if others else "") + note
     flags = _request_flags(sleeves)
     family = _area_family(sleeves)
     unit = "area" if family == "sleeve and side" else family
@@ -288,7 +312,7 @@ def _build_live_plan(request, state):
     ink_quantity = sum(
         int(selection["quantity"])
         for selection in selections
-        if any(selection.get(area) == INK for area in PRINT_AREAS)
+        if selection.get("reverse") or any(selection.get(area) == INK for area in PRINT_AREAS)
     )
     ink_price = _money(request.get("ink_price"), "Custom ink-print price") if flags["ink"] else None
     if ink_price is None and flags["ink"]:
@@ -296,7 +320,20 @@ def _build_live_plan(request, state):
     embroidery_price = _money(request.get("embroidery_price"), "Custom embroidery price") if flags["embroidery"] else None
     if embroidery_price is None and flags["embroidery"]:
         embroidery_price = Decimal("15.00")
+    reverse_price = None
+    if any(x.get("reverse") for x in selections):
+        reverse_price = _money(request.get("reverse_price"), "Custom reverse-print price")
+        if reverse_price is None:
+            reverse_price = _ink_price_for_quantity(ink_quantity)
     for selection in selections:
+        if selection.get("reverse"):
+            areas = selection["existing_areas"]
+            if not areas or any(str(a.get("method") or "").lower() not in {"hd digital", "screen printing"} for a in areas):
+                raise SleevePrintsError(f"Tab {selection['tab_number']} must have ink print areas for reverse printing.")
+            if any(not re.match(r"^(front|back)(?:$|[ -])", str(a.get("description") or ""), re.I) for a in areas):
+                raise SleevePrintsError(f"Tab {selection['tab_number']} has an unsupported reverse-print area; expected front/back.")
+            selection["reverse_area_count"] = len(areas)
+            selection["reverse_unit_price"] = (reverse_price * len(areas)).quantize(MONEY_QUANTUM)
         surcharge = Decimal("0.00")
         for side in SLEEVE_SIDES:
             if selection.get(side) == INK:
@@ -307,6 +344,7 @@ def _build_live_plan(request, state):
     return {
         "selections": selections,
         "ink_quantity": ink_quantity,
+        "reverse_price": reverse_price,
         "ink_price": ink_price,
         "embroidery_price": embroidery_price,
         "warnings": list(dict.fromkeys(warnings)),
@@ -329,7 +367,7 @@ def _apply_crm_sleeve_changes(driver, plan, sales_note):
                 "ink_method": selection["ink_method"],
                 "surcharge": f"{selection['surcharge']:.2f}",
             }
-            for selection in plan["selections"]
+            for selection in plan["selections"] if not selection.get("reverse")
         ],
         "sales_note": sales_note,
         "area_names": PRINT_AREAS,
@@ -814,6 +852,7 @@ def process_sleeve_prints_order(
     ink_price=None,
     embroidery_price=None,
     *,
+    reverse_price=None,
     dry_run=False,
     visible=False,
     attach_browser=False,
@@ -822,7 +861,7 @@ def process_sleeve_prints_order(
     progress_callback=None,
 ):
     order_id = shared._normalize_order_id(order_id)
-    request = normalize_request(sleeves, ink_price, embroidery_price)
+    request = normalize_request(sleeves, ink_price, embroidery_price, reverse_price)
     result = {
         "success": False, "order_id": order_id, "automation": AUTOMATION_KEY, "request": request,
         "dry_run": bool(dry_run), "stages": [], "warnings": [],
@@ -854,12 +893,13 @@ def process_sleeve_prints_order(
         begin("crm_order_update", "Adding Extra Print Areas, pricing, and Sales Notes.")
         before_state = _read_crm_sleeve_state(driver)
         plan = _build_live_plan(request, before_state)
-        sales_note = format_sales_note(plan["selections"], plan["ink_price"], plan["embroidery_price"])
+        sales_note = format_sales_note(plan["selections"], plan["ink_price"], plan["embroidery_price"], plan["reverse_price"])
         request_text = _format_request_text(plan["selections"])
-        cost_text = _format_cost_text(plan["selections"], plan["ink_price"], plan["embroidery_price"])
+        cost_text = _format_cost_text(plan["selections"], plan["ink_price"], plan["embroidery_price"], plan["reverse_price"])
         result.update({
             "plan": {
                 "ink_quantity": plan["ink_quantity"],
+                "reverse_price": None if plan["reverse_price"] is None else f"{plan['reverse_price']:.2f}",
                 "ink_price": None if plan["ink_price"] is None else f"{plan['ink_price']:.2f}",
                 "embroidery_price": None if plan["embroidery_price"] is None else f"{plan['embroidery_price']:.2f}",
                 "selections": plan["selections"],
@@ -869,16 +909,39 @@ def process_sleeve_prints_order(
             "request_text": request_text,
             "cost_text": cost_text,
         })
-        if _crm_note_exists(before_state, sales_note):
+        reverse_selections = [x for x in plan["selections"] if x.get("reverse")]
+        reverse_mutation = None
+        if reverse_selections:
+            from workers import crm_reverse_prints
+            reverse_mutation = crm_reverse_prints.apply_reverse_prints(driver, reverse_selections)
+            result["reverse_prints"] = reverse_mutation
+        if _crm_note_exists(before_state, sales_note) and not reverse_selections:
             mutation = {"skipped": True, "reason": "matching_sales_note_already_saved", "added_areas": [], "existing_areas": [], "price_updates": []}
             result["crm_order_update"] = mutation
             complete("crm_order_update", mutation)
         else:
-            mutation = _apply_crm_sleeve_changes(driver, plan, sales_note)
+            # Reverse clones are always inspected, including retries with a saved note.
+            apply_plan = plan
+            if _crm_note_exists(before_state, sales_note):
+                apply_plan = {**plan, "selections": []}
+            mutation = _apply_crm_sleeve_changes(
+                driver, apply_plan, "" if _crm_note_exists(before_state, sales_note) else sales_note
+            )
             save = shared._save_order_and_wait(driver)
             verification = _verify_crm_sleeve_changes(driver, sales_note, mutation)
+            if reverse_mutation is not None:
+                crm_reverse_prints.verify_reverse_prints(driver, reverse_mutation)
             result["crm_order_update"] = {"mutation": mutation, "save": save, "verification": verification}
             complete("crm_order_update", result["crm_order_update"])
+
+        receipt = None
+        if reverse_mutation is not None:
+            receipt = crm_reverse_prints.email_receipt_path(order_id, contact["email"], plan, reverse_mutation)
+            if crm_reverse_prints.email_was_sent(receipt):
+                result["salesforce"] = {"sent": False, "skipped": True, "reason": "matching_email_already_sent"}
+                complete("salesforce_email", result["salesforce"])
+                result.update(success=True, failed_stage=None)
+                return result
 
         begin("invoice_link", "Copying the CRM View Invoice link without sending the invoice.")
         invoice_link = _capture_view_invoice_link(driver)
@@ -891,6 +954,8 @@ def process_sleeve_prints_order(
             dry_run=dry_run, login_wait_seconds=login_wait_seconds,
         )
         result["salesforce"] = salesforce
+        if receipt is not None and salesforce.get("sent"):
+            crm_reverse_prints.record_email_sent(receipt)
         complete("salesforce_email", salesforce)
         result["success"] = True
         result["failed_stage"] = None
