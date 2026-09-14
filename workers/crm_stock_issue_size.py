@@ -124,7 +124,8 @@ def format_suggested_sizes(sizes):
 
 
 def format_email_stock_text(products):
-    return color.format_email_stock_text(products)
+    with _size_workflow():
+        return color.format_email_stock_text(products)
 
 
 def format_sales_note(sizes, products):

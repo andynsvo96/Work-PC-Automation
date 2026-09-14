@@ -45,6 +45,52 @@ class StockIssueSizeTests(unittest.TestCase):
         with self.assertRaises(stock_size.StockIssueSizeError):
             stock_size.normalize_request(["Small"], [unavailable_selection])
 
+    def test_sales_note_includes_original_size(self):
+        selected = {
+            **product(), "style": "M550W", "color": "LIGHT DENIM",
+            "affected_sizes": ["small"],
+        }
+        self.assertEqual(
+            stock_size.format_sales_note(["medium"], [selected]),
+            "No stock for M550W in LIGHT DENIM for size small - suggested medium\nEmailed Txted",
+        )
+
+    def test_sales_note_keeps_affected_sizes_with_each_color(self):
+        self.assertEqual(
+            stock_size.format_sales_note(["Small"], [
+                product(), {**product(), "color": "Blue", "affected_sizes": ["Large"]},
+            ]),
+            "No stock for DM130 in Red for sizes Medium and Large and "
+            "DM130 in Blue for size Large - suggested Small\nEmailed Txted",
+        )
+
+    def test_crm_size_codes_are_expanded_in_email_and_sales_note(self):
+        for code, name in (
+            ("XS", "x-small"), ("S", "small"), ("M", "medium"), ("L", "large"),
+            ("XL", "x-large"), ("XXL", "2x-large"), ("2XL", "2x-large"),
+            ("3XL", "3x-large"), ("XXXL", "3x-large"), ("6XL", "6x-large"),
+            ("XXS", "2x-small"), (" s ", "small"), ("Youth Small", "Youth Small"),
+            ("32/34", "32/34"),
+        ):
+            with self.subTest(code=code):
+                selected = {**product(), "affected_sizes": [code]}
+                self.assertEqual(
+                    stock_size.format_email_stock_text([selected]),
+                    f"DM130 District Perfect Tri Tee in the color Red for size {name}",
+                )
+                self.assertEqual(
+                    stock_size.format_sales_note(["3XL"], [selected]),
+                    f"No stock for DM130 in Red for size {name} - suggested 3x-large\nEmailed Txted",
+                )
+                self.assertEqual(stock_size.format_suggested_sizes([code]), name)
+
+    def test_size_display_conversion_preserves_crm_selection_codes(self):
+        selected = {**product(), "available_sizes": ["S", "M"], "affected_sizes": ["S"]}
+        request = stock_size.normalize_request(["M"], [selected])
+        self.assertEqual(request["products"][0]["affected_sizes"], ["S"])
+        self.assertEqual(stock_size.format_suggested_sizes(request["sizes"]), "medium")
+        self.assertEqual(selected["affected_sizes"], ["S"])
+
     def test_template_requires_the_size_language_and_placeholder(self):
         state = {
             "subject": "RushOrderTees Order #[ORDER-NUMBER] - URGENT Stock Issue",

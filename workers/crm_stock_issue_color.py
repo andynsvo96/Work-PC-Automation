@@ -118,9 +118,25 @@ def normalize_request(colors, products):
     }
 
 
+def _format_size_name(value):
+    """Expand CRM size codes for display, preserving other size labels."""
+    code = value.strip().upper()
+    names = {"S": "small", "M": "medium", "L": "large", "OS": "one size", "OSFA": "one size fits all"}
+    if code in names:
+        return names[code]
+    match = re.fullmatch(r"(X+|[1-9]\d*X)(S|L)", code)
+    if match:
+        prefix, base = match.groups()
+        count = len(prefix) if prefix.startswith("X") else int(prefix[:-1])
+        return f"{'x' if count == 1 else str(count) + 'x'}-{'small' if base == 'S' else 'large'}"
+    return value
+
+
 def format_suggested_colors(colors):
     """Format one color, two colors with 'or', or an Oxford-comma list."""
     values = normalize_suggested_colors(colors)
+    if SUGGESTION_LABEL == "size":
+        values = list(dict.fromkeys(_format_size_name(value) for value in values))
     if len(values) == 1:
         return values[0]
     if len(values) == 2:
@@ -143,6 +159,8 @@ def format_email_stock_text(products):
                     },
                 )
                 for size in product["affected_sizes"]:
+                    if SUGGESTION_LABEL == "size":
+                        size = _format_size_name(size)
                     if size.casefold() not in {item.casefold() for item in group["sizes"]}:
                         group["sizes"].append(size)
             phrases = []
@@ -159,11 +177,19 @@ def format_email_stock_text(products):
 
 
 def format_sales_note(colors, products):
-    groups = extension._group_products(products)
-    product_text = extension._natural_join(
-        [f"{group['style']} in {extension.format_color_list(group['colors'])}" for group in groups],
-        final_word="and",
-    )
+    if SUGGESTION_LABEL == "size":
+        phrases = []
+        for product in extension.normalize_selected_products(products):
+            sizes = list(dict.fromkeys(_format_size_name(size) for size in product["affected_sizes"]))
+            size_label = "size" if len(sizes) == 1 else "sizes"
+            phrases.append(
+                f"{product['style']} in {product['color']} for {size_label} "
+                f"{extension._natural_join(sizes, final_word='and')}"
+            )
+    else:
+        groups = extension._group_products(products)
+        phrases = [f"{group['style']} in {extension.format_color_list(group['colors'])}" for group in groups]
+    product_text = extension._natural_join(phrases, final_word="and")
     return f"No stock for {product_text} - suggested {format_suggested_colors(colors)}\nEmailed Txted"
 
 
