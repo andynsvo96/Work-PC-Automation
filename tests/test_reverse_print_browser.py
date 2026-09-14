@@ -94,6 +94,20 @@ window.queueManualOrderAutomation=async (...args)=>{window.queued=args[4];return
         self.assertEqual(payload["reverse_price"], 4.25)
         self.assertEqual(payload["sleeves"], [{"tab_number": 1, "quantity": 8, "reverse": "ink"}, {"tab_number": 2, "quantity": 2, "reverse": "ink"}])
 
+    def test_bulk_vendor_from_isolated_inventory_panel(self):
+        driver = self.driver
+        driver.get((ROOT / "tests/fixtures/reverse_print_crm.html").as_uri())
+        driver.execute_script("resource.designs[0].designItems.forEach(item=>delete item.vendorName);window.inventoryVendors=[['Sanmar (Bulk)', 'sanmar']];render();")
+        self.assertEqual([item["vendor"] for item in reverse.read_designs(driver)[0]["items"]], ["Sanmar", "Sanmar"])
+        mutation = reverse.apply_reverse_prints(driver, [{"tab_number": 1, "reverse_unit_price": "14.00"}])
+        self.assertTrue(reverse.verify_reverse_prints(driver, mutation))
+        self.assertEqual(driver.execute_script("return events.filter(e=>e.startsWith('pick:Sanmar'))"), ["pick:Sanmar", "pick:Sanmar"])
+        # A different tab's vendor cannot fill a missing original vendor.
+        driver.execute_script("window.inventoryVendors=[[],['Sanmar (Bulk)']];render();")
+        self.assertEqual(reverse.read_designs(driver)[0]["items"][0]["vendor"], "")
+        driver.execute_script("window.inventoryVendors=[['Sanmar (Bulk)','Other Vendor']];render();")
+        self.assertEqual(reverse.read_designs(driver)[0]["items"][0]["vendor"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

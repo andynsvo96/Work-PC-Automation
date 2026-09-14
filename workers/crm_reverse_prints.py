@@ -93,22 +93,40 @@ function active(xs) { return (xs || []).filter(x => x && x.crudAction !== 'd'); 
 function label(z) { return clean(z.sizeCode || (z.size || {}).name || (z.size || {}).description || z.size || z.label || z.name || z.sizeName || z.sizeType); }
 const blocks = Array.from(document.querySelectorAll('[ng-repeat="($itemIndex, item) in design.designItems"]'));
 function itemScope(item) { return blocks.map(el => angular.element(el).scope()).find(sc => sc && sc.item === item); }
+function vendorName(value) {
+  const name = clean(value);
+  return /^sanmar(?:\s*\(bulk\))?$/i.test(name) ? 'Sanmar' : name;
+}
+function inventoryBelongsTo(el, design) {
+  // The inventory directive may have an isolated scope. Its containing design
+  // panel, rather than the directive itself, owns the original tab's design.
+  for (let node = el; node && node !== document.body; node = node.parentElement) {
+    const wrapped = angular.element(node);
+    for (const first of [wrapped.scope(), wrapped.isolateScope && wrapped.isolateScope()]) {
+      for (let sc = first, depth = 0; sc && depth < 12; sc = sc.$parent, depth++) {
+        const owner = sc.design || sc.orderInventory;
+        if (owner && typeof owner === 'object') {
+          return owner === design || (clean(owner.id) && clean(owner.id) === clean(design.id));
+        }
+      }
+    }
+  }
+  return false;
+}
 function vendor(item, catalog, scope, design) {
-  const direct = clean(item.vendorName || item.vendor || item.supplierName || catalog.vendorName || catalog.vendor || catalog.supplierName);
+  const direct = [item.vendorName, item.vendor, item.supplierName, catalog.vendorName, catalog.vendor, catalog.supplierName].map(vendorName).find(Boolean);
   if (direct) return direct;
   const supplierId = item.supplierId || catalog.supplierId;
   const suppliers = (scope && scope.STATICS || s.STATICS || {}).suppliers || [];
   const supplier = supplierId && suppliers.find(v => String(v.id || v.key) === String(supplierId));
-  if (supplier) return clean(supplier.value || supplier.name);
+  if (supplier) return vendorName(supplier.value || supplier.name);
   // An already-ordered source can expose its vendor in its inventory table.
-  const inventory = Array.from(document.querySelectorAll('[order-inventory]')).find(el => {
-    const scopes = [angular.element(el).scope(), angular.element(el).isolateScope()];
-    return scopes.some(sc => sc && (sc.design === design || sc.orderInventory === design));
-  });
-  if (inventory) {
-    const names = Array.from(inventory.querySelectorAll('[ng-repeat="inventoryOrder in inventoryOrders"] th'))
-      .map(el => clean(el.textContent).replace(/\s*\(Bulk\)$/i, ''));
-    const unique = [...new Set(names.filter(Boolean))];
+  const inventories = Array.from(document.querySelectorAll('[order-inventory]')).filter(el => inventoryBelongsTo(el, design));
+  if (inventories.length) {
+    const names = inventories.flatMap(inventory => Array.from(inventory.querySelectorAll('tr[ng-repeat]'))
+      .filter(row => /^\s*inventoryOrder\s+in\s+inventoryOrders\b/.test(row.getAttribute('ng-repeat') || ''))
+      .map(row => vendorName((row.querySelector('th, td') || {}).textContent)));
+    const unique = [...new Map(names.filter(Boolean).map(name => [name.toLowerCase(), name])).values()];
     if (unique.length === 1) return unique[0];
   }
   return '';
@@ -127,7 +145,7 @@ return (r.designs || []).map((d, index) => ({
     return {
       id: clean(item.id), is_style_sub: isSub,
       catalog_style: clean(item.style),
-      vendor: isSub ? clean(sub.vendor) : vendor(item, cat, sc, d),
+      vendor: isSub ? vendorName(sub.vendor) : vendor(item, cat, sc, d),
       style: isSub ? clean(sub.style) : clean(item.style || f.selectedCatalogItemStyle),
       color: isSub ? clean(sub.color) : (clean(item.color) || clean(item.colorName) || clean((f.selectedColor || {}).name)),
       description: isSub ? clean(sub.description) : clean(item.ourLabel || item.label || cat.ourLabel || cat.label),
