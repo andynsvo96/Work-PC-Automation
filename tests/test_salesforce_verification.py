@@ -1,4 +1,6 @@
 import tempfile
+import subprocess
+import sys
 import unittest
 from unittest import mock
 
@@ -48,6 +50,37 @@ class SalesforceVerificationHandoffTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "6-digit"):
             salesforce_verification.submit_code(request["request_id"], "12345")
+
+    def test_worker_liveness_never_sends_a_signal(self):
+        with (
+            mock.patch.object(salesforce_verification.os, "kill") as kill,
+            mock.patch.object(salesforce_verification.psutil, "pid_exists", return_value=True) as exists,
+        ):
+            self.assertTrue(salesforce_verification._worker_is_alive({"process_id": 4548}))
+        exists.assert_called_once_with(4548)
+        kill.assert_not_called()
+
+    def test_missing_worker_is_not_alive(self):
+        with mock.patch.object(salesforce_verification.psutil, "pid_exists", return_value=False):
+            self.assertFalse(salesforce_verification._worker_is_alive({"process_id": 4548}))
+
+    def test_polling_pending_request_keeps_real_worker_alive(self):
+        worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            with mock.patch.object(salesforce_verification.os, "getpid", return_value=worker.pid):
+                request = salesforce_verification.create_request(order_id="5212890")
+            pending = salesforce_verification.list_pending_requests()
+            self.assertEqual([item["request_id"] for item in pending], [request["request_id"]])
+            self.assertIsNone(worker.poll())
+        finally:
+            worker.terminate()
+            worker.wait(timeout=5)
+
+    def test_invalid_worker_pid_is_not_queried(self):
+        with mock.patch.object(salesforce_verification.psutil, "pid_exists") as exists:
+            for pid in (None, "invalid", 0, -1):
+                self.assertFalse(salesforce_verification._worker_is_alive({"process_id": pid}))
+        exists.assert_not_called()
 
     def test_cancel_releases_waiting_worker(self):
         request = salesforce_verification.create_request(worker_slot=1)

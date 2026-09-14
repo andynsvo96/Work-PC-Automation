@@ -37,6 +37,8 @@ chrome_profile_crm_auto_splitter_workers/
 slack_chrome_profile/
 
 # Generated artifacts
+# Local one-off CRM recovery script
+/tmp/resume_5222118.py
 screenshots/
 product_separator_results/
 auto_splitter_*.json

@@ -4652,6 +4652,7 @@ def run_split_order(
                     "difference": _money_text(split_total_delta),
                     "message": split_total_mismatch_warning,
                 }
+                report["total_mismatch_warning"] = split_total_mismatch_warning
                 _write_split_progress_checkpoint(
                     result_file,
                     report,
@@ -4661,11 +4662,10 @@ def run_split_order(
                     expected_tab_count,
                     divisions,
                     started,
-                    stage="total_verification_failed",
+                    stage="total_verification_warning",
                 )
-                raise SplitterError(
-                    f"{split_total_mismatch_warning} Original refund and cancellation were blocked."
-                )
+                # A total difference is advisory. Finish the original using its
+                # own refund amounts and surface the difference on completion.
             elif split_total_delta:
                 report["split_total_rounding_delta"] = _money_text(split_total_delta)
 

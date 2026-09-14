@@ -3219,7 +3219,7 @@ def force_stop_automation():
     return True, msg
 
 
-def _run_script(script_path, args, label, timeout=120, show_terminal=False):
+def _run_script(script_path, args, label, timeout=120, show_terminal=False, require_result=False):
     started_at = time.time()
     # macOS LaunchAgents write the server's inherited stderr to a broad
     # launchd log.  When a worker fails during import/startup it cannot write
@@ -3318,6 +3318,9 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False):
             return bool(payload.get("success")), payload.get("message", "Unknown result"), payload
 
         if proc.returncode == 0:
+            if require_result:
+                msg = f"{label} exited without a completion result. Completion could not be verified; check the order before retrying."
+                return False, msg, {"success": False, "message": msg, "missing_result": True}
             msg = f"{label} completed successfully."
             return True, msg, {"success": True, "message": msg}
 
@@ -9534,6 +9537,22 @@ def _crm_auto_splitter_recovery_order_ids_from_payload(payload):
     return normalized
 
 
+def _crm_auto_splitter_recovery_candidates(payload):
+    if not isinstance(payload, dict):
+        return []
+    candidates = [payload]
+    for row in payload.get("order_results") or []:
+        if isinstance(row, dict) and isinstance(row.get("result"), dict):
+            candidates.append(row["result"])
+    return [
+        item for item in candidates
+        if _crm_auto_splitter_recovery_payload_is_usable(
+            item, item.get("target_order_id") or item.get("order_id"),
+            item.get("expected_tab_count"), item.get("divisions"),
+        )
+    ]
+
+
 def _crm_auto_splitter_recovery_order_ids(order_id, tab_count, divisions):
     with crm_state_lock:
         state = load_crm_state()
@@ -9541,9 +9560,10 @@ def _crm_auto_splitter_recovery_order_ids(order_id, tab_count, divisions):
             state.get("last_auto_splitter_recovery_payload"),
             state.get("last_auto_splitter_payload"),
         ]
-    for payload in candidates:
-        if _crm_auto_splitter_recovery_payload_is_usable(payload, order_id, tab_count, divisions):
-            return _crm_auto_splitter_recovery_order_ids_from_payload(payload)
+    for candidate in candidates:
+        for payload in _crm_auto_splitter_recovery_candidates(candidate):
+            if _crm_auto_splitter_recovery_payload_is_usable(payload, order_id, tab_count, divisions):
+                return _crm_auto_splitter_recovery_order_ids_from_payload(payload)
     return []
 
 
@@ -9940,6 +9960,11 @@ def _execute_crm_auto_splitter_batch(list_url, minimum_tabs=10, parallel_workers
 
     failed_count = sum(1 for item in order_results if not item.get("success"))
     completed_count = sum(1 for item in order_results if item.get("success"))
+    total_warnings = [
+        f"Order {item['order_id']}: {item['result']['total_mismatch_warning']}"
+        for item in order_results
+        if (item.get("result") or {}).get("total_mismatch_warning")
+    ]
     ok = failed_count == 0 and len(order_results) == len(order_ids)
     if not order_ids:
         message = "Auto Splitter found no orders on the configured list."
@@ -9948,6 +9973,8 @@ def _execute_crm_auto_splitter_batch(list_url, minimum_tabs=10, parallel_workers
         message = f"Auto Splitter completed {completed_count}/{len(order_ids)} order(s)."
     else:
         message = f"Auto Splitter completed {completed_count}/{len(order_ids)} order(s); {failed_count} need attention."
+    if total_warnings:
+        message += " Price warnings: " + " ".join(total_warnings)
     payload = {
         "success": ok,
         "message": message,
@@ -9990,15 +10017,7 @@ def _persist_crm_auto_splitter_run_result(ok, message, payload, dry_run=True):
     with crm_state_lock:
         state = load_crm_state()
         previous_recovery_payload = state.get("last_auto_splitter_recovery_payload") or state.get("last_auto_splitter_payload")
-        previous_recovery_usable = (
-            isinstance(previous_recovery_payload, dict)
-            and _crm_auto_splitter_recovery_payload_is_usable(
-                previous_recovery_payload,
-                previous_recovery_payload.get("target_order_id"),
-                previous_recovery_payload.get("expected_tab_count"),
-                previous_recovery_payload.get("divisions"),
-            )
-        )
+        previous_recovery_usable = bool(_crm_auto_splitter_recovery_candidates(previous_recovery_payload))
         state["last_run_timestamp"] = timestamp
         state["last_run_success"] = bool(ok)
         state["last_run_message"] = str(message)
@@ -10011,7 +10030,7 @@ def _persist_crm_auto_splitter_run_result(ok, message, payload, dry_run=True):
         elif (
             not ok
             and not dry_run
-            and _crm_auto_splitter_recovery_payload_is_usable(payload, target_order_id, payload.get("expected_tab_count"), payload.get("divisions"))
+            and _crm_auto_splitter_recovery_candidates(payload)
         ):
             state["last_auto_splitter_recovery_payload"] = payload
         elif dry_run and previous_recovery_usable:
@@ -10592,6 +10611,7 @@ def _execute_crm_mass_emailer_worker(
         "CRMMassEmailer",
         timeout=CRM_MASS_EMAILER_TIMEOUT_SECONDS,
         show_terminal=bool(show_terminal),
+        require_result=True,
     )
     if not isinstance(payload, dict):
         payload = {"success": bool(ok), "message": str(message)}

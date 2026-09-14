@@ -13,6 +13,8 @@ import secrets
 import threading
 import time
 
+import psutil
+
 from runtime_paths import STATE_DIR
 
 
@@ -88,11 +90,9 @@ def _worker_is_alive(payload):
         return False
     if pid <= 0:
         return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+    # os.kill(pid, 0) terminates the process with exit code 0 on Windows.
+    # Polling the verification dialog must never send a signal to its worker.
+    return psutil.pid_exists(pid)
 
 
 def _public_payload(payload):

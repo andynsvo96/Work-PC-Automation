@@ -5787,6 +5787,67 @@ class CrmAutoSplitterTests(unittest.TestCase):
         self.assertEqual(previously_transferred, crm_auto_splitter.Decimal("250.00"))
         self.assertEqual(current_paid + previously_transferred, crm_auto_splitter.Decimal("300.00"))
 
+    def test_total_difference_continues_original_cleanup_and_reports_warning(self):
+        for split_total in ("962.12", "962.16", "900.00", "962.14"):
+            with self.subTest(split_total=split_total), ExitStack() as stack:
+                driver = mock.Mock()
+                scan = {
+                    "detected_tab_count": 14,
+                    "designs": [
+                        {"tab_number": i, "design_id": str(100 + i), "design_name": f"Design {i}"}
+                        for i in range(1, 15)
+                    ],
+                    "totals": {"grand_total": "962.14", "paid": "962.14", "subtotal_before_tax": "888.76"},
+                    "stock_summary": {"stock_ordered": True},
+                }
+                patches = {
+                    "kill_stale_chrome": None,
+                    "_build_splitter_driver": driver,
+                    "safe_get_with_partial_load": None,
+                    "_handle_login_if_needed": None,
+                    "_switch_to_crm_app_frame": None,
+                    "_scan_original_order": scan,
+                    "_planned_stock_routing": {"action": "none"},
+                    "_get_order_live_state": {"grand_total": "962.14", "amount_paid": "962.14"},
+                    "_get_original_payment_info": {"payment_type": "Stripe.com", "transaction_id": "test"},
+                    "_open_order_scope_with_reload": None,
+                    "_existing_original_refund_fee_amount": "0.00",
+                    "safe_driver_quit": None,
+                    "safe_take_screenshot": None,
+                }
+                for name, value in patches.items():
+                    stack.enter_context(mock.patch.object(crm_auto_splitter, name, return_value=value))
+                inspect = stack.enter_context(mock.patch.object(
+                    crm_auto_splitter, "_inspect_existing_split_order", side_effect=[
+                        {"split_index": 1, "order_id": "5222398", "totals": {"grand_total": "480.90"}},
+                        {"split_index": 2, "order_id": "5222396", "totals": {
+                            "grand_total": str(crm_auto_splitter.Decimal(split_total) - crm_auto_splitter.Decimal("480.90"))}},
+                    ]))
+                create = stack.enter_context(mock.patch.object(crm_auto_splitter, "_prepare_and_save_split_quote"))
+                finalize = stack.enter_context(mock.patch.object(
+                    crm_auto_splitter, "_finalize_original_order_after_split",
+                    return_value={"cancelled": True, "verification": {"passed": True}}))
+                write = stack.enter_context(mock.patch.object(crm_auto_splitter, "_write_result"))
+                code = crm_auto_splitter.run_split_order(
+                    order_id="5222118", divisions=2, dry_run=False,
+                    resume_existing_order_ids=["5222398", "5222396"],
+                )
+                self.assertEqual(code, 0, write.call_args)
+                self.assertEqual(inspect.call_count, 2)
+                create.assert_not_called()
+                finalize.assert_called_once()
+                self.assertEqual(finalize.call_args.args[1:4], (
+                    True, crm_auto_splitter.Decimal("888.76"), crm_auto_splitter.Decimal("962.14")))
+                result = write.call_args
+                self.assertTrue(result.args[0])
+                self.assertFalse(result.kwargs["report"]["partial"])
+                self.assertEqual(result.kwargs["status"], "completed")
+                if split_total != "962.14":
+                    self.assertIn("Total does not match", result.kwargs["total_mismatch_warning"])
+                    self.assertIn(result.kwargs["total_mismatch_warning"], result.args[1])
+                else:
+                    self.assertEqual(result.kwargs["total_mismatch_warning"], "")
+
     def test_split_total_mismatch_message_names_old_new_and_difference(self):
         message = crm_auto_splitter._split_total_mismatch_message(
             crm_auto_splitter.Decimal("100.00"),
@@ -7544,6 +7605,24 @@ class CrmProductSeparatorTests(unittest.TestCase):
         self.assertEqual(payload["live_order_ids"], ["4607567"])
         rows_by_order = {row["order_id"]: row for row in payload["order_results"]}
         self.assertEqual(rows_by_order["4607567"]["status"], "Separated")
+
+    def test_batch_split_recovery_survives_preflight_and_matches_only_requested_order(self):
+        partial = {
+            "success": False, "dry_run": False, "target_order_id": "5222118",
+            "expected_tab_count": 14, "divisions": 2,
+            "new_order_ids": ["5222398", "5222396"], "report": {"partial": True},
+        }
+        batch = {"success": False, "order_results": [{"order_id": "5222118", "result": partial}]}
+        state = {"last_auto_splitter_payload": batch}
+        with mock.patch.object(server, "load_crm_state", return_value=state), \
+             mock.patch.object(server, "save_crm_state"), \
+             mock.patch.object(server, "ensure_crm_state_file"):
+            self.assertEqual(server._crm_auto_splitter_recovery_order_ids("5222118", 14, 2), ["5222398", "5222396"])
+            self.assertEqual(server._crm_auto_splitter_recovery_order_ids("5222119", 14, 2), [])
+            self.assertEqual(server._crm_auto_splitter_recovery_order_ids("5222118", 14, 3), [])
+            server._persist_crm_auto_splitter_run_result(True, "Preflight", {"success": True, "dry_run": True}, dry_run=True)
+            self.assertEqual(state["last_auto_splitter_recovery_payload"], batch)
+            self.assertEqual(server._crm_auto_splitter_recovery_order_ids("5222118", 14, 2), ["5222398", "5222396"])
 
     def test_server_recovers_partial_auto_splitter_order_ids(self):
         payload = {
@@ -11573,6 +11652,26 @@ class CrmAddressServerTests(unittest.TestCase):
                     server._crm_processing_mode_list_url_for_step(processing_filter, "auto_splitter"),
                     expected_url,
                 )
+
+    @mock.patch.object(server, "_automation_stop_is_blocking", return_value=False)
+    @mock.patch.object(server, "_execute_crm_auto_splitter_worker")
+    @mock.patch.object(server, "_run_script")
+    def test_auto_splitter_batch_continues_after_price_warning(self, run_script, execute, _stop):
+        run_script.return_value = (True, "Found two orders.", {"order_ids": ["4700001", "4700002"]})
+        warning = "Total does not match: old/original $962.14 vs new/split $962.12 (difference -$0.02)."
+        execute.side_effect = [
+            (True, "Preflight", {"expected_tab_count": 12, "divisions": 2}),
+            (True, "Preflight", {"expected_tab_count": 12, "divisions": 2}),
+            (True, "Completed. " + warning, {"new_order_ids": ["4800001", "4800002"], "total_mismatch_warning": warning}),
+            (True, "Completed", {"new_order_ids": ["4800003", "4800004"]}),
+        ]
+        ok, message, payload = server._execute_crm_auto_splitter_batch("https://crm.example/report/split-all")
+        self.assertTrue(ok)
+        self.assertIn("completed 2/2", message)
+        self.assertIn("Order 4700001: " + warning, message)
+        self.assertIsNone(payload["stopped_after_partial_failure_order_id"])
+        self.assertEqual(execute.call_count, 4)
+        self.assertTrue(all(row["success"] for row in payload["order_results"]))
 
     def test_processing_auto_splitter_reports_missing_mode_link(self):
         with mock.patch.object(server, "CRM_AUTO_SPLITTER_LIST_URL_ALL", ""):
