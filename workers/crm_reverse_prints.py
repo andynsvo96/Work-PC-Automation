@@ -121,7 +121,13 @@ function vendor(item, catalog, scope, design) {
   const supplier = supplierId && suppliers.find(v => String(v.id || v.key) === String(supplierId));
   if (supplier) return vendorName(supplier.value || supplier.name);
   // An already-ordered source can expose its vendor in its inventory table.
-  const inventories = Array.from(document.querySelectorAll('[order-inventory]')).filter(el => inventoryBelongsTo(el, design));
+  // Bootstrap's transcluded tabs can expose a different design on the
+  // inventory scope. The actual product and its inventory share designForm.
+  const block = blocks.find(el => { const sc = angular.element(el).scope(); return sc && sc.item === item; });
+  const form = block && block.closest('[ng-form="designForm"]');
+  const inventories = form
+    ? Array.from(form.querySelectorAll('[order-inventory]'))
+    : Array.from(document.querySelectorAll('[order-inventory]')).filter(el => inventoryBelongsTo(el, design));
   if (inventories.length) {
     const names = inventories.flatMap(inventory => Array.from(inventory.querySelectorAll('tr[ng-repeat]'))
       .filter(row => /^\s*inventoryOrder\s+in\s+inventoryOrders\b/.test(row.getAttribute('ng-repeat') || ''))
@@ -160,6 +166,23 @@ return (r.designs || []).map((d, index) => ({
 
 def read_designs(driver):
     return shared._order_scope(driver, SNAPSHOT_JS) or []
+
+
+def _wait_for_source_vendors(driver, selections, timeout=20):
+    """Inventory rows load independently after the product controls render."""
+    deadline = time.monotonic() + timeout
+    while True:
+        designs = read_designs(driver)
+        pending = []
+        for selection in selections:
+            index = selection["tab_number"] - 1
+            if index >= len(designs) or not designs[index]["items"] or any(not item["vendor"] for item in designs[index]["items"]):
+                pending.append(selection["tab_number"])
+        if not pending:
+            return designs
+        if time.monotonic() >= deadline:
+            raise ReversePrintError(f"Cannot read source product vendor on tab {pending[0]} after waiting for inventory rows to load.")
+        time.sleep(0.25)
 
 
 def _quantities(item):
@@ -374,7 +397,7 @@ def apply_reverse_prints(driver, selections):
     for selection in selections:
         _select_tab(driver, selection["tab_number"] - 1)
         _block(driver, selection["tab_number"] - 1, 0)
-    designs = read_designs(driver)
+    designs = _wait_for_source_vendors(driver, selections)
     jobs, used = [], set()
     for selection in selections:
         source = designs[selection["tab_number"] - 1]

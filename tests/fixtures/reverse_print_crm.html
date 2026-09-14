@@ -57,11 +57,12 @@ function render() {
   const fixture=document.getElementById('fixture');fixture.replaceChildren();
   resource.designs.forEach((design,index)=>{
     const container=document.createElement('section');container.style.display=index===activeIndex?'block':'none';
+    container.setAttribute('ng-form','designForm');
     container._scope={design};
     container.append(document.createTextNode(design.PO));fixture.append(container);
     if (window.inventoryVendors) {
       const inventory=document.createElement('div');inventory.setAttribute('order-inventory','design');
-      inventory._scope={isolated:true};
+      inventory._scope={isolated:true,orderInventory:{id:'transcluded-controller'}};
       const table=document.createElement('table');inventory.append(table);container.append(inventory);
       for (const name of window.inventoryVendors[index] || []) {
         const row=document.createElement('tr');row.setAttribute('ng-repeat','inventoryOrder in inventoryOrders track by inventoryOrder.id');

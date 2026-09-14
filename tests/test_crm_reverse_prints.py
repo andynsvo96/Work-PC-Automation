@@ -102,6 +102,22 @@ process.stdout.write(JSON.stringify(sleevePrintSelectionSummary(selected,tabs,{v
 
 
 class ReverseCloneTests(unittest.TestCase):
+    def test_source_waits_for_inventory_vendor_before_validation(self):
+        source = source_design()
+        pending = copy.deepcopy(source)
+        pending["items"][0]["vendor"] = ""
+        with patch.object(reverse, "read_designs", side_effect=[[pending], [source]]) as read, patch.object(reverse.time, "sleep") as sleep:
+            result = reverse._wait_for_source_vendors(None, [{"tab_number": 1}])
+        self.assertEqual(result, [source])
+        self.assertEqual(read.call_count, 2)
+        sleep.assert_called_once_with(0.25)
+
+    def test_vendor_wait_times_out_without_assuming_a_vendor(self):
+        pending = source_design()
+        pending["items"][0]["vendor"] = ""
+        with patch.object(reverse, "read_designs", return_value=[pending]), self.assertRaisesRegex(reverse.ReversePrintError, "after waiting for inventory rows"):
+            reverse._wait_for_source_vendors(None, [{"tab_number": 1}], timeout=0)
+
     def test_style_sub_without_details_is_a_resumable_clone(self):
         source = source_design()
         clone = clone_design(source)
