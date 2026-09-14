@@ -8,10 +8,15 @@ export const LOCAL_ORDER_PROCESS_ENDPOINT = `${LOCAL_AUTOMATION_ENDPOINT}/api/ex
 export const LOCAL_ORDER_PROCESS_STATUS_ENDPOINT = `${LOCAL_ORDER_PROCESS_ENDPOINT}/status`;
 export const LOCAL_MANUAL_ORDER_PROCESS_ENDPOINT = `${LOCAL_ORDER_PROCESS_ENDPOINT}/manual`;
 const REQUEST_TIMEOUT_MS = 2500;
+const QUEUE_REQUEST_TIMEOUT_MS = 20000;
 
 async function bridgeFetch(endpoint, options = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const isQueueRequest = options.method === "POST";
+  const timeout = setTimeout(
+    () => controller.abort(),
+    isQueueRequest ? QUEUE_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS
+  );
   try {
     const response = await fetch(endpoint, {
       cache: "no-store",
@@ -24,6 +29,15 @@ async function bridgeFetch(endpoint, options = {}) {
       throw new Error((payload && payload.message) || "Local Automation app rejected the request.");
     }
     return payload;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const timeoutError = new Error(isQueueRequest
+        ? "The Automation app has not confirmed this request yet. The task may already be queued. Check the Automation queue before trying again."
+        : "Could not reach the local Automation app in time.");
+      timeoutError.name = "AbortError";
+      throw timeoutError;
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
