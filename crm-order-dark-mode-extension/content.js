@@ -1026,6 +1026,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.value = String(index);
+    checkbox.checked = isSuggestion && products.length === 1;
     checkbox.setAttribute("aria-label", `Select ${product.style} in ${product.color}`);
     checkCell.append(checkbox);
     const styleCell = document.createElement("td");
@@ -1043,7 +1044,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
     checkboxes.push(checkbox);
     if (isSizeSuggestion) {
       const sizeRow = document.createElement("tr");
-      sizeRow.hidden = true;
+      sizeRow.hidden = !checkbox.checked;
       const sizeCell = document.createElement("td");
       sizeCell.colSpan = 4;
       Object.assign(sizeCell.style, { padding: "7px 7px 11px 38px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" });
