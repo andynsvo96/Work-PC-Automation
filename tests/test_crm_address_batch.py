@@ -703,6 +703,30 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             "Policy conflict content violation\nemailed content violation cancellation",
         )
 
+    def test_unresponsive_cancel_preserves_template_body_and_replaces_subject_only(self):
+        process = crm_copyright_cancel._cancel_process_for_key("unresponsive_cancel")
+        body = "Your order has been cancelled. Your refund is being processed."
+        before = {"subject": "Order [ORDER_NUMBER] cancelled", "body": body}
+        after = {"subject": "Order 4917538 cancelled", "body": body}
+        with mock.patch.object(crm_copyright_cancel, "_insert_cancel_template") as insert, \
+             mock.patch.object(crm_copyright_cancel, "_read_salesforce_email_state", side_effect=[before, after]), \
+             mock.patch.object(crm_copyright_cancel, "_replace_subject_order_number") as subject, \
+             mock.patch.object(crm_copyright_cancel, "_replace_salesforce_body_placeholder_with_reason") as replace_body, \
+             mock.patch.object(crm_copyright_cancel.time, "sleep"):
+            result = crm_copyright_cancel._fill_salesforce_email_from_salesforce_template(
+                mock.sentinel.driver, "4917538", process=process,
+            )
+        insert.assert_called_once_with(mock.sentinel.driver, process)
+        subject.assert_called_once_with(mock.sentinel.driver, "4917538")
+        replace_body.assert_not_called()
+        self.assertEqual(result["state"]["body"], body)
+        self.assertEqual(result["template"], "[AUTO] CANCEL - Unresponsive")
+        self.assertEqual(crm_copyright_cancel._cancel_sales_note("", process), "Customer is unresponsive\nCancelled")
+        self.assertEqual(crm_copyright_cancel._salesforce_refund_case_subject(process), "Unresponsive")
+        self.assertTrue(process.cancel_and_refund)
+        self.assertFalse(process.requires_reason)
+        self.assertTrue(crm_copyright_cancel._missing_body_markers("   ", process))
+
     def test_fixed_cancellation_sales_notes_do_not_require_reason(self):
         self.assertEqual(
             crm_copyright_cancel._cancel_sales_note(

@@ -68,6 +68,8 @@ from config import (
     SALESFORCE_EMAIL_TEMPLATE_FILE,
     SALESFORCE_OUTSIDE_LIMIT_CANCEL_TEMPLATE,
     OUTSIDE_LIMIT_CANCEL_ISSUE_TYPE,
+    UNRESPONSIVE_CANCEL_ISSUE_TYPE,
+    SALESFORCE_UNRESPONSIVE_CANCEL_TEMPLATE,
 )
 import config as _config
 from runtime_paths import STATE_DIR, resolve_runtime_file
@@ -268,6 +270,20 @@ OUTSIDE_LIMIT_CANCEL_PROCESS = CancelProcess(
     fixed_sales_note="Cannot print beyond the designated area limit\nCancelled",
     refund_case_subject="Outside Limit",
 )
+UNRESPONSIVE_CANCEL_PROCESS = CancelProcess(
+    key="unresponsive_cancel",
+    issue_type=UNRESPONSIVE_CANCEL_ISSUE_TYPE,
+    salesforce_template=SALESFORCE_UNRESPONSIVE_CANCEL_TEMPLATE,
+    template_search=SALESFORCE_UNRESPONSIVE_CANCEL_TEMPLATE,
+    sales_note_reason_label="",
+    sales_note_email_line="",
+    subject_markers=(),
+    body_markers=(),
+    display_name="Unresponsive cancel",
+    requires_reason=False,
+    fixed_sales_note="Customer is unresponsive\nCancelled",
+    refund_case_subject="Unresponsive",
+)
 COMPLICATED_EMB_TO_HDD_PROCESS = CancelProcess(
     key="complicated_emb_to_hdd",
     issue_type=COMPLICATED_EMB_ISSUE_TYPE,
@@ -361,6 +377,7 @@ CANCEL_PROCESSES = (
     CONTENT_VIOLATION_CANCEL_PROCESS,
     EXISTING_DESIGNS_CANCEL_PROCESS,
     OUTSIDE_LIMIT_CANCEL_PROCESS,
+    UNRESPONSIVE_CANCEL_PROCESS,
     COMPLICATED_EMB_TO_HDD_PROCESS,
     OVERSIZE_EMB_TO_HDD_PROCESS,
     COPYRIGHT_REACHOUT_PROCESS,
@@ -3747,7 +3764,7 @@ def _salesforce_template_appears_inserted(driver, process=COPYRIGHT_CANCEL_PROCE
     body = _clean_text(state.get("body", ""))
     if process.body_markers:
         return bool(subject and body and not _missing_body_markers(body.lower(), process))
-    return bool(subject and "enter subject" not in subject.lower())
+    return bool(subject and body and "enter subject" not in subject.lower())
 
 
 def _wait_for_salesforce_template_markers(driver, process=COPYRIGHT_CANCEL_PROCESS, timeout=6):
@@ -4575,6 +4592,8 @@ def _replace_subject_order_number(driver, order_id):
 
 def _missing_body_markers(text, process):
     lower_text = _clean_text(text).lower()
+    if not process.body_markers and not lower_text:
+        return ["non-empty email body"]
     return [marker for marker in process.body_markers if marker not in lower_text]
 
 

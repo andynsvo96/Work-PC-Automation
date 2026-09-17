@@ -337,6 +337,22 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         self.assertIn("requires a reason", response.get_json()["message"])
         enqueue.assert_not_called()
 
+    def test_unresponsive_cancel_queues_current_order_without_reason(self):
+        with mock.patch(
+            "server.enqueue_automation",
+            return_value=(True, "CANCEL - Unresponsive queued.", {"id": "task-u", "status": "queued"}),
+        ) as enqueue:
+            response = self.client.post(
+                "/api/extension/bridge/process-order/manual",
+                json={"order_id": "4917538", "automation": "unresponsive_cancel"},
+                headers={"Origin": self.ORIGIN},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(enqueue.call_args.kwargs["task_arguments"], {
+            "order_id": "4917538", "process": "unresponsive_cancel", "reason": "",
+        })
+
     def test_content_violation_manual_action_queues_with_its_reason(self):
         with mock.patch(
             "server.enqueue_automation",

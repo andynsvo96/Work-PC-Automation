@@ -62,7 +62,8 @@ const CANCEL_ORDER_AUTOMATIONS = [
   { key: "copyright_cancel", label: "Copyright - Cancel", requiresReason: true },
   { key: "content_violation_cancel", label: "Content Violation - Cancel", requiresReason: true },
   { key: "existing_designs_cancel", label: "CANCEL - Existing Designs" },
-  { key: "outside_limit_cancel", label: "CANCEL - Outside Limit" }
+  { key: "outside_limit_cancel", label: "CANCEL - Outside Limit" },
+  { key: "unresponsive_cancel", label: "CANCEL - Unresponsive" }
 ];
 
 const REACHOUT_ORDER_AUTOMATIONS = [
