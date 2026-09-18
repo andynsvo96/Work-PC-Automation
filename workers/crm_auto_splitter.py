@@ -2079,21 +2079,20 @@ def _save_transaction_modal_with_amount(driver, tag, transaction_id, amount=None
                   s.transaction.note = arguments[1];
                   if (arguments[2]) s.transaction.amount = arguments[2];
                 });
-                if (!arguments[3]) s.save();
                 return true;
                 """,
                 tag,
                 transaction_id,
                 _money_text(amount) if amount is not None else "",
-                refund_mode,
             )
-            if saved:
-                if refund_mode:
-                    _click_transaction_modal_save_button(driver)
-                    _wait_for_transaction_modal_submission(driver)
-                return True
         except Exception:
-            pass
+            saved = False
+        if saved:
+            # Submit once, through Angular's normal form action, and never
+            # swallow a rejection/timeout and submit the transaction again.
+            _click_transaction_modal_save_button(driver)
+            _wait_for_transaction_modal_submission(driver)
+            return True
         time.sleep(0.5)
     raise SplitterError("Transaction modal did not open with a saveable transaction form.")
 
@@ -2214,6 +2213,26 @@ def _verify_order_payment_allocation(totals, expected_paid):
     }
 
 
+def _verify_payment_with_refresh(driver, order_id, expected_paid, totals):
+    """Retry persisted totals, never the financial transaction itself."""
+    for attempt in range(3):
+        try:
+            return _verify_order_payment_allocation(totals, expected_paid)
+        except SplitterError as err:
+            if attempt == 2:
+                raise SplitterError(
+                    f"Order {order_id}: {err} Still incorrect after two verification refreshes; "
+                    "the transaction was not resubmitted."
+                ) from err
+            print(f"Order {order_id}: payment totals have not settled; refreshing verification ({attempt + 1}/2).")
+            time.sleep(3)
+            _open_order_scope_with_reload(
+                driver, _order_url(order_id=order_id), order_id=order_id,
+                label=f"payment verification retry for order {order_id}",
+            )
+            totals = _read_order_totals(driver)
+
+
 def _record_split_payment_on_order(driver, order_id, tag, transaction_id, amount, expected_grand_total=None):
     order_url = _order_url(order_id=order_id)
     _open_order_scope_with_reload(driver, order_url, order_id=order_id, label=f"fallback split order {order_id}")
@@ -2240,7 +2259,7 @@ def _record_split_payment_on_order(driver, order_id, tag, transaction_id, amount
     _save_transaction_modal_with_amount(driver, tag, transaction_id, amount=expected)
     time.sleep(2)
     _open_order_scope_with_reload(driver, order_url, order_id=order_id, label=f"paid fallback split order {order_id}")
-    return _verify_order_payment_allocation(_read_order_totals(driver), expected)
+    return _verify_payment_with_refresh(driver, order_id, expected, _read_order_totals(driver))
 
 
 def _fallback_from_failed_quote_payment(driver, tag, transaction_id, amount, failure):
@@ -3422,7 +3441,8 @@ def _record_retained_original_payment_allocation(
             label="retained original payment verification",
         )
     totals = _read_order_totals(driver)
-    verification = _verify_order_payment_allocation(totals, desired_paid)
+    verification = _verify_payment_with_refresh(driver, original_order_id, desired_paid, totals)
+    totals = {**totals, **{key: verification[key] for key in ("grand_total", "paid", "balance_due")}}
     return {
         "desired_paid": _money_text(desired_paid),
         "transferred_payment": _money_text(adjustment),

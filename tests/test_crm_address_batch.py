@@ -5790,8 +5790,45 @@ class CrmAutoSplitterTests(unittest.TestCase):
         click_save.assert_called_once_with(driver)
         wait_for_save.assert_called_once_with(driver)
         transaction_call = driver.execute_script.call_args_list[0]
-        self.assertIn("if (!arguments[3]) s.save();", transaction_call.args[0])
-        self.assertIs(transaction_call.args[4], True)
+        self.assertNotIn("s.save();", transaction_call.args[0])
+
+    def test_manual_payment_waits_for_save_and_does_not_retry_rejection(self):
+        for failure in (None, crm_auto_splitter.SplitterError("CRM rejected the transaction")):
+            with self.subTest(failure=failure):
+                driver = mock.Mock()
+                driver.execute_script.return_value = True
+                with mock.patch.object(crm_auto_splitter, "_click_transaction_modal_save_button") as save, \
+                     mock.patch.object(crm_auto_splitter, "_wait_for_transaction_modal_submission", side_effect=failure) as wait:
+                    if failure:
+                        with self.assertRaisesRegex(crm_auto_splitter.SplitterError, "CRM rejected"):
+                            crm_auto_splitter._save_transaction_modal_with_amount(driver, "PayPal", "test", amount="258.45")
+                    else:
+                        self.assertTrue(crm_auto_splitter._save_transaction_modal_with_amount(driver, "PayPal", "test", amount="258.45"))
+                save.assert_called_once_with(driver)
+                wait.assert_called_once_with(driver)
+                self.assertEqual(driver.execute_script.call_count, 1)
+
+    def test_payment_verification_refresh_recovers_stale_totals_without_resubmitting(self):
+        unpaid = {"grand_total": "258.45", "paid": "0.00", "balance_due": "258.45"}
+        paid = {"grand_total": "258.45", "paid": "258.45", "balance_due": "0.00"}
+        with mock.patch.object(crm_auto_splitter, "_open_order_scope_with_reload") as reload, \
+             mock.patch.object(crm_auto_splitter, "_read_order_totals", side_effect=[unpaid, paid]), \
+             mock.patch.object(crm_auto_splitter, "_save_transaction_modal_with_amount") as save, \
+             mock.patch.object(crm_auto_splitter.time, "sleep"):
+            result = crm_auto_splitter._verify_payment_with_refresh(mock.Mock(), "5251087", "258.45", unpaid)
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["paid"], "258.45")
+        self.assertEqual(reload.call_count, 2)
+        save.assert_not_called()
+
+    def test_payment_verification_refresh_stops_when_payment_remains_missing(self):
+        unpaid = {"grand_total": "258.45", "paid": "0.00", "balance_due": "258.45"}
+        with mock.patch.object(crm_auto_splitter, "_open_order_scope_with_reload") as reload, \
+             mock.patch.object(crm_auto_splitter, "_read_order_totals", return_value=unpaid), \
+             mock.patch.object(crm_auto_splitter.time, "sleep"):
+            with self.assertRaisesRegex(crm_auto_splitter.SplitterError, "5251087.*two verification refreshes"):
+                crm_auto_splitter._verify_payment_with_refresh(mock.Mock(), "5251087", "258.45", unpaid)
+        self.assertEqual(reload.call_count, 2)
 
     def test_retained_payment_retry_reconstructs_original_paid_total(self):
         transfer_note = "split 1 retained on original 4900000; transferred to 4900001 and 4900002"

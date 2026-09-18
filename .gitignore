@@ -39,6 +39,10 @@ slack_chrome_profile/
 # Generated artifacts
 # Local one-off CRM recovery script
 /tmp/resume_5222118.py
+# Local CRM payment recovery script and inspection reports
+/tmp/finish_5250040.py
+/tmp/inspect_5250040.json
+/tmp/inspect_5251087.json
 screenshots/
 product_separator_results/
 auto_splitter_*.json
