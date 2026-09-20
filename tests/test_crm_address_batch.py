@@ -5211,6 +5211,23 @@ class CrmAutoSplitterTests(unittest.TestCase):
         self.assertTrue(result["payment_actions_skipped"])
         self.assertEqual(result["refund_fee_amount"], "0.00")
 
+    def test_original_finishes_sales_note_after_transaction_retry_failure(self):
+        driver = mock.Mock()
+        progress = {"required": ["refund_fee", "cancellation", "manual_refund_transaction", "sales_note"], "completed": []}
+        with ExitStack() as stack:
+            for name in ("_add_refund_fee_to_original", "_cancel_original_order", "_open_record_transaction", "_reload_and_verify_original_after_cancellation", "_open_order_scope_with_reload"):
+                stack.enter_context(mock.patch.object(crm_auto_splitter, name))
+            for name in ("_original_refund_fee_already_present", "_original_order_is_cancelled", "_original_refund_transaction_is_present", "_original_transfer_note_is_present"):
+                stack.enter_context(mock.patch.object(crm_auto_splitter, name, return_value=False))
+            stack.enter_context(mock.patch.object(crm_auto_splitter, "_read_order_totals", return_value={}))
+            stack.enter_context(mock.patch.object(crm_auto_splitter, "_save_transaction_modal_with_amount", side_effect=crm_auto_splitter.TransactionSaveButtonMissing("Still missing after retry")))
+            note = stack.enter_context(mock.patch.object(crm_auto_splitter, "_add_original_transfer_note"))
+            with self.assertRaisesRegex(crm_auto_splitter.TransactionSaveButtonMissing, "Still missing"):
+                crm_auto_splitter._finalize_original_order_after_split(driver, True, crm_auto_splitter.Decimal("125"), crm_auto_splitter.Decimal("125"), "transferred to 5261517", "5261516", progress=progress)
+        note.assert_called_once_with(driver, "transferred to 5261517")
+        self.assertIn("sales_note", progress["completed"])
+        self.assertIn("manual_refund_transaction", progress["incomplete"])
+
     def test_paid_original_finalization_keeps_existing_refund_actions(self):
         driver = mock.Mock()
         progress = {
@@ -5791,6 +5808,31 @@ class CrmAutoSplitterTests(unittest.TestCase):
         wait_for_save.assert_called_once_with(driver)
         transaction_call = driver.execute_script.call_args_list[0]
         self.assertNotIn("s.save();", transaction_call.args[0])
+
+    def test_missing_transaction_save_refreshes_and_retries_once(self):
+        for quote in (False, True):
+            for fails_again in (False, True):
+                with self.subTest(quote=quote, fails_again=fails_again):
+                    driver = mock.Mock()
+                    driver.current_url = "https://crm.example/" + ("quote/123" if quote else "order/5261516")
+                    driver.execute_script.return_value = True
+                    missing = crm_auto_splitter.TransactionSaveButtonMissing("Transaction modal Save button was not found.")
+                    with ExitStack() as stack:
+                        click = stack.enter_context(mock.patch.object(crm_auto_splitter, "_click_transaction_modal_save_button", side_effect=[missing, missing if fails_again else True]))
+                        wait = stack.enter_context(mock.patch.object(crm_auto_splitter, "_wait_for_transaction_modal_submission"))
+                        reload = stack.enter_context(mock.patch.object(crm_auto_splitter, "safe_get_with_partial_load"))
+                        stack.enter_context(mock.patch.object(crm_auto_splitter, "_wait_for_order_scope"))
+                        stack.enter_context(mock.patch.object(crm_auto_splitter, "_wait_for_quote_scope", return_value={"order_id": None}))
+                        reopen = stack.enter_context(mock.patch.object(crm_auto_splitter, "_open_record_transaction"))
+                        if fails_again:
+                            with self.assertRaisesRegex(crm_auto_splitter.TransactionSaveButtonMissing, "retrying once"):
+                                crm_auto_splitter._save_transaction_modal_with_amount(driver, "PayPal", "test", amount="20.00")
+                        else:
+                            self.assertTrue(crm_auto_splitter._save_transaction_modal_with_amount(driver, "PayPal", "test", amount="20.00"))
+                        self.assertEqual(click.call_count, 2)
+                        self.assertEqual(reload.call_count, 1)
+                        reopen.assert_called_once_with(driver, quote=quote)
+                        self.assertEqual(wait.call_count, 0 if fails_again else 1)
 
     def test_manual_payment_waits_for_save_and_does_not_retry_rejection(self):
         for failure in (None, crm_auto_splitter.SplitterError("CRM rejected the transaction")):
@@ -11829,7 +11871,7 @@ class CrmAddressServerTests(unittest.TestCase):
     @mock.patch.object(server, "_automation_stop_is_blocking", return_value=False)
     @mock.patch.object(server, "_execute_crm_auto_splitter_worker")
     @mock.patch.object(server, "_run_script")
-    def test_auto_splitter_batch_stops_after_partial_live_failure(
+    def test_auto_splitter_batch_continues_after_partial_live_failure(
         self,
         mock_run_script,
         mock_execute_splitter,
@@ -11859,7 +11901,9 @@ class CrmAddressServerTests(unittest.TestCase):
             for index, order_id in enumerate(order_ids, start=1)
         ]
         mock_execute_splitter.side_effect = preflights + [
-            (False, "Cleanup failed after split creation.", {"new_order_ids": ["4800001", "4800002"]}),
+            (False, "Transaction modal Save button was not found.", {"new_order_ids": ["4800001", "4800002"]}),
+            (True, "Completed second order.", {"new_order_ids": ["4800003"]}),
+            (True, "Completed third order.", {"new_order_ids": ["4800004"]}),
         ]
 
         ok, _message, payload = server._execute_crm_auto_splitter_batch(
@@ -11869,11 +11913,12 @@ class CrmAddressServerTests(unittest.TestCase):
         )
 
         self.assertFalse(ok)
-        self.assertEqual(mock_execute_splitter.call_count, 4)
-        self.assertEqual(payload["stopped_after_partial_failure_order_id"], "4700001")
+        self.assertEqual(mock_execute_splitter.call_count, 6)
+        self.assertIsNone(payload["stopped_after_partial_failure_order_id"])
+        self.assertIn("Save button was not found", payload["order_results"][0]["message"])
         self.assertEqual(
             [row["outcome"] for row in payload["order_results"]],
-            ["split_failed", "blocked_after_partial_failure", "blocked_after_partial_failure"],
+            ["split_failed", "split_completed", "split_completed"],
         )
 
     def test_processing_free_order_goods_reports_missing_mode_link(self):

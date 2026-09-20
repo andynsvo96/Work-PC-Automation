@@ -9940,25 +9940,8 @@ def _execute_crm_auto_splitter_batch(list_url, minimum_tabs=10, parallel_workers
             "preflight": preflight_payload,
             "result": live_payload,
         }
-        if not live_ok and _crm_auto_splitter_payload_has_partial_mutation(live_payload):
-            stopped_after_partial_failure = order_id
-            break
-
-    if stopped_after_partial_failure:
-        for order_id in order_ids:
-            if order_id in order_results_by_id:
-                continue
-            order_results_by_id[order_id] = {
-                "order_id": order_id,
-                "success": False,
-                "status": "Not started",
-                "outcome": "blocked_after_partial_failure",
-                "message": (
-                    f"Not started because order {stopped_after_partial_failure} failed after creating CRM records. "
-                    "The batch stopped to prevent duplicate orders."
-                ),
-                "preflight": preflight_rows.get(order_id, {}),
-            }
+        # Keep partial failures in the report and continue with other source orders.
+        # Never rerun the failed source here: it may already have created split orders.
 
     order_results = [order_results_by_id[order_id] for order_id in order_ids if order_id in order_results_by_id]
 

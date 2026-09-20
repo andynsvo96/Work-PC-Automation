@@ -72,6 +72,10 @@ class SplitterError(Exception):
     """Raised when the splitter must stop before taking action."""
 
 
+class TransactionSaveButtonMissing(SplitterError):
+    """The transaction was not submitted because its Save control is absent."""
+
+
 class QuotePaymentConversionError(SplitterError):
     """Raised when CRM explicitly rejects payment-driven quote conversion."""
 
@@ -2012,10 +2016,11 @@ def _click_transaction_modal_save_button(driver):
             )
             if clicked:
                 return True
-        except Exception:
-            pass
+        except Exception as err:
+            # A script failure may occur after a click; never retry an uncertain submission.
+            raise SplitterError("Transaction Save click could not be confirmed; manual review required.") from err
         time.sleep(0.5)
-    raise SplitterError("Transaction modal Save button was not found.")
+    raise TransactionSaveButtonMissing("Transaction modal Save button was not found.")
 
 
 def _wait_for_transaction_modal_submission(driver, timeout=30):
@@ -2047,6 +2052,30 @@ def _wait_for_transaction_modal_submission(driver, timeout=30):
 
 
 def _save_transaction_modal_with_amount(driver, tag, transaction_id, amount=None, validate_refund=True):
+    for attempt in range(2):
+        try:
+            return _save_transaction_modal_once(driver, tag, transaction_id, amount, validate_refund)
+        except TransactionSaveButtonMissing as err:
+            if attempt:
+                raise TransactionSaveButtonMissing(
+                    f"{err} Still missing after refreshing and retrying once; payment needs manual review."
+                ) from err
+            url = str(driver.current_url)
+            quote = "/quote/" in url or "/quotes/" in url
+            if not quote and not re.search(r"/order/\d+", url):
+                raise
+            print("Transaction modal Save button was not found; refreshing and retrying once.")
+            safe_get_with_partial_load(driver, url, "transaction Save recovery")
+            if quote:
+                state = _wait_for_quote_scope(driver)
+                if state.get("order_id"):
+                    raise SplitterError("Quote converted during Save recovery; payment needs manual review.")
+            else:
+                _wait_for_order_scope(driver, order_id=re.search(r"/order/(\d+)", url).group(1))
+            _open_record_transaction(driver, quote=quote)
+
+
+def _save_transaction_modal_once(driver, tag, transaction_id, amount=None, validate_refund=True):
     refund_mode = "refund" in _clean_text(tag).lower()
     if validate_refund and refund_mode:
         totals = _read_order_totals(driver)
@@ -3666,7 +3695,18 @@ def _finalize_original_order_after_split(
             driver, transfer_note, original_grand_total
         ):
             _open_record_transaction(driver, quote=False)
-            _save_transaction_modal_with_amount(driver, "Refund", transfer_note, amount=-original_grand_total)
+            try:
+                _save_transaction_modal_with_amount(driver, "Refund", transfer_note, amount=-original_grand_total)
+            except TransactionSaveButtonMissing as err:
+                # Finish the independent sales-note task before reporting the payment failure.
+                _open_order_scope_with_reload(
+                    driver, _order_url(order_id=original_order_id), order_id=original_order_id,
+                    label="original cleanup after transaction failure",
+                )
+                if not _original_transfer_note_is_present(driver, transfer_note):
+                    _add_original_transfer_note(driver, transfer_note)
+                _set_original_cleanup_progress(progress, "sales_note")
+                raise err
             time.sleep(2)
         if payment_detected:
             _set_original_cleanup_progress(progress, "manual_refund_transaction")
