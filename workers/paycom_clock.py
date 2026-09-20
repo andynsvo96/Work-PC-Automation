@@ -19,6 +19,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 from automation_audit import log_automation_event, log_automation_result
+from paycom_access import paycom_ip_block_message
 from automation_runtime import (
     SCRIPT_DIR,
     build_chrome_driver,
@@ -122,6 +123,13 @@ def find_punch_button(driver, btn_text, timeout=10):
         pass
 
     return None
+
+
+def detect_ip_block(driver):
+    try:
+        return paycom_ip_block_message(driver.find_element(By.TAG_NAME, "body").text)
+    except Exception:
+        return None
 
 
 def detect_clock_state(driver):
@@ -289,6 +297,10 @@ def _run_once(action, effective_dry_run, profile_path, headless_mode):
             safe_take_screenshot(driver, f"clock_{action}_login_required_{mode_name}")
             return False, msg, bool(headless_mode)
 
+        ip_block = detect_ip_block(driver)
+        if ip_block:
+            return False, ip_block, False
+
         # Step 3.5: Check current clock state
         current_state, last_punch_text = detect_clock_state(driver)
         if last_punch_text:
@@ -316,6 +328,11 @@ def _run_once(action, effective_dry_run, profile_path, headless_mode):
         print(f"Looking for '{btn_text}' button...")
 
         punch_btn = find_punch_button(driver, btn_text)
+
+        # Also catch an access-denied page rendered during the button wait.
+        ip_block = detect_ip_block(driver)
+        if ip_block:
+            return False, ip_block, False
 
         if punch_btn:
             if effective_dry_run:

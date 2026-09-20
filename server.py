@@ -4370,6 +4370,10 @@ def _run_clock_action(action, dry_run=False):
 
 
 def _is_retryable_clock_failure(message):
+    from paycom_access import is_paycom_ip_block
+
+    if is_paycom_ip_block(message):
+        return False
     text = str(message or "").lower()
     if "force-stopped" in text or "force stopped" in text:
         return False
@@ -12729,7 +12733,16 @@ def queue_crm_extension_manual_order_run(order_id, automation_key, reason="", re
     return ok, message, task
 
 
+def _continue_work_after_paycom_ip_block(action, message):
+    notify_user("Paycom IP Address Blocked", f"{message} Continuing with Slack.")
+    slack_ok, slack_msg = _run_slack_action_with_retry(action, retries=1, delay_seconds=3)
+    slack_result = "Slack completed" if slack_ok else "Slack failed"
+    return False, f"{message} {slack_result}: {slack_msg}"
+
+
 def run_work(action, automatic=False, expected_clock_in_at=None):
+    from paycom_access import is_paycom_ip_block
+
     mode = "automatic" if automatic else "manual"
     automation_name = f"work.{action}.{mode}"
 
@@ -12837,6 +12850,8 @@ def run_work(action, automatic=False, expected_clock_in_at=None):
 
             c_ok, c_msg = _run_clock_action_with_retry("in", dry_run=False, retries=1, delay_seconds=3)
             if not c_ok:
+                if is_paycom_ip_block(c_msg):
+                    return _finish(*_continue_work_after_paycom_ip_block("in", c_msg))
                 return _finish(False, c_msg)
 
             s_ok, s_msg = _run_slack_action_with_retry("in", retries=1, delay_seconds=3)
@@ -12903,6 +12918,8 @@ def run_work(action, automatic=False, expected_clock_in_at=None):
 
         c_ok, c_msg = _run_clock_action_with_retry("out", dry_run=False, retries=1, delay_seconds=3)
         if not c_ok:
+            if is_paycom_ip_block(c_msg):
+                return _finish(*_continue_work_after_paycom_ip_block("out", c_msg))
             return _finish(False, c_msg)
 
         s_ok, s_msg = _run_slack_action_with_retry("out", retries=1, delay_seconds=3)
