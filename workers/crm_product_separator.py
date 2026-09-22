@@ -66,6 +66,7 @@ SOURCE = "product_separator_automation.py"
 
 GROUP_LABELS = {
     "adult_general": "Adult/general",
+    "pants": "Pants",
     "youth": "Youth",
     "toddler": "Toddler",
     "infant": "Infant",
@@ -665,6 +666,8 @@ def _classify_product(product):
     override = _product_group_override(product.get("product_name"))
     if override:
         group, reason = override
+    elif re.search(r"\b(pants?|sweat[\s-]*pants?|joggers?|trousers?)\b", name):
+        group, reason = "pants", "product name contains pants keyword"
     elif re.search(r"\b(towel|rally towel|sport towel)\b", name):
         group, reason = "towel", "product name contains towel"
     elif re.search(r"\b(tote|bag|backpack|duffel|drawstring)\b", name):
@@ -1807,6 +1810,7 @@ def _zero_non_keep_group_quantity_inputs(driver, design_index, keep_group):
           const normalized = clean(text).toLowerCase();
           const compact = normalized.replace(/\s+/g, '');
           if (/\b1010be\b.*\bladies['\u2019]?\s+micro\s+ribbed\s+baby\s+tee\b/.test(normalized)) return 'adult_general';
+          if (/\b(pants?|sweat[\s-]*pants?|joggers?|trousers?)\b/.test(normalized)) return 'pants';
           if (/\b(towel|rally towel|sport towel)\b/.test(normalized)) return 'towel';
           if (/\b(tote|bag|backpack|duffel|drawstring)\b/.test(normalized)) return 'bag';
           if (/\b(hat|cap|beanie|snapback|trucker)\b/.test(normalized)) return 'hat_cap';
@@ -1919,6 +1923,7 @@ def _keep_only_group_on_design(driver, design_index, keep_group):
           ].join(' ')).toLowerCase();
           const compact = text.replace(/\s+/g, '');
           if (/\b1010be\b.*\bladies['\u2019]?\s+micro\s+ribbed\s+baby\s+tee\b/.test(text)) return 'adult_general';
+          if (/\b(pants?|sweat[\s-]*pants?|joggers?|trousers?)\b/.test(text)) return 'pants';
           if (/\b(towel|rally towel|sport towel)\b/.test(text)) return 'towel';
           if (/\b(tote|bag|backpack|duffel|drawstring)\b/.test(text)) return 'bag';
           if (/\b(hat|cap|beanie|snapback|trucker)\b/.test(text)) return 'hat_cap';
