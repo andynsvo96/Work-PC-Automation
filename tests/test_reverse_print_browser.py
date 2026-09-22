@@ -80,11 +80,12 @@ window.queueManualOrderAutomation=async (...args)=>{window.queued=args[4];return
             control(f"Reversible Prints for tab {tab}").click()
         self.assertFalse(control("Print location for tab 1").is_displayed())
         self.assertFalse(control("Print method for tab 1").is_displayed())
-        self.assertEqual(control("Price per area for tab 1").get_attribute("value"), "7.00")
-        price = control("Price per area for tab 1")
+        self.assertEqual(control("Reversible ink price per area").get_attribute("value"), "7.00")
+        price = control("Reversible ink price per area")
         price.send_keys(Keys.CONTROL, "a")
         price.send_keys("4.25")
-        self.assertEqual(control("Price per area for tab 2").get_attribute("value"), "4.25")
+        self.assertEqual(price.get_attribute("value"), "4.25")
+        self.assertEqual(len([x for x in driver.find_elements(By.CSS_SELECTOR, 'input[inputmode="decimal"]') if x.is_displayed()]), 1)
         control("Sleeve Prints for tab 1").click()
         self.assertFalse(control("Reversible Prints for tab 1").is_selected())
         self.assertTrue(control("Print location for tab 1").is_displayed())
@@ -93,6 +94,53 @@ window.queueManualOrderAutomation=async (...args)=>{window.queued=args[4];return
         payload = driver.execute_script("return window.queued")
         self.assertEqual(payload["reverse_price"], 4.25)
         self.assertEqual(payload["sleeves"], [{"tab_number": 1, "quantity": 8, "reverse": "ink"}, {"tab_number": 2, "quantity": 2, "reverse": "ink"}])
+
+    def test_popup_shared_ink_price_quantity_changes_and_validation(self):
+        from selenium.webdriver.support.ui import Select
+        driver = self.driver
+        driver.get("about:blank")
+        content = (ROOT / "crm-order-dark-mode-extension/content.js").read_text(encoding="utf-8")
+        functions = content[content.index("const EXTRA_PRINT_AREAS"):content.index("function stockIssueDetectedSizes")]
+        driver.execute_script('''
+window.visibleStockIssueDesignTabs=()=>[{tabNumber:1,quantity:19},{tabNumber:2,quantity:1},{tabNumber:3,quantity:1000}];
+window.queueManualOrderAutomation=async (...args)=>{window.queued=args[4];return {success:true}};
+''' + functions + '\nshowSleevePrintsDialog({},null,null);')
+        def control(label):
+            return driver.find_element(By.CSS_SELECTOR, f'[aria-label="{label}"]')
+        def visible_prices():
+            return [x for x in driver.find_elements(By.CSS_SELECTOR, 'input[inputmode="decimal"]') if x.is_displayed()]
+        self.assertEqual(len(visible_prices()), 0)
+        for tab in (1, 2):
+            control(f"Include design tab {tab}").click()
+            control(f"Sleeve Prints for tab {tab}").click()
+            Select(control(f"Print location for tab {tab}")).select_by_value("right")
+        price = control("Sleeve / side ink price per area")
+        self.assertEqual(len(visible_prices()), 1)
+        self.assertEqual(price.get_attribute("value"), "6.00")
+        self.assertIn("applies to tabs 1, 2", price.find_element(By.XPATH, "..").text)
+        control("Include design tab 2").click()
+        self.assertEqual(price.get_attribute("value"), "7.00")
+        control("Include design tab 2").click()
+        control("Side Prints for tab 2").click()
+        Select(control("Print location for tab 2")).select_by_value("both")
+        self.assertEqual(price.get_attribute("value"), "6.00")
+        self.assertEqual(len(visible_prices()), 1)
+        price.send_keys(Keys.CONTROL, "a")
+        price.send_keys("bad")
+        queue = driver.find_element(By.XPATH, "//button[text()='Queue task']")
+        self.assertFalse(queue.is_enabled())
+        price.send_keys(Keys.CONTROL, "a")
+        price.send_keys("4.25")
+        Select(control("Print method for tab 2")).select_by_value("embroidery")
+        self.assertEqual(len(visible_prices()), 2)
+        self.assertEqual(control("Embroidery price per area").get_attribute("value"), "15.00")
+        Select(control("Print method for tab 2")).select_by_value("ink")
+        self.assertEqual(len(visible_prices()), 1)
+        self.assertEqual(price.get_attribute("value"), "4.25")
+        queue.click()
+        payload = driver.execute_script("return window.queued")
+        self.assertEqual(payload["ink_price"], 4.25)
+        self.assertEqual(payload["sleeves"], [{"tab_number": 1, "quantity": 19, "right": "ink"}, {"tab_number": 2, "quantity": 1, "side_left": "ink", "side_right": "ink"}])
 
     def test_bulk_vendor_from_isolated_inventory_panel(self):
         driver = self.driver

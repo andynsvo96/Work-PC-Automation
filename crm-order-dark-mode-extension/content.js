@@ -67,7 +67,7 @@ const CANCEL_ORDER_AUTOMATIONS = [
 ];
 
 const REACHOUT_ORDER_AUTOMATIONS = [
-  { key: "complicated_emb_to_hdd", label: "Complicated EMB to HDD" },
+  { key: "complicated_emb_to_hdd", label: "Complicated EMB" },
   { key: "oversize_emb_to_hdd", label: "Oversize EMB to HDD" },
   { key: "copyright_removal", label: "Copyright Removal", requiresReason: true },
   { key: "copyright_reachout", label: "Copyright - Reachout", requiresReason: true }
@@ -560,30 +560,14 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
     }
     details.append(categories);
     const areaOptions = document.createElement("div");
+    Object.assign(areaOptions.style, { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" });
     choice.method = selectControl(`Print method for tab ${tab.tabNumber}`, [["ink", "Ink print"], ["embroidery", "Embroidery"]], areaOptions);
     choice.location = selectControl(`Print location for tab ${tab.tabNumber}`, [["", "Select left, right, or both"], ["left", "Left"], ["right", "Right"], ["both", "Both"]], areaOptions);
     choice.areaOptions = areaOptions;
     const reverseHint = document.createElement("p");
     reverseHint.textContent = "Ink only. One charge per garment for a front or back area; two charges for both.";
     choice.reverseHint = reverseHint;
-    const priceWrap = document.createElement("label");
-    const priceCaption = document.createElement("span");
-    Object.assign(priceCaption.style, { display: "block", fontSize: "12px", color: "#334155" });
-    const priceInput = document.createElement("input");
-    priceInput.type = "text";
-    priceInput.inputMode = "decimal";
-    priceInput.setAttribute("aria-label", `Price per area for tab ${tab.tabNumber}`);
-    Object.assign(priceInput.style, { display: "block", width: "100%", padding: "6px", boxSizing: "border-box", marginTop: "4px" });
-    Object.assign(choice, { priceWrap, priceCaption, priceInput });
-    priceInput.addEventListener("input", () => {
-      const key = choice.category === "reverse" ? "reverse" : choice.method.value;
-      const parsed = sleevePrintCleanPrice(priceInput.value);
-      priceErrors[key] = parsed.message;
-      if (parsed.valid) priceOverrides[key] = parsed.value;
-      refresh(priceInput);
-    });
-    priceWrap.append(priceCaption, priceInput);
-    details.append(areaOptions, reverseHint, priceWrap);
+    details.append(areaOptions, reverseHint);
     include.addEventListener("change", () => {
       if (!include.checked) { choice.category = ""; choice.location.value = ""; }
       refresh();
@@ -591,6 +575,29 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
     card.append(heading, details);
     dialog.append(card);
     choices.push(choice);
+  }
+  const sharedPrices = {};
+  for (const [key, label] of [["ink", "Sleeve / side ink"], ["embroidery", "Embroidery"], ["reverse", "Reversible ink"]]) {
+    const priceWrap = document.createElement("label");
+    Object.assign(priceWrap.style, { marginTop: "12px", padding: "11px", border: "1px solid #cbd5e1", borderRadius: "4px" });
+    const priceHeading = document.createElement("strong");
+    priceHeading.textContent = `${label} — shared price per area`;
+    const priceCaption = document.createElement("span");
+    Object.assign(priceCaption.style, { display: "block", fontSize: "12px", color: "#334155" });
+    const priceInput = document.createElement("input");
+    priceInput.type = "text";
+    priceInput.inputMode = "decimal";
+    priceInput.setAttribute("aria-label", `${label} price per area`);
+    Object.assign(priceInput.style, { display: "block", width: "100%", padding: "6px", boxSizing: "border-box", marginTop: "4px" });
+    sharedPrices[key] = { priceWrap, priceCaption, priceInput };
+    priceInput.addEventListener("input", () => {
+      const parsed = sleevePrintCleanPrice(priceInput.value);
+      priceErrors[key] = parsed.message;
+      if (parsed.valid) priceOverrides[key] = parsed.value;
+      refresh(priceInput);
+    });
+    priceWrap.append(priceHeading, priceCaption, priceInput);
+    dialog.append(priceWrap);
   }
   const validation = document.createElement("div");
   validation.setAttribute("role", "status");
@@ -631,21 +638,24 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
     const summary = sleevePrintSelectionSummary(selected, tabs, { value: priceOverrides.ink }, { value: priceOverrides.embroidery }, { value: priceOverrides.reverse });
     const used = { ink: summary.inkTabs.length, embroidery: summary.embroideryTabs.length, reverse: summary.reverseTabs.length };
     for (const choice of choices) {
-      const { include, category, checks, details, areaOptions, reverseHint, priceWrap, priceCaption, priceInput } = choice;
+      const { include, category, checks, details, areaOptions, reverseHint } = choice;
       details.style.setProperty("display", include.checked ? "block" : "none", "important");
       for (const [key, check] of Object.entries(checks)) { check.checked = category === key; check.disabled = submitting; }
-      areaOptions.style.setProperty("display", category && category !== "reverse" ? "block" : "none", "important");
+      areaOptions.style.setProperty("display", category && category !== "reverse" ? "grid" : "none", "important");
       reverseHint.style.setProperty("display", category === "reverse" ? "block" : "none", "important");
-      priceWrap.style.setProperty("display", category ? "block" : "none", "important");
-      const key = category === "reverse" ? "reverse" : choice.method.value;
-      const price = key === "reverse" ? summary.reversePrice : key === "ink" ? summary.inkPrice : summary.embroideryPrice;
-      priceCaption.textContent = key === "embroidery" ? "Price per area — shared across selected embroidery areas."
-        : `Price per area — calculated from ${summary.inkQuantity} selected ink-print garments; shared across selected ${key === "reverse" ? "reverse-print tabs" : "sleeve/side ink areas"}.`;
-      if (priceInput !== sourcePriceInput && !priceErrors[key]) priceInput.value = Number(price ?? (key === "embroidery" ? 15 : sleevePrintInkPrice(summary.inkQuantity))).toFixed(2);
-      priceInput.disabled = submitting;
       include.disabled = submitting;
       choice.method.disabled = submitting;
       choice.location.disabled = submitting;
+    }
+    for (const [key, { priceWrap, priceCaption, priceInput }] of Object.entries(sharedPrices)) {
+      priceWrap.style.setProperty("display", used[key] ? "block" : "none", "important");
+      const applicableTabs = key === "reverse" ? summary.reverseTabs : key === "ink" ? summary.inkTabs : summary.embroideryTabs;
+      const tabNumbers = applicableTabs.map((selection) => selection.tab_number).join(", ");
+      const price = key === "reverse" ? summary.reversePrice : key === "ink" ? summary.inkPrice : summary.embroideryPrice;
+      priceCaption.textContent = key === "embroidery" ? `Price per area — applies to tabs ${tabNumbers}.`
+        : `Price per area — calculated from ${summary.inkQuantity} selected ink-print garments; applies to tabs ${tabNumbers}.`;
+      if (priceInput !== sourcePriceInput && !priceErrors[key]) priceInput.value = Number(price ?? (key === "embroidery" ? 15 : sleevePrintInkPrice(summary.inkQuantity))).toFixed(2);
+      priceInput.disabled = submitting;
     }
     if (!selected.length) errors.push("Choose at least one print-area request.");
     for (const key of Object.keys(used)) if (used[key] && priceErrors[key]) errors.push(priceErrors[key]);
@@ -1253,12 +1263,13 @@ async function startStockIssueExtensionSelection(automation, triggerButton, auto
 
 function showOrderAutomationConfirmation(automation, triggerButton, autoProcessButton) {
   document.getElementById("crm-order-automation-confirmation")?.remove();
+  const asksFeedback = automation.key === "complicated_emb_to_hdd";
   const requiresReason = automation.requiresReason === true;
   const overlay = document.createElement("div");
   overlay.id = "crm-order-automation-confirmation";
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
-  overlay.setAttribute("aria-label", `Confirm ${automation.label}`);
+  overlay.setAttribute("aria-label", asksFeedback ? "Feedback required?" : `Confirm ${automation.label}`);
   Object.assign(overlay.style, {
     position: "fixed", zIndex: "2147483647", inset: "0", display: "flex", alignItems: "center", justifyContent: "center",
     padding: "20px", background: "rgba(15,23,42,.56)", font: "14px system-ui, sans-serif"
@@ -1269,10 +1280,12 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
     boxShadow: "0 20px 45px rgba(15,23,42,.34)"
   });
   const title = document.createElement("div");
-  title.textContent = `Queue ${automation.label}?`;
+  title.textContent = asksFeedback ? "Feedback required?" : `Queue ${automation.label}?`;
   Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "8px" });
   const explanation = document.createElement("p");
-  explanation.textContent = `This will queue ${automation.label} for the currently open order.`;
+  explanation.textContent = asksFeedback
+    ? "Yes: request embroidery feedback. No: use the existing EMB to HDD process."
+    : `This will queue ${automation.label} for the currently open order.`;
   Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
   dialog.append(title, explanation);
   let reasonInput = null;
@@ -1300,7 +1313,7 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
   cancel.textContent = "Back";
   const continueButton = document.createElement("button");
   continueButton.type = "button";
-  continueButton.textContent = "Queue task";
+  continueButton.textContent = asksFeedback ? "Yes" : "Queue task";
   Object.assign(cancel.style, { padding: "7px 11px", cursor: "pointer" });
   Object.assign(continueButton.style, {
     padding: "7px 11px", borderRadius: "3px", color: "#fff"
@@ -1319,11 +1332,25 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
     const reason = String(reasonInput?.value || "").trim();
     if (requiresReason && !reason) return;
     overlay.remove();
-    queueManualOrderAutomation(automation, triggerButton, autoProcessButton, reason);
+    const selectedAutomation = asksFeedback
+      ? { key: "complicated_emb_feedback", label: "Complicated EMB (Feedback)" }
+      : automation;
+    queueManualOrderAutomation(selectedAutomation, triggerButton, autoProcessButton, reason);
   });
   reasonInput?.addEventListener("input", refreshContinueButtonState);
   // Keep the confirmation open until the user clicks Back or queues the task.
   actions.append(cancel, continueButton);
+  if (asksFeedback) {
+    const no = document.createElement("button");
+    no.type = "button";
+    no.textContent = "No";
+    Object.assign(no.style, { padding: "7px 11px", cursor: "pointer" });
+    no.addEventListener("click", () => {
+      overlay.remove();
+      queueManualOrderAutomation(automation, triggerButton, autoProcessButton);
+    });
+    actions.append(no);
+  }
   dialog.append(actions);
   overlay.append(dialog);
   document.body.append(overlay);

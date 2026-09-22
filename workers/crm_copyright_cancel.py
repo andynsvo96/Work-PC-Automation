@@ -301,6 +301,20 @@ COMPLICATED_EMB_TO_HDD_PROCESS = CancelProcess(
     cancel_and_refund=False,
     fixed_sales_note="Complicated embroidery. Switched to HDD to keep the details. Emailed",
 )
+COMPLICATED_EMB_FEEDBACK_PROCESS = CancelProcess(
+    key="complicated_emb_feedback",
+    issue_type="Complicated EMB (Feedback)",
+    salesforce_template="[AUTO] Complicated Embroidery",
+    template_search="[AUTO] Complicated Embroidery",
+    sales_note_reason_label="",
+    sales_note_email_line="",
+    subject_markers=(),
+    body_markers=(),
+    display_name="Complicated EMB (Feedback)",
+    requires_reason=False,
+    cancel_and_refund=False,
+    fixed_sales_note="Complicated embroidery\nEmailed txted",
+)
 OVERSIZE_EMB_TO_HDD_PROCESS = CancelProcess(
     key="oversize_emb_to_hdd",
     issue_type=OVERSIZE_EMB_TO_HDD_ISSUE_TYPE,
@@ -379,6 +393,7 @@ CANCEL_PROCESSES = (
     OUTSIDE_LIMIT_CANCEL_PROCESS,
     UNRESPONSIVE_CANCEL_PROCESS,
     COMPLICATED_EMB_TO_HDD_PROCESS,
+    COMPLICATED_EMB_FEEDBACK_PROCESS,
     OVERSIZE_EMB_TO_HDD_PROCESS,
     COPYRIGHT_REACHOUT_PROCESS,
     COPYRIGHT_REMOVAL_PROCESS,
@@ -7579,7 +7594,7 @@ def _click_order_status_apply(driver):
     )
 
 
-def _apply_order_status(driver, status_text, dry_run=False):
+def _apply_order_status(driver, status_text, dry_run=False, search_text=None):
     status_text = _clean_text(status_text)
     if _order_status_already_applied(driver, status_text):
         return {
@@ -7633,7 +7648,7 @@ def _apply_order_status(driver, status_text, dry_run=False):
         statusInput.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true, key: 'ArrowDown'}));
         return {success: true, typed: true};
         """,
-        status_text,
+        search_text or status_text,
     )
     if not isinstance(result, dict) or not result.get("success"):
         raise CopyrightCancelError((result or {}).get("message") or f"Could not type {status_text} status.")
@@ -9002,6 +9017,16 @@ def process_single_order(
                 reason=reason,
                 login_wait_seconds=login_wait_seconds,
             )
+            if process.key == COMPLICATED_EMB_FEEDBACK_PROCESS.key:
+                # Apply the issue only after the shared email helper reports a successful send.
+                if not dry_run and not salesforce.get("sent"):
+                    raise CopyrightCancelError("Complicated EMB feedback email was not sent.")
+                driver.switch_to.window(crm_handle)
+                _activate_crm_context(driver)
+                _wait_for_order_scope(driver, order_id=order_id)
+                crm_action["order_status"] = _apply_order_status(
+                    driver, "issue - design / placement", dry_run=dry_run, search_text="design"
+                )
             rush_order_slack = {
                 "sent": False,
                 "eligible": False,
