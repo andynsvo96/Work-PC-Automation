@@ -426,6 +426,36 @@
           "sanmar_color_id": "True Navy / White"
         }
       ]
+    },
+    {
+      "crm_product_id": "DM476",
+      "sanmar_product_id": "DM476",
+      "colors": [
+        {
+          "crm_color_id": "Black/Hth Char",
+          "sanmar_color_id": "Black/ Heathered Charcoal"
+        },
+        {
+          "crm_color_id": "Hth Red/Hth Ch",
+          "sanmar_color_id": "Heathered Red/ Heathered Charcoal"
+        },
+        {
+          "crm_color_id": "Hth TrRy/HeCha",
+          "sanmar_color_id": "Heathered True Royal/ Heathered Charcoal"
+        },
+        {
+          "crm_color_id": "Hth Watr/He Ch",
+          "sanmar_color_id": "Heathered Watermelon/ Heathered Charcoal"
+        },
+        {
+          "crm_color_id": "White/Black",
+          "sanmar_color_id": "White/ Black"
+        },
+        {
+          "crm_color_id": "White/ Heather True Navy",
+          "sanmar_color_id": "White/ Heathered True Navy"
+        }
+      ]
     }
   ]
 }
