@@ -1037,7 +1037,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.value = String(index);
-    checkbox.checked = isSuggestion && products.length === 1;
+    checkbox.checked = products.length === 1;
     checkbox.setAttribute("aria-label", `Select ${product.style} in ${product.color}`);
     checkCell.append(checkbox);
     const styleCell = document.createElement("td");
@@ -1072,6 +1072,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
           const sizeCheckbox = document.createElement("input");
           sizeCheckbox.type = "checkbox";
           sizeCheckbox.value = size;
+          sizeCheckbox.checked = checkbox.checked && sizes.length === 1;
           sizeCheckbox.id = `crm-stock-issue-size-${index}-${sizeIndex}`;
           sizeCheckbox.setAttribute("aria-label", `Select ${size} for ${product.style} in ${product.color}`);
           label.htmlFor = sizeCheckbox.id;
@@ -1092,6 +1093,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
       checkbox.addEventListener("change", () => {
         sizeRow.hidden = !checkbox.checked;
         if (!checkbox.checked) sizeChoices.forEach((choice) => { choice.checked = false; });
+        else if (sizeChoices.length === 1) sizeChoices[0].checked = true;
       });
     }
   });
