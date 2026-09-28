@@ -341,6 +341,26 @@ def _order_scope(driver, script, *args):
     return driver.execute_script(ORDER_SCOPE_BOOTSTRAP + "\n" + ANGULAR_APPLY_JS + "\n" + script, *args)
 
 
+def _order_has_screenprinting(driver):
+    return _order_scope(driver, r"""
+        let describeMethod = null;
+        for (let scope = s; scope; scope = scope.$parent) {
+          if (typeof scope.setPrintMethodDescription === 'function') {
+            describeMethod = scope.setPrintMethodDescription.bind(scope);
+            break;
+          }
+        }
+        return (r.designs || []).filter(d => d && d.crudAction !== 'd').some(d =>
+          (d.printAreas || []).filter(a => a && a.crudAction !== 'd').some(a => {
+            let method = a.printMethodDescription || a.methodDescription ||
+              (a.printMethod || {}).description || (a.printMethodTemplate || {}).description;
+            if (!method && describeMethod) method = describeMethod(a);
+            return /^screenprint(?:ing)?$/i.test(String(method || '').replace(/[\s_-]+/g, ''));
+          })
+        );
+    """) is True
+
+
 def _is_login_page(driver):
     body_text = _clean_text(driver.execute_script("return document.body ? document.body.innerText : '';")).lower()
     current_url = str(driver.current_url or "").lower()
@@ -2626,6 +2646,7 @@ def run_product_separator_order(
 
     driver = None
     profile = None
+    report = {}
     try:
         driver, profile = _build_driver(
             visible=visible,
@@ -2766,6 +2787,8 @@ def run_product_separator_order(
             )
             return 0
 
+        # Capture the source print method before separation changes the designs.
+        report["screenprinting_warning"] = _order_has_screenprinting(driver)
         live = _apply_live_split(driver, plan)
         report["live"] = live
         verification, remaining_split_tabs = _verify_split_persisted_after_save(
@@ -3153,6 +3176,7 @@ def run_product_separator_order(
             dry_run=bool(dry_run),
             target_order_id=resolved_order_id,
             order_url=target_url,
+            report=report,
             error_type=type(err).__name__,
             duration_seconds=round(time.monotonic() - started, 2),
         )

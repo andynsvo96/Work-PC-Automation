@@ -6190,6 +6190,7 @@ def _normalize_crm_processing_step_results(items):
                 "message": str(item.get("message") or ""),
                 "errors": _normalize_crm_processing_error_details(item.get("errors")),
                 "split_orders": _normalize_crm_auto_split_orders(item) if step_key == "auto_splitter" else [],
+                "screenprinting_orders": _normalize_crm_auto_split_orders({"split_orders": item.get("screenprinting_orders")}) if step_key == "product_separator" else [],
             }
         )
         if (not cleaned[-1]["success"] or cleaned[-1]["error_count"] > 0) and not cleaned[-1]["errors"]:
@@ -7787,6 +7788,7 @@ def _build_crm_product_separator_order_results(payload):
             "manual_review_required": manual_review,
             "custom_names_and_numbers_present": bool(item.get("custom_names_and_numbers_present")),
             "custom_names_and_numbers_tabs": item.get("custom_names_and_numbers_tabs") or [],
+            "screenprinting_warning": bool(item.get("screenprinting_warning") or (item.get("report") or {}).get("screenprinting_warning")),
         }
         stock_ordered_status = _product_separator_stock_ordered_status(item)
         if stock_ordered_status:
@@ -10973,6 +10975,7 @@ def _run_crm_processing_retry_step(step_key, processing_filter, order_ids, proce
     normalized_order_ids = _extract_crm_order_ids({"order_ids": order_ids})
     order_results = []
     split_orders = []
+    screenprinting_orders = []
     started_at = time.monotonic()
     for order_id in normalized_order_ids:
         try:
@@ -11005,6 +11008,7 @@ def _run_crm_processing_retry_step(step_key, processing_filter, order_ids, proce
             }
         )
         split_orders.extend(result.get("split_orders") if isinstance(result.get("split_orders"), list) else [])
+        screenprinting_orders.extend(result.get("screenprinting_orders") if isinstance(result.get("screenprinting_orders"), list) else [])
         if _automation_stop_is_blocking():
             break
     errors = [error for row in order_results for error in row.get("errors", [])]
@@ -11025,6 +11029,7 @@ def _run_crm_processing_retry_step(step_key, processing_filter, order_ids, proce
         "message": message,
         "errors": errors,
         "split_orders": split_orders,
+        "screenprinting_orders": screenprinting_orders,
         "retry_order_ids": normalized_order_ids,
     }
 
@@ -11150,6 +11155,9 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
             "stage_timings": _normalize_stage_timings(payload.get("stage_timings") if isinstance(payload, dict) else []),
             "message": str(message),
             "errors": _crm_processing_step_error_details(step_key, payload, ok, message),
+            "screenprinting_orders": _normalize_crm_auto_split_orders({
+                "split_orders": [row for row in _build_crm_product_separator_order_results(payload) if row.get("screenprinting_warning")],
+            }),
         }
 
     if step_key == "auto_splitter":

@@ -811,11 +811,11 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
 <div id='crmAutoSplitReviewModal' class='modal-backdrop' role='presentation' aria-hidden='true'>
   <div class='modal auto-split-review-modal' role='alertdialog' aria-modal='true' aria-labelledby='crmAutoSplitReviewTitle' aria-describedby='crmAutoSplitReviewMessage'>
     <div class='modal-title-row'>
-      <h2 id='crmAutoSplitReviewTitle'>Automatically Split Orders — Review Required</h2>
+      <h2 id='crmAutoSplitReviewTitle'>Automation Warnings — Review Required</h2>
     </div>
-    <p id='crmAutoSplitReviewMessage'>Auto Splitter created the following CRM orders. Open and check every order, then acknowledge this message.</p>
+    <p id='crmAutoSplitReviewMessage'>Open and check every order below, then acknowledge this message.</p>
     <div class='auto-split-review-run' id='crmAutoSplitReviewRun'></div>
-    <ul class='auto-split-review-list' id='crmAutoSplitReviewList'></ul>
+    <div id='crmAutoSplitReviewList'></div>
     <div class='modal-actions'>
       <span class='muted'>This message stays pending until acknowledged.</span>
       <button id='crmAutoSplitReviewAcknowledgeBtn' type='button' onclick='acknowledgeCrmAutoSplitReview()'>Acknowledge</button>
@@ -6723,29 +6723,40 @@ function crmAutoSplitReviewRuns(payload) {
     const timestamp = String(entry.timestamp || '').trim();
     const stepResults = Array.isArray(entry.step_results) ? entry.step_results : [];
     const splitterResult = stepResults.find((result) => result && result.key === 'auto_splitter');
-    if (!timestamp || !splitterResult) continue;
-    const rawOrders = Array.isArray(splitterResult.split_orders) ? splitterResult.split_orders : [];
-    const orders = [];
-    const seenOrderIds = new Set();
-    for (const rawOrder of rawOrders) {
-      const orderId = String(rawOrder && rawOrder.order_id || '').trim();
-      if (!/^\d{7}$/.test(orderId) || seenOrderIds.has(orderId)) continue;
-      seenOrderIds.add(orderId);
-      let orderUrl = String(rawOrder && rawOrder.order_url || '').trim();
-      try {
-        const parsed = new URL(orderUrl);
-        if (!['http:', 'https:'].includes(parsed.protocol)) orderUrl = '';
-      } catch (_) {
-        orderUrl = '';
+    const separatorResult = stepResults.find((result) => result && result.key === 'product_separator');
+    if (!timestamp) continue;
+    const sections = [];
+    for (const [key, title, message, rawOrders] of [
+      ['separator', 'Auto Separator', 'Screenprinting was detected on the following orders during separation. Review the separated designs.', separatorResult?.screenprinting_orders],
+      ['splitter', 'Auto Splitter', 'Auto Splitter created the following CRM orders. Review every created order.', splitterResult?.split_orders],
+    ]) {
+      const orders = [];
+      const seenOrderIds = new Set();
+      for (const rawOrder of (Array.isArray(rawOrders) ? rawOrders : [])) {
+        const orderId = String(rawOrder && rawOrder.order_id || '').trim();
+        if (!/^\d{7}$/.test(orderId) || seenOrderIds.has(orderId)) continue;
+        seenOrderIds.add(orderId);
+        let orderUrl = String(rawOrder && rawOrder.order_url || '').trim();
+        try {
+          const parsed = new URL(orderUrl);
+          if (!['http:', 'https:'].includes(parsed.protocol)) orderUrl = '';
+        } catch (_) {
+          orderUrl = '';
+        }
+        if (!orderUrl) orderUrl = `https://crm2.legacy.printfly.com/order/${orderId}`;
+        orders.push({ order_id: orderId, order_url: orderUrl });
       }
-      if (!orderUrl) orderUrl = `https://crm2.legacy.printfly.com/order/${orderId}`;
-      orders.push({ order_id: orderId, order_url: orderUrl });
+      if (orders.length) sections.push({ key, title, message, orders });
     }
+    const orders = sections.flatMap((section) => section.orders);
     if (orders.length === 0) continue;
-    const signature = crmAutoSplitReviewSignature(timestamp, orders);
+    // Keep existing splitter-only acknowledgments valid.
+    const signature = sections.some((section) => section.key === 'separator')
+      ? `${timestamp}|${sections.map((section) => `${section.key}:${section.orders.map((order) => order.order_id).sort().join(',')}`).join('|')}`
+      : crmAutoSplitReviewSignature(timestamp, orders);
     if (!signature || seen.has(signature)) continue;
     seen.add(signature);
-    runs.push({ timestamp, orders, signature });
+    runs.push({ timestamp, orders, sections, signature });
   }
   return runs.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
@@ -6761,18 +6772,30 @@ function maybeShowCrmAutoSplitReview(payload) {
   if (!pendingRun) return;
 
   list.innerHTML = '';
-  for (const order of pendingRun.orders) {
-    const item = document.createElement('li');
-    const link = document.createElement('a');
-    link.href = order.order_url;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.textContent = `CRM Order ${order.order_id}`;
-    link.title = `Open CRM order ${order.order_id}`;
-    item.appendChild(link);
-    list.appendChild(item);
+  document.getElementById('crmAutoSplitReviewTitle').textContent = 'Automation Warnings — Review Required';
+  for (const section of pendingRun.sections) {
+    const heading = document.createElement('h3');
+    heading.textContent = section.title;
+    const message = document.createElement('p');
+    message.textContent = section.message;
+    const sectionList = document.createElement('ul');
+    sectionList.className = 'auto-split-review-list';
+    list.appendChild(heading);
+    list.appendChild(message);
+    list.appendChild(sectionList);
+    for (const order of section.orders) {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      link.href = order.order_url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = `CRM Order ${order.order_id}`;
+      link.title = `Open CRM order ${order.order_id}`;
+      item.appendChild(link);
+      sectionList.appendChild(item);
+    }
   }
-  runText.textContent = `Automate Processing run: ${fmtDateTime(pendingRun.timestamp)} | ${pendingRun.orders.length} split order${pendingRun.orders.length === 1 ? '' : 's'}`;
+  runText.textContent = `Automate Processing run: ${fmtDateTime(pendingRun.timestamp)}`;
   modal.dataset.signature = pendingRun.signature;
   modal.classList.add('active');
   modal.setAttribute('aria-hidden', 'false');
