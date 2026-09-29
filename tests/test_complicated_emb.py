@@ -17,6 +17,26 @@ DESIGNS = [{"tab_number": 2, "design_name": "Schuti Hats"}]
 
 
 class ComplicatedEmbTests(unittest.TestCase):
+    def test_both_templates_replace_one_two_and_three_design_names(self):
+        for process in (worker.COMPLICATED_EMB_FEEDBACK_PROCESS, worker.COMPLICATED_EMB_TO_HDD_PROCESS):
+            for names, expected in ((["Hat A"], "Hat A"), (["Hat A", "Hat B"], "Hat A and Hat B"),
+                                    (["Hat A", "Hat B", "Hat C"], "Hat A, Hat B, and Hat C")):
+                with self.subTest(process=process.key, names=names):
+                    designs = [{"tab_number": index + 1, "design_name": name} for index, name in enumerate(names)]
+                    self.assertEqual(complicated_emb.design_text(designs), expected)
+                    body = " ".join(process.body_markers) + " Please review [DESIGN]."
+                    before = {"subject": "Order 1234567 embroidery", "body": body}
+                    after = {**before, "body": body.replace("[DESIGN]", expected)}
+                    with mock.patch.object(worker, "_insert_cancel_template"), \
+                         mock.patch.object(worker, "_read_salesforce_email_state", side_effect=[before, before, after]), \
+                         mock.patch.object(complicated_emb, "replace_design_placeholder", return_value=1) as replace, \
+                         mock.patch.object(worker.time, "sleep"):
+                        result = worker._fill_salesforce_email_from_salesforce_template(
+                            mock.sentinel.driver, "1234567", process=process, designs=designs,
+                        )
+                    replace.assert_called_once_with(mock.sentinel.driver, expected)
+                    self.assertEqual(result["state"]["body"], after["body"])
+
     def test_feedback_template_replaces_design_and_subject(self):
         process = worker.COMPLICATED_EMB_FEEDBACK_PROCESS
         body = "Please review the embroidery options. Keep all formatting and links."
