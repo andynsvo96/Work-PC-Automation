@@ -10559,6 +10559,7 @@ def _execute_crm_mass_emailer_worker(
     delete_sheet_row=False,
     sheet_row_number=None,
     parallel_workers=1,
+    designs=None,
 ):
     normalized_action = _normalize_crm_mass_emailer_action(action)
     args = ["--action", normalized_action]
@@ -10571,6 +10572,8 @@ def _execute_crm_mass_emailer_worker(
                 "action": normalized_action,
             }
         args.extend(["--order-id", normalized_order_id])
+        if designs is not None:
+            args.extend(["--emb-designs-json", json.dumps(designs)])
         if process:
             args.extend(["--process", str(process).strip()])
         if str(reason or "").strip():
@@ -10750,7 +10753,7 @@ CRM_EXTENSION_SHEET_SCANNER_ORDER_AUTOMATIONS = {
 }
 
 
-def run_crm_sheet_scanner_order_queued(order_id, process, reason="", delete_sheet_row=False, sheet_row_number=None):
+def run_crm_sheet_scanner_order_queued(order_id, process, reason="", delete_sheet_row=False, sheet_row_number=None, designs=None):
     """Run one confirmed Sheets Scanner process for one CRM order.
 
     This is separate from the report-wide scanner queue: extension controls
@@ -10778,6 +10781,7 @@ def run_crm_sheet_scanner_order_queued(order_id, process, reason="", delete_shee
             reason=clean_reason,
             delete_sheet_row=bool(delete_sheet_row),
             sheet_row_number=sheet_row_number,
+            **({"designs": designs} if designs is not None else {}),
         )
         _persist_crm_mass_emailer_run_result(ok, message, payload, dry_run=False)
         return ok, message
@@ -12597,6 +12601,25 @@ for _process_key, _process_automation in CRM_EXTENSION_SHEET_SCANNER_ORDER_AUTOM
             order_id, process_key, reason
         ),
     }
+
+
+def _normalize_complicated_emb_request(data):
+    from workers.complicated_emb import normalize_designs
+    return {"designs": normalize_designs((data or {}).get("designs"))}
+
+
+for _emb_key in ("complicated_emb_to_hdd", "complicated_emb_feedback"):
+    CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS[_emb_key].update({
+        "structured_request": True,
+        "request_validator": _normalize_complicated_emb_request,
+        "task_arguments": lambda order_id, reason="", request_data=None, process_key=_emb_key: {
+            "order_id": order_id, "process": process_key, "reason": str(reason or "").strip(),
+            "designs": (request_data or {}).get("designs"),
+        },
+        "runner": lambda order_id, reason="", request_data=None, progress_callback=None, process_key=_emb_key: run_crm_sheet_scanner_order_queued(
+            order_id, process_key, reason, designs=(request_data or {}).get("designs"),
+        ),
+    })
 
 
 def run_crm_extension_manual_order_run_queued(order_id, automation_key, reason="", request_data=None):

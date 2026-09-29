@@ -121,6 +121,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         colors: message.colors,
         sizes: message.sizes,
         products: message.products,
+        designs: message.designs,
         sleeves: message.sleeves,
         ink_price: message.ink_price,
         embroidery_price: message.embroidery_price,

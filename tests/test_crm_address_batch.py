@@ -615,6 +615,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         for email_only in (False, True):
             with self.subTest(email_only=email_only), ExitStack() as stack:
                 driver = mock.Mock(current_window_handle="crm-tab")
+                stack.enter_context(mock.patch("complicated_emb.resolve_designs", return_value=[{"tab_number": 1, "design_name": "Hat"}]))
                 stack.enter_context(mock.patch.object(crm_copyright_cancel, "_open_driver", return_value=driver))
                 for name in (
                     "safe_get_with_partial_load", "_login_to_crm_if_needed",
@@ -1451,6 +1452,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             order_id="1234567",
             order_url="",
             reason="Copyrighted logo",
+            emb_designs_json="",
             dry_run=False,
             process="copyright_reachout",
             visible=False,
@@ -2523,12 +2525,13 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         mock_no_cancel_action.return_value = {"sales_note": {"updated": True}}
         mock_salesforce_email.return_value = {"sent": False, "dry_run": True}
 
-        details = crm_copyright_cancel.process_single_order(
-            "1234567",
-            "",
-            dry_run=True,
-            process=crm_copyright_cancel.COMPLICATED_EMB_TO_HDD_PROCESS,
-        )
+        with mock.patch("complicated_emb.resolve_designs", return_value=[{"tab_number": 1, "design_name": "Hat"}]):
+            details = crm_copyright_cancel.process_single_order(
+                "1234567",
+                "",
+                dry_run=True,
+                process=crm_copyright_cancel.COMPLICATED_EMB_TO_HDD_PROCESS,
+            )
 
         self.assertEqual(details["process"], "complicated_emb_to_hdd")
         mock_no_cancel_action.assert_called_once()

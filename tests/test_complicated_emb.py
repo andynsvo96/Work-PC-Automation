@@ -1,5 +1,6 @@
 """Complicated EMB feedback routing and ordered CRM actions (no live requests)."""
 import sys
+import json
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
@@ -10,28 +11,34 @@ sys.path.insert(0, str(ROOT / "workers"))
 sys.path.insert(0, str(ROOT))
 import crm_copyright_cancel as worker
 import server
+import complicated_emb
+
+DESIGNS = [{"tab_number": 2, "design_name": "Schuti Hats"}]
 
 
 class ComplicatedEmbTests(unittest.TestCase):
-    def test_feedback_template_changes_subject_only(self):
+    def test_feedback_template_replaces_design_and_subject(self):
         process = worker.COMPLICATED_EMB_FEEDBACK_PROCESS
         body = "Please review the embroidery options. Keep all formatting and links."
-        before = {"subject": "Order [Order-Number] embroidery", "body": body}
-        after = {"subject": "Order 1234567 embroidery", "body": body}
+        before = {"subject": "Order [Order-Number] embroidery", "body": body + " [DESIGN]"}
+        after = {"subject": "Order 1234567 embroidery", "body": body + " [DESIGN]"}
+        replaced = {"subject": after["subject"], "body": body + " Schuti Hats"}
         with mock.patch.object(worker, "_insert_cancel_template") as insert, \
-             mock.patch.object(worker, "_read_salesforce_email_state", side_effect=[before, after]), \
+             mock.patch.object(worker, "_read_salesforce_email_state", side_effect=[before, after, replaced]), \
+             mock.patch.object(complicated_emb, "replace_design_placeholder", return_value=1) as design_replace, \
              mock.patch.object(worker, "_replace_subject_order_number") as subject, \
              mock.patch.object(worker, "_replace_salesforce_body_placeholder_with_reason") as replace_body, \
              mock.patch.object(worker, "_fill_salesforce_email_from_local_template") as local_fill, \
              mock.patch.object(worker.time, "sleep"):
             result = worker._fill_salesforce_email_from_salesforce_template(
-                mock.sentinel.driver, "1234567", process=process,
+                mock.sentinel.driver, "1234567", process=process, designs=DESIGNS,
             )
         insert.assert_called_once_with(mock.sentinel.driver, process)
         subject.assert_called_once_with(mock.sentinel.driver, "1234567")
         replace_body.assert_not_called()
         local_fill.assert_not_called()
-        self.assertEqual(result["state"]["body"], body)
+        design_replace.assert_called_once_with(mock.sentinel.driver, "Schuti Hats")
+        self.assertEqual(result["state"]["body"], replaced["body"])
         self.assertEqual(result["template"], "[AUTO] Complicated Embroidery")
         self.assertEqual(worker._cancel_sales_note("", process), "Complicated embroidery\nEmailed txted")
         self.assertTrue(worker._missing_body_markers("", process))
@@ -41,6 +48,7 @@ class ComplicatedEmbTests(unittest.TestCase):
             with self.subTest(email_result=email_result), ExitStack() as stack:
                 driver = mock.Mock(current_window_handle="crm-tab")
                 steps = []
+                stack.enter_context(mock.patch.object(complicated_emb, "resolve_designs", return_value=DESIGNS))
                 for name in ("safe_get_with_partial_load", "_login_to_crm_if_needed",
                              "_switch_to_crm_app_frame", "_wait_for_order_scope",
                              "safe_driver_quit", "safe_take_screenshot"):
@@ -97,14 +105,51 @@ class ComplicatedEmbTests(unittest.TestCase):
             with self.subTest(key=key), mock.patch.object(
                 server, "enqueue_automation", return_value=(True, "Queued", {"id": "emb-test"})
             ) as enqueue:
-                ok, _, _ = server.queue_crm_extension_manual_order_run("1234567", key)
+                ok, _, _ = server.queue_crm_extension_manual_order_run("1234567", key, request_payload={"designs": DESIGNS})
                 self.assertTrue(ok)
                 self.assertEqual(enqueue.call_args.kwargs["task_arguments"], {
                     "order_id": "1234567", "process": key, "reason": "",
+                    "designs": DESIGNS,
                 })
                 with mock.patch.object(server, "run_crm_sheet_scanner_order_queued", return_value=(True, "Done")) as run:
-                    server.CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS[key]["runner"]("1234567", "")
-                    run.assert_called_once_with("1234567", key, "")
+                    server.CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS[key]["runner"]("1234567", "", {"designs": DESIGNS})
+                    run.assert_called_once_with("1234567", key, "", designs=DESIGNS)
+
+    def test_invalid_selection_and_unresolved_design_are_rejected(self):
+        for designs in (None, [], [{"tab_number": True, "design_name": "Hat"}], DESIGNS * 2):
+            with self.subTest(designs=designs), self.assertRaises(ValueError):
+                complicated_emb.normalize_designs(designs)
+        with self.assertRaises(worker.CopyrightCancelError):
+            worker._validate_no_unresolved_email_placeholders("Order 1234567", "Review [DESIGN]")
+
+    def test_names_are_ordered_and_joined(self):
+        self.assertEqual(complicated_emb.design_text([
+            {"tab_number": 3, "design_name": "Third"},
+            {"tab_number": 1, "design_name": "First & <Hat>"},
+            {"tab_number": 2, "design_name": "Second"},
+        ]), "First & <Hat>, Second, and Third")
+
+    def test_worker_rejects_changed_method_or_name(self):
+        import crm_auto_splitter as splitter
+        driver = mock.Mock()
+        for eligible, name in ((False, "Schuti Hats"), (True, "Different Hat")):
+            driver.execute_script.return_value = [{"tab_number": 2, "eligible": eligible}]
+            with mock.patch.object(splitter, "_click_design_tab", return_value=True), \
+                 mock.patch.object(splitter, "_scan_current_design_detail", return_value={"design_name": name}), \
+                 mock.patch.object(complicated_emb.time, "sleep"), self.assertRaises(ValueError):
+                complicated_emb.resolve_designs(driver, DESIGNS)
+
+    def test_selection_reaches_worker_command_and_order_processing(self):
+        with mock.patch.object(server, "_run_script", return_value=(True, "Done", {})) as run:
+            server._execute_crm_mass_emailer_worker(action="process_order", order_id="1234567", process="complicated_emb_feedback", designs=DESIGNS)
+        args = run.call_args.args[1]
+        self.assertEqual(json.loads(args[args.index("--emb-designs-json") + 1]), DESIGNS)
+        args = mock.Mock(order_id="1234567", order_url="", reason="", process="complicated_emb_feedback",
+                         emb_designs_json=json.dumps(DESIGNS), dry_run=True, delete_sheet_row=False)
+        with mock.patch.object(worker, "process_single_order", return_value={"order_id": "1234567"}) as process, \
+             mock.patch.object(worker, "_write_result"):
+            worker.run_process_order(args)
+        self.assertEqual(process.call_args.kwargs["designs"], DESIGNS)
 
 
 if __name__ == "__main__":

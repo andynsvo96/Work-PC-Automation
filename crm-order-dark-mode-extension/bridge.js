@@ -92,6 +92,7 @@ export async function startLocalManualOrderProcessing(orderId, automation, reaso
       colors: structuredData.colors,
       sizes: structuredData.sizes,
       products: structuredData.products,
+      designs: structuredData.designs,
       sleeves: structuredData.sleeves,
       ink_price: structuredData.ink_price,
       embroidery_price: structuredData.embroidery_price,

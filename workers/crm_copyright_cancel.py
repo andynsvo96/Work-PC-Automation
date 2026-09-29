@@ -1094,6 +1094,7 @@ def _unresolved_placeholder_labels(text):
     value = str(text or "")
     labels = []
     checks = (
+        (re.compile(r"\[\s*DESIGN\s*\]", re.IGNORECASE), "[DESIGN]"),
         (ORDER_NUMBER_PLACEHOLDER_RE, ORDER_NUMBER_PLACEHOLDER_LABEL),
         (REASON_PLACEHOLDER_RE, REASON_PLACEHOLDER_LABEL),
         (LEGACY_PLACEHOLDER_RE, "XXXXXX"),
@@ -5648,6 +5649,7 @@ def _fill_salesforce_email_from_salesforce_template(
     expected_body="",
     process=COPYRIGHT_CANCEL_PROCESS,
     reason="",
+    designs=None,
 ):
     try:
         _insert_cancel_template(driver, process)
@@ -5727,6 +5729,19 @@ def _fill_salesforce_email_from_salesforce_template(
     if missing:
         raise CopyrightCancelError(f"Salesforce template body is missing expected text: {', '.join(missing)}")
     body_replacement = None
+    if process.key in (COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key):
+        from complicated_emb import design_text, replace_design_placeholder
+        replacement = design_text(designs)
+        if re.search(r"\[\s*DESIGN\s*\]", body_text, re.IGNORECASE):
+            if not replace_design_placeholder(driver, replacement):
+                raise CopyrightCancelError("Could not replace [DESIGN] in the Salesforce email.")
+            state = _read_salesforce_email_state(driver)
+            updated_body = _clean_text(state.get("body", ""))
+            if replacement not in updated_body or re.search(r"\[\s*DESIGN\s*\]", updated_body, re.IGNORECASE):
+                raise CopyrightCancelError("Salesforce email design names could not be verified.")
+            body_replacement = {"placeholder": "[DESIGN]", "replacement": replacement, "state": state}
+        else:
+            raise CopyrightCancelError(f"{process.salesforce_template} template is missing [DESIGN].")
     if process.replace_body_placeholder_with_reason:
         body_replacement = _replace_salesforce_body_placeholder_with_reason(driver, reason, process=process)
         state = body_replacement.get("state") or _read_salesforce_email_state(driver)
@@ -6186,6 +6201,7 @@ def _prepare_and_maybe_send_salesforce_email(
     skip_from_selection=False,
     skip_ready_verify=False,
     contact=None,
+    designs=None,
 ):
     if " ".join(str((contact or {}).get("salesforce_label") or "").split()).casefold() == "salesforce contact":
         return {
@@ -6220,6 +6236,7 @@ def _prepare_and_maybe_send_salesforce_email(
                 order_id=order_id,
                 process=process,
                 reason=reason,
+                **({"designs": designs} if designs is not None else {}),
             )
             email_state = fill_result.get("state") or _read_salesforce_email_state(driver)
             subject = _clean_text(email_state.get("subject", ""))
@@ -8982,6 +8999,7 @@ def process_single_order(
     click_refund_button=True,
     keep_browser_open=False,
     keep_browser_open_on_error=False,
+    designs=None,
 ):
     process = _cancel_process_for_key(process) if isinstance(process, str) else process
     if process.key == AUTO_SPLITTER_PROCESS.key:
@@ -9012,6 +9030,9 @@ def process_single_order(
         _wait_for_order_scope(driver, order_id=order_id)
         crm_handle = driver.current_window_handle
         contact = _wait_for_crm_contact_info(driver, order_id=order_id)
+        if process.key in (COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key):
+            from complicated_emb import resolve_designs
+            designs = resolve_designs(driver, designs)
         if not process.cancel_and_refund:
             crm_action = _prepare_no_cancel_crm_action(
                 driver,
@@ -9025,6 +9046,7 @@ def process_single_order(
                 order_id,
                 contact["email"],
                 contact=contact,
+                **({"designs": designs} if designs is not None else {}),
                 dry_run=dry_run,
                 process=process,
                 reason=reason,
@@ -9512,6 +9534,7 @@ def run_process_order(args):
             click_refund_button=not args.skip_refund_click,
             keep_browser_open=args.keep_browser_open,
             keep_browser_open_on_error=args.keep_browser_open_on_error,
+            **({"designs": json.loads(args.emb_designs_json)} if getattr(args, "emb_designs_json", "") else {}),
         )
         cleared_sheet_row = None
         if delete_sheet_row and not args.dry_run:
@@ -10033,6 +10056,7 @@ def main(argv=None):
     parser.add_argument("--order-id", default="")
     parser.add_argument("--order-url", default="")
     parser.add_argument("--reason", default="", help="Required for full cancellation processing; written to CRM Sales Notes.")
+    parser.add_argument("--emb-designs-json", default="", help="Selected embroidery tabs and Design Names from the extension.")
     parser.add_argument("--process", choices=sorted(CANCEL_PROCESSES_BY_KEY), default=COPYRIGHT_CANCEL_PROCESS.key)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument(

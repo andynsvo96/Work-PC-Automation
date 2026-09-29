@@ -1268,6 +1268,64 @@ async function startStockIssueExtensionSelection(automation, triggerButton, auto
   }
 }
 
+function readComplicatedEmbMethods() {
+  return new Promise((resolve, reject) => {
+    const id = `${Date.now()}-${Math.random()}`;
+    const finish = (error, designs) => {
+      clearTimeout(timer);
+      document.removeEventListener('crm-emb-methods-response', receive);
+      if (error) reject(new Error(error)); else resolve(designs);
+    };
+    const receive = event => {
+      let result;
+      try { result = JSON.parse(event.detail); } catch (_) { return; }
+      if (result.id === id) finish(result.error, result.designs);
+    };
+    const timer = setTimeout(() => finish('Reload the CRM Order Assistant extension and refresh this order to scan embroidery designs.'), 5000);
+    document.addEventListener('crm-emb-methods-response', receive);
+    document.dispatchEvent(new CustomEvent('crm-emb-methods-request', { detail: id }));
+  });
+}
+
+async function scanComplicatedEmbDesigns(onProgress) {
+  const tabs = visibleStockIssueDesignTabs();
+  const original = activeStockIssueDesignTabNumber(tabs);
+  if (!tabs.length || original === null) throw new Error('Could not identify the order design tabs. Refresh the order and try again.');
+  const methods = await readComplicatedEmbMethods();
+  const found = [];
+  try {
+    for (const tab of tabs) {
+      onProgress(`Reading design tab ${tab.tabNumber} of ${tabs.length}...`);
+      clickStockIssueDesignTab(tab.tabNumber);
+      await stockIssueDelay(750);
+      let previous = '';
+      let name = '';
+      for (let attempt = 0; attempt < 30; attempt++) {
+        const text = document.body.innerText || '';
+        const match = text.match(/Design Name:\s*([^|\n\r]+)/i);
+        name = stockIssueCleanText(match?.[1]);
+        if (name && name === previous && activeStockIssueDesignTabNumber(visibleStockIssueDesignTabs()) === tab.tabNumber) break;
+        previous = name;
+        name = '';
+        await stockIssueDelay(200);
+      }
+      const metadata = methods.find(item => item.tab_number === tab.tabNumber);
+      if (!metadata || !metadata.methods.length || metadata.methods.some(method => !method)) {
+        throw new Error(`Could not determine the print method for tab ${tab.tabNumber}.`);
+      }
+      if (metadata.eligible) {
+        if (!name) throw new Error(`Could not read Design Name for embroidery tab ${tab.tabNumber}.`);
+        found.push({ tab_number: tab.tabNumber, design_name: name });
+      }
+    }
+  } finally {
+    clickStockIssueDesignTab(original);
+    await stockIssueDelay(750);
+  }
+  if (!found.length) throw new Error('No embroidery-only design tabs were found on this order.');
+  return found;
+}
+
 function showOrderAutomationConfirmation(automation, triggerButton, autoProcessButton) {
   document.getElementById("crm-order-automation-confirmation")?.remove();
   const asksFeedback = automation.key === "complicated_emb_to_hdd";
@@ -1295,6 +1353,15 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
     : `This will queue ${automation.label} for the currently open order.`;
   Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
   dialog.append(title, explanation);
+  let embroideryDesigns = null;
+  const selectedDesigns = () => Array.from(dialog.querySelectorAll('input[data-emb-tab]:checked'))
+    .map(input => embroideryDesigns.find(design => design.tab_number === Number(input.dataset.embTab)));
+  const designPicker = document.createElement('div');
+  if (asksFeedback) {
+    title.textContent = 'Complicated EMB';
+    designPicker.textContent = 'Scanning embroidery designs...';
+    dialog.append(designPicker);
+  }
   let reasonInput = null;
   if (requiresReason) {
     const label = document.createElement("label");
@@ -1326,8 +1393,11 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
     padding: "7px 11px", borderRadius: "3px", color: "#fff"
   });
   const refreshContinueButtonState = () => {
-    const enabled = !requiresReason || Boolean(String(reasonInput?.value || "").trim());
+    const enabled = (!requiresReason || Boolean(String(reasonInput?.value || "").trim())) &&
+      (!asksFeedback || (embroideryDesigns !== null && selectedDesigns().length > 0));
     continueButton.disabled = !enabled;
+    const noButton = actions.querySelector('[data-emb-no]');
+    if (noButton) noButton.disabled = !enabled;
     continueButton.setAttribute("aria-disabled", String(!enabled));
     continueButton.style.setProperty("background", enabled ? "#15803d" : "#9ca3af", "important");
     continueButton.style.setProperty("border", `1px solid ${enabled ? "#166534" : "#6b7280"}`, "important");
@@ -1338,11 +1408,13 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
   continueButton.addEventListener("click", () => {
     const reason = String(reasonInput?.value || "").trim();
     if (requiresReason && !reason) return;
+    if (asksFeedback && (!embroideryDesigns || !selectedDesigns().length)) return;
+    const designs = asksFeedback ? selectedDesigns() : null;
     overlay.remove();
     const selectedAutomation = asksFeedback
       ? { key: "complicated_emb_feedback", label: "Complicated EMB (Feedback)" }
       : automation;
-    queueManualOrderAutomation(selectedAutomation, triggerButton, autoProcessButton, reason);
+    queueManualOrderAutomation(selectedAutomation, triggerButton, autoProcessButton, reason, designs ? { designs } : {});
   });
   reasonInput?.addEventListener("input", refreshContinueButtonState);
   // Keep the confirmation open until the user clicks Back or queues the task.
@@ -1351,16 +1423,39 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
     const no = document.createElement("button");
     no.type = "button";
     no.textContent = "No";
+    no.dataset.embNo = 'true';
+    no.disabled = true;
     Object.assign(no.style, { padding: "7px 11px", cursor: "pointer" });
     no.addEventListener("click", () => {
+      if (!embroideryDesigns || !selectedDesigns().length) return;
+      const designs = selectedDesigns();
       overlay.remove();
-      queueManualOrderAutomation(automation, triggerButton, autoProcessButton);
+      queueManualOrderAutomation(automation, triggerButton, autoProcessButton, '', { designs });
     });
     actions.append(no);
   }
   dialog.append(actions);
   overlay.append(dialog);
   document.body.append(overlay);
+  if (asksFeedback) {
+    scanComplicatedEmbDesigns(message => { designPicker.textContent = message; }).then(designs => {
+      if (!overlay.isConnected) return;
+      embroideryDesigns = designs;
+      designPicker.textContent = 'Select the applicable embroidery design(s):';
+      for (const design of designs) {
+        const label = document.createElement('label');
+        Object.assign(label.style, { display: 'block', marginTop: '8px' });
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.dataset.embTab = String(design.tab_number);
+        input.checked = designs.length === 1;
+        input.addEventListener('change', refreshContinueButtonState);
+        label.append(input, document.createTextNode(` Tab ${design.tab_number}: ${design.design_name}`));
+        designPicker.append(label);
+      }
+      refreshContinueButtonState();
+    }).catch(error => { designPicker.textContent = error.message; });
+  }
   if (reasonInput) reasonInput.focus(); else continueButton.focus();
 }
 
