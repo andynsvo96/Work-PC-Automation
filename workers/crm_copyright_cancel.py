@@ -7477,8 +7477,12 @@ def _requires_salesforce_refund_case(payment):
 def _cancel_sales_note(reason, process=COPYRIGHT_CANCEL_PROCESS, designs=None):
     if designs is not None and process.key in (COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key):
         from complicated_emb import normalize_designs
-        tabs = ", ".join(str(row["tab_number"]) for row in normalize_designs(designs))
-        first_line = f"Tab {tabs} Complicated Embroidery"
+        numbers = [str(row["tab_number"]) for row in normalize_designs(designs)]
+        if len(numbers) == 1:
+            first_line = f"Tab {numbers[0]} is Complicated Embroidery"
+        else:
+            tabs = " and ".join(numbers) if len(numbers) == 2 else ", ".join(numbers[:-1]) + ", and " + numbers[-1]
+            first_line = f"Tabs {tabs} are Complicated Embroidery"
         if process.key == COMPLICATED_EMB_FEEDBACK_PROCESS.key:
             return f"{first_line}\nEmailed txted"
         return f"{first_line}\nSwitched to HDD to keep the details. Emailed"

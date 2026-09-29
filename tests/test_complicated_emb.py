@@ -116,9 +116,13 @@ class ComplicatedEmbTests(unittest.TestCase):
             (worker.COMPLICATED_EMB_FEEDBACK_PROCESS, "Emailed txted"),
             (worker.COMPLICATED_EMB_TO_HDD_PROCESS, "Switched to HDD to keep the details. Emailed"),
         ):
-            for designs, tabs in ((DESIGNS, "2"), (selections, "1, 3")):
-                with self.subTest(process=process.key, tabs=tabs):
-                    expected = f"Tab {tabs} Complicated Embroidery\n{tail}"
+            for designs, first_line in (
+                (DESIGNS, "Tab 2 is Complicated Embroidery"),
+                (selections, "Tabs 1 and 3 are Complicated Embroidery"),
+                (selections + DESIGNS, "Tabs 1, 2, and 3 are Complicated Embroidery"),
+            ):
+                with self.subTest(process=process.key, first_line=first_line):
+                    expected = f"{first_line}\n{tail}"
                     with mock.patch.object(worker, "_order_scope", return_value="Complicated embroidery\nEmailed txted"), \
                          mock.patch.object(worker, "_save_order_and_wait") as save:
                         result = worker._prepare_no_cancel_crm_action(
