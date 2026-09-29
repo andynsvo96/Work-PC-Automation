@@ -7474,7 +7474,14 @@ def _requires_salesforce_refund_case(payment):
     return _has_positive_payment_amount(payment) and not _is_stripe_payment(payment)
 
 
-def _cancel_sales_note(reason, process=COPYRIGHT_CANCEL_PROCESS):
+def _cancel_sales_note(reason, process=COPYRIGHT_CANCEL_PROCESS, designs=None):
+    if designs is not None and process.key in (COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key):
+        from complicated_emb import normalize_designs
+        tabs = ", ".join(str(row["tab_number"]) for row in normalize_designs(designs))
+        first_line = f"Tab {tabs} Complicated Embroidery"
+        if process.key == COMPLICATED_EMB_FEEDBACK_PROCESS.key:
+            return f"{first_line}\nEmailed txted"
+        return f"{first_line}\nSwitched to HDD to keep the details. Emailed"
     if process.fixed_sales_note:
         return process.fixed_sales_note
     clean_reason = _clean_text(reason)
@@ -7489,8 +7496,8 @@ def _copyright_cancel_sales_note(reason):
     return _cancel_sales_note(reason, COPYRIGHT_CANCEL_PROCESS)
 
 
-def _append_copyright_cancel_sales_note(driver, reason, dry_run=False, process=COPYRIGHT_CANCEL_PROCESS):
-    note = _cancel_sales_note(reason, process)
+def _append_copyright_cancel_sales_note(driver, reason, dry_run=False, process=COPYRIGHT_CANCEL_PROCESS, designs=None):
+    note = _cancel_sales_note(reason, process, designs=designs)
     existing = _order_scope(
         driver,
         """
@@ -7739,8 +7746,11 @@ def _apply_order_status(driver, status_text, dry_run=False, search_text=None):
     )
 
 
-def _prepare_no_cancel_crm_action(driver, reason, dry_run=False, process=COMPLICATED_EMB_TO_HDD_PROCESS):
-    sales_note_result = _append_copyright_cancel_sales_note(driver, reason, dry_run=dry_run, process=process)
+def _prepare_no_cancel_crm_action(driver, reason, dry_run=False, process=COMPLICATED_EMB_TO_HDD_PROCESS, designs=None):
+    sales_note_result = _append_copyright_cancel_sales_note(
+        driver, reason, dry_run=dry_run, process=process,
+        **({"designs": designs} if designs is not None else {}),
+    )
     status_result = None
     if process.key == COPYRIGHT_REACHOUT_PROCESS.key:
         status_result = _apply_order_status(driver, COPYRIGHT_REACHOUT_CRM_STATUS, dry_run=dry_run)
@@ -9039,6 +9049,7 @@ def process_single_order(
                 reason,
                 dry_run=dry_run,
                 process=process,
+                **({"designs": designs} if designs is not None else {}),
             )
             salesforce = _prepare_and_maybe_send_salesforce_email(
                 driver,

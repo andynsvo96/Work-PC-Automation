@@ -104,8 +104,36 @@ class ComplicatedEmbTests(unittest.TestCase):
                         worker.process_single_order("1234567", "", dry_run=False, process="complicated_emb_feedback")
                     self.assertEqual(steps, ["note", "email"])
                     apply.assert_not_called()
-                note.assert_called_once_with(driver, "", dry_run=False, process=worker.COMPLICATED_EMB_FEEDBACK_PROCESS)
+                note.assert_called_once_with(driver, "", dry_run=False, process=worker.COMPLICATED_EMB_FEEDBACK_PROCESS, designs=DESIGNS)
                 cancel.assert_not_called()
+
+    def test_both_sales_notes_identify_selected_tabs_and_keep_followup_text(self):
+        selections = [
+            {"tab_number": 3, "design_name": "Same Name"},
+            {"tab_number": 1, "design_name": "Same Name"},
+        ]
+        for process, tail in (
+            (worker.COMPLICATED_EMB_FEEDBACK_PROCESS, "Emailed txted"),
+            (worker.COMPLICATED_EMB_TO_HDD_PROCESS, "Switched to HDD to keep the details. Emailed"),
+        ):
+            for designs, tabs in ((DESIGNS, "2"), (selections, "1, 3")):
+                with self.subTest(process=process.key, tabs=tabs):
+                    expected = f"Tab {tabs} Complicated Embroidery\n{tail}"
+                    with mock.patch.object(worker, "_order_scope", return_value="Complicated embroidery\nEmailed txted"), \
+                         mock.patch.object(worker, "_save_order_and_wait") as save:
+                        result = worker._prepare_no_cancel_crm_action(
+                            mock.sentinel.driver, "", dry_run=True, process=process, designs=designs,
+                        )
+                    self.assertEqual(result["sales_note"]["note"], expected)
+                    self.assertFalse(result["sales_note"]["already_present"])
+                    save.assert_not_called()
+                    with mock.patch.object(worker, "_order_scope", return_value=expected), \
+                         mock.patch.object(worker, "_save_order_and_wait") as save:
+                        result = worker._append_copyright_cancel_sales_note(
+                            mock.sentinel.driver, "", process=process, designs=designs,
+                        )
+                    self.assertTrue(result["already_present"])
+                    save.assert_not_called()
 
     def test_design_status_search_selects_full_status_and_verifies_apply(self):
         driver = mock.Mock()
