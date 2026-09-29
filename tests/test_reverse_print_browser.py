@@ -95,6 +95,37 @@ window.queueManualOrderAutomation=async (...args)=>{window.queued=args[4];return
         self.assertEqual(payload["reverse_price"], 4.25)
         self.assertEqual(payload["sleeves"], [{"tab_number": 1, "quantity": 8, "reverse": "ink"}, {"tab_number": 2, "quantity": 2, "reverse": "ink"}])
 
+    def test_popup_extra_emb_uses_shared_embroidery_price_and_no_location_selector(self):
+        driver = self.driver
+        driver.get("about:blank")
+        content = (ROOT / "crm-order-dark-mode-extension/content.js").read_text(encoding="utf-8")
+        functions = content[content.index("const EXTRA_PRINT_AREAS"):content.index("function stockIssueDetectedSizes")]
+        driver.execute_script('''
+window.visibleStockIssueDesignTabs=()=>[{tabNumber:1,quantity:8},{tabNumber:2,quantity:2}];
+window.queueManualOrderAutomation=async (...args)=>{window.queued=args[4];return {success:true}};
+''' + functions + '\nshowSleevePrintsDialog({},null,null);')
+        def control(label):
+            return driver.find_element(By.CSS_SELECTOR, f'[aria-label="{label}"]')
+        for tab in (1, 2):
+            control(f"Include design tab {tab}").click()
+            control(f"Extra EMB Area for tab {tab}").click()
+            self.assertFalse(control(f"Print location for tab {tab}").is_displayed())
+            self.assertFalse(control(f"Print method for tab {tab}").is_displayed())
+        price = control("Embroidery price per area")
+        self.assertEqual(price.get_attribute("value"), "15.00")
+        self.assertIn("applies to tabs 1, 2", price.find_element(By.XPATH, "..").text)
+        self.assertFalse(control("Sleeve / side ink price per area").is_displayed())
+        price.send_keys(Keys.CONTROL, "a")
+        price.send_keys("12.50")
+        control("Sleeve Prints for tab 1").click()
+        self.assertFalse(control("Extra EMB Area for tab 1").is_selected())
+        control("Extra EMB Area for tab 1").click()
+        driver.find_element(By.XPATH, "//button[text()='Queue task']").click()
+        payload = driver.execute_script("return window.queued")
+        self.assertEqual(payload["embroidery_price"], 12.5)
+        self.assertEqual(payload["sleeves"], [{"tab_number": 1, "quantity": 8, "extra_emb": "embroidery"},
+                                             {"tab_number": 2, "quantity": 2, "extra_emb": "embroidery"}])
+
     def test_popup_shared_ink_price_quantity_changes_and_validation(self):
         from selenium.webdriver.support.ui import Select
         driver = self.driver

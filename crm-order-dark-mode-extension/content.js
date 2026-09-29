@@ -476,7 +476,7 @@ function sleevePrintCleanPrice(value) {
 
 function sleevePrintSelectionSummary(selections, tabs, customInkPrice, customEmbroideryPrice, customReversePrice = { value: null }) {
   const inkTabs = selections.filter((selection) => Object.keys(EXTRA_PRINT_AREAS).some((area) => selection[area] === "ink"));
-  const embroideryTabs = selections.filter((selection) => Object.keys(EXTRA_PRINT_AREAS).some((area) => selection[area] === "embroidery"));
+  const embroideryTabs = selections.filter((selection) => selection.extra_emb === "embroidery" || Object.keys(EXTRA_PRINT_AREAS).some((area) => selection[area] === "embroidery"));
   const reverseTabs = selections.filter((selection) => selection.reverse === "ink");
   const pricedTabs = selections.filter((selection) => selection.reverse === "ink" || Object.keys(EXTRA_PRINT_AREAS).some((area) => selection[area] === "ink"));
   const inkQuantity = pricedTabs.reduce((total, selection) => total + Number(tabs.get(selection.tab_number)?.quantity || 0), 0);
@@ -548,7 +548,7 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
     const categories = document.createElement("div");
     Object.assign(categories.style, { display: "flex", flexWrap: "wrap", gap: "12px", marginBottom: "12px" });
     const choice = { tab, include, details, category: "", checks: {} };
-    for (const [key, label] of [["sleeve", "Sleeve Prints"], ["reverse", "Reversible Prints"], ["side", "Side Prints"]]) {
+    for (const [key, label] of [["sleeve", "Sleeve Prints"], ["reverse", "Reversible Prints"], ["side", "Side Prints"], ["extra_emb", "Extra EMB Area"]]) {
       const wrap = document.createElement("label");
       const check = document.createElement("input");
       check.type = "checkbox";
@@ -567,7 +567,10 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
     const reverseHint = document.createElement("p");
     reverseHint.textContent = "Ink only. One charge per garment for a front or back area; two charges for both.";
     choice.reverseHint = reverseHint;
-    details.append(areaOptions, reverseHint);
+    const embroideryHint = document.createElement("p");
+    embroideryHint.textContent = "Sets up left and right chest embroidery. One additional-area charge per garment; the existing area is included. Existing chest areas are reused and pricing still applies.";
+    choice.embroideryHint = embroideryHint;
+    details.append(areaOptions, reverseHint, embroideryHint);
     include.addEventListener("change", () => {
       if (!include.checked) { choice.category = ""; choice.location.value = ""; }
       refresh();
@@ -624,12 +627,13 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
     for (const choice of choices) {
       const { tab, include, category, method, location } = choice;
       if (!include.checked) continue;
-      if (!category || (category !== "reverse" && !location.value)) {
+      if (!category || (!["reverse", "extra_emb"].includes(category) && !location.value)) {
         errors.push(`Complete the category and location for tab ${tab.tabNumber}.`);
         continue;
       }
       const selection = { tab_number: tab.tabNumber, quantity: tab.quantity };
       if (category === "reverse") selection.reverse = "ink";
+      else if (category === "extra_emb") selection.extra_emb = "embroidery";
       else for (const side of ["left", "right"]) {
         if (location.value === side || location.value === "both") selection[category === "side" ? `side_${side}` : side] = method.value;
       }
@@ -638,11 +642,12 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
     const summary = sleevePrintSelectionSummary(selected, tabs, { value: priceOverrides.ink }, { value: priceOverrides.embroidery }, { value: priceOverrides.reverse });
     const used = { ink: summary.inkTabs.length, embroidery: summary.embroideryTabs.length, reverse: summary.reverseTabs.length };
     for (const choice of choices) {
-      const { include, category, checks, details, areaOptions, reverseHint } = choice;
+      const { include, category, checks, details, areaOptions, reverseHint, embroideryHint } = choice;
       details.style.setProperty("display", include.checked ? "block" : "none", "important");
       for (const [key, check] of Object.entries(checks)) { check.checked = category === key; check.disabled = submitting; }
-      areaOptions.style.setProperty("display", category && category !== "reverse" ? "grid" : "none", "important");
+      areaOptions.style.setProperty("display", category && !["reverse", "extra_emb"].includes(category) ? "grid" : "none", "important");
       reverseHint.style.setProperty("display", category === "reverse" ? "block" : "none", "important");
+      embroideryHint.style.setProperty("display", category === "extra_emb" ? "block" : "none", "important");
       include.disabled = submitting;
       choice.method.disabled = submitting;
       choice.location.disabled = submitting;

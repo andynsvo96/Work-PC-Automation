@@ -40,7 +40,8 @@ def email_receipt_path(order_id, customer_email, plan, mutation):
             {**{k: item[k] for k in ("style", "vendor", "color", "description")}, "quantities": _quantities(item)}
             for item in source["items"]]})
     payload = {"order_id": str(order_id), "email": customer_email, "sources": sources,
-               "selections": [{k: selection.get(k) for k in ("tab_number", "quantity", "left", "right", "side_left", "side_right", "reverse")}
+               "selections": [{**{k: selection.get(k) for k in ("tab_number", "quantity", "left", "right", "side_left", "side_right", "reverse")},
+                               **({"extra_emb": selection["extra_emb"]} if selection.get("extra_emb") else {})}
                               for selection in plan["selections"]], "ink_price": plan["ink_price"],
                "reverse_price": plan["reverse_price"], "embroidery_price": plan["embroidery_price"]}
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()

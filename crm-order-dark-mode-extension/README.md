@@ -25,6 +25,14 @@ On retry, existing clones are inspected and completed fields are skipped. Ambigu
 
 After updating, restart the local Automation app, reload the extension, and refresh CRM order pages.
 
+### Extra EMB Area
+
+Choose **Extra EMB Area** inside **Manual Process → Extra Print Areas** for each desired tab. It uses the shared, editable **Embroidery** price, defaulting to **$15 per additional area per garment**. The existing area is included, so each selected tab receives one surcharge even if both chest areas already exist.
+
+Front is converted to Front-left chest, and Front-right chest is added. If either chest area already exists, it is reused and the missing side is added. Both chest methods are set to Embroidery. Other locations and existing artwork are retained. Unsupported or duplicate chest configurations stop for review.
+
+The sales note is `Additional embroidery area`, `$15.00 each` (or the custom price), and `emailed txted` on separate lines. The existing Additional Requests email uses `additional embroidery area`, the charge, and the invoice link. No text message is sent. Local receipts verify saved changes and prevent duplicate pricing/email on matching retries; an interrupted save with unverified prices stops for review.
+
 ## Salesforce tab reuse
 
 Clicking a Salesforce link in CRM navigates an existing Salesforce tab instead of opening a duplicate. The search includes every normal Chrome window in the current browser profile; if the reused tab is in another window, that window and tab are focused. If no Salesforce tab is open, the link opens normally in a new tab.

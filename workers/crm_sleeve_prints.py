@@ -9,10 +9,12 @@ Requests email.
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import json
 import os
 import re
 import sys
 import time
+import tempfile
 
 import config as config_module
 
@@ -133,13 +135,21 @@ def normalize_request(sleeves, ink_price=None, embroidery_price=None, reverse_pr
             any_ink = any_ink or method == INK
             any_embroidery = any_embroidery or method == EMBROIDERY
         reverse = raw.get("reverse", "")
+        extra_emb = raw.get("extra_emb", "")
+        if extra_emb not in ("", None, EMBROIDERY):
+            raise SleevePrintsError("Extra EMB Area supports embroidery only.")
+        if extra_emb:
+            if reverse or any(selection[area] for area in PRINT_AREAS):
+                raise SleevePrintsError("Choose only one extra-print category per Extra EMB Area tab.")
+            selection["extra_emb"] = EMBROIDERY
+            any_embroidery = True
         if reverse not in ("", None, "ink"):
             raise SleevePrintsError("Reverse printing supports ink only.")
         if reverse:
             if any(selection[area] for area in PRINT_AREAS):
                 raise SleevePrintsError("Choose only one extra-print category per reverse-print tab.")
             selection["reverse"] = INK
-        if not reverse and not any(selection[area] for area in PRINT_AREAS):
+        if not reverse and not extra_emb and not any(selection[area] for area in PRINT_AREAS):
             raise SleevePrintsError(f"Choose an ink-print or embroidery request for design tab {tab_number}.")
         normalized.append(selection)
     custom_reverse = _money(reverse_price, "Custom reverse-print price")
@@ -163,7 +173,8 @@ def _request_flags(sleeves):
     sleeves = sleeves or []
     return {
         "ink": any(selection.get(side) == INK for selection in sleeves for side in SLEEVE_SIDES),
-        "embroidery": any(selection.get(side) == EMBROIDERY for selection in sleeves for side in SLEEVE_SIDES),
+        "embroidery": any(selection.get("extra_emb") == EMBROIDERY for selection in sleeves)
+        or any(selection.get(side) == EMBROIDERY for selection in sleeves for side in SLEEVE_SIDES),
     }
 
 
@@ -176,6 +187,9 @@ def _area_family(sleeves, method=None):
 
 
 def _format_request_text(sleeves):
+    if any(x.get("extra_emb") for x in sleeves):
+        others = [x for x in sleeves if not x.get("extra_emb")]
+        return (_format_request_text(others) + " and " if others else "") + "additional embroidery area"
     if any(x.get("reverse") for x in sleeves):
         others = [x for x in sleeves if not x.get("reverse")]
         return (_format_request_text(others) + " and " if others else "") + "reverse prints"
@@ -188,6 +202,11 @@ def _format_request_text(sleeves):
 
 
 def _format_cost_text(sleeves, ink_price, embroidery_price, reverse_price=None):
+    if any(x.get("extra_emb") for x in sleeves):
+        others = [x for x in sleeves if not x.get("extra_emb")]
+        cost = _money_text(embroidery_price)
+        return (_format_cost_text(others, ink_price, embroidery_price, reverse_price)
+                + f" and {cost} for additional embroidery area" if others else cost)
     if any(x.get("reverse") for x in sleeves):
         others = [x for x in sleeves if not x.get("reverse")]
         cost = _money_text(reverse_price)
@@ -201,6 +220,10 @@ def _format_cost_text(sleeves, ink_price, embroidery_price, reverse_price=None):
 
 
 def format_sales_note(sleeves, ink_price, embroidery_price, reverse_price=None):
+    if any(x.get("extra_emb") for x in sleeves):
+        others = [x for x in sleeves if not x.get("extra_emb")]
+        note = f"Additional embroidery area\n{_money_text(embroidery_price)} each\nemailed txted"
+        return (format_sales_note(others, ink_price, embroidery_price, reverse_price) + "\n" if others else "") + note
     if any(x.get("reverse") for x in sleeves):
         others = [x for x in sleeves if not x.get("reverse")]
         note = f"Reverse prints\nPriced at {_money_text(reverse_price)} per area\nEmailed Txted"
@@ -334,7 +357,13 @@ def _build_live_plan(request, state):
                 raise SleevePrintsError(f"Tab {selection['tab_number']} has an unsupported reverse-print area; expected front/back.")
             selection["reverse_area_count"] = len(areas)
             selection["reverse_unit_price"] = (reverse_price * len(areas)).quantize(MONEY_QUANTUM)
-        surcharge = Decimal("0.00")
+        if selection.get("extra_emb"):
+            chest_names = [re.sub(r"[^a-z]", "", str(a.get("description") or "").lower())
+                           for a in selection["existing_areas"]]
+            relevant = [name for name in chest_names if name in {"front", "frontleftchest", "frontrightchest"}]
+            if not relevant or len(relevant) != len(set(relevant)) or len(relevant) > 2:
+                raise SleevePrintsError(f"Tab {selection['tab_number']} has an unsupported or duplicate chest-area configuration.")
+        surcharge = embroidery_price if selection.get("extra_emb") else Decimal("0.00")
         for side in SLEEVE_SIDES:
             if selection.get(side) == INK:
                 surcharge += ink_price
@@ -355,6 +384,19 @@ def _crm_note_exists(state, note):
     return str(note or "").casefold() in str((state or {}).get("sales_notes") or "").casefold()
 
 
+def _record_emb_mutation(path, mutation):
+    """Persist exact target prices before save so a retry never adds the fee twice."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".emb-", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(mutation, stream)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def _apply_crm_sleeve_changes(driver, plan, sales_note):
     payload = {
         "selections": [
@@ -364,6 +406,7 @@ def _apply_crm_sleeve_changes(driver, plan, sales_note):
                 "right": selection["right"],
                 "side_left": selection["side_left"],
                 "side_right": selection["side_right"],
+                "extra_emb": selection.get("extra_emb", ""),
                 "ink_method": selection["ink_method"],
                 "surcharge": f"{selection['surcharge']:.2f}",
             }
@@ -447,6 +490,32 @@ def _apply_crm_sleeve_changes(driver, plan, sales_note):
             const designIndex = Number(selection.tab_number) - 1;
             const design = (r.designs || [])[designIndex];
             if (!design) throw new Error(`Design tab ${selection.tab_number} was not found while applying Extra Print Areas.`);
+            if (selection.extra_emb) {
+              const key = value => lower(value).replace(/[^a-z]/g, '');
+              const method = findByDescription(methods, 'Embroidery');
+              if (!method) throw new Error('CRM does not expose the Embroidery print method.');
+              const targets = ['frontleftchest', 'frontrightchest'].map(name => {
+                const template = templates.find(value => key(value.description) === name);
+                if (!template) throw new Error(`CRM does not expose the ${name} print-area template.`);
+                return {name, template};
+              });
+              for (const {name, template} of targets) {
+                let area = activeAreas(design).find(value => key(areaDescription(value)) === name);
+                if (!area) {
+                  // Reuse Front and its artwork before creating the missing chest area.
+                  area = activeAreas(design).find(value => key(areaDescription(value)) === 'front');
+                  if (!area) {
+                    const beforeCount = activeAreas(design).length;
+                    addPrintArea(design);
+                    if (activeAreas(design).length !== beforeCount + 1) throw new Error('CRM did not create the chest area.');
+                    area = activeAreas(design)[activeAreas(design).length - 1];
+                  }
+                  updateAreaTemplate(area, template);
+                }
+                if (lower(methodDescription(area)) !== 'embroidery') updateAreaMethod(area, method);
+                existingAreas.push({tab_number: selection.tab_number, description: areaDescription(area), method: 'Embroidery'});
+              }
+            }
             for (const side of Object.keys(request.area_names)) {
               const requested = selection[side];
               if (!requested) continue;
@@ -910,23 +979,40 @@ def process_sleeve_prints_order(
             "cost_text": cost_text,
         })
         reverse_selections = [x for x in plan["selections"] if x.get("reverse")]
+        extra_emb_selections = [x for x in plan["selections"] if x.get("extra_emb")]
         reverse_mutation = None
+        receipt = None
+        emb_mutation_path = None
         if reverse_selections:
             from workers import crm_reverse_prints
             reverse_mutation = crm_reverse_prints.apply_reverse_prints(driver, reverse_selections)
             result["reverse_prints"] = reverse_mutation
-        if _crm_note_exists(before_state, sales_note) and not reverse_selections:
+        if extra_emb_selections:
+            from workers import crm_reverse_prints
+            receipt = crm_reverse_prints.email_receipt_path(order_id, contact["email"], plan, reverse_mutation or {"jobs": []})
+            emb_mutation_path = receipt.with_suffix(".crm.json")
+        if emb_mutation_path is not None and emb_mutation_path.exists():
+            mutation = json.loads(emb_mutation_path.read_text(encoding="utf-8"))
+            # An interrupted save must be inspected, never blindly repriced.
+            verification = _verify_crm_sleeve_changes(driver, sales_note, mutation)
+            if reverse_mutation is not None:
+                crm_reverse_prints.verify_reverse_prints(driver, reverse_mutation)
+            result["crm_order_update"] = {"mutation": mutation, "verification": verification, "skipped": True}
+            complete("crm_order_update", result["crm_order_update"])
+        elif _crm_note_exists(before_state, sales_note) and not reverse_selections and not extra_emb_selections:
             mutation = {"skipped": True, "reason": "matching_sales_note_already_saved", "added_areas": [], "existing_areas": [], "price_updates": []}
             result["crm_order_update"] = mutation
             complete("crm_order_update", mutation)
         else:
             # Reverse clones are always inspected, including retries with a saved note.
             apply_plan = plan
-            if _crm_note_exists(before_state, sales_note):
+            if _crm_note_exists(before_state, sales_note) and not extra_emb_selections:
                 apply_plan = {**plan, "selections": []}
             mutation = _apply_crm_sleeve_changes(
                 driver, apply_plan, "" if _crm_note_exists(before_state, sales_note) else sales_note
             )
+            if emb_mutation_path is not None:
+                _record_emb_mutation(emb_mutation_path, mutation)
             save = shared._save_order_and_wait(driver)
             verification = _verify_crm_sleeve_changes(driver, sales_note, mutation)
             if reverse_mutation is not None:
@@ -934,9 +1020,8 @@ def process_sleeve_prints_order(
             result["crm_order_update"] = {"mutation": mutation, "save": save, "verification": verification}
             complete("crm_order_update", result["crm_order_update"])
 
-        receipt = None
-        if reverse_mutation is not None:
-            receipt = crm_reverse_prints.email_receipt_path(order_id, contact["email"], plan, reverse_mutation)
+        if reverse_mutation is not None or extra_emb_selections:
+            receipt = crm_reverse_prints.email_receipt_path(order_id, contact["email"], plan, reverse_mutation or {"jobs": []})
             if crm_reverse_prints.email_was_sent(receipt):
                 result["salesforce"] = {"sent": False, "skipped": True, "reason": "matching_email_already_sent"}
                 complete("salesforce_email", result["salesforce"])
