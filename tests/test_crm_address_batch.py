@@ -491,7 +491,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertEqual(result["source"], "local_template_fallback")
         fill_local.assert_called_once_with(driver, state["subject"], state["body"])
 
-    def test_salesforce_contact_is_accepted_as_account_link_alias(self):
+    def test_salesforce_contact_label_is_read_from_crm(self):
         contact_driver = mock.Mock()
         contact_driver.execute_script.return_value = {
             "customer_name": "Steve Eiken",
@@ -610,6 +610,55 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertTrue(result["sent"])
         self.assertTrue(result["send_clicked"])
         self.assertFalse(result["activity_verified"])
+
+    def test_salesforce_contact_skips_email_and_allows_hdd_crm_changes(self):
+        for email_only in (False, True):
+            with self.subTest(email_only=email_only), ExitStack() as stack:
+                driver = mock.Mock(current_window_handle="crm-tab")
+                stack.enter_context(mock.patch.object(crm_copyright_cancel, "_open_driver", return_value=driver))
+                for name in (
+                    "safe_get_with_partial_load", "_login_to_crm_if_needed",
+                    "_switch_to_crm_app_frame", "_wait_for_order_scope",
+                    "_activate_crm_context", "safe_take_screenshot", "safe_driver_quit",
+                ):
+                    stack.enter_context(mock.patch.object(crm_copyright_cancel, name))
+                get_contact = stack.enter_context(mock.patch.object(
+                    crm_copyright_cancel, "_get_crm_contact_info", return_value={
+                        "email": "buyer@example.com",
+                        "salesforce_label": " Salesforce   Contact ",
+                    },
+                ))
+                crm_action = stack.enter_context(mock.patch.object(
+                    crm_copyright_cancel, "_prepare_no_cancel_crm_action", return_value={"updated": True},
+                ))
+                open_salesforce = stack.enter_context(mock.patch.object(
+                    crm_copyright_cancel, "_open_salesforce_account",
+                ))
+                sleep = stack.enter_context(mock.patch.object(crm_copyright_cancel.time, "sleep"))
+                run = (crm_copyright_cancel.send_salesforce_email_single_order if email_only
+                       else crm_copyright_cancel.process_single_order)
+                result = run("5301167", reason="", dry_run=False,
+                             process=crm_copyright_cancel.COMPLICATED_EMB_TO_HDD_PROCESS)
+                self.assertFalse(result["salesforce"]["sent"])
+                self.assertTrue(result["salesforce"]["skipped"])
+                self.assertIn("Salesforce Contact account detected. Email not sent", result["salesforce"]["message"])
+                get_contact.assert_called_once()
+                driver.refresh.assert_not_called()
+                sleep.assert_not_called()
+                open_salesforce.assert_not_called()
+                if email_only:
+                    crm_action.assert_not_called()
+                else:
+                    crm_action.assert_called_once()
+                    self.assertTrue(result["crm_action"]["updated"])
+
+    def test_salesforce_account_contact_info_continues(self):
+        driver = mock.Mock()
+        contact = {"email": "buyer@example.com", "salesforce_label": "Salesforce Account"}
+        with mock.patch.object(crm_copyright_cancel, "_activate_crm_context"), \
+             mock.patch.object(crm_copyright_cancel, "_get_crm_contact_info", return_value=contact):
+            self.assertEqual(crm_copyright_cancel._wait_for_crm_contact_info(driver), contact)
+        driver.refresh.assert_not_called()
 
     def test_contact_panel_timeout_refreshes_once_then_retries(self):
         driver = mock.Mock()

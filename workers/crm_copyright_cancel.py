@@ -6185,7 +6185,18 @@ def _prepare_and_maybe_send_salesforce_email(
     login_wait_seconds=0,
     skip_from_selection=False,
     skip_ready_verify=False,
+    contact=None,
 ):
+    if " ".join(str((contact or {}).get("salesforce_label") or "").split()).casefold() == "salesforce contact":
+        return {
+            "sent": False,
+            "skipped": True,
+            "skip_reason": "salesforce_contact",
+            "dry_run": bool(dry_run),
+            "email": customer_email,
+            "process": process.key,
+            "message": "Salesforce Contact account detected. Email not sent because this business account uses a different email structure.",
+        }
     preparation_retry_error = None
     for attempt in range(2):
         try:
@@ -8714,6 +8725,7 @@ def send_salesforce_email_single_order(
             crm_handle,
             order_id,
             contact["email"],
+            contact=contact,
             dry_run=dry_run,
             process=process,
             reason=reason,
@@ -9012,14 +9024,15 @@ def process_single_order(
                 crm_handle,
                 order_id,
                 contact["email"],
+                contact=contact,
                 dry_run=dry_run,
                 process=process,
                 reason=reason,
                 login_wait_seconds=login_wait_seconds,
             )
             if process.key == COMPLICATED_EMB_FEEDBACK_PROCESS.key:
-                # Apply the issue only after the shared email helper reports a successful send.
-                if not dry_run and not salesforce.get("sent"):
+                # Contact accounts still need the CRM issue even though their email is skipped.
+                if not dry_run and not salesforce.get("sent") and salesforce.get("skip_reason") != "salesforce_contact":
                     raise CopyrightCancelError("Complicated EMB feedback email was not sent.")
                 driver.switch_to.window(crm_handle)
                 _activate_crm_context(driver)
@@ -9081,6 +9094,7 @@ def process_single_order(
             crm_handle,
             order_id,
             contact["email"],
+            contact=contact,
             dry_run=dry_run,
             process=process,
             reason=reason,
@@ -9509,7 +9523,8 @@ def run_process_order(args):
             )
         _write_result(
             True,
-            f"Sheet scanner {'dry run' if args.dry_run else 'automation'} complete for order {details['order_id']}.",
+            f"Sheet scanner {'dry run' if args.dry_run else 'automation'} complete for order {details['order_id']}."
+            + (f" {(details.get('salesforce') or {}).get('message')}" if (details.get("salesforce") or {}).get("skipped") else ""),
             result_file=args.result_file,
             action="process_order",
             cleared_sheet_row=cleared_sheet_row,
@@ -9556,6 +9571,8 @@ def run_send_email_order(args):
         )
         _write_result(
             True,
+            (details.get("salesforce") or {}).get("message")
+            if (details.get("salesforce") or {}).get("skipped") else
             f"Copyright-cancel Salesforce email {'dry run' if args.dry_run else 'send'} complete for order {details['order_id']}.",
             result_file=args.result_file,
             action="send_email_order",
@@ -9970,6 +9987,15 @@ def run_process_queue(args):
         if eligible
         else "No eligible sheet scanner rows found."
     )
+    unsent_contact_orders = [
+        str(details["order_id"]) for details in processed
+        if (details.get("salesforce") or {}).get("skip_reason") == "salesforce_contact"
+    ]
+    if unsent_contact_orders:
+        message += (
+            " Salesforce Contact account detected; email not sent for order(s): "
+            + ", ".join(unsent_contact_orders) + "."
+        )
     _write_result(
         ok,
         message,
