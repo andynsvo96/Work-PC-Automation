@@ -1,6 +1,6 @@
 # Work PC Automation
 
-Cross-platform Windows/macOS automation dashboard for coordinating work-day routines, CRM order workflows, Slack status updates, Paycom time tracking, and one private control panel. Desktop power and hardware metrics remain Windows-only.
+Cross-platform Windows/macOS automation dashboard for CRM and Salesforce workflows, Paycom time tracking, Slack updates, and private remote controls. Includes the CRM Order Assistant Chrome extension for working directly from an order page. Desktop power and hardware metrics remain Windows-only.
 
 The app runs as a local Flask server with a browser control panel and a tray icon. Worker scripts handle the browser automation through Selenium, while the server coordinates scheduling, locks, retries, runtime state, result history, stage timing, and audit logging.
 
@@ -25,6 +25,19 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - Runs Home Assistant/Alexa HTTP triggers on the computer whose private URL receives the request.
 - Can clear finished local queue history without touching running or waiting tasks.
 
+## CRM Order Assistant and Newer Workflows
+
+- **Order-page controls:** Chrome extension with dark mode, queued single-order Auto-Process, Manual Process, Cancel, Reachout, and Stock Issue actions, plus Salesforce tab reuse across windows in the same Chrome profile.
+- **Single-order processing:** address validation, mixed-product separation, auto-splitting, stock unlocking and goods ordering, with conditional shipping bypass and stops for manual review when prerequisite steps fail.
+- **Extra print areas:** sleeve, side, and reversible printing, plus additional embroidery areas, with design selection, configurable pricing, saved-change verification, and retry receipts for supported workflows.
+- **Complicated embroidery:** select eligible embroidery designs and route feedback requests through the existing Salesforce email workflow.
+- **Stock issues:** dedicated size, color, and extension-required workflows using order-page selections and queued workers.
+- **Sheets Scanner and Salesforce setup:** saved Salesforce worker profiles, setup and authentication checks, verification-code prompts, and scheduled or repeating queue runs.
+- **Slack visibility:** local post history and paid-rush notifications for supported order workflows.
+- **Settings and connectivity:** shipping product/color mapping editor, service connection controls, OS credential storage, private tablet access, and authenticated Windows/macOS clipboard transfer.
+
+See the [CRM Order Assistant guide](crm-order-dark-mode-extension/README.md) for installation, workflow details, and reload instructions. The extension is loaded locally through Chrome's **Load unpacked** control.
+
 ## Project Layout
 
 - `server.py` - main Flask server, scheduler, tray app, and orchestration layer.
@@ -43,7 +56,9 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - `config.example.py` - safe template for local runtime settings.
 - `shipping_bypasser_product_color_mappings.json` - editable CRM-to-SanMar product and color mappings used by Shipping Bypasser.
 - `docs/` - fuller system guide and CRM automation notes.
-- `tests/` - regression tests for CRM batch/address behavior.
+- `crm-order-dark-mode-extension/` - CRM Order Assistant extension and local app bridge.
+- `tests/` - regression coverage for CRM workflows, queues, security, credentials, cross-platform runtime, sync, and extension behavior.
+- `AGENTS.md` - repository guidance for coding agents, validation, and handling local data.
 
 ## Local Setup
 
@@ -117,6 +132,12 @@ Run the regression suite with:
 python -m unittest discover -s tests
 ```
 
+Run the extension's Node tests with:
+
+```powershell
+node --test tests/test_extension_bridge.mjs tests/test_salesforce_tabs.mjs
+```
+
 You can also run a syntax compile pass:
 
 ```powershell
@@ -127,4 +148,4 @@ python -m compileall automation_audit.py automation_runtime.py server.py slack_m
 
 Login secrets are stored as Generic Credentials for the current Windows user under the `WorkAutomation/*` targets. `config.py` and browser profile directories can still contain private operational URLs and active sessions, so they remain ignored and should not be force-added to Git.
 
-For deeper implementation details, see `docs/AUTOMATION_SYSTEM_GUIDE.md`.
+For contributor guidance, see [AGENTS.md](AGENTS.md). For deeper implementation details, see [the system guide](docs/AUTOMATION_SYSTEM_GUIDE.md) and [CRM edit/save runbook](docs/CRM_ORDER_EDIT_SAVE_RUNBOOK.md). Older planning documents may describe earlier versions; check current code and tests when implementing changes.
