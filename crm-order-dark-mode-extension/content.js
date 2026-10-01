@@ -1281,7 +1281,7 @@ function readComplicatedEmbMethods() {
       try { result = JSON.parse(event.detail); } catch (_) { return; }
       if (result.id === id) finish(result.error, result.designs);
     };
-    const timer = setTimeout(() => finish('Reload the CRM Order Assistant extension and refresh this order to scan embroidery designs.'), 5000);
+    const timer = setTimeout(() => finish('Reload the CRM Order Assistant extension and refresh this order to scan designs.'), 5000);
     document.addEventListener('crm-emb-methods-response', receive);
     document.dispatchEvent(new CustomEvent('crm-emb-methods-request', { detail: id }));
   });
@@ -1314,7 +1314,7 @@ async function scanComplicatedEmbDesigns(onProgress) {
         throw new Error(`Could not determine the print method for tab ${tab.tabNumber}.`);
       }
       if (metadata.eligible) {
-        if (!name) throw new Error(`Could not read Design Name for embroidery tab ${tab.tabNumber}.`);
+        if (!name) throw new Error(`Could not read Design Name for design tab ${tab.tabNumber}.`);
         found.push({ tab_number: tab.tabNumber, design_name: name });
       }
     }
@@ -1322,7 +1322,7 @@ async function scanComplicatedEmbDesigns(onProgress) {
     clickStockIssueDesignTab(original);
     await stockIssueDelay(750);
   }
-  if (!found.length) throw new Error('No embroidery-only design tabs were found on this order.');
+  if (!found.length) throw new Error('No available design tabs were found on this order.');
   return found;
 }
 
@@ -1359,7 +1359,7 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
   const designPicker = document.createElement('div');
   if (asksFeedback) {
     title.textContent = 'Complicated EMB';
-    designPicker.textContent = 'Scanning embroidery designs...';
+    designPicker.textContent = 'Scanning order designs...';
     dialog.append(designPicker);
   }
   let reasonInput = null;
@@ -1441,7 +1441,7 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
     scanComplicatedEmbDesigns(message => { designPicker.textContent = message; }).then(designs => {
       if (!overlay.isConnected) return;
       embroideryDesigns = designs;
-      designPicker.textContent = 'Select the applicable embroidery design(s):';
+      designPicker.textContent = 'Select the design(s) for Complicated EMB:';
       for (const design of designs) {
         const label = document.createElement('label');
         Object.assign(label.style, { display: 'block', marginTop: '8px' });

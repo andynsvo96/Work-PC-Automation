@@ -55,13 +55,16 @@ The **Process order** button on an open CRM order sends only that order number t
 Selecting **Shipping Bypasser** from **Manual Process** is an explicit approval to use SanMar stock without the normal 10-piece per-size safety buffer. It still stops when SanMar has fewer units than the order requires. List-driven Shipping Bypasser runs and Auto-Process retain the 10-piece buffer.
 # Complicated EMB design selection
 
-Reachout > Complicated EMB scans the order design tabs and offers only tabs whose
-active print areas all use embroidery. Select one or more designs, then answer
-"Feedback required?" with Yes or No. A single eligible design is preselected.
+Reachout > Complicated EMB scans the order design tabs and offers tabs with
+readable print methods, including ink and mixed-method designs. Designs already
+switched from embroidery to ink printing remain selectable. Select one or more
+designs, then answer "Feedback required?" with Yes or No. A single available
+design is preselected.
 The existing feedback/HDD routing is retained. Selected Design Names replace
 `[DESIGN]` in one Salesforce email; the worker rechecks each selection before
-processing and stops if its name or print method has changed.
+processing and stops if its name has changed, the tab is unavailable, or its
+print methods cannot be read. A change to another readable print method is allowed.
 
-After updating to 1.5.6, reload CRM Order Assistant at `chrome://extensions`,
+After updating to 1.5.7, reload CRM Order Assistant at `chrome://extensions`,
 refresh the CRM order page, and restart the local Automation app to load the
 updated queue handler.

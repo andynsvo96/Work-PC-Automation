@@ -6,20 +6,20 @@ import time
 
 def normalize_designs(designs):
     if not isinstance(designs, list) or not designs or len(designs) > 100:
-        raise ValueError("Select at least one embroidery design tab.")
+        raise ValueError("Select at least one design tab for Complicated EMB.")
     result = []
     seen = set()
     for row in designs:
         if not isinstance(row, dict):
-            raise ValueError("Invalid embroidery design selection.")
+            raise ValueError("Invalid Complicated EMB design selection.")
         number = row.get("tab_number")
         name = " ".join(str(row.get("design_name") or "").split())
         if type(number) is not int or not 1 <= number <= 1000 or not name or len(name) > 500:
-            raise ValueError("Each embroidery selection needs a valid tab number and Design Name.")
+            raise ValueError("Each design selection needs a valid tab number and Design Name.")
         if re.search(r"\[\s*(?:DESIGN|REASON|ORDER-NUMBER)\s*\]|XXXXXX", name, re.I):
             raise ValueError("Design Name contains an unresolved email placeholder.")
         if number in seen:
-            raise ValueError("Select each embroidery tab only once.")
+            raise ValueError("Select each design tab only once.")
         seen.add(number)
         result.append({"tab_number": number, "design_name": name})
     return sorted(result, key=lambda row: row["tab_number"])
@@ -33,7 +33,7 @@ def resolve_designs(driver, selections=None):
     eligible = {row["tab_number"] for row in methods if row.get("eligible")}
     if selections is None:
         if len(eligible) != 1:
-            raise ValueError("Choose the applicable embroidery design tabs in Reachout > Complicated EMB.")
+            raise ValueError("Choose the applicable design tabs in Reachout > Complicated EMB.")
         selections = [{"tab_number": next(iter(eligible)), "design_name": ""}]
     else:
         selections = normalize_designs(selections)
@@ -41,9 +41,9 @@ def resolve_designs(driver, selections=None):
     for selected in selections:
         number = selected["tab_number"]
         if number not in eligible:
-            raise ValueError(f"Tab {number} is no longer an embroidery-only design.")
+            raise ValueError(f"Tab {number} is no longer available with readable print methods.")
         if not splitter._click_design_tab(driver, number):
-            raise ValueError(f"Could not open embroidery tab {number}.")
+            raise ValueError(f"Could not open design tab {number}.")
         time.sleep(0.75)
         previous = ""
         name = ""
@@ -55,7 +55,7 @@ def resolve_designs(driver, selections=None):
             name = ""
             time.sleep(0.2)
         if not name:
-            raise ValueError(f"Could not read Design Name for embroidery tab {number}.")
+            raise ValueError(f"Could not read Design Name for design tab {number}.")
         if selected["design_name"] and name != selected["design_name"]:
             raise ValueError(f"Design Name changed for tab {number}. Reopen Complicated EMB and select the designs again.")
         resolved.append({"tab_number": number, "design_name": name})

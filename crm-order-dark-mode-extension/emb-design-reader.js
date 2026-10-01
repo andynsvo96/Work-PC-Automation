@@ -28,7 +28,8 @@ function readEmbDesignMethods() {
     });
     return {
       tab_number: index + 1,
-      eligible: design.crudAction !== 'd' && methods.length > 0 && methods.every(method => /^(embroidery|emb)$/i.test(method)),
+      // Complicated EMB also applies after a design has been switched to ink.
+      eligible: design.crudAction !== 'd' && methods.length > 0 && methods.every(Boolean),
       methods
     };
   });

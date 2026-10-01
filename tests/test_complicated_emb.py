@@ -181,7 +181,7 @@ class ComplicatedEmbTests(unittest.TestCase):
             {"tab_number": 2, "design_name": "Second"},
         ]), "First & <Hat>, Second, and Third")
 
-    def test_worker_rejects_changed_method_or_name(self):
+    def test_worker_rejects_unavailable_design_or_changed_name(self):
         import crm_auto_splitter as splitter
         driver = mock.Mock()
         for eligible, name in ((False, "Schuti Hats"), (True, "Different Hat")):
@@ -190,6 +190,18 @@ class ComplicatedEmbTests(unittest.TestCase):
                  mock.patch.object(splitter, "_scan_current_design_detail", return_value={"design_name": name}), \
                  mock.patch.object(complicated_emb.time, "sleep"), self.assertRaises(ValueError):
                 complicated_emb.resolve_designs(driver, DESIGNS)
+
+    def test_worker_requires_explicit_selection_with_multiple_available_designs(self):
+        import crm_auto_splitter as splitter
+        driver = mock.Mock()
+        driver.execute_script.return_value = [
+            {"tab_number": 1, "eligible": True, "methods": ["Embroidery"]},
+            {"tab_number": 2, "eligible": True, "methods": ["HDD"]},
+        ]
+        with mock.patch.object(splitter, "_click_design_tab") as click, \
+             self.assertRaisesRegex(ValueError, "Choose the applicable"):
+            complicated_emb.resolve_designs(driver)
+        click.assert_not_called()
 
     def test_selection_reaches_worker_command_and_order_processing(self):
         with mock.patch.object(server, "_run_script", return_value=(True, "Done", {})) as run:

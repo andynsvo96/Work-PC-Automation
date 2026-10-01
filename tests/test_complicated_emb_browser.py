@@ -87,18 +87,21 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
         self.assertEqual(self.driver.find_element(By.TAG_NAME, 'a').get_attribute('href'), 'https://example.com/')
         self.assertFalse(self.driver.find_elements(By.TAG_NAME, 'hat'))
 
-    def test_method_reader_excludes_other_and_mixed_methods(self):
+    def test_method_reader_includes_other_and_mixed_methods(self):
         self.driver.get('about:blank')
         reader = (ROOT / 'crm-order-dark-mode-extension/emb-design-reader.js').read_text(encoding='utf-8')
         rows = self.driver.execute_script('''
-          const designs = ['Embroidery', 'HDD', 'EMB', ''].map(method => ({printAreas: [{printMethodDescription: method}]}));
+          const designs = ['Embroidery', 'HDD', 'EMB', '', 'Screen Printing', 'HD Digital'].map(method => ({printAreas: [{printMethodDescription: method}]}));
           designs.push({printAreas: [{printMethodDescription: 'Embroidery'}, {printMethodDescription: 'Screen Printing'}]});
+          designs.push({crudAction: 'd', printAreas: [{printMethodDescription: 'Embroidery'}]});
+          designs.push({printAreas: [{crudAction: 'd', printMethodDescription: 'Embroidery'}]});
+          designs.push({printAreas: []});
           const scope = {copyOrder() {}, order: {getResource: () => ({designs})}};
           window.angular = {element: () => ({scope: () => scope})};
         ''' + reader + '\nreturn readEmbDesignMethods();')
-        self.assertEqual([row['tab_number'] for row in rows if row['eligible']], [1, 3])
+        self.assertEqual([row['tab_number'] for row in rows if row['eligible']], [1, 2, 3, 5, 6, 7])
 
-    def test_scan_reads_each_name_filters_methods_and_restores_original_tab(self):
+    def test_scan_and_worker_include_ink_and_mixed_methods(self):
         self.driver.get('about:blank')
         source = (ROOT / 'crm-order-dark-mode-extension/content.js').read_text(encoding='utf-8')
         helpers = source[source.index('function stockIssueCleanText'):source.index('const EXTRA_PRINT_AREAS')]
@@ -119,6 +122,7 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
             document.getElementById('main-header-design-tabs').append(button);
           }
           const designs = ['Embroidery', 'HDD', 'Embroidery'].map(method => ({printAreas: [{printMethodDescription: method}]}));
+          designs[2].printAreas.push({printMethodDescription: 'Screen Printing'});
           const scope = {copyOrder() {}, order: {getResource: () => ({designs})}};
           window.angular = {element: () => ({scope: () => scope})};
         ''' + reader + bridge + helpers + scan + '''
@@ -126,8 +130,16 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
           scanComplicatedEmbDesigns(() => {}).then(rows => window.scanResult = rows).catch(error => window.scanResult = {error: error.message});
         ''')
         rows = WebDriverWait(self.driver, 15).until(lambda d: d.execute_script('return window.scanResult'))
-        self.assertEqual(rows, [{"tab_number": 1, "design_name": "Hat 1"}, {"tab_number": 3, "design_name": "Hat 3"}])
+        self.assertEqual(rows, [{"tab_number": 1, "design_name": "Hat 1"}, {"tab_number": 2, "design_name": "Hat 2"},
+                                {"tab_number": 3, "design_name": "Hat 3"}])
         self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, 'button[aria-selected="true"]').text, '2 - QTY: 20 Design Previews')
+        # Changing a selected design to another ink method before the queued run
+        # must still resolve the same tabs and names.
+        self.driver.execute_script('''
+          window.angular.element(document.body).scope().order.getResource().designs[1]
+            .printAreas[0].printMethodDescription = 'Screen Printing';
+        ''')
+        self.assertEqual(complicated_emb.resolve_designs(self.driver, rows[1:]), rows[1:])
 
 
 if __name__ == "__main__":
