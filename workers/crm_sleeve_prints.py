@@ -907,9 +907,12 @@ def _prepare_and_send_salesforce_email(driver, crm_handle, order_id, customer_em
             "sent": False, "dry_run": True, "salesforce_handle": sf_handle, "from": selected_from,
             "recipients": recipients, "subject": final_subject, "body": final_body, "replacement": replacement,
         }
-    if not shared._click_salesforce_send_button(driver):
-        raise SleevePrintsError("Salesforce Send button was not found.")
+    from workers.salesforce_activity_confirmation import send_and_confirm
+    confirmation = send_and_confirm(
+        driver, order_id, final_subject, customer_email, shared._click_salesforce_send_button
+    )
     return {
+        **confirmation,
         "sent": True, "dry_run": False, "salesforce_handle": sf_handle, "from": selected_from,
         "recipients": recipients, "subject": final_subject, "body": final_body, "replacement": replacement,
     }
