@@ -33,6 +33,7 @@ The app runs as a local Flask server with a browser control panel and a tray ico
   Email success requires a new matching email row in Salesforce Activity after Send. An unconfirmed attempt stops for manual review and blocks resending; inspect Activity before resolving its local receipt under `runtime/state/extra_print_email_confirmations/`. Restart the app after installing this change; no extension reload is needed.
 - **Complicated embroidery:** select eligible embroidery designs and route feedback requests through the existing Salesforce email workflow.
 - **Stock issues:** dedicated size, color, and extension-required workflows using order-page selections and queued workers.
+  Extension Required now trials the Salesforce Activity confirmation used by Extra Print Areas, including Lightning and Aura timeline layouts. It records check timing and blocks resending after an unconfirmed attempt. This check has not been rolled out to other Salesforce email workflows. Restart the app to load worker changes; no extension reload is required.
 - **Sheets Scanner and Salesforce setup:** saved Salesforce worker profiles, setup and authentication checks, verification-code prompts, and scheduled or repeating queue runs.
 - **Slack visibility:** local post history and paid-rush notifications for supported order workflows.
 - **Settings and connectivity:** shipping product/color mapping editor, service connection controls, OS credential storage, private tablet access, and authenticated Windows/macOS clipboard transfer.

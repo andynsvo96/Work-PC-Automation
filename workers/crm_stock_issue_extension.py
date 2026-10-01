@@ -808,9 +808,11 @@ def _prepare_and_send_salesforce_email(
             **content,
         }
     activity["email_send_attempted"] = True
-    if not shared._click_salesforce_send_button(driver):
-        raise StockIssueExtensionError("Salesforce Send button was not found.")
-    confirmation = _wait_for_send_confirmation(driver)
+    from workers.salesforce_activity_confirmation import send_and_confirm
+    confirmation = send_and_confirm(
+        driver, order_id, content["subject"], customer_email,
+        shared._click_salesforce_send_button,
+    )
     activity["email_sent"] = True
     return {
         "sent": True,

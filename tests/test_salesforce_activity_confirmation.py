@@ -24,7 +24,10 @@ class ActivityConfirmationTests(unittest.TestCase):
         driver = Mock()
         driver.execute_script.side_effect = [[], [self.row]]
         click = Mock(return_value=True)
-        self.assertTrue(self.send(driver, click)['activity_verified'])
+        result = self.send(driver, click)
+        self.assertTrue(result['activity_verified'])
+        self.assertEqual(result['timing']['polls'], 1)
+        self.assertGreaterEqual(result['timing']['total_seconds'], result['timing']['after_click_seconds'])
         self.assertTrue(self.send(driver, click)['skipped'])
         click.assert_called_once_with(driver)
 
@@ -84,6 +87,22 @@ class ActivityBrowserTests(unittest.TestCase):
                 self.assertEqual(len(rows), 1)
                 self.assertEqual(rows[0]['recipient'], 'Customer')
                 self.assertEqual(driver.execute_script(confirmation.ACTIVITY_SCRIPT, 'Order #7654321'), [])
+                # Live Lightning components place lookup links across nested shadow roots.
+                driver.execute_script('''
+                  document.body.innerHTML = '<ul><li class="row"><x-email></x-email></li></ul>';
+                  const root = document.querySelector('x-email').attachShadow({mode:'open'});
+                  root.innerHTML = '<lightning-icon icon-name="standard:email"></lightning-icon><span class="timelineSubject">Order #1234567</span><x-from class="fromAddress"></x-from><x-to class="toAddress"></x-to>';
+                  root.querySelector('x-from').attachShadow({mode:'open'}).innerHTML = '<x-link></x-link>';
+                  root.querySelector('x-from').shadowRoot.querySelector('x-link').attachShadow({mode:'open'}).innerHTML = '<a href="/lightning/r/005STAFF/view">Staff</a>';
+                  root.querySelector('x-to').attachShadow({mode:'open'}).innerHTML = '<a>Customer</a>';
+                ''')
+                rows = driver.execute_script(confirmation.ACTIVITY_SCRIPT, 'Order #1234567')
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]['recipient'], 'Customer')
+                driver.execute_script('''document.body.innerHTML = '<ul><li class="row"><a class="subjectLink">Order #1234567</a><div class="summary"><a href="mailto:orders@example.test">orders@example.test</a> sent an email to <a class="outputLookupLink">Customer</a></div></li></ul>';''')
+                self.assertEqual(len(driver.execute_script(confirmation.ACTIVITY_SCRIPT, 'Order #1234567')), 1)
+                driver.execute_script("document.querySelector('.summary').innerHTML = 'Customer received an email';")
+                self.assertEqual(driver.execute_script(confirmation.ACTIVITY_SCRIPT, 'Order #1234567'), [])
             finally:
                 driver.quit()
 
