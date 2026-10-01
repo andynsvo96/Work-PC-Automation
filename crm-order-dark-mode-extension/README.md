@@ -59,12 +59,22 @@ Reachout > Complicated EMB scans the order design tabs and offers tabs with
 readable print methods, including ink and mixed-method designs. Designs already
 switched from embroidery to ink printing remain selectable. Select one or more
 designs, then answer "Feedback required?" with Yes or No. A single available
-design is preselected.
+design is preselected, including tabs labelled View Proofs after proof creation.
 The existing feedback/HDD routing is retained. Selected Design Names replace
 `[DESIGN]` in one Salesforce email; the worker rechecks each selection before
 processing and stops if its name has changed, the tab is unavailable, or its
 print methods cannot be read. A change to another readable print method is allowed.
 
-After updating to 1.5.7, reload CRM Order Assistant at `chrome://extensions`,
-refresh the CRM order page, and restart the local Automation app to load the
-updated queue handler.
+For an order with one active design tab, the sales note starts with
+`Complicated embroidery` and omits the tab number. Orders with multiple tabs keep
+the selected tab numbers, even when only one tab is selected. Retrying an order
+with the earlier `Tab 1 is Complicated Embroidery` note does not add another note.
+
+The HDD template check accepts the current Salesforce wording
+`updated the design, [DESIGN], from embroidery to ink printing instead` as well
+as the earlier order-level wording. It still requires the embroidery-detail
+explanation and the ink-conversion text before sending.
+
+After updating to 1.5.8, reload CRM Order Assistant at `chrome://extensions`,
+then refresh open CRM order pages. The worker changes load with the next queued
+task; an Automation app restart is not required for this update.

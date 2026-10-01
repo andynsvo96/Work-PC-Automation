@@ -294,7 +294,7 @@ COMPLICATED_EMB_TO_HDD_PROCESS = CancelProcess(
     subject_markers=(),
     body_markers=(
         "details are too small or complex to reproduce clearly with embroidery",
-        "updated the order from embroidery to ink printing instead",
+        "from embroidery to ink printing instead",
     ),
     display_name="Complicated EMB to HDD",
     requires_reason=False,
@@ -7474,11 +7474,13 @@ def _requires_salesforce_refund_case(payment):
     return _has_positive_payment_amount(payment) and not _is_stripe_payment(payment)
 
 
-def _cancel_sales_note(reason, process=COPYRIGHT_CANCEL_PROCESS, designs=None):
+def _cancel_sales_note(reason, process=COPYRIGHT_CANCEL_PROCESS, designs=None, design_tab_count=None):
     if designs is not None and process.key in (COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key):
         from complicated_emb import normalize_designs
         numbers = [str(row["tab_number"]) for row in normalize_designs(designs)]
-        if len(numbers) == 1:
+        if design_tab_count == 1 and len(numbers) == 1:
+            first_line = "Complicated embroidery"
+        elif len(numbers) == 1:
             first_line = f"Tab {numbers[0]} is Complicated Embroidery"
         else:
             tabs = " and ".join(numbers) if len(numbers) == 2 else ", ".join(numbers[:-1]) + ", and " + numbers[-1]
@@ -7501,14 +7503,26 @@ def _copyright_cancel_sales_note(reason):
 
 
 def _append_copyright_cancel_sales_note(driver, reason, dry_run=False, process=COPYRIGHT_CANCEL_PROCESS, designs=None):
-    note = _cancel_sales_note(reason, process, designs=designs)
+    design_tab_count = None
+    if designs is not None and process.key in (COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key):
+        # Count the whole order, not just the selected designs: one selected tab
+        # on a multi-tab order still needs its tab number in the note.
+        design_tab_count = _order_scope(
+            driver,
+            "return (r.designs || []).filter(design => design && design.crudAction !== 'd').length;",
+        )
+    note = _cancel_sales_note(reason, process, designs=designs, design_tab_count=design_tab_count)
     existing = _order_scope(
         driver,
         """
         return String(r.addSalesNotes || r.salesNotes || r.filteredSalesNotes || '');
         """,
     )
-    if note.lower() in str(existing or "").lower():
+    matching_notes = [note]
+    if design_tab_count == 1:
+        # Keep retries compatible with the original single-order note format.
+        matching_notes.append(process.fixed_sales_note)
+    if any(candidate and candidate.lower() in str(existing or "").lower() for candidate in matching_notes):
         return {
             "updated": False,
             "already_present": True,

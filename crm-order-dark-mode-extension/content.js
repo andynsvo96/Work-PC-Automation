@@ -384,7 +384,7 @@ function visibleStockIssueDesignTabs() {
   for (const element of Array.from(document.querySelectorAll("div,a,button,li,span")).filter(visibleStockIssueElement)) {
     const text = stockIssueCleanText(element.innerText || element.textContent);
     const match = text.match(/\b(\d+)\s*-\s*QTY\s*:\s*(\d+)/i);
-    if (!match || !/Design Previews/i.test(text)) continue;
+    if (!match || !/Design Previews|View Proofs/i.test(text)) continue;
     const clickTarget = element.closest("#main-header-design-tabs button, button, a, [role='tab'], [ng-click], [onclick], li") || element;
     const rect = clickTarget.getBoundingClientRect();
     let score = 1000 - text.length;

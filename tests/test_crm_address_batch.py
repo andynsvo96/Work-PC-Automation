@@ -1939,7 +1939,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
 
         self.assertEqual(queries, ["[AUTO] Complicated EMB to HDD"])
         self.assertIn(
-            "updated the order from embroidery to ink printing instead",
+            "from embroidery to ink printing instead",
             crm_copyright_cancel.COMPLICATED_EMB_TO_HDD_PROCESS.body_markers,
         )
 

@@ -17,6 +17,26 @@ DESIGNS = [{"tab_number": 2, "design_name": "Schuti Hats"}]
 
 
 class ComplicatedEmbTests(unittest.TestCase):
+    def test_hdd_template_accepts_current_design_wording_before_and_after_replacement(self):
+        process = worker.COMPLICATED_EMB_TO_HDD_PROCESS
+        body = (
+            "While reviewing your design for embroidery, we found that some of the "
+            "details are too small or complex to reproduce clearly with embroidery. "
+            "To help preserve the details and overall appearance of your design, we have "
+            "updated the design, [DESIGN], from embroidery to ink printing instead."
+        )
+        driver = mock.Mock()
+        for name in ("[DESIGN]", "Omc"):
+            with self.subTest(name=name), mock.patch.object(worker, "_read_salesforce_email_state", return_value={
+                "subject": "RushOrderTees Order #[ORDER-NUMBER] - Embroidery Request",
+                "body": body.replace("[DESIGN]", name),
+            }):
+                self.assertTrue(worker._salesforce_template_appears_inserted(driver, process))
+        with mock.patch.object(worker, "_read_salesforce_email_state", return_value={
+            "subject": "Order 1234567 embroidery", "body": "Please review the embroidery options.",
+        }):
+            self.assertFalse(worker._salesforce_template_appears_inserted(driver, process))
+
     def test_both_templates_replace_one_two_and_three_design_names(self):
         for process in (worker.COMPLICATED_EMB_FEEDBACK_PROCESS, worker.COMPLICATED_EMB_TO_HDD_PROCESS):
             for names, expected in ((["Hat A"], "Hat A"), (["Hat A", "Hat B"], "Hat A and Hat B"),
@@ -151,6 +171,36 @@ class ComplicatedEmbTests(unittest.TestCase):
         self.assertEqual(driver.execute_script.call_args_list[1].args[1], "issue - design / placement")
         apply.assert_called_once_with(driver)
         self.assertTrue(result["status_applied"])
+
+    def test_single_tab_notes_omit_tab_number_but_single_selection_on_multiple_tabs_keeps_it(self):
+        designs = [{"tab_number": 1, "design_name": "Omc"}]
+        for process, tail in (
+            (worker.COMPLICATED_EMB_FEEDBACK_PROCESS, "Emailed txted"),
+            (worker.COMPLICATED_EMB_TO_HDD_PROCESS, "Switched to HDD to keep the details. Emailed"),
+        ):
+            for tab_count, first_line in ((1, "Complicated embroidery"), (2, "Tab 1 is Complicated Embroidery")):
+                with self.subTest(process=process.key, tab_count=tab_count), \
+                     mock.patch.object(worker, "_order_scope", side_effect=[tab_count, ""]), \
+                     mock.patch.object(worker, "_save_order_and_wait") as save:
+                    result = worker._append_copyright_cancel_sales_note(
+                        mock.sentinel.driver, "", dry_run=True, process=process, designs=designs,
+                    )
+                self.assertEqual(result["note"], f"{first_line}\n{tail}")
+                save.assert_not_called()
+
+    def test_single_tab_retry_recognizes_existing_tab_one_note(self):
+        designs = [{"tab_number": 1, "design_name": "Omc"}]
+        for process in (worker.COMPLICATED_EMB_FEEDBACK_PROCESS, worker.COMPLICATED_EMB_TO_HDD_PROCESS):
+            old_note = worker._cancel_sales_note("", process, designs=designs)
+            with self.subTest(process=process.key), \
+                 mock.patch.object(worker, "_order_scope", side_effect=[1, old_note]), \
+                 mock.patch.object(worker, "_save_order_and_wait") as save:
+                result = worker._append_copyright_cancel_sales_note(
+                    mock.sentinel.driver, "", process=process, designs=designs,
+                )
+            self.assertTrue(result["already_present"])
+            self.assertNotIn("Tab 1", result["note"])
+            save.assert_not_called()
 
     def test_each_choice_queues_its_own_worker_process_without_reason(self):
         for key in ("complicated_emb_to_hdd", "complicated_emb_feedback"):

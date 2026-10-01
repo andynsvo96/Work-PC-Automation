@@ -77,6 +77,34 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
         yes.click()
         self.assertEqual(self.driver.execute_script('return window.queued'), [{"key": "complicated_emb_feedback", "data": {"designs": designs}}])
 
+    def test_single_proof_tab_is_scanned_and_selected_automatically(self):
+        self.driver.get('about:blank')
+        source = (ROOT / 'crm-order-dark-mode-extension/content.js').read_text(encoding='utf-8')
+        choices = source[source.index('const REACHOUT_ORDER_AUTOMATIONS'):source.index('const STOCK_ISSUE_AUTOMATIONS')]
+        helpers = source[source.index('function stockIssueCleanText'):source.index('const EXTRA_PRINT_AREAS')]
+        scan_and_popup = source[source.index('function readComplicatedEmbMethods'):source.index('function createOrderProcessMenuControl')]
+        reader = (ROOT / 'crm-order-dark-mode-extension/emb-design-reader.js').read_text(encoding='utf-8')
+        bridge = (ROOT / 'crm-order-dark-mode-extension/emb-design-bridge.js').read_text(encoding='utf-8')
+        self.driver.execute_script('''
+          document.body.innerHTML = '<button>1 - QTY: 12 View Proofs</button><p>Design Name: Omc | admin</p>';
+          const designs = [{printAreas: [{printMethodDescription: 'HD Digital'}]}];
+          const scope = {copyOrder() {}, order: {getResource: () => ({designs})}};
+          window.angular = {element: () => ({scope: () => scope})};
+          window.queued = [];
+          window.queueManualOrderAutomation = (...args) => window.queued.push({key: args[0].key, data: args[4]});
+        ''' + reader + bridge + choices + helpers + scan_and_popup + '''
+          showOrderAutomationConfirmation(REACHOUT_ORDER_AUTOMATIONS[0], null, null);
+        ''')
+        checkbox = WebDriverWait(self.driver, 10).until(lambda d: d.find_elements(By.CSS_SELECTOR, 'input[data-emb-tab]'))[0]
+        self.assertTrue(checkbox.is_selected())
+        self.assertTrue(self.driver.find_element(By.XPATH, '//button[text()="Yes"]').is_enabled())
+        no = self.driver.find_element(By.XPATH, '//button[text()="No"]')
+        self.assertTrue(no.is_enabled())
+        no.click()
+        self.assertEqual(self.driver.execute_script('return window.queued'), [{
+            "key": "complicated_emb_to_hdd", "data": {"designs": [{"tab_number": 1, "design_name": "Omc"}]},
+        }])
+
     def test_rich_text_replacement_preserves_links_and_literal_names(self):
         self.driver.get('about:blank')
         self.driver.execute_script('''document.body.innerHTML = '<div contenteditable="true"><p>Review <b>[DE</b><i>SIGN]</i> and [DESIGN].</p><a href="https://example.com">Keep link</a></div>';''')
