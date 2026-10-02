@@ -410,7 +410,7 @@ def format_email_stock_text(products):
     selected_products = normalize_selected_products(products)
     if any("affected_sizes" in product for product in selected_products):
         return _natural_join([
-            f"{product['style']} {product['description']} in the color {product['color']}"
+            f"{product['style']} {product['color'].lower()} {product['description']}"
             f"{_extension_size_text(product)}"
             for product in selected_products
         ])

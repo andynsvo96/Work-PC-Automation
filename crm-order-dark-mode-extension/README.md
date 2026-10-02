@@ -42,16 +42,20 @@ then check only the sizes that need an extension. Each selected product requires
 at least one size before **Queue task** is enabled. Products with unreadable order
 sizes cannot be queued for this workflow.
 
-The saved CRM Sales Note and Salesforce email describe each product/color with
-its own sizes. One size uses `size x-large`; multiple sizes use `sizes medium,
-large, and x-large`. Selecting every detected size uses `all ordered sizes`
+The saved CRM Sales Note and Salesforce email place the color before the product
+description and describe each product/color with its own sizes. One size uses
+`size x-large`; multiple sizes use `sizes medium, large, and x-large`.
+Selecting every detected size uses `all ordered sizes`
 (a product with only one ordered size still names that size). CRM size codes such
 as `XL` are expanded for the message text. A note can read `An extension of 5 days
-is needed for 5040 Bayside Performance T-Shirts in the color Black in size x-large`,
+is needed for 5040 black Bayside Performance T-Shirts in size x-large`,
 followed by the existing `Emailed Txted` line.
 
 After updating to **1.5.9**, restart the local Automation app, reload CRM Order
 Assistant at `chrome://extensions`, and refresh open CRM order pages.
+
+Restart the local Automation app to load changes to the sales notes and email
+wording.
 
 ## Salesforce tab reuse
 

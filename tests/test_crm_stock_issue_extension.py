@@ -101,7 +101,7 @@ class StockIssueExtensionFormattingTests(unittest.TestCase):
 
     def test_single_selected_size_is_used_in_email_and_sales_note(self):
         selected = {**product(), "available_sizes": ["S", "M", "L", "XL"], "affected_sizes": ["XL"]}
-        stock_text = "DM130 Triblend T-Shirts in the color Red in size x-large"
+        stock_text = "DM130 red Triblend T-Shirts in size x-large"
 
         self.assertEqual(stock_extension.format_email_stock_text([selected]), stock_text)
         self.assertEqual(
@@ -123,19 +123,19 @@ class StockIssueExtensionFormattingTests(unittest.TestCase):
                 selected = {**product(), "affected_sizes": sizes}
                 self.assertEqual(
                     stock_extension.format_email_stock_text([selected]),
-                    f"DM130 Triblend T-Shirts in the color Red in {expected}",
+                    f"DM130 red Triblend T-Shirts in {expected}",
                 )
 
     def test_all_ordered_sizes_are_distinguished_from_a_partial_selection(self):
         selected = {**product(), "available_sizes": ["S", "M", "XL"], "affected_sizes": ["s", "M", "XL"]}
         self.assertEqual(
             stock_extension.format_email_stock_text([selected]),
-            "DM130 Triblend T-Shirts in the color Red in all ordered sizes",
+            "DM130 red Triblend T-Shirts in all ordered sizes",
         )
         only_order_size = {**product(), "available_sizes": ["XL"], "affected_sizes": ["XL"]}
         self.assertEqual(
             stock_extension.format_email_stock_text([only_order_size]),
-            "DM130 Triblend T-Shirts in the color Red in size x-large",
+            "DM130 red Triblend T-Shirts in size x-large",
         )
 
     def test_each_product_and_color_keeps_its_own_sizes(self):
@@ -145,9 +145,9 @@ class StockIssueExtensionFormattingTests(unittest.TestCase):
             {**product(style="PC54", description="Core Cotton Tee", color="Navy", item=3), "affected_sizes": ["S"]},
         ]
         stock_text = (
-            "DM130 Triblend T-Shirts in the color Red in size x-large, "
-            "DM130 Triblend T-Shirts in the color Black in sizes medium and large, and "
-            "PC54 Core Cotton Tee in the color Navy in size small"
+            "DM130 red Triblend T-Shirts in size x-large, "
+            "DM130 black Triblend T-Shirts in sizes medium and large, and "
+            "PC54 navy Core Cotton Tee in size small"
         )
         self.assertEqual(stock_extension.format_email_stock_text(products), stock_text)
         self.assertEqual(
