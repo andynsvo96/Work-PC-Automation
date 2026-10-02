@@ -10,6 +10,9 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 
+from workers import crm_stock_issue_color as stock_color
+from workers import crm_stock_issue_size as stock_size
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -166,6 +169,84 @@ class StockIssueBrowserTests(unittest.TestCase):
         self.assertEqual(len(combined), 1)
         self.assertEqual(combined[0]["available_sizes"], ["S", "XL", "M"])
         self.assertEqual(combined[0]["total_quantity"], 4)
+
+    def test_size_email_sentences_work_for_single_and_multiple_products(self):
+        single = {**product(), "affected_sizes": ["M"]}
+        second = {
+            **product(color="Navy"), "style": "18500", "description": "Gildan Hoodies",
+            "affected_sizes": ["L", "XL"],
+        }
+        for products in ([single], [single, second]):
+            with self.subTest(products=products):
+                self.driver.get("about:blank")
+                self.driver.execute_script("""
+                    document.body.innerHTML = '<div contenteditable="true"><p>Unfortunately, the '
+                      + '<a href="https://example.com/product">[STOCK]</a> is currently out of stock '
+                      + 'and will not be available in time to meet your scheduled due date.</p>'
+                      + '<p>We can offer an available size such as [SIZE].</p>'
+                      + '<a id="help-link" href="https://example.com/help">Keep help link</a></div>';
+                """)
+                request = stock_size.normalize_request(["L", "XL"], products)
+                stock_text = stock_size.format_email_stock_text(request["products"])
+                size_text = stock_size.format_suggested_sizes(request["sizes"])
+                result = stock_size._replace_stock_size_placeholders(self.driver, stock_text, size_text)
+                text = self.driver.find_element(By.CSS_SELECTOR, '[contenteditable="true"]').text
+                self.assertIn(
+                    f"the {stock_text} cannot currently be supplied because of stock shortages "
+                    "and will not be available in time to meet your scheduled due date.",
+                    text,
+                )
+                self.assertIn("available size such as large or x-large", text)
+                self.assertEqual(result["grammar_adjustments"], 1)
+                self.assertEqual(result["[STOCK]"], 1)
+                self.assertEqual(result["[SIZE]"], 1)
+                self.assertEqual(len(self.driver.find_elements(By.TAG_NAME, "a")), 1)
+                self.assertEqual(self.driver.find_element(By.ID, "help-link").get_attribute("href"), "https://example.com/help")
+
+    def test_color_email_keeps_sizes_and_literal_product_names(self):
+        selected = {**product(color="BLACK"), "description": "Performance Tees $&", "affected_sizes": ["M"]}
+        self.driver.get("about:blank")
+        self.driver.execute_script("""
+            document.body.innerHTML = '<div contenteditable="true"><p>The [STOCK] is currently out of stock.</p>'
+              + '<p>We can offer an available color such as [COLOR].</p></div>';
+        """)
+        stock_text = stock_color.format_email_stock_text([selected])
+        colors = stock_color.format_suggested_colors(["Navy", "White"])
+        result = stock_color._replace_stock_color_placeholders(self.driver, stock_text, colors)
+        text = self.driver.find_element(By.CSS_SELECTOR, '[contenteditable="true"]').text
+        self.assertIn(f"The {stock_text} cannot currently be supplied because of stock shortages.", text)
+        self.assertIn("5040 black Performance Tees $& in size medium", text)
+        self.assertIn("available color such as Navy or White", text)
+        self.assertNotIn("[STOCK]", text)
+        self.assertEqual(result["grammar_adjustments"], 1)
+
+    def test_stock_sentence_survives_rich_text_in_a_ckeditor_frame(self):
+        self.driver.get("about:blank")
+        self.driver.execute_script("""
+            document.body.innerHTML = '<iframe style="width:600px;height:300px"></iframe>';
+            const frame = document.querySelector('iframe');
+            const doc = frame.contentDocument;
+            doc.open();
+            doc.write('<div contenteditable="true"><p>The <b>[STO</b><i>CK]</i> '
+              + '<span>is currently out of stock</span>.</p><p>Available color such as [COLOR].</p>'
+              + '<a id="keep-link" href="https://example.com/help"><b>Help</b></a></div>');
+            doc.close();
+            window.editorUpdates = 0;
+            frame.contentWindow.CKEDITOR = {instances: {fixture: {
+              editable: () => ({$: doc.querySelector('[contenteditable]')}),
+              updateElement: () => { window.editorUpdates += 1; },
+              fire: () => {}
+            }}};
+        """)
+        stock_text = stock_color.format_email_stock_text([{**product(), "affected_sizes": ["M", "XL"]}])
+        result = stock_color._replace_stock_color_placeholders(self.driver, stock_text, "Navy or White")
+        text = self.driver.execute_script("return document.querySelector('iframe').contentDocument.body.innerText;")
+        self.assertIn(f"The {stock_text} cannot currently be supplied because of stock shortages.", text)
+        self.assertIn("Available color such as Navy or White.", text)
+        self.assertEqual(result["grammar_adjustments"], 1)
+        self.assertEqual(result["[STOCK]"], 1)
+        self.assertEqual(self.driver.execute_script("return window.editorUpdates;"), 1)
+        self.assertTrue(self.driver.execute_script("return !!document.querySelector('iframe').contentDocument.querySelector('#keep-link b');"))
 
 
 if __name__ == "__main__":

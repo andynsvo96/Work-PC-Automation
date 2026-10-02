@@ -138,31 +138,10 @@ def format_suggested_colors(colors):
 def format_email_stock_text(products):
     try:
         selected_products = extension.normalize_selected_products(products)
-        if selected_products and all("affected_sizes" in product for product in selected_products):
-            groups = {}
-            for product in selected_products:
-                key = (product["style"].casefold(), product["description"].casefold(), product["color"].casefold())
-                group = groups.setdefault(
-                    key,
-                    {
-                        "style": product["style"], "description": product["description"], "color": product["color"],
-                        "sizes": [],
-                    },
-                )
-                for size in product["affected_sizes"]:
-                    if SUGGESTION_LABEL == "size":
-                        size = _format_size_name(size)
-                    if size.casefold() not in {item.casefold() for item in group["sizes"]}:
-                        group["sizes"].append(size)
-            phrases = []
-            for group in groups.values():
-                size_label = "size" if len(group["sizes"]) == 1 else "sizes"
-                phrases.append(
-                    f"{group['style']} {group['description']} in the color {group['color']} for {size_label} "
-                    f"{extension._natural_join(group['sizes'], final_word='and')}"
-                )
-            return extension._natural_join(phrases, final_word="and")
-        return extension.format_email_stock_text(selected_products)
+        return extension._natural_join([
+            extension._format_stock_product(product, summarize_all_sizes=False)
+            for product in selected_products
+        ])
     except extension.StockIssueExtensionError as exc:
         raise StockIssueColorError(str(exc)) from exc
 
@@ -314,18 +293,45 @@ def _replace_stock_color_placeholders(driver, stock_text, color_text):
           }
           return out;
         }
+        function correctStockSentence(root, counts) {
+          const doc = root.ownerDocument || document;
+          const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+          const nodes = [];
+          let text = '';
+          while (walker.nextNode()) {
+            const node = walker.currentNode;
+            nodes.push({node, start: text.length, end: text.length + node.data.length});
+            text += node.data;
+          }
+          const pattern = /\b(the)\s+\[STOCK\]\s+(?:is|are)\s+currently\s+out\s+of\s+stock\b/gi;
+          for (const match of Array.from(text.matchAll(pattern)).reverse()) {
+            const start = match.index, end = start + match[0].length;
+            const first = nodes.find(item => item.end > start);
+            const last = nodes.find(item => item.end >= end);
+            if (!first || !last) continue;
+            const range = doc.createRange();
+            range.setStart(first.node, start - first.start);
+            range.setEnd(last.node, end - last.start);
+            range.deleteContents();
+            range.insertNode(doc.createTextNode(
+              `${match[1]} [STOCK] cannot currently be supplied because of stock shortages`
+            ));
+            counts.grammar_adjustments += 1;
+          }
+        }
         function replaceText(value, counts) {
           let output = String(value || '');
           for (const [placeholder, replacement] of Object.entries(replacements)) {
             const pattern = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
             const matches = output.match(pattern) || [];
             counts[placeholder] += matches.length;
-            output = output.replace(pattern, replacement);
+            output = output.replace(pattern, () => replacement);
           }
           return output;
         }
         function replaceRoot(root, counts) {
           if (!root) return;
+          correctStockSentence(root, counts);
           const doc = root.ownerDocument || document;
           const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
           const nodes = [];
@@ -350,7 +356,7 @@ def _replace_stock_color_placeholders(driver, stock_text, color_text):
             root.dispatchEvent(new Event('change', {bubbles: true}));
           } catch (err) {}
         }
-        const counts = {[String(arguments[2])]: 0, [String(arguments[3])]: 0, unwrapped_links: 0};
+        const counts = {[String(arguments[2])]: 0, [String(arguments[3])]: 0, unwrapped_links: 0, grammar_adjustments: 0};
         const seen = new Set();
         function inspectDocument(doc) {
           if (!doc || seen.has(doc)) return;
@@ -506,6 +512,9 @@ def _prepare_and_send_salesforce_email(
     if str(order_id) not in subject:
         shared._replace_subject_order_number(driver, order_id)
     replacement = _replace_stock_color_placeholders(driver, stock_text, color_text)
+    if re.search(r"\bthe\s+\[STOCK\]\s+(?:is|are)\s+currently\s+out\s+of\s+stock\b", body, re.IGNORECASE):
+        if int(replacement.get("grammar_adjustments") or 0) < 1:
+            raise StockIssueColorError("Salesforce stock availability wording could not be updated; review the draft before sending.")
     time.sleep(0.8)
     content = _verify_email_content(driver, order_id, stock_text, color_text)
     if _selected_product_text_is_linked(driver, products):

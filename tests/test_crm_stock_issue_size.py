@@ -28,13 +28,18 @@ class StockIssueSizeTests(unittest.TestCase):
         single_size_product["affected_sizes"] = ["X-Small"]
         self.assertEqual(
             stock_size.format_email_stock_text([single_size_product]),
-            "DM130 District Perfect Tri Tee in the color Red for size X-Small",
+            "DM130 red District Perfect Tri Tee in size X-Small",
         )
         three_sizes_product = product()
         three_sizes_product["affected_sizes"] = ["Medium", "Large", "X-Large"]
         self.assertEqual(
             stock_size.format_email_stock_text([three_sizes_product]),
-            "DM130 District Perfect Tri Tee in the color Red for sizes Medium, Large, and X-Large",
+            "DM130 red District Perfect Tri Tee in sizes Medium, Large, and X-Large",
+        )
+        all_sizes_product = {**product(), "affected_sizes": ["Small", "Medium", "Large"]}
+        self.assertEqual(
+            stock_size.format_email_stock_text([all_sizes_product]),
+            "DM130 red District Perfect Tri Tee in sizes Small, Medium, and Large",
         )
         missing_selection = product()
         missing_selection.pop("affected_sizes")
@@ -56,10 +61,14 @@ class StockIssueSizeTests(unittest.TestCase):
         )
 
     def test_sales_note_keeps_affected_sizes_with_each_color(self):
+        products = [product(), {**product(), "color": "Blue", "affected_sizes": ["Large"]}]
         self.assertEqual(
-            stock_size.format_sales_note(["Small"], [
-                product(), {**product(), "color": "Blue", "affected_sizes": ["Large"]},
-            ]),
+            stock_size.format_email_stock_text(products),
+            "DM130 red District Perfect Tri Tee in sizes Medium and Large and "
+            "DM130 blue District Perfect Tri Tee in size Large",
+        )
+        self.assertEqual(
+            stock_size.format_sales_note(["Small"], products),
             "No stock for DM130 in Red for sizes Medium and Large and "
             "DM130 in Blue for size Large - suggested Small\nEmailed Txted",
         )
@@ -76,7 +85,7 @@ class StockIssueSizeTests(unittest.TestCase):
                 selected = {**product(), "affected_sizes": [code]}
                 self.assertEqual(
                     stock_size.format_email_stock_text([selected]),
-                    f"DM130 District Perfect Tri Tee in the color Red for size {name}",
+                    f"DM130 red District Perfect Tri Tee in size {name}",
                 )
                 self.assertEqual(
                     stock_size.format_sales_note(["3XL"], [selected]),

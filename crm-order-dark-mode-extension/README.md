@@ -57,6 +57,22 @@ Assistant at `chrome://extensions`, and refresh open CRM order pages.
 Restart the local Automation app to load changes to the sales notes and email
 wording.
 
+## Stock Issue: Suggest Different Size or Color
+
+The Size and Color emails use the same color-before-description wording as
+Extension Required, such as `5040 black Bayside Performance T-Shirts in size
+medium`. Multiple sizes use `in sizes medium and large`. Each product/color
+keeps its own affected sizes, and the Size email names all selected sizes even
+when every order size was selected. Suggested replacement sizes or colors remain
+alternatives joined with `or`.
+
+The generated draft changes the template's stock availability sentence to
+`The [selected products] cannot currently be supplied because of stock shortages`.
+This works for both one product and multiple products without choosing `is` or
+`are` from catalog descriptions. The draft is verified before sending.
+
+Restart the local Automation app to load this wording update.
+
 ## Salesforce tab reuse
 
 Clicking a Salesforce link in CRM navigates an existing Salesforce tab instead of opening a duplicate. The search includes every normal Chrome window in the current browser profile; if the reused tab is in another window, that window and tab are focused. If no Salesforce tab is open, the link opens normally in a new tab.

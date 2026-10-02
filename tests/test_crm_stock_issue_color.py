@@ -47,7 +47,12 @@ class StockIssueColorFormattingTests(unittest.TestCase):
     def test_stock_and_sales_note_text_include_selected_product(self):
         self.assertEqual(
             stock_color.format_email_stock_text([product()]),
-            "DM130 District Perfect Tri Tee in the color Red",
+            "DM130 red District Perfect Tri Tee",
+        )
+        selected = {**product(color="BLACK"), "affected_sizes": ["M", "XL"]}
+        self.assertEqual(
+            stock_color.format_email_stock_text([selected]),
+            "DM130 black District Perfect Tri Tee in sizes medium and x-large",
         )
         self.assertEqual(
             stock_color.format_sales_note(["Navy", "Black"], [product()]),
@@ -99,13 +104,13 @@ class StockIssueColorFormattingTests(unittest.TestCase):
 
         result = stock_color._replace_stock_color_placeholders(
             driver,
-            "DM130 District Perfect Tri Tee in the color Red",
+            "DM130 red District Perfect Tri Tee",
             "Navy or Black",
         )
 
         self.assertEqual(result["[STOCK]"], 1)
         self.assertEqual(driver.execute_script.call_args.args[1:], (
-            "DM130 District Perfect Tri Tee in the color Red",
+            "DM130 red District Perfect Tri Tee",
             "Navy or Black",
             "[STOCK]",
             "[COLOR]",
@@ -119,6 +124,29 @@ class StockIssueColorFormattingTests(unittest.TestCase):
         selector_script = driver.execute_script.call_args.args[0]
         self.assertIn("input|textarea|select|option", selector_script)
         self.assertNotIn("el.textContent || el.value", selector_script)
+
+    def test_unverified_grammar_change_stops_before_send(self):
+        driver = mock.Mock()
+        state = {"subject": "RushOrderTees Order #1234567 - URGENT Stock Issue", "body": (
+            "The [STOCK] is currently out of stock. We can offer [COLOR]."
+        )}
+        with (
+            mock.patch.object(stock_color.shared, "_open_salesforce_account"),
+            mock.patch.object(stock_color.shared, "_verify_salesforce_email"),
+            mock.patch.object(stock_color.shared, "_click_salesforce_email"),
+            mock.patch.object(stock_color.shared, "_wait_for_email_composer"),
+            mock.patch.object(stock_color.shared, "_set_salesforce_from_orders"),
+            mock.patch.object(stock_color, "_insert_exact_stock_color_template"),
+            mock.patch.object(stock_color.shared, "_read_salesforce_email_state", return_value=state),
+            mock.patch.object(stock_color, "_replace_stock_color_placeholders", return_value={"[STOCK]": 1, "[COLOR]": 1}),
+            mock.patch.object(stock_color.time, "sleep"),
+            mock.patch.object(stock_color.shared, "_click_salesforce_send_button") as send,
+        ):
+            with self.assertRaisesRegex(stock_color.StockIssueColorError, "wording could not be updated"):
+                stock_color._prepare_and_send_salesforce_email(
+                    driver, "crm", "1234567", "customer@example.com", "DM130 red Tees", "Navy", [product()], {},
+                )
+        send.assert_not_called()
 
 
 class StockIssueColorSourceContractTests(unittest.TestCase):

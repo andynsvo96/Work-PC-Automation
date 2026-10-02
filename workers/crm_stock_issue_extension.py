@@ -388,7 +388,7 @@ def _format_size_name(value):
     return value
 
 
-def _extension_size_text(product):
+def _extension_size_text(product, *, summarize_all_sizes=True):
     selected = product.get("affected_sizes")
     if not selected:
         return ""
@@ -400,18 +400,25 @@ def _extension_size_text(product):
     available = product.get("available_sizes")
     selected_keys = {size.casefold() for size in selected}
     available_keys = {size.casefold() for size in available or []}
-    if len(sizes) > 1 and available_keys and selected_keys == available_keys:
+    if summarize_all_sizes and len(sizes) > 1 and available_keys and selected_keys == available_keys:
         return " in all ordered sizes"
     label = "size" if len(sizes) == 1 else "sizes"
     return f" in {label} {_natural_join(sizes)}"
+
+
+def _format_stock_product(product, *, summarize_all_sizes=True):
+    """Describe one normalized product/color, keeping its selected sizes attached."""
+    return (
+        f"{product['style']} {product['color'].lower()} {product['description']}"
+        f"{_extension_size_text(product, summarize_all_sizes=summarize_all_sizes)}"
+    )
 
 
 def format_email_stock_text(products):
     selected_products = normalize_selected_products(products)
     if any("affected_sizes" in product for product in selected_products):
         return _natural_join([
-            f"{product['style']} {product['color'].lower()} {product['description']}"
-            f"{_extension_size_text(product)}"
+            _format_stock_product(product)
             for product in selected_products
         ])
     groups = _group_products(selected_products)
