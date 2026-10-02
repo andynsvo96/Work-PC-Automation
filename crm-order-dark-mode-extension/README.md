@@ -33,6 +33,26 @@ Front is converted to Front-left chest, and Front-right chest is added. If eithe
 
 The sales note is `Additional embroidery area`, `$15.00 each` (or the custom price), and `emailed txted` on separate lines. The existing Additional Requests email uses `additional embroidery area`, the charge, and the invoice link. No text message is sent. Local receipts verify saved changes and prevent duplicate pricing/email on matching retries; an interrupted save with unverified prices stops for review.
 
+## Stock Issue: Extension Required
+
+Choose **Stock Issue → Extension Required** on an order page, select the affected
+products/colors, and enter the extension days. Each product starts with all its
+detected order sizes checked. Use its **Clear** button to deselect those sizes,
+then check only the sizes that need an extension. Each selected product requires
+at least one size before **Queue task** is enabled. Products with unreadable order
+sizes cannot be queued for this workflow.
+
+The saved CRM Sales Note and Salesforce email describe each product/color with
+its own sizes. One size uses `size x-large`; multiple sizes use `sizes medium,
+large, and x-large`. Selecting every detected size uses `all ordered sizes`
+(a product with only one ordered size still names that size). CRM size codes such
+as `XL` are expanded for the message text. A note can read `An extension of 5 days
+is needed for 5040 Bayside Performance T-Shirts in the color Black in size x-large`,
+followed by the existing `Emailed Txted` line.
+
+After updating to **1.5.9**, restart the local Automation app, reload CRM Order
+Assistant at `chrome://extensions`, and refresh open CRM order pages.
+
 ## Salesforce tab reuse
 
 Clicking a Salesforce link in CRM navigates an existing Salesforce tab instead of opening a duplicate. The search includes every normal Chrome window in the current browser profile; if the reused tab is in another window, that window and tab are focused. If no Salesforce tab is open, the link opens normally in a new tab.

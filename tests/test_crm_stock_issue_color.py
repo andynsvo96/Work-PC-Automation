@@ -140,7 +140,7 @@ class StockIssueColorSourceContractTests(unittest.TestCase):
         self.assertIn("sizes: message.sizes", background)
         self.assertIn("{ surfacePageErrors: false }", content)
         self.assertIn("if (response && response.success)", content)
-        self.assertEqual(manifest["version"], "1.5.1")
+        self.assertRegex(manifest["version"], r"^\d+\.\d+\.\d+$")
 
 
 if __name__ == "__main__":

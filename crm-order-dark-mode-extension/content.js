@@ -1008,6 +1008,8 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
   const isColorSuggestion = automation.key === "stock_issue_color";
   const isSizeSuggestion = automation.key === "stock_issue_size";
   const isSuggestion = isColorSuggestion || isSizeSuggestion;
+  const isExtension = automation.key === "stock_issue_extension";
+  const selectsSizes = isSizeSuggestion || isExtension;
   const suggestionLabel = isSizeSuggestion ? "size" : "color";
   const dialogName = isSuggestion ? `Suggest Different ${suggestionLabel[0].toUpperCase()}${suggestionLabel.slice(1)}` : "Extension Required";
   const { overlay, dialog } = createStockIssueDialogShell(`Configure Stock Issue ${dialogName}`);
@@ -1017,7 +1019,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
   const explanation = document.createElement("p");
   explanation.textContent = isSuggestion
     ? `Select each out-of-stock product/color, then list the available replacement ${suggestionLabel}s separated by commas.`
-    : "Select each product/color that needs an extension, then enter the number of days.";
+    : "Select each product/color that needs an extension, then enter the number of days. All order sizes start selected; use Clear to choose specific sizes.";
   Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
   dialog.append(title, explanation);
 
@@ -1036,6 +1038,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
   const body = document.createElement("tbody");
   const checkboxes = [];
   const sizeCheckboxesByProduct = new Map();
+  const clearSizeButtons = [];
   products.forEach((product, index) => {
     const row = document.createElement("tr");
     const checkCell = document.createElement("td");
@@ -1058,7 +1061,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
     row.append(checkCell, styleCell, descriptionCell, colorCell);
     body.append(row);
     checkboxes.push(checkbox);
-    if (isSizeSuggestion) {
+    if (selectsSizes) {
       const sizeRow = document.createElement("tr");
       sizeRow.hidden = !checkbox.checked;
       const sizeCell = document.createElement("td");
@@ -1077,7 +1080,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
           const sizeCheckbox = document.createElement("input");
           sizeCheckbox.type = "checkbox";
           sizeCheckbox.value = size;
-          sizeCheckbox.checked = checkbox.checked && sizes.length === 1;
+          sizeCheckbox.checked = isExtension || (checkbox.checked && sizes.length === 1);
           sizeCheckbox.id = `crm-stock-issue-size-${index}-${sizeIndex}`;
           sizeCheckbox.setAttribute("aria-label", `Select ${size} for ${product.style} in ${product.color}`);
           label.htmlFor = sizeCheckbox.id;
@@ -1086,10 +1089,24 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
           sizeChoices.push(sizeCheckbox);
         });
         sizeCell.append(sizePrompt, choices);
+        if (isExtension) {
+          const clear = document.createElement("button");
+          clear.type = "button";
+          clear.textContent = "Clear";
+          clear.setAttribute("aria-label", `Clear sizes for ${product.style} in ${product.color}`);
+          Object.assign(clear.style, { marginTop: "8px", padding: "4px 9px", cursor: "pointer" });
+          clear.addEventListener("click", () => {
+            if (submitting) return;
+            sizeChoices.forEach((choice) => { choice.checked = false; });
+            refreshAfterEdit();
+          });
+          sizeCell.append(clear);
+          clearSizeButtons.push(clear);
+        }
       } else {
         const unavailable = document.createElement("div");
         unavailable.textContent = "No order sizes could be detected for this product. It cannot be selected for this workflow.";
-        unavailable.style.color = "#b91c1c";
+        unavailable.style.color = "var(--crm-stock-error-color, #b91c1c)";
         sizeCell.append(sizePrompt, unavailable);
       }
       sizeRow.append(sizeCell);
@@ -1097,8 +1114,10 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
       sizeCheckboxesByProduct.set(checkbox, sizeChoices);
       checkbox.addEventListener("change", () => {
         sizeRow.hidden = !checkbox.checked;
-        if (!checkbox.checked) sizeChoices.forEach((choice) => { choice.checked = false; });
-        else if (sizeChoices.length === 1) sizeChoices[0].checked = true;
+        if (isSizeSuggestion) {
+          if (!checkbox.checked) sizeChoices.forEach((choice) => { choice.checked = false; });
+          else if (sizeChoices.length === 1) sizeChoices[0].checked = true;
+        }
       });
     }
   });
@@ -1158,7 +1177,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
       : validateStockIssueExtensionDays(detailInput.value);
     const errors = [];
     if (!selected) errors.push("Select at least one product.");
-    const productsMissingSizes = isSizeSuggestion && selectedCheckboxes.some(
+    const productsMissingSizes = selectsSizes && selectedCheckboxes.some(
       (checkbox) => !(sizeCheckboxesByProduct.get(checkbox) || []).some((choice) => choice.checked)
     );
     if (productsMissingSizes) errors.push("Select at least one affected size for every selected product.");
@@ -1166,9 +1185,14 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
     if (submissionError) errors.push(submissionError);
     const enabled = !submitting && selected > 0 && !productsMissingSizes && inputValidation.valid;
     validation.textContent = submitting ? `Sending ${automation.label} to the Automation queue…` : errors.join(" ");
-    validation.style.color = submitting ? "#334155" : "#b91c1c";
+    validation.style.color = submitting
+      ? "var(--crm-stock-progress-color, #334155)"
+      : "var(--crm-stock-error-color, #b91c1c)";
     detailInput.setAttribute("aria-invalid", String(!inputValidation.valid));
     detailInput.disabled = submitting;
+    checkboxes.forEach((checkbox) => { checkbox.disabled = submitting; });
+    sizeCheckboxesByProduct.forEach((choices) => choices.forEach((choice) => { choice.disabled = submitting; }));
+    clearSizeButtons.forEach((button) => { button.disabled = submitting; });
     back.disabled = submitting;
     queue.disabled = !enabled;
     queue.setAttribute("aria-disabled", String(!enabled));
@@ -1191,7 +1215,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
       .filter((checkbox) => checkbox.checked)
       .map((checkbox) => {
         const product = products[Number(checkbox.value)];
-        if (!isSizeSuggestion) return product;
+        if (!selectsSizes) return product;
         return {
           ...product,
           affected_sizes: (sizeCheckboxesByProduct.get(checkbox) || [])
@@ -1204,7 +1228,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
       : isSizeSuggestion
       ? validateStockIssueSuggestedSizes(detailInput.value)
       : validateStockIssueExtensionDays(detailInput.value);
-    const missingSelectedSizes = isSizeSuggestion && selectedProducts.some((product) => !product.affected_sizes.length);
+    const missingSelectedSizes = selectsSizes && selectedProducts.some((product) => !product.affected_sizes.length);
     if (!selectedProducts.length || missingSelectedSizes || !inputValidation.valid) {
       refresh();
       return;

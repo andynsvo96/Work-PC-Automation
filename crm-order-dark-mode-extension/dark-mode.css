@@ -156,6 +156,19 @@
   html.crm-order-dark-mode .ui-widget-overlay { background-color: rgba(0, 0, 0, 0.68) !important; }
   html.crm-order-dark-mode ::selection { background: #264f78 !important; color: #fff !important; }
 
+  html.crm-order-dark-mode #crm-stock-issue-dialog {
+    --crm-stock-error-color: #f87171;
+    --crm-stock-progress-color: #d4d4d4;
+  }
+
+  html.crm-order-dark-mode #crm-stock-issue-dialog > div {
+    background-color: #252526 !important;
+    color: #d4d4d4 !important;
+  }
+
+  html.crm-order-dark-mode #crm-stock-issue-dialog :is(th, td) { border-color: #3c3c3c !important; }
+  html.crm-order-dark-mode #crm-stock-issue-dialog td[colspan] { background-color: #2d2d30 !important; }
+
   /* CRM order-form components that use custom !important light surfaces. */
   html.crm-order-dark-mode #view-orders-index,
   html.crm-order-dark-mode #content,

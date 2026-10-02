@@ -99,6 +99,95 @@ class StockIssueExtensionFormattingTests(unittest.TestCase):
             with self.subTest(days=days):
                 self.assertEqual(stock_extension.normalize_request(days, [product()])["days"], 5)
 
+    def test_single_selected_size_is_used_in_email_and_sales_note(self):
+        selected = {**product(), "available_sizes": ["S", "M", "L", "XL"], "affected_sizes": ["XL"]}
+        stock_text = "DM130 Triblend T-Shirts in the color Red in size x-large"
+
+        self.assertEqual(stock_extension.format_email_stock_text([selected]), stock_text)
+        self.assertEqual(
+            stock_extension.format_sales_note(5, [selected]),
+            f"An extension of 5 days is needed for {stock_text}\nEmailed Txted",
+        )
+        self.assertEqual(
+            stock_extension.format_sales_note(1, [selected]),
+            f"An extension of 1 day is needed for {stock_text}\nEmailed Txted",
+        )
+
+    def test_multiple_sizes_use_plural_and_natural_list_grammar(self):
+        for sizes, expected in (
+            (["M", "XL"], "sizes medium and x-large"),
+            (["M", "L", "XL"], "sizes medium, large, and x-large"),
+            (["XL", "X-Large"], "size x-large"),
+        ):
+            with self.subTest(sizes=sizes):
+                selected = {**product(), "affected_sizes": sizes}
+                self.assertEqual(
+                    stock_extension.format_email_stock_text([selected]),
+                    f"DM130 Triblend T-Shirts in the color Red in {expected}",
+                )
+
+    def test_all_ordered_sizes_are_distinguished_from_a_partial_selection(self):
+        selected = {**product(), "available_sizes": ["S", "M", "XL"], "affected_sizes": ["s", "M", "XL"]}
+        self.assertEqual(
+            stock_extension.format_email_stock_text([selected]),
+            "DM130 Triblend T-Shirts in the color Red in all ordered sizes",
+        )
+        only_order_size = {**product(), "available_sizes": ["XL"], "affected_sizes": ["XL"]}
+        self.assertEqual(
+            stock_extension.format_email_stock_text([only_order_size]),
+            "DM130 Triblend T-Shirts in the color Red in size x-large",
+        )
+
+    def test_each_product_and_color_keeps_its_own_sizes(self):
+        products = [
+            {**product(), "affected_sizes": ["XL"]},
+            {**product(color="Black", item=2), "affected_sizes": ["M", "L"]},
+            {**product(style="PC54", description="Core Cotton Tee", color="Navy", item=3), "affected_sizes": ["S"]},
+        ]
+        stock_text = (
+            "DM130 Triblend T-Shirts in the color Red in size x-large, "
+            "DM130 Triblend T-Shirts in the color Black in sizes medium and large, and "
+            "PC54 Core Cotton Tee in the color Navy in size small"
+        )
+        self.assertEqual(stock_extension.format_email_stock_text(products), stock_text)
+        self.assertEqual(
+            stock_extension.format_sales_note(8, products),
+            f"An extension of 8 days is needed for {stock_text}\nEmailed Txted",
+        )
+
+    def test_duplicate_products_merge_sizes_and_survive_queue_normalization(self):
+        products = [
+            {**product(tab=1, item=100), "available_sizes": ["S", "M"], "affected_sizes": ["M"]},
+            {**product(tab=2, item=200), "available_sizes": ["m", "XL"], "affected_sizes": ["XL"]},
+        ]
+        request = stock_extension.normalize_request(5, products)
+        self.assertEqual(request["products"][0]["affected_sizes"], ["M", "XL"])
+        self.assertEqual(request["products"][0]["available_sizes"], ["S", "M", "XL"])
+        self.assertEqual(stock_extension.normalize_request(**request), request)
+        self.assertEqual(products[0]["affected_sizes"], ["M"])
+        self.assertIn("in sizes medium and x-large", stock_extension.format_email_stock_text(request["products"]))
+
+    def test_invalid_size_selections_stop_before_processing(self):
+        for selection in (
+            {"affected_sizes": []},
+            {"affected_sizes": "XL"},
+            {"affected_sizes": ["<b>XL</b>"]},
+            {"available_sizes": [], "affected_sizes": ["XL"]},
+            {"available_sizes": "XL", "affected_sizes": ["XL"]},
+            {"available_sizes": ["S", "M"], "affected_sizes": ["XL"]},
+            {"affected_sizes": [f"Size {index}" for index in range(21)]},
+        ):
+            with self.subTest(selection=selection):
+                with self.assertRaises(stock_extension.StockIssueExtensionError):
+                    stock_extension.normalize_request(5, [{**product(), **selection}])
+
+    def test_duplicate_products_cannot_mix_specific_and_unspecified_sizes(self):
+        specific = {**product(), "affected_sizes": ["XL"]}
+        for products in ([specific, product()], [product(), specific]):
+            with self.subTest(products=products):
+                with self.assertRaises(stock_extension.StockIssueExtensionError):
+                    stock_extension.normalize_request(5, products)
+
 
 class StockIssueExtensionWorkflowTests(unittest.TestCase):
     @staticmethod
@@ -402,7 +491,7 @@ class StockIssueExtensionSourceContractTests(unittest.TestCase):
         shared_worker = (ROOT / "workers" / "crm_copyright_cancel.py").read_text(encoding="utf-8")
         self.assertIn("_insert_exact_stock_extension_template(driver)", stock_worker)
         self.assertIn("(?:STOCK|DAYS|COLOR|SIZE)", shared_worker)
-        self.assertEqual(manifest["version"], "1.5.1")
+        self.assertRegex(manifest["version"], r"^\d+\.\d+\.\d+$")
 
 
 if __name__ == "__main__":

@@ -274,6 +274,19 @@ def normalize_selected_products(products):
                 if size.casefold() not in {item.casefold() for item in affected_sizes}:
                     affected_sizes.append(size)
 
+        available_sizes = None
+        if affected_sizes is not None and "available_sizes" in product:
+            raw_available_sizes = product.get("available_sizes")
+            if not isinstance(raw_available_sizes, list) or not raw_available_sizes:
+                raise StockIssueExtensionError("No order sizes were detected for a selected product.")
+            if len(raw_available_sizes) > 20:
+                raise StockIssueExtensionError("Select no more than 20 order sizes per product.")
+            available_sizes = []
+            for raw_size in raw_available_sizes:
+                size = _clean_text(raw_size, field="order size", maximum=80)
+                if size.casefold() not in {item.casefold() for item in available_sizes}:
+                    available_sizes.append(size)
+
         key = (style.casefold(), description.casefold(), color.casefold())
         if key not in normalized:
             normalized[key] = {
@@ -284,6 +297,7 @@ def normalize_selected_products(products):
                 "design_item_ids": [],
                 "total_quantity": 0 if total_quantity is not None else None,
                 "affected_sizes": [] if affected_sizes is not None else None,
+                "available_sizes": [] if available_sizes is not None else None,
             }
         row = normalized[key]
         for tab_number in tab_numbers:
@@ -294,23 +308,43 @@ def normalize_selected_products(products):
                 row["design_item_ids"].append(design_item_id)
         if total_quantity is not None:
             row["total_quantity"] = int(row.get("total_quantity") or 0) + total_quantity
+        if (row["affected_sizes"] is None) != (affected_sizes is None):
+            raise StockIssueExtensionError("Every matching selected product must include its affected sizes.")
+        if (row["available_sizes"] is None) != (available_sizes is None):
+            raise StockIssueExtensionError("Every matching selected product must include its detected order sizes.")
         if affected_sizes is not None:
-            if row["affected_sizes"] is None:
-                raise StockIssueExtensionError("Every matching selected product must include its affected sizes.")
             for size in affected_sizes:
                 if size.casefold() not in {item.casefold() for item in row["affected_sizes"]}:
                     row["affected_sizes"].append(size)
+            if len(row["affected_sizes"]) > 20:
+                raise StockIssueExtensionError("Select no more than 20 affected sizes per product.")
+        if available_sizes is not None:
+            for size in available_sizes:
+                if size.casefold() not in {item.casefold() for item in row["available_sizes"]}:
+                    row["available_sizes"].append(size)
+            if len(row["available_sizes"]) > 20:
+                raise StockIssueExtensionError("Select no more than 20 order sizes per product.")
 
     return [
-        {key: value for key, value in row.items() if key != "affected_sizes" or value is not None}
+        {
+            key: value for key, value in row.items()
+            if key not in {"affected_sizes", "available_sizes"} or value is not None
+        }
         for row in normalized.values()
     ]
 
 
 def normalize_request(days, products):
+    day_count = _positive_integer(days, label="Extension days", maximum=365)
+    selected_products = normalize_selected_products(products)
+    for product in selected_products:
+        if "available_sizes" in product:
+            available_keys = {size.casefold() for size in product["available_sizes"]}
+            if any(size.casefold() not in available_keys for size in product["affected_sizes"]):
+                raise StockIssueExtensionError("Each affected size must be one detected on its selected product.")
     return {
-        "days": _positive_integer(days, label="Extension days", maximum=365),
-        "products": normalize_selected_products(products),
+        "days": day_count,
+        "products": selected_products,
     }
 
 
@@ -340,8 +374,47 @@ def format_color_list(colors):
     return _natural_join(colors, final_word="or" if len(colors) >= 3 else "and")
 
 
+def _format_size_name(value):
+    """Expand CRM size codes for display without changing the queued selection."""
+    code = value.strip().upper()
+    names = {"S": "small", "M": "medium", "L": "large", "OS": "one size", "OSFA": "one size fits all"}
+    if code in names:
+        return names[code]
+    match = re.fullmatch(r"(X+|[1-9]\d*X)(S|L)", code)
+    if match:
+        prefix, base = match.groups()
+        count = len(prefix) if prefix.startswith("X") else int(prefix[:-1])
+        return f"{'x' if count == 1 else str(count) + 'x'}-{'small' if base == 'S' else 'large'}"
+    return value
+
+
+def _extension_size_text(product):
+    selected = product.get("affected_sizes")
+    if not selected:
+        return ""
+    names_by_key = OrderedDict()
+    for size in selected:
+        name = _format_size_name(size)
+        names_by_key.setdefault(name.casefold(), name)
+    sizes = list(names_by_key.values())
+    available = product.get("available_sizes")
+    selected_keys = {size.casefold() for size in selected}
+    available_keys = {size.casefold() for size in available or []}
+    if len(sizes) > 1 and available_keys and selected_keys == available_keys:
+        return " in all ordered sizes"
+    label = "size" if len(sizes) == 1 else "sizes"
+    return f" in {label} {_natural_join(sizes)}"
+
+
 def format_email_stock_text(products):
-    groups = _group_products(products)
+    selected_products = normalize_selected_products(products)
+    if any("affected_sizes" in product for product in selected_products):
+        return _natural_join([
+            f"{product['style']} {product['description']} in the color {product['color']}"
+            f"{_extension_size_text(product)}"
+            for product in selected_products
+        ])
+    groups = _group_products(selected_products)
     phrases = [
         f"{group['style']} {group['description']} in the color {format_color_list(group['colors'])}"
         for group in groups
@@ -351,7 +424,14 @@ def format_email_stock_text(products):
 
 def format_sales_note(days, products):
     day_count = _positive_integer(days, label="Extension days", maximum=365)
-    groups = _group_products(products)
+    selected_products = normalize_selected_products(products)
+    if any("affected_sizes" in product for product in selected_products):
+        day_label = "day" if day_count == 1 else "days"
+        return (
+            f"An extension of {day_count} {day_label} is needed for {format_email_stock_text(selected_products)}"
+            "\nEmailed Txted"
+        )
+    groups = _group_products(selected_products)
     product_text = _natural_join(
         [f"{group['style']} in {format_color_list(group['colors'])}" for group in groups],
         final_word="and",

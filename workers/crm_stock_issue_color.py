@@ -120,16 +120,7 @@ def normalize_request(colors, products):
 
 def _format_size_name(value):
     """Expand CRM size codes for display, preserving other size labels."""
-    code = value.strip().upper()
-    names = {"S": "small", "M": "medium", "L": "large", "OS": "one size", "OSFA": "one size fits all"}
-    if code in names:
-        return names[code]
-    match = re.fullmatch(r"(X+|[1-9]\d*X)(S|L)", code)
-    if match:
-        prefix, base = match.groups()
-        count = len(prefix) if prefix.startswith("X") else int(prefix[:-1])
-        return f"{'x' if count == 1 else str(count) + 'x'}-{'small' if base == 'S' else 'large'}"
-    return value
+    return extension._format_size_name(value)
 
 
 def format_suggested_colors(colors):

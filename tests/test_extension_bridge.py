@@ -463,6 +463,14 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
             {"days": -2, "products": [{"style": "DM130", "description": "Tee", "color": "Red"}]},
             {"days": 1.5, "products": [{"style": "DM130", "description": "Tee", "color": "Red"}]},
             {"days": 5, "products": []},
+            {"days": 5, "products": [{
+                "style": "DM130", "description": "Tee", "color": "Red",
+                "available_sizes": ["M", "XL"], "affected_sizes": [],
+            }]},
+            {"days": 5, "products": [{
+                "style": "DM130", "description": "Tee", "color": "Red",
+                "available_sizes": ["M", "XL"], "affected_sizes": ["L"],
+            }]},
         ]
         for payload in invalid_payloads:
             with self.subTest(payload=payload), mock.patch("server.enqueue_automation") as enqueue:
@@ -476,6 +484,34 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 409)
                 self.assertFalse(response.get_json()["success"])
                 enqueue.assert_not_called()
+
+    def test_stock_issue_extension_preserves_each_products_selected_sizes_in_queue(self):
+        products = [
+            {
+                "style": "DM130", "description": "T-Shirts", "color": "Red",
+                "available_sizes": ["S", "M", "XL"], "affected_sizes": ["XL"],
+            },
+            {
+                "style": "DM130", "description": "T-Shirts", "color": "Black",
+                "available_sizes": ["S", "M", "L"], "affected_sizes": ["S", "M", "L"],
+            },
+        ]
+        with mock.patch(
+            "server.enqueue_automation",
+            return_value=(True, "Stock Extension queued.", {"id": "stock-1", "status": "queued"}),
+        ) as enqueue:
+            response = self.client.post(
+                "/api/extension/bridge/process-order/manual",
+                json={"order_id": "5043020", "automation": "stock_issue_extension", "days": 5, "products": products},
+                headers={"Origin": self.ORIGIN},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        arguments = enqueue.call_args.kwargs["task_arguments"]
+        self.assertEqual(arguments["products"][0]["affected_sizes"], ["XL"])
+        self.assertEqual(arguments["products"][1]["affected_sizes"], ["S", "M", "L"])
+        self.assertEqual(arguments["products"][0]["available_sizes"], ["S", "M", "XL"])
 
     def test_sleeve_prints_queues_per_tab_sleeve_requests_and_custom_prices(self):
         sleeves = [
