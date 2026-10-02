@@ -5582,6 +5582,108 @@ def _shipping_bypasser_actionable_stock_tabs(driver, order_id, tabs):
     return actionable, skipped
 
 
+def _prepare_sanmar_shipping_plan(sanmar_driver, order_id, order, product_lines, warehouse_plan):
+    """Build and validate one allocation, then read its checkout delivery dates."""
+    multi_warehouse = str(warehouse_plan.get("mode") or "") == "multi_warehouse"
+    selected_warehouses = warehouse_plan.get("warehouses") or []
+    warehouse = _single_warehouse_from_plan(None, warehouse_plan)
+    cart_product_lines = warehouse_plan.get("expanded_lines") or []
+
+    for line_index, line in enumerate(cart_product_lines, start=1):
+        product = line["product"]
+        search_id = line["search_id"]
+        _publish_status(
+            f"Adding SanMar product {search_id} to cart ({line_index}/{len(cart_product_lines)}) for order {order_id}.",
+            stage="adding_sanmar_cart",
+            order_id=order_id,
+        )
+        _search_sanmar_product(
+            sanmar_driver,
+            search_id,
+            click_inventory_button=bool(line.get("click_inventory_button")),
+            expected_style_keys=line.get("expected_style_keys"),
+        )
+        _select_sanmar_color(sanmar_driver, product["color"], product=product)
+        _fill_sanmar_quantities(sanmar_driver, line.get("warehouse") or warehouse, line["quantities"])
+        _add_current_product_to_box(sanmar_driver)
+
+    _publish_status(f"Validating SanMar cart for order {order_id}.", stage="validating_sanmar_cart", order_id=order_id)
+    safe_get_with_partial_load(sanmar_driver, SANMAR_CART_URL, label="SanMar cart")
+    cart_lines = _wait_for_sanmar_cart_lines(sanmar_driver, timeout=20)
+    cart_validation = _validate_sanmar_cart_contents(
+        sanmar_driver,
+        cart_product_lines,
+        warehouse=None if multi_warehouse else warehouse,
+        cart_lines=cart_lines,
+    )
+    if not cart_validation.get("success"):
+        safe_take_screenshot(sanmar_driver, f"sanmar_cart_mismatch_{order_id}")
+        issues = cart_validation.get("issues") or ["SanMar cart did not match the CRM products."]
+        return _result(
+            order_id,
+            False,
+            "sanmar_cart_mismatch",
+            "SanMar cart does not match CRM product/size quantities: " + " ".join(issues[:4]),
+            order=order,
+            warehouse=warehouse,
+            warehouses=selected_warehouses,
+            products=product_lines,
+            warehouse_plan=warehouse_plan,
+            sanmar_cart_validation=cart_validation,
+            manual_review_required=True,
+            retryable=False,
+        )
+    _click_sanmar_button(sanmar_driver, r"Continue\s+Checkout")
+    _wait_for_text(sanmar_driver, r"Shipping\s+Details|Shipping\s+Address", timeout=20)
+    _publish_status(f"Selecting SanMar shipping for order {order_id}.", stage="selecting_sanmar_shipping", order_id=order_id)
+    shipping = _select_shipping_destination(sanmar_driver, order["order_type"], warehouse, multi_warehouse=multi_warehouse)
+    eta_state = {}
+    if shipping.get("ship_mode") == "ship":
+        try:
+            eta_state = _select_ups_eta_for_shipping_plan(
+                sanmar_driver,
+                order["order_type"],
+                warehouse=warehouse,
+                selected_warehouses=selected_warehouses,
+                multi_warehouse=multi_warehouse,
+                order_id=order_id,
+            )
+        except RuntimeError as exc:
+            diagnostic = getattr(exc, "sanmar_checkout_diagnostic", None)
+            detail = ""
+            if isinstance(diagnostic, dict):
+                screenshot = diagnostic.get("screenshot")
+                text_snapshot = diagnostic.get("text_snapshot")
+                artifacts = ", ".join(path for path in (screenshot, text_snapshot) if path)
+                if artifacts:
+                    detail = f" Diagnostic saved: {artifacts}."
+            return _result(
+                order_id,
+                False,
+                "sanmar_ups_unavailable",
+                f"SanMar UPS shipping option could not be selected/read: {exc}.{detail}",
+                order=order,
+                warehouse=warehouse,
+                warehouses=selected_warehouses,
+                products=product_lines,
+                warehouse_plan=warehouse_plan,
+                shipping=shipping,
+                sanmar_checkout_diagnostic=diagnostic if isinstance(diagnostic, dict) else None,
+                manual_review_required=True,
+                retryable=False,
+            )
+    return {
+        "success": True,
+        "warehouse": warehouse,
+        "warehouses": selected_warehouses,
+        "multi_warehouse": multi_warehouse,
+        "shipping": shipping,
+        "eta": eta_state.get("eta"),
+        "eta_by_warehouse": eta_state.get("eta_by_warehouse"),
+        "freight_calculation_unavailable": bool(eta_state.get("freight_calculation_unavailable")),
+    }
+
+
 def _process_open_order(
     crm_driver,
     sanmar_driver,
@@ -5605,7 +5707,11 @@ def _process_open_order(
         }
     )
 
+    shipping_plan_attempts = []
+
     def done(result):
+        if shipping_plan_attempts:
+            result["shipping_plan_attempts"] = _json_safe(shipping_plan_attempts)
         return _attach_stock_tab_context(result, stock_tab_index, stock_tab_count, stock_tab_label)
 
     tab_suffix = f" stock tab {stock_tab_index}/{stock_tab_count}" if stock_tab_count > 1 else ""
@@ -5842,99 +5948,82 @@ def _process_open_order(
             products=product_lines,
         ))
 
-    multi_warehouse = str(warehouse_plan.get("mode") or "") == "multi_warehouse"
-    selected_warehouses = warehouse_plan.get("warehouses") or ([warehouse] if warehouse else [])
-    warehouse = _single_warehouse_from_plan(warehouse, warehouse_plan)
-    cart_product_lines = warehouse_plan.get("expanded_lines") or []
+    for plan_attempt in range(2):
+        shipping_state = _prepare_sanmar_shipping_plan(
+            sanmar_driver, order_id, order, product_lines, warehouse_plan
+        )
+        if not shipping_state.get("success"):
+            return done(shipping_state)
+        warehouse = shipping_state["warehouse"]
+        selected_warehouses = shipping_state["warehouses"]
+        multi_warehouse = shipping_state["multi_warehouse"]
+        shipping = shipping_state["shipping"]
+        eta = shipping_state["eta"]
+        eta_by_warehouse = shipping_state["eta_by_warehouse"]
+        shipping_plan_attempts.append({
+            "warehouses": selected_warehouses,
+            "eta": eta,
+            "eta_by_warehouse": eta_by_warehouse,
+        })
+        if shipping.get("ship_mode") != "ship" or eta is None:
+            break
+        production_target = _shipping_bypasser_production_target_for_eta(eta)
+        free_due_extension = order.get("shipping_class") == "free" and eta > order["due_date"]
+        if (
+            plan_attempt
+            or multi_warehouse
+            or production_target < order["due_date"]
+            or free_due_extension
+        ):
+            break
 
-    for line_index, line in enumerate(cart_product_lines, start=1):
-        product = line["product"]
-        search_id = line["search_id"]
+        # A complete warehouse is preferred only while its shipment can meet the deadline.
+        split_plan = _choose_multi_warehouse_plan(product_lines, order["order_type"], stock_buffer=stock_buffer)
+        if not split_plan or split_plan.get("mode") != "multi_warehouse":
+            break
         _publish_status(
-            f"Adding SanMar product {search_id} to cart ({line_index}/{len(cart_product_lines)}) for order {order_id}.",
-            stage="adding_sanmar_cart",
+            f"Single-warehouse stock would arrive too late for order {order_id}; checking a split across "
+            f"{', '.join(split_plan['warehouses'])} with the same PO.",
+            stage="checking_split_warehouse_eta",
             order_id=order_id,
         )
-        _search_sanmar_product(
-            sanmar_driver,
-            search_id,
-            click_inventory_button=bool(line.get("click_inventory_button")),
-            expected_style_keys=line.get("expected_style_keys"),
-        )
-        _select_sanmar_color(sanmar_driver, product["color"], product=product)
-        _fill_sanmar_quantities(sanmar_driver, line.get("warehouse") or warehouse, line["quantities"])
-        _add_current_product_to_box(sanmar_driver)
-
-    _publish_status(f"Validating SanMar cart for order {order_id}.", stage="validating_sanmar_cart", order_id=order_id)
-    safe_get_with_partial_load(sanmar_driver, SANMAR_CART_URL, label="SanMar cart")
-    cart_lines = _wait_for_sanmar_cart_lines(sanmar_driver, timeout=20)
-    cart_validation = _validate_sanmar_cart_contents(
-        sanmar_driver,
-        cart_product_lines,
-        warehouse=None if multi_warehouse else warehouse,
-        cart_lines=cart_lines,
-    )
-    if not cart_validation.get("success"):
-        safe_take_screenshot(sanmar_driver, f"sanmar_cart_mismatch_{order_id}")
-        issues = cart_validation.get("issues") or ["SanMar cart did not match the CRM products."]
-        return done(_result(
-            order_id,
-            False,
-            "sanmar_cart_mismatch",
-            "SanMar cart does not match CRM product/size quantities: " + " ".join(issues[:4]),
-            order=order,
-            warehouse=warehouse,
-            warehouses=selected_warehouses,
-            products=product_lines,
-            warehouse_plan=warehouse_plan,
-            sanmar_cart_validation=cart_validation,
-            manual_review_required=True,
-            retryable=False,
-        ))
-    _click_sanmar_button(sanmar_driver, r"Continue\s+Checkout")
-    _wait_for_text(sanmar_driver, r"Shipping\s+Details|Shipping\s+Address", timeout=20)
-    _publish_status(f"Selecting SanMar shipping for order {order_id}.", stage="selecting_sanmar_shipping", order_id=order_id)
-    shipping = _select_shipping_destination(sanmar_driver, order["order_type"], warehouse, multi_warehouse=multi_warehouse)
-    eta = None
-    eta_by_warehouse = None
-    if shipping.get("ship_mode") == "ship":
-        try:
-            eta_state = _select_ups_eta_for_shipping_plan(
-                sanmar_driver,
-                order["order_type"],
-                warehouse=warehouse,
-                selected_warehouses=selected_warehouses,
-                multi_warehouse=multi_warehouse,
-                order_id=order_id,
-            )
-        except RuntimeError as exc:
-            diagnostic = getattr(exc, "sanmar_checkout_diagnostic", None)
-            detail = ""
-            if isinstance(diagnostic, dict):
-                screenshot = diagnostic.get("screenshot")
-                text_snapshot = diagnostic.get("text_snapshot")
-                artifacts = ", ".join(path for path in (screenshot, text_snapshot) if path)
-                if artifacts:
-                    detail = f" Diagnostic saved: {artifacts}."
+        # Neither allocation has been submitted. Confirm the old cart is empty before rebuilding it.
+        cleanup = _clear_sanmar_cart(sanmar_driver, order_id=order_id)
+        if not cleanup.get("success"):
             return done(_result(
                 order_id,
                 False,
-                "sanmar_ups_unavailable",
-                f"SanMar UPS shipping option could not be selected/read: {exc}.{detail}",
+                "sanmar_cart_cleanup_failed",
+                "Could not replace the late single-warehouse cart with split stock. "
+                + str(cleanup.get("message") or ""),
                 order=order,
                 warehouse=warehouse,
                 warehouses=selected_warehouses,
-                products=product_lines,
-                warehouse_plan=warehouse_plan,
-                shipping=shipping,
-                sanmar_checkout_diagnostic=diagnostic if isinstance(diagnostic, dict) else None,
+                sanmar_cart_cleanup=cleanup,
                 manual_review_required=True,
                 retryable=False,
+                stop_run=True,
             ))
-        eta = eta_state.get("eta")
-        eta_by_warehouse = eta_state.get("eta_by_warehouse")
+        warehouse_plan = split_plan
+
+    if shipping.get("ship_mode") == "ship":
         if eta is None:
-            if not eta_state.get("freight_calculation_unavailable"):
+            if len(shipping_plan_attempts) > 1:
+                return done(_result(
+                    order_id,
+                    False,
+                    "sanmar_ups_unavailable",
+                    "Split-warehouse delivery dates could not be confirmed. The preferred single-warehouse "
+                    "shipment would arrive too late. No SanMar stock was ordered.",
+                    order=order,
+                    warehouses=selected_warehouses,
+                    products=product_lines,
+                    warehouse_plan=warehouse_plan,
+                    shipping=shipping,
+                    manual_review_required=True,
+                    retryable=False,
+                ))
+            if not shipping_state.get("freight_calculation_unavailable"):
                 raise RuntimeError("UPS was selected but no estimated delivery date was returned.")
             _publish_status(
                 f"SanMar freight calculation is unavailable for order {order_id}; proceeding with selected UPS and no ETA.",

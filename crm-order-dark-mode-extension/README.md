@@ -53,6 +53,9 @@ The extension checks `http://127.0.0.1:5123/api/extension/bridge/status` when it
 The **Process order** button on an open CRM order sends only that order number to the local app. It is placed in the Automation queue, so it waits for any active task instead of overlapping another automation. It validates the address, separates mixed listed/non-listed products, splits orders with more than 10 tabs, unlocks stock as part of Order Goods, and orders every applicable stock tab. If the visible CRM page or the Order Goods result reports that shipping is too expensive (including a purchase plan exceeding the maximum shipment-cost percentage), it then runs the shipping bypasser. The chain stops for manual review on an address, separation, or split failure; it does not fall back to batch reports.
 
 Selecting **Shipping Bypasser** from **Manual Process** is an explicit approval to use SanMar stock without the normal 10-piece per-size safety buffer. It still stops when SanMar has fewer units than the order requires. List-driven Shipping Bypasser runs and Auto-Process retain the 10-piece buffer.
+
+The worker prefers one warehouse, but checks a closer split before stopping when that complete shipment would arrive too late. The split retains the selected buffer setting and must pass cart validation and the delivery-date check for every warehouse. It uses one customer PO and the usual production note describing the boxes and quantities from each warehouse. This worker update loads on the next queued run; no app restart, extension reload, or page refresh is required.
+
 # Complicated EMB design selection
 
 Reachout > Complicated EMB scans the order design tabs and offers tabs with
