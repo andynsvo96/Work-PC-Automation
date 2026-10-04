@@ -456,6 +456,28 @@
           "sanmar_color_id": "White/ Heathered True Navy"
         }
       ]
+    },
+    {
+      "crm_product_id": "ST270",
+      "sanmar_product_id": "ST270",
+      "colors": [
+        {
+          "crm_color_id": "Black/Vnt Hthr",
+          "sanmar_color_id": "Black/ Vintage Heather"
+        },
+        {
+          "crm_color_id": "Graph He/VntHe",
+          "sanmar_color_id": "Graphite Heather/ Vintage Heather"
+        },
+        {
+          "crm_color_id": "Tr Royal/VntHe",
+          "sanmar_color_id": "True Navy/ Vintage Heather"
+        },
+        {
+          "crm_color_id": "Royal/VntHe",
+          "sanmar_color_id": "True Royal/ Vintage Heather"
+        }
+      ]
     }
   ]
 }
