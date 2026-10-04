@@ -3792,8 +3792,24 @@ function conciseAutomationFailureMessage(message, payload = {}, automationLabel 
     ...(Array.isArray(resultPayload && resultPayload.order_results) ? resultPayload.order_results : []),
     ...(Array.isArray(resultPayload && resultPayload.order_details) ? resultPayload.order_details : []),
     ...(Array.isArray(resultPayload && resultPayload.step_results) ? resultPayload.step_results : []),
+    ...(Array.isArray(contextReport.step_results) ? contextReport.step_results : []),
     ...(Array.isArray(contextReport.order_details) ? contextReport.order_details : []),
   ];
+  if (resultPayload && resultPayload.action === 'validate_batch' && resultPayload.resolution === 'batch') {
+    return String(resultPayload.message || message || '');
+  }
+  const failedSteps = baseRows.filter((row) => row && row.key && !Boolean(row.success));
+  if (failedSteps.length === 1) {
+    const step = failedSteps[0];
+    const total = Number(step.order_count);
+    const succeeded = Number(step.successful_order_count);
+    const errors = Number(step.error_count);
+    if (step.key === 'address_validator_batch' && String(step.message || '').startsWith('Processed ')
+        && Number.isInteger(succeeded) && succeeded >= 0 && Number.isInteger(errors) && errors > 0
+        && total === succeeded + errors) {
+      return `Validator finished: ${succeeded} succeeded; ${errors} need review.`;
+    }
+  }
   const rows = baseRows.concat(baseRows.flatMap((row) => Array.isArray(row && row.errors) ? row.errors : []));
   const isStockIssueExtension = /stock issue\s*-\s*extension required/i.test(String(automationLabel || ''))
     || Boolean(resultPayload && resultPayload.stock_issue_extension);

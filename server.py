@@ -2345,6 +2345,17 @@ def _concise_automation_failure_message(task, message=""):
         # not recorded.
         details = []
         step_results = report.get("step_results") if isinstance(report.get("step_results"), list) else []
+        failed_steps = [step for step in step_results if isinstance(step, dict) and not step.get("success")]
+        if len(failed_steps) == 1:
+            step = failed_steps[0]
+            if step.get("key") == "address_validator_batch" and str(step.get("message") or "").startswith("Processed "):
+                total = max(0, int(_safe_float(step.get("order_count"), 0)))
+                succeeded = max(0, int(_safe_float(step.get("successful_order_count"), 0)))
+                errors = max(0, int(_safe_float(step.get("error_count"), 0)))
+                if errors and total == succeeded + errors:
+                    # An order timeout is a review item in a completed batch,
+                    # not evidence that the entire automation timed out.
+                    return f"Validator finished: {succeeded} succeeded; {errors} need review."
         for step_result in step_results:
             if not isinstance(step_result, dict):
                 continue
@@ -2436,6 +2447,8 @@ def _automation_runtime_display_message(task_type, ok, message, payload=None):
     if ok:
         return str(message)
     payload = payload if isinstance(payload, dict) else {}
+    if task_type == "crm.address_validator" and payload.get("action") == "validate_batch" and payload.get("resolution") == "batch":
+        return str(message)
     if task_type == "crm.shipping_bypasser":
         details = _build_crm_shipping_bypasser_order_results(payload)
     elif task_type == "crm.order_goods":
