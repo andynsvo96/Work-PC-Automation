@@ -478,6 +478,16 @@
           "sanmar_color_id": "True Royal/ Vintage Heather"
         }
       ]
+    },
+    {
+      "crm_product_id": "DT110",
+      "sanmar_product_id": "DT110",
+      "colors": [
+        {
+          "crm_color_id": "Blust Frost",
+          "sanmar_color_id": "Blush Frost"
+        }
+      ]
     }
   ]
 }
