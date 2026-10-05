@@ -2,12 +2,13 @@
 
 The Chrome extension supplies the selected design tabs and a requested method for
 each print area.  This worker applies the CRM changes once, collects the View Invoice
-link without sending the CRM invoice, then sends the Salesforce Additional
-Requests email.
+link without sending the CRM invoice, then sends the appropriate Salesforce
+Additional Requests or Comp Sleeves email.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import json
 import os
@@ -33,6 +34,7 @@ SALESFORCE_TEMPLATE = str(
     getattr(config_module, "SALESFORCE_SLEEVE_PRINTS_TEMPLATE", "[AUTO] Additional Requests")
     or "[AUTO] Additional Requests"
 ).strip()
+COMP_SLEEVES_TEMPLATE = "[AUTO] Comp Sleeves"
 ORDER_NUMBER_PLACEHOLDER = "[ORDER-NUMBER]"
 REQUEST_PLACEHOLDER = "[REQUEST]"
 COST_PLACEHOLDER = "[COST]"
@@ -65,6 +67,12 @@ SLEEVE_PRINTS_PROCESS = shared.CancelProcess(
     display_name=DISPLAY_NAME,
     requires_reason=False,
     cancel_and_refund=False,
+)
+COMP_SLEEVES_PROCESS = replace(
+    SLEEVE_PRINTS_PROCESS,
+    salesforce_template=COMP_SLEEVES_TEMPLATE,
+    template_search=COMP_SLEEVES_TEMPLATE,
+    body_markers=(),
 )
 
 
@@ -384,6 +392,18 @@ def _crm_note_exists(state, note):
     return str(note or "").casefold() in str((state or {}).get("sales_notes") or "").casefold()
 
 
+def _salesforce_process_for_plan(plan):
+    selections = plan["selections"]
+    if selections and all(
+        (selection.get("left") or selection.get("right"))
+        and not any(selection.get(area) for area in ("side_left", "side_right", "reverse", "extra_emb"))
+        and selection["surcharge"] == 0
+        for selection in selections
+    ):
+        return COMP_SLEEVES_PROCESS
+    return SLEEVE_PRINTS_PROCESS
+
+
 def _record_emb_mutation(path, mutation):
     """Persist exact target prices before save so a retry never adds the fee twice."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -552,9 +572,11 @@ def _apply_crm_sleeve_changes(driver, plan, sales_note):
               if (!item || item.crudAction === 'd') continue;
               if (Number(item.splitIntoSizes) === 0) {
                 const next = Math.round((price(item.pricePerPiece) + surcharge) * 100) / 100;
-                item.pricePerPiece = next.toFixed(2);
-                if (watchItemChanges) watchItemChanges(item);
-                priceUpdates.push({tab_number: selection.tab_number, item_index: itemIndex, size_index: null, price: next.toFixed(2)});
+                if (surcharge !== 0) {
+                  item.pricePerPiece = next.toFixed(2);
+                  if (watchItemChanges) watchItemChanges(item);
+                }
+                priceUpdates.push({tab_number: selection.tab_number, item_index: itemIndex, size_index: null, price: String(item.pricePerPiece)});
                 adjusted += 1;
                 continue;
               }
@@ -562,9 +584,11 @@ def _apply_crm_sleeve_changes(driver, plan, sales_note):
                 const size = item.sizes[sizeIndex];
                 if (!size || size.crudAction === 'd' || Number(size.quantity) <= 0) continue;
                 const next = Math.round((price(size.pricePerPiece) + surcharge) * 100) / 100;
-                size.pricePerPiece = next.toFixed(2);
-                if (watchSizeChanges) watchSizeChanges(item, size);
-                priceUpdates.push({tab_number: selection.tab_number, item_index: itemIndex, size_index: sizeIndex, price: next.toFixed(2)});
+                if (surcharge !== 0) {
+                  size.pricePerPiece = next.toFixed(2);
+                  if (watchSizeChanges) watchSizeChanges(item, size);
+                }
+                priceUpdates.push({tab_number: selection.tab_number, item_index: itemIndex, size_index: sizeIndex, price: String(size.pricePerPiece)});
                 adjusted += 1;
               }
             }
@@ -747,7 +771,7 @@ def _capture_view_invoice_link(driver):
     return href
 
 
-def _replace_additional_request_placeholders(driver, request_text, cost_text, invoice_link):
+def _replace_additional_request_placeholders(driver, request_text, cost_text, invoice_link, *, required=True):
     replacements = {
         REQUEST_PLACEHOLDER: request_text,
         COST_PLACEHOLDER: cost_text,
@@ -846,6 +870,8 @@ def _replace_additional_request_placeholders(driver, request_text, cost_text, in
         """,
         replacements,
     ) or {}
+    if not required:
+        return result
     request_count = int(result.get(REQUEST_PLACEHOLDER) or 0)
     if request_count < 2:
         raise SleevePrintsError(
@@ -857,7 +883,8 @@ def _replace_additional_request_placeholders(driver, request_text, cost_text, in
     return result
 
 
-def _prepare_and_send_salesforce_email(driver, crm_handle, order_id, customer_email, request_text, cost_text, invoice_link, *, dry_run=False, login_wait_seconds=0):
+def _prepare_and_send_salesforce_email(driver, crm_handle, order_id, customer_email, request_text, cost_text, invoice_link, *, process=SLEEVE_PRINTS_PROCESS, dry_run=False, login_wait_seconds=0):
+    comp_sleeves = process == COMP_SLEEVES_PROCESS
     sf_handle = shared._open_salesforce_account(
         driver, crm_handle, customer_email, login_wait_seconds=login_wait_seconds, order_id=order_id
     )
@@ -865,25 +892,27 @@ def _prepare_and_send_salesforce_email(driver, crm_handle, order_id, customer_em
     shared._click_salesforce_email(driver, customer_email)
     shared._wait_for_email_composer(driver)
     selected_from = shared._set_salesforce_from_orders(driver)
-    shared._insert_cancel_template(driver, SLEEVE_PRINTS_PROCESS)
+    shared._insert_cancel_template(driver, process)
     deadline = time.monotonic() + 20
     state = {}
     while time.monotonic() < deadline:
         state = shared._read_salesforce_email_state(driver) or {}
         body = shared._clean_text(state.get("body"))
         subject = shared._clean_text(state.get("subject"))
-        if subject and all(token.casefold() in body.casefold() for token in (REQUEST_PLACEHOLDER, COST_PLACEHOLDER, INVOICE_LINK_PLACEHOLDER)):
+        if subject and body and all(marker in body.casefold() for marker in process.body_markers):
             break
         time.sleep(0.4)
     else:
         raise SleevePrintsError(
-            f"Salesforce template {SALESFORCE_TEMPLATE} did not load with {REQUEST_PLACEHOLDER}, {COST_PLACEHOLDER}, and {INVOICE_LINK_PLACEHOLDER}."
+            f"Salesforce template {process.salesforce_template} did not load with its expected body markers."
         )
     if not shared._subject_has_order_placeholder(subject) and str(order_id) not in subject:
         raise SleevePrintsError(f"Salesforce template subject does not contain {ORDER_NUMBER_PLACEHOLDER}.")
     if str(order_id) not in subject:
         shared._replace_subject_order_number(driver, order_id)
-    replacement = _replace_additional_request_placeholders(driver, request_text, cost_text, invoice_link)
+    replacement = _replace_additional_request_placeholders(
+        driver, request_text, cost_text, invoice_link, required=not comp_sleeves
+    )
     time.sleep(0.5)
     state = shared._read_salesforce_email_state(driver) or {}
     final_subject = shared._clean_text(state.get("subject"))
@@ -896,15 +925,20 @@ def _prepare_and_send_salesforce_email(driver, crm_handle, order_id, customer_em
         raise SleevePrintsError(f"Salesforce email still contains unresolved placeholders: {', '.join(unresolved)}.")
     if str(order_id) not in final_subject:
         raise SleevePrintsError("Salesforce email subject did not retain the CRM order number.")
-    if final_body.casefold().count(request_text.casefold()) < 2:
+    shared._validate_no_unresolved_email_placeholders(final_subject, final_body)
+    if comp_sleeves and not final_body:
+        raise SleevePrintsError("Salesforce Comp Sleeves email body was not retained before sending.")
+    required_requests = int((replacement or {}).get(REQUEST_PLACEHOLDER) or 0) if comp_sleeves else 2
+    if final_body.casefold().count(request_text.casefold()) < required_requests:
         raise SleevePrintsError("Salesforce email body did not retain both Extra Print Areas request replacements.")
-    for expected in (cost_text, invoice_link):
-        if expected.casefold() not in final_body.casefold():
+    for placeholder, expected in ((COST_PLACEHOLDER, cost_text), (INVOICE_LINK_PLACEHOLDER, invoice_link)):
+        if (not comp_sleeves or int((replacement or {}).get(placeholder) or 0)) and expected.casefold() not in final_body.casefold():
             raise SleevePrintsError("Salesforce email body did not retain the Extra Print Areas cost and invoice link.")
     recipients = _verify_final_recipients(driver, customer_email)
     if dry_run:
         return {
             "sent": False, "dry_run": True, "salesforce_handle": sf_handle, "from": selected_from,
+            "template": process.salesforce_template,
             "recipients": recipients, "subject": final_subject, "body": final_body, "replacement": replacement,
         }
     from workers.salesforce_activity_confirmation import send_and_confirm
@@ -914,6 +948,7 @@ def _prepare_and_send_salesforce_email(driver, crm_handle, order_id, customer_em
     return {
         **confirmation,
         "sent": True, "dry_run": False, "salesforce_handle": sf_handle, "from": selected_from,
+        "template": process.salesforce_template,
         "recipients": recipients, "subject": final_subject, "body": final_body, "replacement": replacement,
     }
 
@@ -965,6 +1000,8 @@ def process_sleeve_prints_order(
         begin("crm_order_update", "Adding Extra Print Areas, pricing, and Sales Notes.")
         before_state = _read_crm_sleeve_state(driver)
         plan = _build_live_plan(request, before_state)
+        process = _salesforce_process_for_plan(plan)
+        comp_sleeves = process == COMP_SLEEVES_PROCESS
         sales_note = format_sales_note(plan["selections"], plan["ink_price"], plan["embroidery_price"], plan["reverse_price"])
         request_text = _format_request_text(plan["selections"])
         cost_text = _format_cost_text(plan["selections"], plan["ink_price"], plan["embroidery_price"], plan["reverse_price"])
@@ -980,6 +1017,7 @@ def process_sleeve_prints_order(
             "sales_note_text": sales_note,
             "request_text": request_text,
             "cost_text": cost_text,
+            "salesforce_template": process.salesforce_template,
         })
         reverse_selections = [x for x in plan["selections"] if x.get("reverse")]
         extra_emb_selections = [x for x in plan["selections"] if x.get("extra_emb")]
@@ -1002,14 +1040,14 @@ def process_sleeve_prints_order(
                 crm_reverse_prints.verify_reverse_prints(driver, reverse_mutation)
             result["crm_order_update"] = {"mutation": mutation, "verification": verification, "skipped": True}
             complete("crm_order_update", result["crm_order_update"])
-        elif _crm_note_exists(before_state, sales_note) and not reverse_selections and not extra_emb_selections:
+        elif _crm_note_exists(before_state, sales_note) and not reverse_selections and not extra_emb_selections and not comp_sleeves:
             mutation = {"skipped": True, "reason": "matching_sales_note_already_saved", "added_areas": [], "existing_areas": [], "price_updates": []}
             result["crm_order_update"] = mutation
             complete("crm_order_update", mutation)
         else:
             # Reverse clones are always inspected, including retries with a saved note.
             apply_plan = plan
-            if _crm_note_exists(before_state, sales_note) and not extra_emb_selections:
+            if _crm_note_exists(before_state, sales_note) and not extra_emb_selections and not comp_sleeves:
                 apply_plan = {**plan, "selections": []}
             mutation = _apply_crm_sleeve_changes(
                 driver, apply_plan, "" if _crm_note_exists(before_state, sales_note) else sales_note
@@ -1017,6 +1055,12 @@ def process_sleeve_prints_order(
             if emb_mutation_path is not None:
                 _record_emb_mutation(emb_mutation_path, mutation)
             save = shared._save_order_and_wait(driver)
+            if comp_sleeves:
+                # Re-read persisted areas and unchanged prices before preparing the email.
+                shared.safe_get_with_partial_load(driver, order_url, f"Verify saved sleeve areas for CRM order {order_id}")
+                shared._login_to_crm_if_needed(driver, order_url, login_wait_seconds=login_wait_seconds)
+                shared._switch_to_crm_app_frame(driver)
+                shared._wait_for_order_scope(driver, order_id=order_id)
             verification = _verify_crm_sleeve_changes(driver, sales_note, mutation)
             if reverse_mutation is not None:
                 crm_reverse_prints.verify_reverse_prints(driver, reverse_mutation)
@@ -1036,10 +1080,10 @@ def process_sleeve_prints_order(
         result["invoice_link"] = invoice_link
         complete("invoice_link", {"captured": True})
 
-        begin("salesforce_email", "Preparing and sending the Additional Requests email.")
+        begin("salesforce_email", f"Preparing and sending the {process.salesforce_template} email.")
         salesforce = _prepare_and_send_salesforce_email(
             driver, crm_handle, order_id, contact["email"], request_text, cost_text, invoice_link,
-            dry_run=dry_run, login_wait_seconds=login_wait_seconds,
+            process=process, dry_run=dry_run, login_wait_seconds=login_wait_seconds,
         )
         result["salesforce"] = salesforce
         if receipt is not None and salesforce.get("sent"):
