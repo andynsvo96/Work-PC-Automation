@@ -35,6 +35,7 @@ SALESFORCE_TEMPLATE = str(
     or "[AUTO] Additional Requests"
 ).strip()
 COMP_SLEEVES_TEMPLATE = "[AUTO] Comp Sleeves"
+COMP_SLEEVES_SALES_NOTE = "Comped Sleeve prints\nEmailed"
 ORDER_NUMBER_PLACEHOLDER = "[ORDER-NUMBER]"
 REQUEST_PLACEHOLDER = "[REQUEST]"
 COST_PLACEHOLDER = "[COST]"
@@ -186,6 +187,17 @@ def _request_flags(sleeves):
     }
 
 
+def _is_comp_sleeves_request(sleeves, ink_price, embroidery_price):
+    if not sleeves or not all(
+        (selection.get("left") or selection.get("right"))
+        and not any(selection.get(area) for area in ("side_left", "side_right", "reverse", "extra_emb"))
+        for selection in sleeves
+    ):
+        return False
+    flags = _request_flags(sleeves)
+    return (not flags["ink"] or ink_price == 0) and (not flags["embroidery"] or embroidery_price == 0)
+
+
 def _area_family(sleeves, method=None):
     sleeve = any(selection.get(area) and (method is None or selection.get(area) == method)
                  for selection in sleeves for area in ("left", "right"))
@@ -228,6 +240,12 @@ def _format_cost_text(sleeves, ink_price, embroidery_price, reverse_price=None):
 
 
 def format_sales_note(sleeves, ink_price, embroidery_price, reverse_price=None):
+    if _is_comp_sleeves_request(sleeves, ink_price, embroidery_price):
+        return COMP_SLEEVES_SALES_NOTE
+    return _format_priced_sales_note(sleeves, ink_price, embroidery_price, reverse_price)
+
+
+def _format_priced_sales_note(sleeves, ink_price, embroidery_price, reverse_price=None):
     if any(x.get("extra_emb") for x in sleeves):
         others = [x for x in sleeves if not x.get("extra_emb")]
         note = f"Additional embroidery area\n{_money_text(embroidery_price)} each\nemailed txted"
@@ -393,13 +411,7 @@ def _crm_note_exists(state, note):
 
 
 def _salesforce_process_for_plan(plan):
-    selections = plan["selections"]
-    if selections and all(
-        (selection.get("left") or selection.get("right"))
-        and not any(selection.get(area) for area in ("side_left", "side_right", "reverse", "extra_emb"))
-        and selection["surcharge"] == 0
-        for selection in selections
-    ):
+    if _is_comp_sleeves_request(plan["selections"], plan["ink_price"], plan["embroidery_price"]):
         return COMP_SLEEVES_PROCESS
     return SLEEVE_PRINTS_PROCESS
 
@@ -1003,6 +1015,11 @@ def process_sleeve_prints_order(
         process = _salesforce_process_for_plan(plan)
         comp_sleeves = process == COMP_SLEEVES_PROCESS
         sales_note = format_sales_note(plan["selections"], plan["ink_price"], plan["embroidery_price"], plan["reverse_price"])
+        if comp_sleeves and not _crm_note_exists(before_state, sales_note):
+            legacy_note = _format_priced_sales_note(plan["selections"], plan["ink_price"], plan["embroidery_price"])
+            if _crm_note_exists(before_state, legacy_note):
+                # Keep an already-saved note on retries rather than appending a duplicate.
+                sales_note = legacy_note
         request_text = _format_request_text(plan["selections"])
         cost_text = _format_cost_text(plan["selections"], plan["ink_price"], plan["embroidery_price"], plan["reverse_price"])
         result.update({

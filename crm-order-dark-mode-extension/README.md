@@ -21,6 +21,8 @@ Ink pricing uses the combined garment quantity of selected tabs with an ink or r
 
 For **Sleeve Prints** only, setting every selected sleeve method's price to **$0.00** uses the Salesforce **[AUTO] Comp Sleeves** template. Left, right, or both sleeve areas are still added with the selected print method, and existing product and size prices are retained and verified after saving and reloading the order. This also supports sleeve embroidery priced at $0.00. Requests that include side, reversible, or extra embroidery areas, or any paid sleeves, keep the **[AUTO] Additional Requests** template.
 
+New zero-price sleeve Sales Notes read `Comped Sleeve prints` and `Emailed` on separate lines. Matching notes from the earlier `$0.00 per sleeve` wording are retained on retries to avoid duplicate notes.
+
 The Comp Sleeves template does not need the paid email's `[REQUEST]`, `[COST]`, or `[INVOICE_LINK]` placeholders; any of those present are filled and verified. The order number and Salesforce Activity confirmation remain required. Restart the local Automation app to load this worker update; no extension reload or page refresh is needed.
 
 Reverse printing clones each selected original as **REVERSE-PRINT**, explicitly selects **Style Sub** and clicks **Apply** for each product, and selects the original vendor from its dropdown. Style and description are copied; two-color names are reversed and single colors retained. Quantities are restored by size label. The clone's unit price is the reverse price multiplied by its front/back area count (front or back: one charge; both: two). The original product prices are preserved. CRM carries over artwork and print methods.

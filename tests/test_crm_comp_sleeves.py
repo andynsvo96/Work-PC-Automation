@@ -30,6 +30,8 @@ class CompSleevesPricingTests(unittest.TestCase):
                     self.assertEqual(plan["selections"][0]["surcharge"], Decimal("0.00"))
                     self.assertEqual(sleeves._salesforce_process_for_plan(plan).salesforce_template,
                                      "[AUTO] Comp Sleeves")
+                    self.assertEqual(sleeves.format_sales_note(plan["selections"], plan["ink_price"], plan["embroidery_price"]),
+                                     "Comped Sleeve prints\nEmailed")
         plan = live_plan([
             {"tab_number": 1, "quantity": 10, "left": "ink"},
             {"tab_number": 2, "quantity": 10, "right": "embroidery"},
@@ -54,6 +56,9 @@ class CompSleevesPricingTests(unittest.TestCase):
                     for index, area in enumerate(areas)
                 ], **prices)
                 self.assertEqual(sleeves._salesforce_process_for_plan(plan), sleeves.SLEEVE_PRINTS_PROCESS)
+                self.assertNotEqual(sleeves.format_sales_note(plan["selections"], plan["ink_price"],
+                                                             plan["embroidery_price"], plan["reverse_price"]),
+                                    "Comped Sleeve prints\nEmailed")
 
     def test_comp_sleeves_add_areas_without_writing_prices_and_verify_unchanged_prices(self):
         plan = live_plan([{"tab_number": 1, "quantity": 10, "left": "ink", "right": "embroidery"}],
@@ -209,15 +214,22 @@ class CompSleevesWorkflowTests(unittest.TestCase):
             result = sleeves.process_sleeve_prints_order("1234567", selection, ink_price=0)
             self.assertTrue(result["success"])
             self.assertEqual(result["salesforce_template"], "[AUTO] Comp Sleeves")
+            self.assertEqual(result["sales_note_text"], state["sales_notes"])
+            self.assertEqual(apply.call_args.args[2], "")
             self.assertEqual(apply.call_args.args[1]["selections"][0]["right"], "ink")
             verify.assert_called_once()
             self.assertEqual(sleeves.shared.safe_get_with_partial_load.call_count, 2)
             self.assertIn("Verify saved sleeve areas", sleeves.shared.safe_get_with_partial_load.call_args.args[2])
             self.assertEqual(send.call_args.kwargs["process"], sleeves.COMP_SLEEVES_PROCESS)
+            state["sales_notes"] = ""
+            result = sleeves.process_sleeve_prints_order("1234567", selection, ink_price=0)
+            self.assertEqual(result["sales_note_text"], "Comped Sleeve prints\nEmailed")
+            self.assertEqual(apply.call_args.args[2], "Comped Sleeve prints\nEmailed")
+            self.assertEqual(verify.call_args.args[1], "Comped Sleeve prints\nEmailed")
             verify.side_effect = sleeves.SleevePrintsError("Sleeve areas were not saved")
             with self.assertRaisesRegex(sleeves.SleevePrintsError, "Sleeve areas were not saved"):
                 sleeves.process_sleeve_prints_order("1234567", selection, ink_price=0)
-            send.assert_called_once()
+            self.assertEqual(send.call_count, 2)
 
 
 if __name__ == "__main__":
