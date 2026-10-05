@@ -493,6 +493,28 @@
       "crm_product_id": "1010BE",
       "sanmar_product_id": "BC1010",
       "colors": []
+    },
+    {
+      "crm_product_id": "LST293",
+      "sanmar_product_id": "LST293",
+      "colors": [
+        {
+          "crm_color_id": "Black Triad So",
+          "sanmar_color_id": "Black Triad Solid"
+        },
+        {
+          "crm_color_id": "Dark Grey Hthr",
+          "sanmar_color_id": "Dark Grey Heather"
+        },
+        {
+          "crm_color_id": "True Navy Hthr",
+          "sanmar_color_id": "True Navy Heather"
+        },
+        {
+          "crm_color_id": "True Royal Hth",
+          "sanmar_color_id": "True Royal Heather"
+        }
+      ]
     }
   ]
 }
