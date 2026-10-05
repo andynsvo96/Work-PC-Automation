@@ -488,6 +488,11 @@
           "sanmar_color_id": "Blush Frost"
         }
       ]
+    },
+    {
+      "crm_product_id": "1010BE",
+      "sanmar_product_id": "BC1010",
+      "colors": []
     }
   ]
 }
