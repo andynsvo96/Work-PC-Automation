@@ -104,6 +104,56 @@ class WorkRouteScheduleTests(unittest.TestCase):
         self.assertEqual(captured["queue_mode"], "scheduled")
         self.assertEqual(captured["scheduled_for"], "2026-08-07T12:00:00")
 
+    def test_custom_processing_snapshots_link_and_all_selected_tools(self):
+        run = mock.Mock()
+        state = {"state": {"custom_list_url": "https://crm.example/app#reports?list=original"}}
+        app, captured = self._app_with_captured_queue(
+            run_crm_processing_run_queued=run,
+            get_crm_processing_state_payload=lambda: state,
+        )
+        response = app.test_client().post("/crm/process", json={
+            "processing_filter": "custom", "shipping_bypasser_enabled": True, "push_back_enabled": True,
+            "advanced_mode": "repeat", "repeat_interval_minutes": 0,
+        })
+        self.assertEqual(response.status_code, 202)
+        self.assertIn("Custom", captured["label"])
+        self.assertEqual(len(captured["automation_signature"]["steps"]), 7)
+        self.assertEqual(captured["repeat_interval_minutes"], 0)
+        link = captured["task_arguments"]["custom_list_url"]
+        self.assertEqual(captured["automation_signature"]["custom_list_url"], link)
+        state["state"]["custom_list_url"] = "https://crm.example/report/changed"
+        captured["fn"]()
+        self.assertEqual(run.call_args.kwargs["custom_list_url"], link)
+
+    def test_custom_processing_signatures_distinguish_links_and_keep_schedule(self):
+        app, captured = self._app_with_captured_queue()
+        signatures = []
+        for link in ("https://crm.example/report/one", "https://crm.example/report/two"):
+            response = app.test_client().post("/crm/process/custom", json={
+                "custom_list_url": link, "advanced_mode": "scheduled", "scheduled_time": "2026-10-07T09:00:00",
+            })
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(captured["task_arguments"]["custom_list_url"], link)
+            self.assertEqual(captured["scheduled_for"], "2026-10-07T09:00:00")
+            signatures.append(captured["automation_signature"])
+        self.assertNotEqual(*signatures)
+
+    def test_custom_processing_rejects_missing_and_invalid_links_before_queue(self):
+        app, captured = self._app_with_captured_queue()
+        for link in (None, "", "not a link", "javascript:alert(1)", "https://user:password@crm.example/report"):
+            with self.subTest(link=link):
+                response = app.test_client().post("/crm/process", json={"processing_filter": "custom", "custom_list_url": link})
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(response.json["success"])
+                self.assertEqual(captured, {})
+
+    def test_standard_processing_ignores_custom_link(self):
+        app, captured = self._app_with_captured_queue()
+        response = app.test_client().post("/crm/process/free", json={"custom_list_url": "https://crm.example/report/custom"})
+        self.assertEqual(response.status_code, 202)
+        self.assertNotIn("custom_list_url", captured["task_arguments"])
+        self.assertNotIn("custom_list_url", captured["automation_signature"])
+
 
 if __name__ == "__main__":
     unittest.main()

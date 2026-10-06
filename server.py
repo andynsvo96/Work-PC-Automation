@@ -52,6 +52,7 @@ from clipboard_runtime import (
     create_platform_clipboard_adapter,
 )
 from credential_store import CREDENTIAL_TARGETS
+from crm_list_url import normalize_custom_crm_list_url
 import config as config_module
 from node_preferences import load_node_preferences, update_node_preferences
 from platform_runtime import get_platform_snapshot, normalize_os_name, resolve_worker_count
@@ -5564,7 +5565,7 @@ def _normalize_crm_auto_split_orders(payload):
     return cleaned[:100]
 
 
-CRM_PROCESSING_FILTERS = ("rush", "free", "all", "813", "high_value")
+CRM_PROCESSING_FILTERS = ("rush", "free", "all", "813", "high_value", "custom")
 # "all" is a Processing mode.  "all_reports" deliberately has a different key so
 # report filtering can never confuse the two meanings of All.
 CRM_PROCESSING_REPORT_FILTERS = CRM_PROCESSING_FILTERS + ("all_reports",)
@@ -5603,7 +5604,7 @@ def _crm_processing_filter_is_rush_like(value):
 
 
 def _crm_processing_filter_supports_unlocker(value):
-    return _normalize_crm_shipping_filter(value) in {"rush", "high_value", "free", "all"}
+    return _normalize_crm_shipping_filter(value) in {"rush", "high_value", "free", "all", "custom"}
 
 
 def _crm_processing_filter_supports_order_goods(value):
@@ -5731,7 +5732,7 @@ def _sanitize_crm_processing_mode_preferences(processing_filter, values=None):
     elif key == "free":
         prefs["shipping_bypasser_enabled"] = False
         prefs["push_back_enabled"] = False
-    elif not _crm_processing_filter_is_rush_like(key):
+    elif key != "custom" and not _crm_processing_filter_is_rush_like(key):
         prefs["stock_unlocker_enabled"] = False
         prefs["order_goods_enabled"] = False
         prefs["shipping_bypasser_enabled"] = False
@@ -5802,9 +5803,9 @@ def _crm_processing_selected_steps_from_state(state):
         steps.append("stock_unlocker")
     if _crm_processing_filter_supports_order_goods(processing_filter) and _normalize_crm_processing_enabled(state.get("order_goods_enabled"), default=True):
         steps.append("order_goods")
-    if (rush_like or processing_filter == "813") and _normalize_crm_processing_enabled(state.get("shipping_bypasser_enabled"), default=False):
+    if (rush_like or processing_filter in {"813", "custom"}) and _normalize_crm_processing_enabled(state.get("shipping_bypasser_enabled"), default=False):
         steps.append("shipping_bypasser")
-    if (rush_like or processing_filter == "813") and _normalize_crm_processing_enabled(state.get("push_back_enabled"), default=False):
+    if (rush_like or processing_filter in {"813", "custom"}) and _normalize_crm_processing_enabled(state.get("push_back_enabled"), default=False):
         steps.append("push_back")
     return steps
 
@@ -5933,6 +5934,7 @@ def _default_crm_processing_state():
         "shipping_bypasser_enabled": False,
         "push_back_enabled": False,
         "processing_filter": "rush",
+        "custom_list_url": "",
         "mode_preferences": {
             processing_filter: _default_crm_processing_mode_preferences(processing_filter)
             for processing_filter in CRM_PROCESSING_FILTERS
@@ -6745,7 +6747,7 @@ def _build_crm_processing_summary(step_results):
     return False, f"Automate Processing completed with partial success. Needs attention: {failed_labels}."
 
 
-def _persist_crm_processing_run_result(success, message, selected_steps, step_results, processing_filter="rush"):
+def _persist_crm_processing_run_result(success, message, selected_steps, step_results, processing_filter="rush", custom_list_url=None):
     ensure_crm_processing_state_file()
     timestamp = datetime.now().isoformat()
     normalized_steps = [
@@ -6776,6 +6778,8 @@ def _persist_crm_processing_run_result(success, message, selected_steps, step_re
             "duration_seconds": duration_seconds,
             "message": str(message),
         }
+        if normalized_filter == "custom":
+            entry["custom_list_url"] = custom_list_url
         history = state.get("run_history") if isinstance(state.get("run_history"), list) else []
         state["run_history"] = [entry] + history[:19]
         _append_crm_processing_report(state, timestamp, normalized_results, processing_filter=normalized_filter)
@@ -6880,6 +6884,8 @@ def _crm_address_worker_timeout(action="validate_order", batch_size=1, parallel_
 
 def _crm_shipping_filter_label(value):
     key = _normalize_crm_shipping_filter(value)
+    if key == "custom":
+        return "Custom List"
     if key == "813":
         return "813 Orders"
     if key == "high_value":
@@ -10861,7 +10867,7 @@ def clear_crm_mass_emailer_history():
     return True, "Sheets Scanner history cleared."
 
 
-def update_crm_processing_preferences(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None):
+def update_crm_processing_preferences(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None, custom_list_url=None):
     ensure_crm_processing_state_file()
     unlock_supplied = _crm_processing_value_supplied(stock_unlocker_enabled)
     address_supplied = _crm_processing_value_supplied(address_validator_enabled)
@@ -10875,6 +10881,13 @@ def update_crm_processing_preferences(stock_unlocker_enabled=None, mass_emailer_
     with crm_processing_state_lock:
         state = load_crm_processing_state()
         target_filter = _normalize_crm_shipping_filter(processing_filter) if filter_supplied else state.get("processing_filter")
+        if target_filter == "custom":
+            try:
+                state["custom_list_url"] = normalize_custom_crm_list_url(
+                    custom_list_url if custom_list_url is not None else state.get("custom_list_url")
+                )
+            except ValueError as exc:
+                return False, str(exc), state
         mode_preferences = state.get("mode_preferences") if isinstance(state.get("mode_preferences"), dict) else {}
         target_preferences = dict(
             mode_preferences.get(target_filter)
@@ -11123,9 +11136,19 @@ def _run_crm_processing_auto_splitter_order(order_id):
 
 def _run_crm_processing_step(step_key, processing_filter, processing_state=None, target_order_id=None):
     target_order_id = _normalize_crm_single_order_id(target_order_id)
+    custom_list_url = None
+    if _normalize_crm_shipping_filter(processing_filter) == "custom":
+        try:
+            custom_list_url = normalize_custom_crm_list_url((processing_state or {}).get("custom_list_url"))
+        except ValueError as exc:
+            return {"key": step_key, "label": _crm_processing_step_label(step_key), "success": False, "message": str(exc)}
+        # Keep the existing worker modes and eligibility checks. Validator's All
+        # mode determines shipping rules per order; other tools use normal Rush
+        # behavior with the supplied list replacing their configured report.
+        processing_filter = "all" if step_key == "address_validator_batch" else "rush"
     if step_key == "product_separator":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-        list_url = _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
+        list_url = custom_list_url or _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
         if normalized_filter == "high_value" and not list_url and not target_order_id:
             message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
             return {
@@ -11181,7 +11204,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
         if target_order_id:
             return _run_crm_processing_auto_splitter_order(target_order_id)
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-        list_url = _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
+        list_url = custom_list_url or _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
         if not list_url:
             config_key = _crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)
             message = (
@@ -11246,7 +11269,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
 
     if step_key == "order_goods":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-        list_url = _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
+        list_url = custom_list_url or _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
         if normalized_filter in {"813", "high_value", "free", "all"} and not list_url and not target_order_id:
             message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
             return {
@@ -11297,7 +11320,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
 
     if step_key == "shipping_bypasser":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-        list_url = _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
+        list_url = custom_list_url or _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
         if normalized_filter in {"813", "high_value"} and not list_url and not target_order_id:
             message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
             return {
@@ -11351,7 +11374,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
 
     if step_key == "push_back":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-        list_url = _crm_processing_push_back_list_url_for_filter(normalized_filter)
+        list_url = custom_list_url or _crm_processing_push_back_list_url_for_filter(normalized_filter)
         if not (_crm_processing_filter_is_rush_like(normalized_filter) or normalized_filter == "813"):
             message = "Push Back is only available for Rush, High Value, and 813 modes."
             return {
@@ -11420,7 +11443,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
 
     if step_key == "stock_unlocker":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-        list_url = _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
+        list_url = custom_list_url or _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
         if normalized_filter in {"free", "all"} and not list_url and not target_order_id:
             message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
             return {
@@ -11462,7 +11485,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
     parallel_workers = _normalize_crm_positive_int(address_state.get("saved_parallel_workers"), default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
     if batch_size is not None:
         parallel_workers = min(parallel_workers, batch_size)
-    list_url = _crm_processing_address_list_url_for_filter(normalized_filter)
+    list_url = custom_list_url or _crm_processing_address_list_url_for_filter(normalized_filter)
     if normalized_filter in {"813", "high_value"} and not list_url and not target_order_id:
         message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, 'address_validator_batch')} is empty in config.py."
         return {
@@ -11527,15 +11550,16 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
     }
 
 
-def _crm_processing_run_thread(selected_steps, processing_filter, retry_plan=None):
+def _crm_processing_run_thread(selected_steps, processing_filter, retry_plan=None, processing_state=None):
     step_results = []
     overall_success = False
     summary = "Automate Processing did not run."
     normalized_filter = _normalize_crm_shipping_filter(processing_filter)
     normalized_retry_plan = _normalize_crm_processing_retry_plan(retry_plan)
     try:
-        with crm_processing_state_lock:
-            processing_state = load_crm_processing_state()
+        if processing_state is None:
+            with crm_processing_state_lock:
+                processing_state = load_crm_processing_state()
         for step_key in selected_steps:
             if _automation_stop_is_blocking():
                 summary = _force_stop_message("Automate Processing")
@@ -11584,7 +11608,10 @@ def _crm_processing_run_thread(selected_steps, processing_filter, retry_plan=Non
                 }
             )
     finally:
-        state = _persist_crm_processing_run_result(overall_success, summary, selected_steps, step_results, processing_filter=normalized_filter)
+        result_options = {"processing_filter": normalized_filter}
+        if normalized_filter == "custom":
+            result_options["custom_list_url"] = (processing_state or {}).get("custom_list_url")
+        state = _persist_crm_processing_run_result(overall_success, summary, selected_steps, step_results, **result_options)
         _audit_result("crm.processing", overall_success, summary)
         with crm_processing_runtime_lock:
             crm_processing_runtime["running"] = False
@@ -11611,6 +11638,7 @@ def start_crm_processing_run(
     processing_filter=None,
     persist_preferences=True,
     retry_plan=None,
+    custom_list_url=None,
 ):
     ensure_crm_processing_state_file()
     unlock_supplied = _crm_processing_value_supplied(stock_unlocker_enabled)
@@ -11625,6 +11653,13 @@ def start_crm_processing_run(
     with crm_processing_state_lock:
         state = load_crm_processing_state()
         target_filter = _normalize_crm_shipping_filter(processing_filter) if filter_supplied else state.get("processing_filter")
+        if target_filter == "custom":
+            try:
+                state["custom_list_url"] = normalize_custom_crm_list_url(
+                    custom_list_url if custom_list_url is not None else state.get("custom_list_url")
+                )
+            except ValueError as exc:
+                return False, str(exc)
         mode_preferences = state.get("mode_preferences") if isinstance(state.get("mode_preferences"), dict) else {}
         target_preferences = dict(
             mode_preferences.get(target_filter)
@@ -11694,6 +11729,7 @@ def start_crm_processing_run(
         crm_processing_runtime["completedAt"] = None
         crm_processing_runtime["currentStep"] = None
         crm_processing_runtime["processingFilter"] = normalized_filter
+        crm_processing_runtime["customListUrl"] = state.get("custom_list_url") if normalized_filter == "custom" else None
         crm_processing_runtime["selectedSteps"] = list(selected_steps)
         crm_processing_runtime["completedSteps"] = []
         crm_processing_runtime["currentOrderProgress"] = None
@@ -11702,7 +11738,7 @@ def start_crm_processing_run(
 
     threading.Thread(
         target=_crm_processing_run_thread,
-        args=(list(selected_steps), normalized_filter, normalized_retry_plan),
+        args=(list(selected_steps), normalized_filter, normalized_retry_plan, state),
         daemon=True,
     ).start()
     labels = ", ".join(_crm_processing_step_label(step) for step in selected_steps)
@@ -13473,7 +13509,7 @@ def run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, limit=
     return _wait_for_status_completion(get_crm_mass_emailer_status_payload, msg)
 
 
-def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None, retry_plan=None):
+def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None, retry_plan=None, custom_list_url=None):
     ok, msg = start_crm_processing_run(
         stock_unlocker_enabled=stock_unlocker_enabled,
         mass_emailer_enabled=mass_emailer_enabled,
@@ -13486,6 +13522,7 @@ def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enab
         processing_filter=processing_filter,
         persist_preferences=False,
         retry_plan=retry_plan,
+        custom_list_url=custom_list_url,
     )
     if not ok:
         return ok, msg

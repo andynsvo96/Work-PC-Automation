@@ -12401,7 +12401,7 @@ class CrmAddressServerTests(unittest.TestCase):
 
         self.assertIn("report", payload)
         self.assertEqual(set(payload["report"]["periods"]), {"daily", "weekly", "monthly", "all"})
-        self.assertEqual(set(payload["report"]["filters"]), {"free", "rush", "813", "all", "high_value", "all_reports"})
+        self.assertEqual(set(payload["report"]["filters"]), {"free", "rush", "813", "all", "high_value", "custom", "all_reports"})
         self.assertEqual(len(payload["report"]["periods"]["all"]["rows"]), 9)
 
     def test_processing_report_backfills_live_sheet_scanner_history(self):

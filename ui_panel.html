@@ -1031,6 +1031,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
         <option value='free'>FREE</option>
         <option value='all'>ALL</option>
         <option value='813'>813</option>
+        <option value='custom'>CUSTOM</option>
     </select>
     <div class='rough-modebar'>
       <button class='rough-mode active' id='crmProcessingRushFilterBtn' onclick="setCrmProcessingFilter('rush')">Rush</button>
@@ -1038,6 +1039,11 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
       <button class='rough-mode' id='crmProcessingFreeFilterBtn' onclick="setCrmProcessingFilter('free')">Free</button>
       <button class='rough-mode' id='crmProcessingAllFilterBtn' onclick="setCrmProcessingFilter('all')">All</button>
       <button class='rough-mode' id='crmProcessing813FilterBtn' onclick="setCrmProcessingFilter('813')">813</button>
+      <button class='rough-mode' id='crmProcessingCustomFilterBtn' onclick="setCrmProcessingFilter('custom')">Custom</button>
+    </div>
+    <div id='crmProcessingCustomListRow' style='display:none;margin-top:8px'>
+      <div class='muted' style='overflow-wrap:anywhere'>CRM list: <span id='crmProcessingCustomListUrl'></span> <button class='secondary tiny' type='button' onclick="setCrmProcessingFilter('custom')">Change link</button></div>
+      <div class='muted' style='margin-top:6px'>Choose the tools appropriate for this list. Each selected tool uses this link with its existing processing rules.</div>
     </div>
     <div class='rough-label' style='margin:16px 0 7px'>Automation tools</div>
     <div class='compact-tools'>
@@ -1128,6 +1134,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
               <option value='813'>813</option>
               <option value='all'>All</option>
               <option value='high_value'>High Value</option>
+              <option value='custom'>Custom</option>
             </select>
           </label>
           <div class='processing-report-filters' aria-label='Processing report period'>
@@ -1976,7 +1983,7 @@ const CRM_HISTORY_STATUS_FILTER_LABELS = {
   successful: 'Successful',
   failed: 'Failed',
 };
-const CRM_PROCESSING_FILTER_SEQUENCE = ['rush', 'high_value', 'free', 'all', '813'];
+const CRM_PROCESSING_FILTER_SEQUENCE = ['rush', 'high_value', 'free', 'all', '813', 'custom'];
 const HIDDEN_CONFIG_KEYS = new Set([
   'CRM_SHIPPING_813_URL',
   'PRODUCT_SEPARATOR_LIST_URL_813',
@@ -2092,7 +2099,11 @@ function isCrmRushLikeProcessingFilter(value) {
 
 function canCrmProcessingFilterRunUnlocker(value) {
   const key = normalizeCrmProcessingFilter(value);
-  return isCrmRushLikeProcessingFilter(key) || key === 'free' || key === 'all';
+  return isCrmRushLikeProcessingFilter(key) || key === 'free' || key === 'all' || key === 'custom';
+}
+
+function canCrmProcessingFilterRunOrderSupport(value) {
+  return ['rush', 'high_value', '813', 'custom'].includes(normalizeCrmProcessingFilter(value));
 }
 
 function canCrmProcessingFilterRunOrderGoods(value) {
@@ -2124,7 +2135,7 @@ function normalizeCrmProcessingStepList(stepList, state = {}) {
   const rushLike = isCrmRushLikeProcessingFilter(processingFilter);
   const unlockerCapable = canCrmProcessingFilterRunUnlocker(processingFilter);
   const canRunOrderGoods = canCrmProcessingFilterRunOrderGoods(processingFilter);
-  const canRunOrderSupport = rushLike || processingFilter === '813';
+  const canRunOrderSupport = canCrmProcessingFilterRunOrderSupport(processingFilter);
   const orderGoodsEnabled = state && canRunOrderGoods && state.order_goods_enabled;
   const shippingBypasserEnabled = state && canRunOrderSupport && state.shipping_bypasser_enabled;
   const pushBackEnabled = state && canRunOrderSupport && state.push_back_enabled;
@@ -2154,7 +2165,7 @@ function crmProcessingAvailableStepsForFilter(processingFilter) {
   if (filter !== '813') steps.push('auto_splitter');
   if (canCrmProcessingFilterRunUnlocker(filter)) steps.push('stock_unlocker');
   if (canCrmProcessingFilterRunOrderGoods(filter)) steps.push('order_goods');
-  if (rushLike || filter === '813') {
+  if (canCrmProcessingFilterRunOrderSupport(filter)) {
     steps.push('shipping_bypasser');
     steps.push('push_back');
   }
@@ -2164,7 +2175,7 @@ function crmProcessingAvailableStepsForFilter(processingFilter) {
 function crmProcessingBulkPayload(processingFilter, enabled) {
   const filter = normalizeCrmProcessingFilter(processingFilter);
   const rushLike = isCrmRushLikeProcessingFilter(filter);
-  const canRunOrderSupport = rushLike || filter === '813';
+  const canRunOrderSupport = canCrmProcessingFilterRunOrderSupport(filter);
   return {
     stock_unlocker_enabled: enabled && canCrmProcessingFilterRunUnlocker(filter),
     address_validator_enabled: enabled,
@@ -2251,7 +2262,7 @@ function renderCrmProcessingReport(payload) {
       trackingText = ` Tracking began ${fmtDateTime(report.tracking_started_at)}.`;
     }
     const filterLabels = {
-      all_reports: 'All Reports', free: 'Free', rush: 'Rush', '813': '813', all: 'All', high_value: 'High Value',
+      all_reports: 'All Reports', free: 'Free', rush: 'Rush', '813': '813', all: 'All', high_value: 'High Value', custom: 'Custom',
     };
     rangeEl.textContent = `${filterLabels[crmProcessingReportFilter] || 'All Reports'} — ${periodLabels[crmProcessingReportPeriod] || 'Selected period'}. Time saved is the total runtime recorded across the selected automations.${trackingText}`;
   }
@@ -2418,6 +2429,7 @@ function normalizeCrmAddressFilter(value) {
 
 function formatCrmAddressFilterLabel(value) {
   const key = String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+  if (key === 'custom') return 'Custom';
   if (key === '813') return '813 Orders';
   if (key === 'high_value') return 'High Value Orders';
   if (key === 'all') return 'All Invalid-Address Orders';
@@ -6600,11 +6612,12 @@ function renderCrmProcessingSelectionButtons(state = {}) {
     free: document.getElementById('crmProcessingFreeFilterBtn'),
     all: document.getElementById('crmProcessingAllFilterBtn'),
     813: document.getElementById('crmProcessing813FilterBtn'),
+    custom: document.getElementById('crmProcessingCustomFilterBtn'),
   };
   const rushLike = isCrmRushLikeProcessingFilter(processingFilter);
   const unlockerCapable = canCrmProcessingFilterRunUnlocker(processingFilter);
   const canRunOrderGoods = canCrmProcessingFilterRunOrderGoods(processingFilter);
-  const canRunOrderSupport = rushLike || processingFilter === '813';
+  const canRunOrderSupport = canCrmProcessingFilterRunOrderSupport(processingFilter);
   const canRunSeparator = processingFilter !== '813';
   if (addressBtn) {
     const enabled = selectedSteps.includes('address_validator_batch');
@@ -6681,7 +6694,7 @@ function renderCrmProcessingSelectionButtons(state = {}) {
     filterBtn.disabled = false;
     filterBtn.textContent = processingFilter.toUpperCase();
     filterBtn.title = `Automate Processing is set to ${formatCrmAddressFilterLabel(processingFilter)}. Click to switch.`;
-    filterBtn.classList.remove('all', 'free', 'rush', '813', 'high_value');
+    filterBtn.classList.remove('all', 'free', 'rush', '813', 'high_value', 'custom');
     filterBtn.classList.add(processingFilter);
     filterBtn.classList.toggle('active', true);
   }
@@ -6693,6 +6706,10 @@ function renderCrmProcessingSelectionButtons(state = {}) {
       ? `Automate Processing is set to ${formatCrmAddressFilterLabel(filterKey)}.`
       : `Switch Automate Processing to ${formatCrmAddressFilterLabel(filterKey)}.`;
   }
+  const customListRow = document.getElementById('crmProcessingCustomListRow');
+  const customListUrl = document.getElementById('crmProcessingCustomListUrl');
+  if (customListRow) customListRow.style.display = processingFilter === 'custom' ? 'block' : 'none';
+  if (customListUrl) customListUrl.textContent = state.custom_list_url || 'Choose a CRM list link';
   if (bulkBtn) {
     const availableSteps = crmProcessingAvailableStepsForFilter(processingFilter);
     const allAvailableSelected = availableSteps.every((step) => selectedSteps.includes(step));
@@ -7076,7 +7093,7 @@ async function toggleCrmProcessingSelection(stepKey) {
   const rushLike = isCrmRushLikeProcessingFilter(processingFilter);
   const unlockerCapable = canCrmProcessingFilterRunUnlocker(processingFilter);
   const canRunOrderGoods = canCrmProcessingFilterRunOrderGoods(processingFilter);
-  const canRunOrderSupport = rushLike || processingFilter === '813';
+  const canRunOrderSupport = canCrmProcessingFilterRunOrderSupport(processingFilter);
   if (stepKey === 'stock_unlocker' && !unlockerCapable) {
     setStatus('Unlocker is available in Rush, High Value, Free, and ALL modes.');
     return;
@@ -7176,6 +7193,15 @@ async function setCrmProcessingFilter(nextFilter) {
   const payload = {
     processing_filter: nextFilter,
   };
+  if (nextFilter === 'custom') {
+    const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
+    const link = window.prompt('Enter the CRM list link for the selected automations:', state.custom_list_url || '');
+    if (link === null) {
+      renderCrmProcessingSelectionButtons(state);
+      return;
+    }
+    payload.custom_list_url = link.trim();
+  }
   try {
     await persistCrmProcessingSelection(payload, `Automate Processing switched to ${formatCrmAddressFilterLabel(nextFilter)}.`);
   } catch (e) {
@@ -7298,7 +7324,7 @@ async function startCrmProcessingRun(button = null) {
   const rushLike = isCrmRushLikeProcessingFilter(processingFilter);
   const unlockerCapable = canCrmProcessingFilterRunUnlocker(processingFilter);
   const canRunOrderGoods = canCrmProcessingFilterRunOrderGoods(processingFilter);
-  const canRunOrderSupport = rushLike || processingFilter === '813';
+  const canRunOrderSupport = canCrmProcessingFilterRunOrderSupport(processingFilter);
   const payload = {
     stock_unlocker_enabled: unlockerCapable ? Boolean(state.stock_unlocker_enabled) : false,
     address_validator_enabled: Boolean(state.address_validator_enabled),
@@ -7309,6 +7335,7 @@ async function startCrmProcessingRun(button = null) {
     push_back_enabled: canRunOrderSupport ? Boolean(state.push_back_enabled) : false,
     processing_filter: processingFilter,
   };
+  if (processingFilter === 'custom') payload.custom_list_url = state.custom_list_url || '';
   try {
     Object.assign(payload, buildCrmProcessingAdvancedPayload());
   } catch (e) {

@@ -7,6 +7,8 @@ from datetime import datetime
 
 from flask import g, jsonify, request
 
+from crm_list_url import normalize_custom_crm_list_url
+
 
 def register_work_routes(
     app,
@@ -341,6 +343,12 @@ def register_work_routes(
                 request.args.get("processingFilter"),
                 request.args.get("filter"),
             ),
+            "custom_list_url": _first_present(
+                data.get("custom_list_url"),
+                data.get("customListUrl"),
+                request.args.get("custom_list_url"),
+                request.args.get("customListUrl"),
+            ),
             "advanced_mode": _first_present(
                 data.get("advanced_mode"),
                 data.get("advancedMode"),
@@ -376,6 +384,8 @@ def register_work_routes(
     def _crm_processing_filter_label(processing_filter):
         key = str(processing_filter or "").strip().lower()
         key = key.replace("-", "_").replace(" ", "_")
+        if key == "custom":
+            return "Custom"
         if key == "813":
             return "813"
         if key == "high_value":
@@ -401,9 +411,9 @@ def register_work_routes(
         raw_filter = options.get("processing_filter")
         processing_filter = str(raw_filter if raw_filter is not None else state.get("processing_filter") or "rush").strip().lower()
         processing_filter = processing_filter.replace("-", "_").replace(" ", "_")
-        if processing_filter not in {"rush", "free", "all", "813", "high_value"}:
+        if processing_filter not in {"rush", "free", "all", "813", "high_value", "custom"}:
             processing_filter = "rush"
-        rush_like = processing_filter in {"rush", "high_value"}
+        rush_like = processing_filter in {"rush", "high_value", "custom"}
         unlocker_capable = rush_like or processing_filter in {"free", "all"}
         mode_preferences = state.get("mode_preferences") if isinstance(state.get("mode_preferences"), dict) else {}
         mode_state = mode_preferences.get(processing_filter) if isinstance(mode_preferences.get(processing_filter), dict) else {}
@@ -440,6 +450,10 @@ def register_work_routes(
             ),
             "processing_filter": processing_filter,
         }
+        if processing_filter == "custom":
+            effective["custom_list_url"] = normalize_custom_crm_list_url(
+                options.get("custom_list_url") if options.get("custom_list_url") is not None else state.get("custom_list_url")
+            )
         if processing_filter == "all":
             effective["shipping_bypasser_enabled"] = False
             effective["push_back_enabled"] = False
@@ -475,7 +489,7 @@ def register_work_routes(
     def _crm_processing_step_signature(effective):
         steps = []
         processing_filter = effective.get("processing_filter")
-        rush_like = processing_filter in {"rush", "high_value"}
+        rush_like = processing_filter in {"rush", "high_value", "custom"}
         if effective.get("address_validator_enabled"):
             steps.append("validator")
         if effective.get("product_separator_enabled") and processing_filter != "813":
@@ -505,6 +519,8 @@ def register_work_routes(
             "steps": steps,
             "advanced_mode": mode,
         }
+        if effective.get("processing_filter") == "custom":
+            signature["custom_list_url"] = effective["custom_list_url"]
         queue_options = {"automation_signature": signature}
         if mode == "repeat":
             interval = options.get("repeat_interval_minutes")
@@ -540,7 +556,7 @@ def register_work_routes(
         advanced_mode = _crm_processing_advanced_mode(options)
         steps = []
         processing_filter = effective.get("processing_filter")
-        rush_like = processing_filter in {"rush", "high_value"}
+        rush_like = processing_filter in {"rush", "high_value", "custom"}
         if effective.get("address_validator_enabled"):
             steps.append("Validator")
         if effective.get("product_separator_enabled") and processing_filter != "813":
@@ -569,7 +585,10 @@ def register_work_routes(
     @app.route("/crm/process", methods=["POST", "GET"])
     def crm_process():
         raw_options = _crm_processing_request_options()
-        options = _crm_processing_effective_options(raw_options)
+        try:
+            options = _crm_processing_effective_options(raw_options)
+        except ValueError as exc:
+            return jsonify({"success": False, "message": str(exc)}), 400
         queue_source = {**raw_options, **options}
         return _queue_response(
             _crm_processing_queue_label(queue_source),
@@ -588,7 +607,10 @@ def register_work_routes(
 
     def _start_crm_processing_mode(processing_filter):
         raw_options = _crm_processing_mode_options(processing_filter)
-        options = _crm_processing_effective_options(raw_options)
+        try:
+            options = _crm_processing_effective_options(raw_options)
+        except ValueError as exc:
+            return jsonify({"success": False, "message": str(exc)}), 400
         queue_source = {**raw_options, **options}
         return _queue_response(
             _crm_processing_queue_label(queue_source),
@@ -625,6 +647,10 @@ def register_work_routes(
     def crm_process_high_value():
         return _start_crm_processing_mode("high_value")
 
+    @app.route("/crm/process/custom", methods=["POST", "GET"])
+    def crm_process_custom():
+        return _start_crm_processing_mode("custom")
+
     @app.route("/crm/process/status", methods=["GET"])
     def crm_process_status():
         return jsonify(get_crm_processing_status_payload()), 200
@@ -647,6 +673,7 @@ def register_work_routes(
                 "shipping_bypasser_enabled",
                 "push_back_enabled",
                 "processing_filter",
+                "custom_list_url",
             )
         }
         ok, msg, _state = update_crm_processing_preferences(**preference_options)
