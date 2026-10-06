@@ -154,6 +154,38 @@ class WorkRouteScheduleTests(unittest.TestCase):
         self.assertNotIn("custom_list_url", captured["task_arguments"])
         self.assertNotIn("custom_list_url", captured["automation_signature"])
 
+    def test_custom_order_list_snapshots_ids_and_deduplicates_for_scheduled_runs(self):
+        run = mock.Mock()
+        app, captured = self._app_with_captured_queue(run_crm_processing_run_queued=run)
+        response = app.test_client().post("/crm/process/custom", json={
+            "custom_order_ids": "2345678,1234567\n2345678", "advanced_mode": "scheduled", "scheduled_time": "2026-10-07T09:00:00",
+        })
+        self.assertEqual(response.status_code, 202)
+        args = captured["task_arguments"]
+        self.assertEqual(args["custom_input_type"], "orders")
+        self.assertEqual(args["custom_order_ids"], ["2345678", "1234567"])
+        self.assertEqual(captured["automation_signature"]["custom_order_ids"], args["custom_order_ids"])
+        self.assertNotIn("custom_list_url", args)
+        captured["fn"]()
+        self.assertEqual(run.call_args.kwargs["custom_order_ids"], args["custom_order_ids"])
+
+    def test_order_list_is_not_replaced_by_saved_link_after_invalid_input(self):
+        app, captured = self._app_with_captured_queue(get_crm_processing_state_payload=lambda: {"state": {"custom_list_url": "https://crm.example/report"}})
+        for orders in ("", "1234567, bad", [], [True]):
+            response = app.test_client().post("/crm/process", json={"processing_filter": "custom", "custom_order_ids": orders})
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(captured, {})
+
+    def test_saved_order_list_is_used_and_distinct_lists_have_distinct_signatures(self):
+        state = {"custom_input_type": "orders", "custom_order_ids": ["1234567"]}
+        app, captured = self._app_with_captured_queue(get_crm_processing_state_payload=lambda: {"state": state})
+        app.test_client().post("/crm/process", json={"processing_filter": "custom"})
+        original = captured["automation_signature"]
+        state["custom_order_ids"] = ["2345678"]
+        self.assertEqual(captured["task_arguments"]["custom_order_ids"], ["1234567"])
+        app.test_client().post("/crm/process", json={"processing_filter": "custom"})
+        self.assertNotEqual(original, captured["automation_signature"])
+
 
 if __name__ == "__main__":
     unittest.main()

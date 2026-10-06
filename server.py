@@ -52,7 +52,7 @@ from clipboard_runtime import (
     create_platform_clipboard_adapter,
 )
 from credential_store import CREDENTIAL_TARGETS
-from crm_list_url import normalize_custom_crm_list_url
+from crm_list_url import normalize_custom_crm_target
 import config as config_module
 from node_preferences import load_node_preferences, update_node_preferences
 from platform_runtime import get_platform_snapshot, normalize_os_name, resolve_worker_count
@@ -5935,6 +5935,8 @@ def _default_crm_processing_state():
         "push_back_enabled": False,
         "processing_filter": "rush",
         "custom_list_url": "",
+        "custom_input_type": "link",
+        "custom_order_ids": [],
         "mode_preferences": {
             processing_filter: _default_crm_processing_mode_preferences(processing_filter)
             for processing_filter in CRM_PROCESSING_FILTERS
@@ -6747,7 +6749,7 @@ def _build_crm_processing_summary(step_results):
     return False, f"Automate Processing completed with partial success. Needs attention: {failed_labels}."
 
 
-def _persist_crm_processing_run_result(success, message, selected_steps, step_results, processing_filter="rush", custom_list_url=None):
+def _persist_crm_processing_run_result(success, message, selected_steps, step_results, processing_filter="rush", custom_list_url=None, custom_input_type=None, custom_order_ids=None):
     ensure_crm_processing_state_file()
     timestamp = datetime.now().isoformat()
     normalized_steps = [
@@ -6779,7 +6781,11 @@ def _persist_crm_processing_run_result(success, message, selected_steps, step_re
             "message": str(message),
         }
         if normalized_filter == "custom":
-            entry["custom_list_url"] = custom_list_url
+            entry["custom_input_type"] = custom_input_type or "link"
+            if entry["custom_input_type"] == "orders":
+                entry["custom_order_ids"] = list(custom_order_ids or [])
+            else:
+                entry["custom_list_url"] = custom_list_url
         history = state.get("run_history") if isinstance(state.get("run_history"), list) else []
         state["run_history"] = [entry] + history[:19]
         _append_crm_processing_report(state, timestamp, normalized_results, processing_filter=normalized_filter)
@@ -6921,8 +6927,12 @@ def _is_crm_transient_failure(message, payload):
     return any(signal in text for signal in signals)
 
 
-def _execute_crm_worker(dry_run=False, list_url=None):
+def _execute_crm_worker(dry_run=False, list_url=None, order_id=None):
     args = ["--action", "unlock_all"]
+    if order_id is not None:
+        if not re.fullmatch(r"[0-9]{7}", str(order_id)):
+            raise ValueError("Stock Unlocker requires a seven-digit order ID.")
+        args.extend(["--order-id", str(order_id)])
     if list_url:
         args.extend(["--list-url", str(list_url)])
     if dry_run:
@@ -7027,7 +7037,7 @@ def _persist_crm_order_goods_run_result(ok, message, payload, dry_run=False):
     return state
 
 
-def _run_crm_unlock_with_retry(dry_run=False, list_url=None):
+def _run_crm_unlock_with_retry(dry_run=False, list_url=None, order_id=None):
     total_attempts = max(1, CRM_MAX_RETRIES + 1)
     delay_seconds = max(0, CRM_RETRY_DELAY_SECONDS)
     last_result = (False, "CRM unlock did not run.", {"success": False, "message": "CRM unlock did not run."})
@@ -7047,7 +7057,10 @@ def _run_crm_unlock_with_retry(dry_run=False, list_url=None):
             f"Attempt {attempt}/{total_attempts} started. dry_run={bool(dry_run)}",
             source="server.py",
         )
-        ok, message, payload = _execute_crm_worker(dry_run=dry_run, list_url=list_url)
+        worker_options = {"dry_run": dry_run, "list_url": list_url}
+        if order_id is not None:
+            worker_options["order_id"] = order_id
+        ok, message, payload = _execute_crm_worker(**worker_options)
         last_result = (ok, message, payload)
 
         with crm_runtime_lock:
@@ -10867,7 +10880,7 @@ def clear_crm_mass_emailer_history():
     return True, "Sheets Scanner history cleared."
 
 
-def update_crm_processing_preferences(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None, custom_list_url=None):
+def update_crm_processing_preferences(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None, custom_list_url=None, custom_input_type=None, custom_order_ids=None):
     ensure_crm_processing_state_file()
     unlock_supplied = _crm_processing_value_supplied(stock_unlocker_enabled)
     address_supplied = _crm_processing_value_supplied(address_validator_enabled)
@@ -10883,9 +10896,9 @@ def update_crm_processing_preferences(stock_unlocker_enabled=None, mass_emailer_
         target_filter = _normalize_crm_shipping_filter(processing_filter) if filter_supplied else state.get("processing_filter")
         if target_filter == "custom":
             try:
-                state["custom_list_url"] = normalize_custom_crm_list_url(
-                    custom_list_url if custom_list_url is not None else state.get("custom_list_url")
-                )
+                state.update(normalize_custom_crm_target({
+                    "custom_input_type": custom_input_type, "custom_list_url": custom_list_url, "custom_order_ids": custom_order_ids,
+                }, state))
             except ValueError as exc:
                 return False, str(exc), state
         mode_preferences = state.get("mode_preferences") if isinstance(state.get("mode_preferences"), dict) else {}
@@ -11001,7 +11014,7 @@ def _crm_processing_targeted_list_url(list_url, order_id):
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items), parts.fragment))
 
 
-def _run_crm_processing_retry_step(step_key, processing_filter, order_ids, processing_state=None):
+def _run_crm_processing_order_list_step(step_key, processing_filter, order_ids, processing_state=None, *, retry=False, blocked_orders=None):
     normalized_order_ids = _extract_crm_order_ids({"order_ids": order_ids})
     order_results = []
     split_orders = []
@@ -11009,14 +11022,19 @@ def _run_crm_processing_retry_step(step_key, processing_filter, order_ids, proce
     started_at = time.monotonic()
     for order_id in normalized_order_ids:
         try:
-            result = _run_crm_processing_step(
-                step_key,
-                processing_filter,
-                processing_state=processing_state,
-                target_order_id=order_id,
-            )
+            if blocked_orders and order_id in blocked_orders:
+                result = {"success": False, "message": f"Skipped: {blocked_orders[order_id]} needs review before this order can continue."}
+            elif blocked_orders is not None and _automation_stop_is_blocking():
+                result = {"success": False, "message": _force_stop_message("Automate Processing")}
+            else:
+                result = _run_crm_processing_step(
+                    step_key,
+                    processing_filter,
+                    processing_state=processing_state,
+                    target_order_id=order_id,
+                )
         except Exception as exc:
-            logger.exception("Automate Processing retry failed for %s order %s", step_key, order_id)
+            logger.exception("Automate Processing failed for %s order %s", step_key, order_id)
             result = {
                 "success": False,
                 "message": str(exc),
@@ -11024,7 +11042,7 @@ def _run_crm_processing_retry_step(step_key, processing_filter, order_ids, proce
             }
         errors = result.get("errors") if isinstance(result.get("errors"), list) else []
         if not result.get("success") and not errors:
-            errors = [{"order_id": order_id, "status": "Needs attention", "message": result.get("message") or "Retry failed."}]
+            errors = [{"order_id": order_id, "status": "Needs attention", "message": result.get("message") or "Order processing failed."}]
         normalized_errors = _normalize_crm_processing_error_details(errors)
         for error in normalized_errors:
             if not error.get("order_id"):
@@ -11044,10 +11062,9 @@ def _run_crm_processing_retry_step(step_key, processing_filter, order_ids, proce
     errors = [error for row in order_results for error in row.get("errors", [])]
     successful_count = sum(1 for row in order_results if row.get("success"))
     success = len(order_results) == len(normalized_order_ids) and not errors
-    message = (
-        f"Retry completed {successful_count}/{len(normalized_order_ids)} failed order(s) for "
-        f"{_crm_processing_step_label(step_key)}."
-    )
+    scope = "failed order(s)" if retry else "custom order(s)"
+    prefix = "Retry completed" if retry else "Completed"
+    message = f"{prefix} {successful_count}/{len(normalized_order_ids)} {scope} for {_crm_processing_step_label(step_key)}."
     return {
         "key": step_key,
         "label": _crm_processing_step_label(step_key),
@@ -11060,8 +11077,13 @@ def _run_crm_processing_retry_step(step_key, processing_filter, order_ids, proce
         "errors": errors,
         "split_orders": split_orders,
         "screenprinting_orders": screenprinting_orders,
-        "retry_order_ids": normalized_order_ids,
+        "retry_order_ids" if retry else "order_ids": normalized_order_ids,
+        "order_results": order_results,
     }
+
+
+def _run_crm_processing_retry_step(step_key, processing_filter, order_ids, processing_state=None):
+    return _run_crm_processing_order_list_step(step_key, processing_filter, order_ids, processing_state, retry=True)
 
 
 def _run_crm_processing_auto_splitter_order(order_id):
@@ -11139,7 +11161,10 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
     custom_list_url = None
     if _normalize_crm_shipping_filter(processing_filter) == "custom":
         try:
-            custom_list_url = normalize_custom_crm_list_url((processing_state or {}).get("custom_list_url"))
+            custom_target = normalize_custom_crm_target(state=processing_state)
+            if custom_target["custom_input_type"] == "orders" and not target_order_id:
+                raise ValueError("An explicit order list must target one order at a time.")
+            custom_list_url = custom_target.get("custom_list_url")
         except ValueError as exc:
             return {"key": step_key, "label": _crm_processing_step_label(step_key), "success": False, "message": str(exc)}
         # Keep the existing worker modes and eligibility checks. Validator's All
@@ -11461,7 +11486,10 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
             if target_order_id and not base_list_url:
                 raise RuntimeError("Stock Unlocker cannot target the failed order because its CRM list URL is empty.")
             targeted_list_url = _crm_processing_targeted_list_url(base_list_url, target_order_id)
-            ok, message, payload = _run_crm_unlock_with_retry(dry_run=False, list_url=targeted_list_url)
+            unlock_options = {"dry_run": False, "list_url": targeted_list_url}
+            if target_order_id:
+                unlock_options["order_id"] = target_order_id
+            ok, message, payload = _run_crm_unlock_with_retry(**unlock_options)
         except Exception as e:
             logger.exception("Automate Processing stock unlocker step failed unexpectedly")
             ok = False
@@ -11560,6 +11588,10 @@ def _crm_processing_run_thread(selected_steps, processing_filter, retry_plan=Non
         if processing_state is None:
             with crm_processing_state_lock:
                 processing_state = load_crm_processing_state()
+        custom_order_ids = []
+        blocked_orders = {}
+        if normalized_filter == "custom":
+            custom_order_ids = normalize_custom_crm_target(state=processing_state).get("custom_order_ids") or []
         for step_key in selected_steps:
             if _automation_stop_is_blocking():
                 summary = _force_stop_message("Automate Processing")
@@ -11578,7 +11610,20 @@ def _crm_processing_run_thread(selected_steps, processing_filter, retry_plan=Non
                 crm_processing_runtime["currentOrderProgress"] = None
                 crm_processing_runtime["lastMessage"] = f"Running {step_label}."
             step_started_at = time.monotonic()
-            if normalized_retry_plan:
+            if custom_order_ids:
+                step_order_ids = (normalized_retry_plan.get(step_key) or []) if normalized_retry_plan else custom_order_ids
+                result = _run_crm_processing_order_list_step(
+                    step_key,
+                    normalized_filter,
+                    step_order_ids,
+                    processing_state=processing_state,
+                    retry=bool(normalized_retry_plan),
+                    blocked_orders=blocked_orders,
+                )
+                for row in result.get("order_results") or []:
+                    if not row.get("success"):
+                        blocked_orders.setdefault(row["order_id"], step_label)
+            elif normalized_retry_plan:
                 result = _run_crm_processing_retry_step(
                     step_key,
                     normalized_filter,
@@ -11611,6 +11656,8 @@ def _crm_processing_run_thread(selected_steps, processing_filter, retry_plan=Non
         result_options = {"processing_filter": normalized_filter}
         if normalized_filter == "custom":
             result_options["custom_list_url"] = (processing_state or {}).get("custom_list_url")
+            result_options["custom_input_type"] = (processing_state or {}).get("custom_input_type") or "link"
+            result_options["custom_order_ids"] = (processing_state or {}).get("custom_order_ids")
         state = _persist_crm_processing_run_result(overall_success, summary, selected_steps, step_results, **result_options)
         _audit_result("crm.processing", overall_success, summary)
         with crm_processing_runtime_lock:
@@ -11639,6 +11686,8 @@ def start_crm_processing_run(
     persist_preferences=True,
     retry_plan=None,
     custom_list_url=None,
+    custom_input_type=None,
+    custom_order_ids=None,
 ):
     ensure_crm_processing_state_file()
     unlock_supplied = _crm_processing_value_supplied(stock_unlocker_enabled)
@@ -11655,9 +11704,9 @@ def start_crm_processing_run(
         target_filter = _normalize_crm_shipping_filter(processing_filter) if filter_supplied else state.get("processing_filter")
         if target_filter == "custom":
             try:
-                state["custom_list_url"] = normalize_custom_crm_list_url(
-                    custom_list_url if custom_list_url is not None else state.get("custom_list_url")
-                )
+                state.update(normalize_custom_crm_target({
+                    "custom_input_type": custom_input_type, "custom_list_url": custom_list_url, "custom_order_ids": custom_order_ids,
+                }, state))
             except ValueError as exc:
                 return False, str(exc)
         mode_preferences = state.get("mode_preferences") if isinstance(state.get("mode_preferences"), dict) else {}
@@ -11729,7 +11778,9 @@ def start_crm_processing_run(
         crm_processing_runtime["completedAt"] = None
         crm_processing_runtime["currentStep"] = None
         crm_processing_runtime["processingFilter"] = normalized_filter
-        crm_processing_runtime["customListUrl"] = state.get("custom_list_url") if normalized_filter == "custom" else None
+        crm_processing_runtime["customListUrl"] = state.get("custom_list_url") if normalized_filter == "custom" and state.get("custom_input_type") == "link" else None
+        crm_processing_runtime["customInputType"] = state.get("custom_input_type") if normalized_filter == "custom" else None
+        crm_processing_runtime["customOrderIds"] = list(state.get("custom_order_ids") or []) if normalized_filter == "custom" and state.get("custom_input_type") == "orders" else []
         crm_processing_runtime["selectedSteps"] = list(selected_steps)
         crm_processing_runtime["completedSteps"] = []
         crm_processing_runtime["currentOrderProgress"] = None
@@ -13509,7 +13560,7 @@ def run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, limit=
     return _wait_for_status_completion(get_crm_mass_emailer_status_payload, msg)
 
 
-def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None, retry_plan=None, custom_list_url=None):
+def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None, retry_plan=None, custom_list_url=None, custom_input_type=None, custom_order_ids=None):
     ok, msg = start_crm_processing_run(
         stock_unlocker_enabled=stock_unlocker_enabled,
         mass_emailer_enabled=mass_emailer_enabled,
@@ -13523,6 +13574,8 @@ def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enab
         persist_preferences=False,
         retry_plan=retry_plan,
         custom_list_url=custom_list_url,
+        custom_input_type=custom_input_type,
+        custom_order_ids=custom_order_ids,
     )
     if not ok:
         return ok, msg

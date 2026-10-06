@@ -1042,8 +1042,8 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
       <button class='rough-mode' id='crmProcessingCustomFilterBtn' onclick="setCrmProcessingFilter('custom')">Custom</button>
     </div>
     <div id='crmProcessingCustomListRow' style='display:none;margin-top:8px'>
-      <div class='muted' style='overflow-wrap:anywhere'>CRM list: <span id='crmProcessingCustomListUrl'></span> <button class='secondary tiny' type='button' onclick="setCrmProcessingFilter('custom')">Change link</button></div>
-      <div class='muted' style='margin-top:6px'>Choose the tools appropriate for this list. Each selected tool uses this link with its existing processing rules.</div>
+      <div class='muted' style='overflow-wrap:anywhere'>Custom input: <span id='crmProcessingCustomListUrl'></span> <button class='secondary tiny' type='button' onclick="setCrmProcessingFilter('custom')">Edit input</button></div>
+      <div class='muted' style='margin-top:6px'>Choose the tools appropriate for this list. Selected tools keep their existing processing rules.</div>
     </div>
     <div class='rough-label' style='margin:16px 0 7px'>Automation tools</div>
     <div class='compact-tools'>
@@ -1352,6 +1352,30 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
     <div class='muted' id='crmAddressReportDialogSummary'>No report loaded.</div>
     <pre id='crmAddressReportDialogBody' style='white-space:pre-wrap;max-height:420px;overflow:auto;margin-top:12px'></pre>
   </div>
+</dialog>
+<dialog id='crmProcessingCustomInputDialog' aria-labelledby='crmProcessingCustomInputTitle' onclose='renderCrmProcessingSelectionButtons((crmProcessingStatusPayload || {}).state || {})' style='max-width:560px;width:min(560px, calc(100vw - 32px));border:none;border-radius:14px;padding:0;'>
+  <form class='card' style='margin:0' onsubmit='event.preventDefault(); saveCrmProcessingCustomInput()'>
+    <h3 id='crmProcessingCustomInputTitle' style='margin-top:0'>Custom Processing input</h3>
+    <label for='crmProcessingCustomInputType'>Use a</label>
+    <select id='crmProcessingCustomInputType' onchange='syncCrmProcessingCustomInputControls()' style='margin:8px 0 12px;width:100%'>
+      <option value='link'>CRM list link</option>
+      <option value='orders'>List of order IDs</option>
+    </select>
+    <div id='crmProcessingCustomLinkFields'>
+      <label for='crmProcessingCustomLinkInput'>CRM list link</label>
+      <input id='crmProcessingCustomLinkInput' type='url' required placeholder='https://…' style='box-sizing:border-box;width:100%;margin-top:6px'>
+    </div>
+    <div id='crmProcessingCustomOrderFields' style='display:none'>
+      <label for='crmProcessingCustomOrderIdsInput'>Order IDs</label>
+      <textarea id='crmProcessingCustomOrderIdsInput' rows='6' required placeholder='1234567&#10;2345678' style='box-sizing:border-box;width:100%;margin-top:6px;resize:vertical'></textarea>
+      <div class='muted' style='margin-top:6px'>Up to 100 seven-digit order IDs. Separate them with commas, spaces, or new lines. Duplicates run once.</div>
+    </div>
+    <div class='bad' id='crmProcessingCustomInputError' role='alert' style='margin-top:10px'></div>
+    <div class='row' style='justify-content:flex-end;margin-top:12px'>
+      <button type='button' class='secondary' onclick="document.getElementById('crmProcessingCustomInputDialog').close()">Cancel</button>
+      <button type='submit' id='crmProcessingCustomInputSaveBtn'>Use this input</button>
+    </div>
+  </form>
 </dialog>
 <dialog id='crmProcessingErrorsDialog' style='max-width:820px;width:min(820px, calc(100vw - 32px));border:none;border-radius:14px;padding:0;'>
   <div class='card' style='margin:0'>
@@ -6709,7 +6733,12 @@ function renderCrmProcessingSelectionButtons(state = {}) {
   const customListRow = document.getElementById('crmProcessingCustomListRow');
   const customListUrl = document.getElementById('crmProcessingCustomListUrl');
   if (customListRow) customListRow.style.display = processingFilter === 'custom' ? 'block' : 'none';
-  if (customListUrl) customListUrl.textContent = state.custom_list_url || 'Choose a CRM list link';
+  if (customListUrl) {
+    const ids = Array.isArray(state.custom_order_ids) ? state.custom_order_ids : [];
+    customListUrl.textContent = state.custom_input_type === 'orders'
+      ? `${ids.length} order${ids.length === 1 ? '' : 's'}: ${ids.slice(0, 6).join(', ')}${ids.length > 6 ? `, +${ids.length - 6} more` : ''}`
+      : (state.custom_list_url || 'Choose a CRM list link');
+  }
   if (bulkBtn) {
     const availableSteps = crmProcessingAvailableStepsForFilter(processingFilter);
     const allAvailableSelected = availableSteps.every((step) => selectedSteps.includes(step));
@@ -7194,19 +7223,51 @@ async function setCrmProcessingFilter(nextFilter) {
     processing_filter: nextFilter,
   };
   if (nextFilter === 'custom') {
-    const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
-    const link = window.prompt('Enter the CRM list link for the selected automations:', state.custom_list_url || '');
-    if (link === null) {
-      renderCrmProcessingSelectionButtons(state);
-      return;
-    }
-    payload.custom_list_url = link.trim();
+    openCrmProcessingCustomInput();
+    return;
   }
   try {
     await persistCrmProcessingSelection(payload, `Automate Processing switched to ${formatCrmAddressFilterLabel(nextFilter)}.`);
   } catch (e) {
     setStatus(`Automate Processing filter switch failed: ${e.message}`);
   }
+}
+
+function openCrmProcessingCustomInput() {
+  const state = (crmProcessingStatusPayload || {}).state || {};
+  const dialog = document.getElementById('crmProcessingCustomInputDialog');
+  document.getElementById('crmProcessingCustomInputType').value = state.custom_input_type === 'orders' ? 'orders' : 'link';
+  document.getElementById('crmProcessingCustomLinkInput').value = state.custom_list_url || '';
+  document.getElementById('crmProcessingCustomOrderIdsInput').value = (state.custom_order_ids || []).join('\n');
+  document.getElementById('crmProcessingCustomInputError').textContent = '';
+  syncCrmProcessingCustomInputControls();
+  if (!dialog.open) dialog.showModal();
+}
+
+function syncCrmProcessingCustomInputControls() {
+  const orders = document.getElementById('crmProcessingCustomInputType').value === 'orders';
+  document.getElementById('crmProcessingCustomLinkFields').style.display = orders ? 'none' : 'block';
+  document.getElementById('crmProcessingCustomOrderFields').style.display = orders ? 'block' : 'none';
+  document.getElementById('crmProcessingCustomLinkInput').disabled = orders;
+  document.getElementById('crmProcessingCustomOrderIdsInput').disabled = !orders;
+}
+
+async function saveCrmProcessingCustomInput() {
+  const inputType = document.getElementById('crmProcessingCustomInputType').value;
+  const payload = {processing_filter: 'custom', custom_input_type: inputType};
+  if (inputType === 'orders') payload.custom_order_ids = document.getElementById('crmProcessingCustomOrderIdsInput').value;
+  else payload.custom_list_url = document.getElementById('crmProcessingCustomLinkInput').value.trim();
+  const error = document.getElementById('crmProcessingCustomInputError');
+  error.textContent = '';
+  return withButtonBusy(document.getElementById('crmProcessingCustomInputSaveBtn'), 'SAVING...', async () => {
+    try {
+      const result = await persistCrmProcessingSelection(payload, 'Custom Processing input saved.');
+      if (result.success === false) error.textContent = result.message || 'Check the custom input.';
+      else document.getElementById('crmProcessingCustomInputDialog').close();
+    } catch (e) {
+      error.textContent = e.message;
+    }
+  });
 }
 
 async function loadCrmProcessingStatus(setStatusText = false) {
@@ -7335,7 +7396,11 @@ async function startCrmProcessingRun(button = null) {
     push_back_enabled: canRunOrderSupport ? Boolean(state.push_back_enabled) : false,
     processing_filter: processingFilter,
   };
-  if (processingFilter === 'custom') payload.custom_list_url = state.custom_list_url || '';
+  if (processingFilter === 'custom') {
+    payload.custom_input_type = state.custom_input_type || 'link';
+    if (payload.custom_input_type === 'orders') payload.custom_order_ids = [...(state.custom_order_ids || [])];
+    else payload.custom_list_url = state.custom_list_url || '';
+  }
   try {
     Object.assign(payload, buildCrmProcessingAdvancedPayload());
   } catch (e) {

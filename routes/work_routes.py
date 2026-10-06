@@ -7,7 +7,7 @@ from datetime import datetime
 
 from flask import g, jsonify, request
 
-from crm_list_url import normalize_custom_crm_list_url
+from crm_list_url import normalize_custom_crm_target
 
 
 def register_work_routes(
@@ -349,6 +349,8 @@ def register_work_routes(
                 request.args.get("custom_list_url"),
                 request.args.get("customListUrl"),
             ),
+            "custom_input_type": _first_present(data.get("custom_input_type"), data.get("customInputType"), request.args.get("custom_input_type")),
+            "custom_order_ids": _first_present(data.get("custom_order_ids"), data.get("customOrderIds"), request.args.get("custom_order_ids")),
             "advanced_mode": _first_present(
                 data.get("advanced_mode"),
                 data.get("advancedMode"),
@@ -451,9 +453,7 @@ def register_work_routes(
             "processing_filter": processing_filter,
         }
         if processing_filter == "custom":
-            effective["custom_list_url"] = normalize_custom_crm_list_url(
-                options.get("custom_list_url") if options.get("custom_list_url") is not None else state.get("custom_list_url")
-            )
+            effective.update(normalize_custom_crm_target(options, state))
         if processing_filter == "all":
             effective["shipping_bypasser_enabled"] = False
             effective["push_back_enabled"] = False
@@ -520,7 +520,7 @@ def register_work_routes(
             "advanced_mode": mode,
         }
         if effective.get("processing_filter") == "custom":
-            signature["custom_list_url"] = effective["custom_list_url"]
+            signature.update(normalize_custom_crm_target(effective))
         queue_options = {"automation_signature": signature}
         if mode == "repeat":
             interval = options.get("repeat_interval_minutes")
@@ -674,6 +674,8 @@ def register_work_routes(
                 "push_back_enabled",
                 "processing_filter",
                 "custom_list_url",
+                "custom_input_type",
+                "custom_order_ids",
             )
         }
         ok, msg, _state = update_crm_processing_preferences(**preference_options)

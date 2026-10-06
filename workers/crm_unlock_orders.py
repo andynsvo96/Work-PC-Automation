@@ -730,7 +730,7 @@ def _single_order_locked_report_url(order_id, list_url=None):
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items), parts.fragment))
 
 
-def unlock_single_order_with_driver(driver, order_id, list_url=None):
+def unlock_single_order_with_driver(driver, order_id, list_url=None, dry_run=False):
     """Apply the proven locked-report Order Preview flow to one order."""
     normalized_order_id = str(order_id or "").strip()
     report_url = _single_order_locked_report_url(normalized_order_id, list_url=list_url)
@@ -746,12 +746,12 @@ def unlock_single_order_with_driver(driver, order_id, list_url=None):
         }
 
     visible_order_ids = _collect_order_ids(rows)
-    if visible_order_ids and normalized_order_id not in visible_order_ids:
+    if visible_order_ids != [normalized_order_id] or len(rows) != 1:
         return {
             "order_id": normalized_order_id,
             "success": False,
             "outcome": "stock_unlock_report_order_mismatch",
-            "message": "The targeted locked-orders report returned a different order.",
+            "message": "The targeted locked-orders report did not identify exactly the requested order.",
             "manual_review_required": True,
             "stock_unlock_required": True,
         }
@@ -772,6 +772,9 @@ def unlock_single_order_with_driver(driver, order_id, list_url=None):
         }
 
     choose_unlock_status(driver, preview_panel)
+    if dry_run:
+        get_apply_button(preview_panel)
+        return {"order_id": normalized_order_id, "success": True, "outcome": "stock_unlock_ready", "message": "Dry run prepared one targeted order; Apply was skipped.", "apply_clicked": False}
     click_apply(driver, preview_panel)
     confirmation_reached = maybe_wait_for_confirmation_modal(driver, timeout=2)
     if confirmation_reached:
@@ -953,7 +956,7 @@ def verify_update_complete(driver, previous_order_count=None):
     raise TimeoutException("The CRM did not show the unlock success message before the timeout expired.")
 
 
-def _run_once(action, dry_run=False, headless_mode=True, list_url=None):
+def _run_once(action, dry_run=False, headless_mode=True, list_url=None, order_id=None):
     driver = None
     mode_name = "headless" if headless_mode else "visible"
     try:
@@ -966,6 +969,13 @@ def _run_once(action, dry_run=False, headless_mode=True, list_url=None):
             page_load_timeout=CRM_PAGE_LOAD_TIMEOUT,
             script_timeout=CRM_ACTION_TIMEOUT,
         )
+
+        if order_id is not None:
+            result = unlock_single_order_with_driver(driver, order_id, list_url=list_url, dry_run=dry_run)
+            return {
+                **result, "action": action, "order_count": 1, "order_ids": [order_id],
+                "dry_run": dry_run, "headless": headless_mode, "order_results": [dict(result)],
+            }
 
         all_order_ids = []
         seen_order_ids = set()
@@ -1070,20 +1080,27 @@ def _run_once(action, dry_run=False, headless_mode=True, list_url=None):
         safe_driver_quit(driver, profile_path=PROFILE_PATH)
 
 
-def run(action, dry_run=False, visible=False, list_url=None):
+def run(action, dry_run=False, visible=False, list_url=None, order_id=None):
     started_at = time.monotonic()
     final_mode = bool(CRM_HEADLESS)
     final_error = None
     try:
         _validate_runtime_config(list_url=list_url)
+        if order_id is not None and not ORDER_ID_PATTERN.fullmatch(str(order_id)):
+            raise ValueError("Order ID must be a 7-digit value.")
 
         attempt_modes = [False] if visible else _crm_attempt_modes()
 
         errors = []
         for index, headless_mode in enumerate(attempt_modes, start=1):
             try:
-                result = _run_once(action, dry_run=dry_run, headless_mode=headless_mode, list_url=list_url)
-                if dry_run:
+                run_options = {"dry_run": dry_run, "headless_mode": headless_mode, "list_url": list_url}
+                if order_id is not None:
+                    run_options["order_id"] = order_id
+                result = _run_once(action, **run_options)
+                if order_id is not None:
+                    message = result["message"]
+                elif dry_run:
                     message = (
                         f"Dry run prepared {result['order_count']} orders and confirmed the Apply button was clickable; the Apply click was skipped."
                     )
@@ -1101,11 +1118,11 @@ def run(action, dry_run=False, visible=False, list_url=None):
                 write_result_payload(
                     AUTOMATION_NAME,
                     "crm_unlock_orders.py",
-                    True,
+                    bool(result.get("success", True)),
                     message,
                     extra_fields={**result, "duration_seconds": round(max(0.0, time.monotonic() - started_at), 1)},
                 )
-                return 0
+                return 0 if result.get("success", True) else 1
             except Exception as err:
                 errors.append((headless_mode, err))
                 if index < len(attempt_modes) and headless_mode and _is_retryable_exception(err):
@@ -1143,10 +1160,11 @@ def parse_args(argv=None):
     parser.add_argument("--visible", action="store_true", help="Run Chrome visibly instead of headless for testing.")
     parser.add_argument("--dry-run", action="store_true", help="Prepare the unlock selection and confirm Apply is clickable without clicking Apply.")
     parser.add_argument('--list-url', help='Override CRM_LOCKED_URL for a mode-specific unlock report.')
+    parser.add_argument('--order-id', help='Unlock only this seven-digit order after verifying its targeted report selection.')
     return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
     options = parse_args()
     effective_dry_run = bool(options.dry_run or CONFIG_CRM_DRY_RUN)
-    sys.exit(run(options.action, dry_run=effective_dry_run, visible=bool(options.visible), list_url=options.list_url))
+    sys.exit(run(options.action, dry_run=effective_dry_run, visible=bool(options.visible), list_url=options.list_url, order_id=options.order_id))
