@@ -32,6 +32,25 @@ class CustomCrmProcessingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_custom_crm_target({"custom_input_type": []})
 
+    def test_order_list_accepts_mixed_numbers_and_direct_or_embedded_order_links(self):
+        root = "https://crm2.legacy.printfly.com"
+        pasted = f"2345678, {root}/order/1234567?tab=products#details\n#2345678;{root}/app#/order/3456789?tab=shipping"
+        self.assertEqual(normalize_custom_crm_order_ids(pasted), ["2345678", "1234567", "3456789"])
+        self.assertEqual(normalize_custom_crm_order_ids([
+            1234567, f"{root}/order/1234567/", f"{root}/app#!/order/2345678", f"{root}/order/2345678?other=7654321",
+        ]), ["1234567", "2345678"])
+
+    def test_order_list_rejects_reports_malformed_links_and_ambiguous_order_routes(self):
+        root = "https://crm2.legacy.printfly.com"
+        for value in (
+            f"{root}/report/1234567", f"{root}/app#/reports/orders?_orderIds=1234567",
+            f"{root}/order/12345678", f"{root}/order/1234567/extra", f"{root}/order/1234567#/order/2345678",
+            f"{root}/login?next=/order/1234567", f"{root}/app#https://other.example/order/1234567",
+            "file:///order/1234567", "https://user:password@crm.example/order/1234567", "https://crm.example:bad/order/1234567",
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                normalize_custom_crm_order_ids(["1234567", value])
+
     def test_link_validation_preserves_report_filters_and_rejects_unsafe_input(self):
         self.assertEqual(normalize_custom_crm_list_url(" " + LINK + " "), LINK)
         for value in (None, {}, "", "/report", "file:///report", "https://", "https://crm.example:bad/report",

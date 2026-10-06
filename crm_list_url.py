@@ -29,19 +29,36 @@ def normalize_custom_crm_list_url(value):
 
 def normalize_custom_crm_order_ids(value):
     """Reject a malformed list in full, and preserve the first occurrence of each ID."""
+    message = "Each entry must be a seven-digit order number or an individual CRM order link. Separate entries with commas, spaces, or new lines."
     if isinstance(value, str):
         items = [item for item in re.split(r"[\s,;]+", value.strip()) if item]
     elif isinstance(value, list):
         items = value
     else:
-        raise ValueError("Enter a list of seven-digit CRM order IDs.")
+        raise ValueError(message)
     if not items:
-        raise ValueError("Enter at least one seven-digit CRM order ID.")
+        raise ValueError("Enter at least one seven-digit order number or individual CRM order link.")
     order_ids = []
     for item in items:
-        if not isinstance(item, (str, int)) or isinstance(item, bool) or not re.fullmatch(r"[0-9]{7}", str(item).strip()):
-            raise ValueError("Every CRM order ID must contain exactly seven digits. Separate IDs with commas, spaces, or new lines.")
-        order_id = str(item).strip()
+        if not isinstance(item, (str, int)) or isinstance(item, bool):
+            raise ValueError(message)
+        text = str(item).strip()
+        match = re.fullmatch(r"#?([0-9]{7})", text)
+        if match is None:
+            try:
+                parts = urlsplit(normalize_custom_crm_list_url(text))
+            except ValueError:
+                raise ValueError(message) from None
+            route = parts.path
+            if route.rstrip("/") == "/app":
+                route = "/" + parts.fragment.split("?", 1)[0].lstrip("!/")
+            elif parts.fragment.startswith(("/order/", "!/order/")):
+                # Two order routes in one URL are ambiguous; do not pick one.
+                raise ValueError(message)
+            match = re.fullmatch(r"/order/([0-9]{7})/?", route)
+            if match is None:
+                raise ValueError(message)
+        order_id = match.group(1)
         if order_id not in order_ids:
             order_ids.append(order_id)
     if len(order_ids) > 100:

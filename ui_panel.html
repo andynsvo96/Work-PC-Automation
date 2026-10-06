@@ -1359,16 +1359,16 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
     <label for='crmProcessingCustomInputType'>Use a</label>
     <select id='crmProcessingCustomInputType' onchange='syncCrmProcessingCustomInputControls()' style='margin:8px 0 12px;width:100%'>
       <option value='link'>CRM list link</option>
-      <option value='orders'>List of order IDs</option>
+      <option value='orders'>Order IDs or order links</option>
     </select>
     <div id='crmProcessingCustomLinkFields'>
       <label for='crmProcessingCustomLinkInput'>CRM list link</label>
       <input id='crmProcessingCustomLinkInput' type='url' required placeholder='https://…' style='box-sizing:border-box;width:100%;margin-top:6px'>
     </div>
     <div id='crmProcessingCustomOrderFields' style='display:none'>
-      <label for='crmProcessingCustomOrderIdsInput'>Order IDs</label>
-      <textarea id='crmProcessingCustomOrderIdsInput' rows='6' required placeholder='1234567&#10;2345678' style='box-sizing:border-box;width:100%;margin-top:6px;resize:vertical'></textarea>
-      <div class='muted' style='margin-top:6px'>Up to 100 seven-digit order IDs. Separate them with commas, spaces, or new lines. Duplicates run once.</div>
+      <label for='crmProcessingCustomOrderIdsInput'>Order IDs or individual CRM order links</label>
+      <textarea id='crmProcessingCustomOrderIdsInput' rows='6' required placeholder='1234567&#10;https://crm2.legacy.printfly.com/order/2345678' style='box-sizing:border-box;width:100%;margin-top:6px;resize:vertical'></textarea>
+      <div class='muted' style='margin-top:6px'>Up to 100 orders. Paste seven-digit IDs or individual CRM order links, separated by commas, spaces, or new lines. Duplicates run once.</div>
     </div>
     <div class='bad' id='crmProcessingCustomInputError' role='alert' style='margin-top:10px'></div>
     <div class='row' style='justify-content:flex-end;margin-top:12px'>

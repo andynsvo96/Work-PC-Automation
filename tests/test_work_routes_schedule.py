@@ -186,6 +186,21 @@ class WorkRouteScheduleTests(unittest.TestCase):
         app.test_client().post("/crm/process", json={"processing_filter": "custom"})
         self.assertNotEqual(original, captured["automation_signature"])
 
+    def test_mixed_order_links_queue_the_same_ids_and_signature_as_plain_numbers(self):
+        app, captured = self._app_with_captured_queue()
+        client = app.test_client()
+        response = client.post("/crm/process/custom", json={
+            "custom_order_ids": "1234567, https://crm2.legacy.printfly.com/order/2345678\nhttps://crm2.legacy.printfly.com/app#/order/1234567",
+        })
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(captured["task_arguments"]["custom_order_ids"], ["1234567", "2345678"])
+        original = captured["automation_signature"]
+        response = client.post("/crm/process/custom", json={"custom_order_ids": ["1234567", "2345678"]})
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(original, captured["automation_signature"])
+        response = client.post("/crm/process/custom", json={"custom_order_ids": "https://crm2.legacy.printfly.com/report/1234567"})
+        self.assertEqual(response.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()
