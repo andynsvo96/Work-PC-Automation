@@ -4423,8 +4423,9 @@ class ShippingBypasserTests(unittest.TestCase):
                 "product": {"index": 1, "product_id": "5000"},
                 "quantities": {"XL": 5},
                 "inventory": [
-                    {"warehouse": "Robbinsville, NJ", "stock": {"XL": 14}},
-                    {"warehouse": "Richmond, VA", "stock": {"XL": 11}},
+                    {"warehouse": "Robbinsville, NJ", "stock": {"XL": 100}},
+                    {"warehouse": "Richmond, VA", "stock": {"XL": 14}},
+                    {"warehouse": "Cincinnati, OH", "stock": {"XL": 11}},
                 ],
             }
         ]
@@ -4432,8 +4433,8 @@ class ShippingBypasserTests(unittest.TestCase):
         plan = crm_shipping_bypasser._choose_multi_warehouse_plan(product_lines, "inhouse")
 
         self.assertEqual(plan["mode"], "multi_warehouse")
-        self.assertEqual(plan["warehouses"], ["Robbinsville, NJ", "Richmond, VA"])
-        self.assertEqual(plan["pieces_by_warehouse"], {"Robbinsville, NJ": 4, "Richmond, VA": 1})
+        self.assertEqual(plan["warehouses"], ["Richmond, VA", "Cincinnati, OH"])
+        self.assertEqual(plan["pieces_by_warehouse"], {"Richmond, VA": 4, "Cincinnati, OH": 1})
         self.assertEqual([line["quantities"] for line in plan["expanded_lines"]], [{"XL": 4}, {"XL": 1}])
 
     def test_shipping_bypasser_warehouse_plan_prefers_single_complete_warehouse(self):

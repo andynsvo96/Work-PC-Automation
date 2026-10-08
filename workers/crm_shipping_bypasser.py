@@ -2866,7 +2866,8 @@ def _warehouse_usable_qty(line, warehouse, size, stock_buffer=SANMAR_WAREHOUSE_S
 
 def _choose_multi_warehouse_plan(product_lines, order_type, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
     lines = product_lines if isinstance(product_lines, list) else []
-    priority = _warehouse_priority(order_type)
+    # NJ remains eligible for a complete single-warehouse order, but never a split.
+    priority = [warehouse for warehouse in _warehouse_priority(order_type) if warehouse != "Robbinsville, NJ"]
     expanded_lines = []
     pieces_by_warehouse = {}
     warehouses = []
@@ -5943,7 +5944,8 @@ def _process_open_order(
             order_id,
             False,
             "no_single_warehouse",
-            _single_warehouse_failure_message(product_lines, order["order_type"], stock_buffer=stock_buffer),
+            _single_warehouse_failure_message(product_lines, order["order_type"], stock_buffer=stock_buffer)
+            + " No complete split allocation is available with NJ excluded. Skipped for now; no SanMar stock was ordered.",
             order=order,
             products=product_lines,
         ))

@@ -275,6 +275,49 @@ class ShippingBypassStockBufferTests(unittest.TestCase):
         self.assertIsNone(warehouse)
         self.assertIsNone(plan)
 
+    def test_split_across_products_excludes_nj_for_both_destinations(self):
+        product_lines = [
+            {
+                "product": {"index": 1, "product_id": "PC54"},
+                "quantities": {"M": 2},
+                "inventory": [
+                    {"warehouse": "Robbinsville, NJ", "stock": {"M": 20}},
+                    {"warehouse": "Richmond, VA", "stock": {"M": 12}},
+                ],
+            },
+            {
+                "product": {"index": 2, "product_id": "PC61"},
+                "quantities": {"L": 3},
+                "inventory": [{"warehouse": "Cincinnati, OH", "stock": {"L": 13}}],
+            },
+        ]
+        for order_type in ("inhouse", "mach6"):
+            for stock_buffer in (10, 0):
+                with self.subTest(order_type=order_type, stock_buffer=stock_buffer):
+                    warehouse, plan = crm_shipping_bypasser._choose_warehouse_plan(
+                        product_lines, order_type, stock_buffer=stock_buffer,
+                    )
+
+                    self.assertIsNone(warehouse)
+                    self.assertEqual(plan["warehouses"], ["Richmond, VA", "Cincinnati, OH"])
+                    self.assertEqual(plan["pieces_by_warehouse"], {"Richmond, VA": 2, "Cincinnati, OH": 3})
+                    self.assertEqual([line["quantities"] for line in plan["expanded_lines"]], [{"M": 2}, {"L": 3}])
+
+    def test_same_size_split_is_rejected_when_nj_is_needed_to_complete_quantity(self):
+        for order_type in ("inhouse", "mach6"):
+            for stock_buffer in (10, 0):
+                with self.subTest(order_type=order_type, stock_buffer=stock_buffer):
+                    lines = self._product_lines(available=stock_buffer + 4, needed=5)
+                    lines[0]["inventory"].append(
+                        {"warehouse": "Richmond, VA", "stock": {"M": stock_buffer + 1}}
+                    )
+                    warehouse, plan = crm_shipping_bypasser._choose_warehouse_plan(
+                        lines, order_type, stock_buffer=stock_buffer,
+                    )
+
+                    self.assertIsNone(warehouse)
+                    self.assertIsNone(plan)
+
 
 class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
     def _run_order(
@@ -306,14 +349,15 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
         if inventory is None:
             inventory = [
                 {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 17, "4XL": 0}},
-                {"warehouse": "Richmond, VA", "stock": {"3XL": 0, "4XL": 11}},
+                {"warehouse": "Richmond, VA", "stock": {"3XL": 17, "4XL": 0}},
+                {"warehouse": "Cincinnati, OH", "stock": {"3XL": 0, "4XL": 11}},
                 {"warehouse": "Phoenix, AZ", "stock": {"3XL": 1, "4XL": 13}},
                 {"warehouse": "Seattle, WA", "stock": {"3XL": 20, "4XL": 22}},
             ]
         if eta_states is None:
             eta_states = [
                 {"Phoenix, AZ": day(8), "Seattle, WA": day(8)},
-                {"Robbinsville, NJ": day(5), "Richmond, VA": day(6)},
+                {"Richmond, VA": day(5), "Cincinnati, OH": day(6)},
             ]
         eta_states = iter(eta_states)
         cart = []
@@ -409,6 +453,56 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
         mocks["_change_crm_due_date"].assert_not_called()
         mocks["_change_crm_production_date"].assert_not_called()
 
+    def test_nj_only_complete_order_remains_eligible(self):
+        result, mocks, cart = self._run_order(
+            inventory=[{"warehouse": "Robbinsville, NJ", "stock": {"3XL": 17, "4XL": 11}}],
+            eta_states=[{"Robbinsville, NJ": crm_shipping_bypasser.datetime(2026, 10, 5).date()}],
+        )
+
+        self.assertTrue(result["success"], result["message"])
+        self.assertEqual(result["warehouses"], ["Robbinsville, NJ"])
+        self.assertEqual({row["warehouse"] for row in cart}, {"Robbinsville, NJ"})
+        mocks["_fill_review_and_submit"].assert_called_once()
+        mocks["_append_crm_production_note"].assert_not_called()
+
+    def test_nj_plus_other_warehouse_is_skipped_before_adding_partial_stock(self):
+        for override in (False, True):
+            with self.subTest(buffer_override=override):
+                result, mocks, cart = self._run_order(
+                    inventory=[
+                        {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 17, "4XL": 0}},
+                        {"warehouse": "Richmond, VA", "stock": {"3XL": 0, "4XL": 11}},
+                    ],
+                    allow_low_stock_buffer=override,
+                )
+
+                self.assertFalse(result["success"])
+                self.assertEqual(result["outcome"], "no_single_warehouse")
+                self.assertIn("NJ excluded", result["message"])
+                self.assertIn("Skipped for now", result["message"])
+                self.assertEqual(cart, [])
+                mocks["_fill_sanmar_quantities"].assert_not_called()
+                mocks["_add_current_product_to_box"].assert_not_called()
+                mocks["_select_ups_eta_for_shipping_plan"].assert_not_called()
+                self._assert_no_purchase(mocks)
+
+    def test_late_complete_order_does_not_use_nj_to_make_an_on_time_split(self):
+        day = lambda value: crm_shipping_bypasser.datetime(2026, 10, value).date()
+        result, mocks, _cart = self._run_order(
+            inventory=[
+                {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 17, "4XL": 0}},
+                {"warehouse": "Richmond, VA", "stock": {"3XL": 0, "4XL": 11}},
+                {"warehouse": "Seattle, WA", "stock": {"3XL": 20, "4XL": 22}},
+            ],
+            eta_states=[{"Seattle, WA": day(8)}, {"Seattle, WA": day(8), "Richmond, VA": day(5)}],
+        )
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["outcome"], "eta_after_due_date")
+        self.assertEqual(result["warehouses"], ["Seattle, WA", "Richmond, VA"])
+        self.assertNotIn("Robbinsville, NJ", [call.args[1] for call in mocks["_fill_sanmar_quantities"].call_args_list])
+        self._assert_no_purchase(mocks)
+
     def test_late_complete_warehouse_falls_back_to_on_time_split_with_same_po(self):
         for override, first_warehouse in [(False, "Seattle, WA"), (True, "Phoenix, AZ")]:
             with self.subTest(buffer_override=override):
@@ -416,14 +510,14 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
 
                 self.assertTrue(result["success"], result["message"])
                 self.assertEqual(result["outcome"], "shipping_bypass_ordered")
-                self.assertEqual(result["warehouses"], ["Robbinsville, NJ", "Richmond, VA"])
+                self.assertEqual(result["warehouses"], ["Richmond, VA", "Cincinnati, OH"])
                 self.assertEqual(result["eta"], "2026-10-06")
                 self.assertEqual(result["shipping_plan_attempts"][0]["warehouses"], [first_warehouse])
                 self.assertEqual(
                     [(call.args[1], call.args[2]) for call in mocks["_fill_sanmar_quantities"].call_args_list],
-                    [(first_warehouse, {"3XL": 1, "4XL": 1}), ("Robbinsville, NJ", {"3XL": 1}), ("Richmond, VA", {"4XL": 1})],
+                    [(first_warehouse, {"3XL": 1, "4XL": 1}), ("Richmond, VA", {"3XL": 1}), ("Cincinnati, OH", {"4XL": 1})],
                 )
-                self.assertEqual([(row["warehouse"], row["size"], row["quantity"]) for row in cart], [("Robbinsville, NJ", "3XL", 1), ("Richmond, VA", "4XL", 1)])
+                self.assertEqual([(row["warehouse"], row["size"], row["quantity"]) for row in cart], [("Richmond, VA", "3XL", 1), ("Cincinnati, OH", "4XL", 1)])
                 mocks["_clear_sanmar_cart"].assert_called_once()
                 mocks["_fill_review_and_submit"].assert_called_once()
                 self.assertEqual(mocks["_fill_review_and_submit"].call_args.args[1], "H-TestSplit")
@@ -432,7 +526,7 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
                 mocks["_record_crm_manual_order"].assert_called_once()
                 self.assertEqual(mocks["_record_crm_manual_order"].call_args.args[2], "H-TestSplit")
                 mocks["_mark_pending_shipping_bypass_submission_recorded"].assert_called_once()
-                note = "tab 1: 2 boxes from sanmar with the same PO\n1 pc from NJ\n1 pc from VA"
+                note = "tab 1: 2 boxes from sanmar with the same PO\n1 pc from VA\n1 pc from OH"
                 self.assertEqual(result["production_note"], note)
                 self.assertEqual(mocks["_append_crm_production_note"].call_args.args[2], note)
                 mocks["_change_crm_due_date"].assert_not_called()
@@ -448,12 +542,12 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
 
     def test_split_rejects_latest_arrival_on_due_date(self):
         day = lambda value: crm_shipping_bypasser.datetime(2026, 10, value).date()
-        result, mocks, _cart = self._run_order(eta_states=[{"Seattle, WA": day(8)}, {"Robbinsville, NJ": day(5), "Richmond, VA": day(7)}])
+        result, mocks, _cart = self._run_order(eta_states=[{"Seattle, WA": day(8)}, {"Richmond, VA": day(5), "Cincinnati, OH": day(7)}])
 
         self.assertFalse(result["success"])
         self.assertEqual(result["outcome"], "eta_after_due_date")
         self.assertEqual(result["eta"], "2026-10-07")
-        self.assertEqual(result["warehouses"], ["Robbinsville, NJ", "Richmond, VA"])
+        self.assertEqual(result["warehouses"], ["Richmond, VA", "Cincinnati, OH"])
         self._assert_no_purchase(mocks)
 
     def test_split_stops_when_delivery_dates_are_unavailable(self):
@@ -494,7 +588,8 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
     def test_split_retains_extension_override_and_default_buffer(self):
         inventory = [
             {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 1, "4XL": 0}},
-            {"warehouse": "Richmond, VA", "stock": {"3XL": 0, "4XL": 1}},
+            {"warehouse": "Richmond, VA", "stock": {"3XL": 1, "4XL": 0}},
+            {"warehouse": "Cincinnati, OH", "stock": {"3XL": 0, "4XL": 1}},
             {"warehouse": "Phoenix, AZ", "stock": {"3XL": 1, "4XL": 13}},
             {"warehouse": "Seattle, WA", "stock": {"3XL": 20, "4XL": 22}},
         ]
@@ -507,19 +602,21 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
         self.assertEqual(result["warehouses"], ["Seattle, WA", "Phoenix, AZ"])
         self.assertNotIn("Robbinsville, NJ", result["warehouses"])
         self.assertNotIn("Richmond, VA", result["warehouses"])
+        self.assertNotIn("Cincinnati, OH", result["warehouses"])
         self._assert_no_purchase(mocks)
 
         result, _mocks, _cart = self._run_order(inventory=inventory, allow_low_stock_buffer=True)
         self.assertTrue(result["success"], result["message"])
-        self.assertEqual(result["warehouses"], ["Robbinsville, NJ", "Richmond, VA"])
+        self.assertEqual(result["warehouses"], ["Richmond, VA", "Cincinnati, OH"])
 
     def test_existing_split_plan_uses_same_po_without_an_extra_cart_attempt(self):
         result, mocks, _cart = self._run_order(
             inventory=[
                 {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 17, "4XL": 0}},
-                {"warehouse": "Richmond, VA", "stock": {"3XL": 0, "4XL": 11}},
+                {"warehouse": "Richmond, VA", "stock": {"3XL": 17, "4XL": 0}},
+                {"warehouse": "Cincinnati, OH", "stock": {"3XL": 0, "4XL": 11}},
             ],
-            eta_states=[{"Robbinsville, NJ": crm_shipping_bypasser.datetime(2026, 10, 5).date(), "Richmond, VA": crm_shipping_bypasser.datetime(2026, 10, 6).date()}],
+            eta_states=[{"Richmond, VA": crm_shipping_bypasser.datetime(2026, 10, 5).date(), "Cincinnati, OH": crm_shipping_bypasser.datetime(2026, 10, 6).date()}],
         )
 
         self.assertTrue(result["success"], result["message"])
