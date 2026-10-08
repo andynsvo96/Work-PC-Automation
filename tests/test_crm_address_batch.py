@@ -4443,7 +4443,7 @@ class ShippingBypasserTests(unittest.TestCase):
                 "product": {"index": 1, "product_id": "5000"},
                 "quantities": {"S": 2, "M": 2},
                 "inventory": [
-                    {"warehouse": "Robbinsville, NJ", "stock": {"S": 20, "M": 0}},
+                    {"warehouse": "Robbinsville, NJ", "stock": {"S": 0, "M": 0}},
                     {"warehouse": "Richmond, VA", "stock": {"S": 20, "M": 20}},
                 ],
             }

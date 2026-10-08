@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Local NJ pickup and CRM Add box fixture</title>
+<style>
+  body { font: 16px Arial; padding: 24px; }
+  label, select, input, button { margin: 8px; }
+  .modal { display: none; padding: 16px; border: 1px solid #888; }
+  textarea { width: 600px; height: 160px; }
+</style>
+<body></body>
+<script>
+const page = new URLSearchParams(location.search).get('page') || 'checkout';
+const body = document.body;
+const escapeText = (text) => String(text).replace(/[&<>"']/g, (ch) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
+if (page === 'checkout') {
+  body.innerHTML = `
+    <h1>Shipping Details</h1>
+    <div><label><input id="ship" type="radio" name="fulfillment" checked>Ship to an address</label></div>
+    <div><label><input id="pickup" type="radio" name="fulfillment">Pick Up at warehouse</label>
+      <select id="warehouse"><option>Select warehouse</option><option value="nj">Robbinsville, NJ</option><option>Richmond, VA</option></select>
+    </div>
+    <button id="payment">Proceed To Payment</button>`;
+  document.querySelector('#payment').onclick = () => {
+    const pickup = document.querySelector('#pickup').checked;
+    const warehouse = document.querySelector('#warehouse').selectedOptions[0].textContent;
+    window.fixtureFulfillment = { pickup, warehouse };
+    body.innerHTML = `<h1>Review &amp; Submit</h1><p>Payment method: Net</p>
+      <p>${pickup ? 'Pickup' : 'UPS shipping'}: ${escapeText(warehouse)}</p>
+      <label for="po">Customer PO</label><input id="po" name="customerPo" style="width:320px">
+      <button id="submit">Submit Order</button>`;
+    document.querySelector('#submit').onclick = () => {
+      const po = document.querySelector('#po').value;
+      body.innerHTML = `<h1>Thank You For Your Order</h1><p>Web Reference: LOCAL-FIXTURE</p><p>Customer PO: ${escapeText(po)}</p>`;
+    };
+  };
+} else {
+  const rows = JSON.parse(localStorage.getItem('fixture_rows') || '[]');
+  const notes = localStorage.getItem('fixture_notes') || '';
+  body.innerHTML = `<h1>Order 5000001 — H-CJVillafra302</h1>
+    <section><h2>Order Goods from Vendor: Manual Order</h2>
+      <button id="order-goods">Order Goods</button><button id="add-box">Add box</button>
+      <table id="stock-rows"></table>
+    </section>
+    <div class="modal"><div class="modal-content"><h2>Manual Order</h2>
+      <input id="manual-po"><select id="vendor"><option>Select vendor</option><option>Sanmar</option></select>
+      <button id="manual-save">Save</button>
+    </div></div>
+    <section><h2>Production Notes</h2><pre id="notes"></pre>
+      <button id="edit">Edit Order</button><textarea id="note-input" style="display:none"></textarea>
+      <button id="save-order" style="display:none">Save Order</button>
+    </section>`;
+  const renderRows = () => {
+    document.querySelector('#stock-rows').innerHTML = rows.map((po) => `<tr style="background:rgb(255,255,150)"><td>Sanmar ${escapeText(po)}-Sanmar</td></tr>`).join('');
+  };
+  renderRows();
+  document.querySelector('#notes').textContent = notes;
+  for (const id of ['order-goods', 'add-box']) {
+    document.getElementById(id).onclick = () => {
+      const clicks = JSON.parse(localStorage.getItem('fixture_clicks') || '[]');
+      clicks.push(id);
+      localStorage.setItem('fixture_clicks', JSON.stringify(clicks));
+      document.querySelector('.modal').style.display = 'block';
+      document.querySelector('#manual-po').value = '';
+    };
+  }
+  document.querySelector('#manual-save').onclick = () => {
+    rows.push(document.querySelector('#manual-po').value);
+    localStorage.setItem('fixture_rows', JSON.stringify(rows));
+    document.querySelector('.modal').style.display = 'none';
+    renderRows();
+  };
+  document.querySelector('#edit').onclick = () => {
+    document.querySelector('#edit').style.display = 'none';
+    document.querySelector('#note-input').style.display = 'block';
+    document.querySelector('#note-input').value = localStorage.getItem('fixture_notes') || '';
+    document.querySelector('#save-order').style.display = 'inline-block';
+  };
+  document.querySelector('#save-order').onclick = () => {
+    const note = document.querySelector('#note-input').value;
+    localStorage.setItem('fixture_notes', note);
+    document.querySelector('#notes').textContent = note;
+    document.querySelector('#edit').style.display = 'inline-block';
+    document.querySelector('#note-input').style.display = 'none';
+    document.querySelector('#save-order').style.display = 'none';
+  };
+}
+</script>
+</html>

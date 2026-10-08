@@ -5109,7 +5109,7 @@ def _normalize_crm_stock_order_results(items, fallback_order_ids=None, fallback_
             row["stock_tab_label"] = tab_label
         if isinstance(item.get("partial_success_details"), list):
             row["partial_success_details"] = item.get("partial_success_details")
-        for key in ("warehouse", "warehouses", "eta", "eta_by_warehouse"):
+        for key in ("warehouse", "warehouses", "eta", "eta_by_warehouse", "stock_orders", "stock_order_complete"):
             if item.get(key) is not None:
                 row[key] = item.get(key)
         cleaned.append(row)
@@ -5365,9 +5365,17 @@ def _build_crm_shipping_bypasser_order_results(payload):
         if not order_ids:
             continue
         order_id = order_ids[0]
-        success_detail = _crm_shipping_bypasser_ordered_stock_success_detail(item)
-        if success_detail is not None:
-            order_success_details.setdefault(order_id, []).append(success_detail)
+        stock_orders = item.get("stock_orders") if isinstance(item.get("stock_orders"), list) else []
+        detail_items = [item]
+        if stock_orders:
+            detail_items = [dict(
+                item, success=group.get("state") == "recorded", outcome="shipping_bypass_ordered",
+                sanmar_confirmation=group.get("sanmar_confirmation"),
+            ) for group in stock_orders if isinstance(group, dict)]
+        for detail_item in detail_items:
+            success_detail = _crm_shipping_bypasser_ordered_stock_success_detail(detail_item)
+            if success_detail is not None:
+                order_success_details.setdefault(order_id, []).append(success_detail)
         if str(item.get("outcome") or "") != "sanmar_cart_cleanup_failed":
             has_non_cleanup_row[order_id] = True
 
@@ -5388,6 +5396,8 @@ def _build_crm_shipping_bypasser_order_results(payload):
         partial_details = order_success_details.get(order_id) or []
         partial_success = bool((not item_success) and partial_details)
         effective_success = bool(item_success or partial_success)
+        if item.get("stock_order_complete") is False:
+            effective_success = False
         status = (
             _crm_order_goods_outcome_label(item.get("outcome"), item_success)
             if item_success
@@ -5429,6 +5439,9 @@ def _build_crm_shipping_bypasser_order_results(payload):
                 "stock_tab_label": str(item.get("stock_tab_label") or ""),
             }
         )
+        if "stock_order_complete" in item:
+            results[-1]["stock_order_complete"] = item["stock_order_complete"]
+            results[-1]["stock_orders"] = item.get("stock_orders") or []
     if results:
         return results
     return _normalize_crm_stock_order_results(

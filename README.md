@@ -115,9 +115,11 @@ A direct `python server.py` launch also performs the same safe startup check. Un
 
 Use **Settings → Shipping mappings** to add an exact CRM product/color to SanMar product/color mapping. Each CRM product appears once and contains its own color list. Advanced fields support the SanMar inventory/pricing button, expected style IDs, and report labels. The same values remain directly editable in `shipping_bypasser_product_color_mappings.json`; malformed JSON and duplicate product/color entries fail with a specific error instead of being silently ignored.
 
-Shipping Bypasser prefers a complete shipment from one warehouse. Before rejecting that shipment as too late, it checks a split across the closest available warehouses using the same stock-buffer setting. Split orders always exclude Robbinsville, NJ, including when the stock-buffer override is enabled. If fulfilling the order requires NJ plus another warehouse, the order is skipped for now without submitting a partial order. A complete single-warehouse shipment from NJ remains eligible. It verifies the rebuilt cart and each warehouse's UPS arrival date, then applies the production/due-date check to the latest arrival. An accepted split submits one order with the same customer PO and saves the usual production note listing the boxes and pieces from each warehouse. Missing split delivery dates stop for review. Existing free-shipping due-date extensions retain their behavior.
+Shipping Bypasser prioritizes usable Robbinsville, NJ stock, including partial quantities of a size, while retaining the configured stock buffer and closed-warehouse checks. NJ is ordered separately under the original customer PO using **Pick Up at warehouse → Robbinsville**; NJ never uses UPS, including for Mach 6 orders. If stock remains, the worker orders it separately under `ADD-<original PO>`, using one or multiple warehouses that exclude NJ. Both carts, POs, and ADD delivery dates are checked before the first purchase. Each purchase is confirmed and recorded in CRM; the second uses **Add box**. Production notes identify the ADD PO and list each product/color's sizes, piece quantities, and warehouse. A multi-warehouse ADD note also lists its box count under the same ADD PO. The note is refreshed and checked after saving.
 
-This worker update takes effect on the next queued run; no app restart, extension reload, or CRM page refresh is required.
+When no usable NJ stock is involved, the existing process and original PO remain unchanged: prefer a complete shipment from one warehouse, then consider a split across the closest warehouses if the complete shipment arrives too late. Cart validation, the latest-arrival production/due-date check, and free-shipping due-date extensions retain their behavior.
+
+NJ/ADD allocations and purchase states are saved under `runtime/state/shipping_bypass_nj_orders/`, alongside the existing submission receipts. A confirmed NJ purchase does not complete an unfinished ADD purchase. A retry uses the saved allocation, repairs missing CRM records or notes, and never repeats a confirmed purchase. An uncertain submission, missing allocation receipt, or changed CRM product/color/quantity stops for review. History retains both PO confirmation links and shows incomplete purchases as needing attention. Restart the local app and refresh the dashboard to load the history changes; no extension reload is needed.
 
 ## Runtime Files
 
@@ -148,6 +150,14 @@ Run the extension's Node tests with:
 ```powershell
 node --test tests/test_extension_bridge.mjs tests/test_salesforce_tabs.mjs
 ```
+
+Verify the NJ/ADD history display with:
+
+```powershell
+node --test tests/test_nj_stock_history.mjs
+```
+
+Optional local browser verification for NJ pickup, distinct CRM POs, Add box selection, and persisted production notes uses `tests/fixtures/sanmar_nj_checkout.html`. Set `SANMAR_FIXTURE_CHROMEDRIVER` to a local ChromeDriver path (and `SANMAR_FIXTURE_CHROME` if Chrome is not in its usual location), then run `python -m unittest discover -s tests -p test_sanmar_nj_browser.py`. It uses an isolated headless profile under ignored runtime folders and never opens live vendor or CRM pages.
 
 You can also run a syntax compile pass:
 

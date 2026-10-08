@@ -7,6 +7,7 @@ order, then records the same PO in CRM under Manual Order.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -73,6 +74,8 @@ RUSH_FILTER = "rush"
 CONTINUOUS_ORDER_FETCH_LIMIT = 25
 CRM_STATE_PATH = state_file("crm_state.json")
 SHIPPING_BYPASS_PENDING_SUBMISSIONS_PATH = state_file("shipping_bypasser_pending_submissions.json")
+NJ_STOCK_ORDER_STATE_DIR = state_file("shipping_bypass_nj_orders")
+NJ_WAREHOUSE = "Robbinsville, NJ"
 WAREHOUSE_DISTANCE = {
     "inhouse": [
         "Robbinsville, NJ",
@@ -414,7 +417,7 @@ def _load_historical_shipping_bypass_order_ids(state_path=CRM_STATE_PATH):
             continue
         if entry.get("success"):
             skipped.update(_normalize_order_ids(entry.get("order_ids")))
-    return skipped
+    return skipped - _unfinished_nj_stock_order_ids()
 
 
 def _load_historical_shipping_bypass_customer_pos(state_path=CRM_STATE_PATH):
@@ -444,6 +447,12 @@ def _load_historical_shipping_bypass_customer_pos(state_path=CRM_STATE_PATH):
             po = str(confirmation.get("po") or "").strip()
             if po:
                 customer_pos.add(po.lower())
+            for group in item.get("stock_orders") if isinstance(item.get("stock_orders"), list) else []:
+                group_confirmation = group.get("sanmar_confirmation") if isinstance(group, dict) else None
+                if isinstance(group_confirmation, dict) and group_confirmation.get("po_confirmed"):
+                    group_po = str(group_confirmation.get("po") or "").strip()
+                    if group_po:
+                        customer_pos.add(group_po.lower())
             for detail in item.get("partial_success_details") if isinstance(item.get("partial_success_details"), list) else []:
                 if isinstance(detail, dict):
                     po = str(detail.get("po") or "").strip()
@@ -528,6 +537,10 @@ def _historical_shipping_bypass_confirmation(po, state_path=CRM_STATE_PATH):
             confirmation_po = str(confirmation.get("po") or "").strip().lower()
             if confirmation_po == po_text:
                 return dict(confirmation)
+            for group in item.get("stock_orders") if isinstance(item.get("stock_orders"), list) else []:
+                group_confirmation = group.get("sanmar_confirmation") if isinstance(group, dict) else None
+                if isinstance(group_confirmation, dict) and str(group_confirmation.get("po") or "").strip().lower() == po_text:
+                    return dict(group_confirmation)
             for detail in reversed(item.get("partial_success_details") if isinstance(item.get("partial_success_details"), list) else []):
                 if not isinstance(detail, dict):
                     continue
@@ -550,7 +563,7 @@ def _saved_shipping_bypass_confirmation(order_id, po):
     return _historical_shipping_bypass_confirmation(po)
 
 
-def _remember_pending_shipping_bypass_submission(order_id, po, sanmar_confirmation, vendor_name="Sanmar"):
+def _remember_pending_shipping_bypass_submission(order_id, po, sanmar_confirmation, vendor_name="Sanmar", nj_order_po=None):
     normalized_order_id = _normalize_target_order_id(order_id)
     normalized_po = str(po or "").strip()
     if not normalized_order_id or not normalized_po:
@@ -563,6 +576,8 @@ def _remember_pending_shipping_bypass_submission(order_id, po, sanmar_confirmati
         "sanmar_confirmation": sanmar_confirmation if isinstance(sanmar_confirmation, dict) else {},
         "submitted_at": datetime.now().isoformat(),
     }
+    if nj_order_po:
+        replacement["nj_order_po"] = str(nj_order_po).strip()
     kept = [
         item for item in submissions
         if not (
@@ -599,6 +614,87 @@ def _mark_pending_shipping_bypass_submission_recorded(order_id, po, record_state
 
 def _normalize_text(value):
     return " ".join(str(value or "").replace("\xa0", " ").split())
+
+
+def _nj_stock_order_path(order_id, po):
+    normalized_id = _normalize_target_order_id(order_id)
+    if not normalized_id or not str(po or "").strip():
+        raise RuntimeError("NJ stock-order receipt requires an order ID and original PO.")
+    digest = hashlib.sha256(str(po).strip().casefold().encode("utf-8")).hexdigest()[:24]
+    return os.path.join(NJ_STOCK_ORDER_STATE_DIR, f"{normalized_id}_{digest}.json")
+
+
+def _load_nj_stock_order(order_id, po):
+    if not order_id or not po:
+        return None
+    path = _nj_stock_order_path(order_id, po)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            receipt = json.load(handle)
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        raise RuntimeError("NJ stock-order receipt cannot be read; review it before retrying.") from exc
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("version") != 1
+        or str(receipt.get("order_id")) != str(order_id)
+        or str(receipt.get("po") or "").casefold() != str(po).strip().casefold()
+        or not isinstance(receipt.get("groups"), list)
+        or len(receipt["groups"]) != 2
+    ):
+        raise RuntimeError("NJ stock-order receipt is invalid; review it before retrying.")
+    return receipt
+
+
+def _save_nj_stock_order(receipt):
+    path = _nj_stock_order_path(receipt["order_id"], receipt["po"])
+    os.makedirs(NJ_STOCK_ORDER_STATE_DIR, exist_ok=True)
+    temp_path = f"{path}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump(_json_safe(receipt), handle, ensure_ascii=False)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp_path, path)
+
+
+def _nj_stock_order_known(order_id, po):
+    if _load_nj_stock_order(order_id, po):
+        return True
+    submission = _saved_shipping_bypass_submission(order_id, po)
+    return bool(submission and submission.get("nj_order_po"))
+
+
+def _unfinished_nj_stock_order_ids():
+    unfinished = set()
+    try:
+        filenames = os.listdir(NJ_STOCK_ORDER_STATE_DIR)
+    except FileNotFoundError:
+        return unfinished
+    for filename in filenames:
+        match = re.fullmatch(r"(\d{7})_[a-f0-9]{24}\.json", filename)
+        if not match:
+            continue
+        try:
+            with open(os.path.join(NJ_STOCK_ORDER_STATE_DIR, filename), "r", encoding="utf-8") as handle:
+                receipt = json.load(handle)
+            complete = isinstance(receipt, dict) and receipt.get("complete") is True
+        except Exception:
+            complete = False
+        if not complete:
+            unfinished.add(match.group(1))
+    return unfinished
+
+
+def _nj_product_signature(products):
+    quantities = {}
+    for product in products or []:
+        key = (_normalize_text(product.get("product_id")).upper(), _normalize_text(product.get("color")).casefold())
+        totals = quantities.setdefault(key, {})
+        for size, qty in _sanmar_quantities_for_product(product).items():
+            if _stock_qty(qty) > 0:
+                totals[str(size).upper().replace(" ", "")] = totals.get(str(size).upper().replace(" ", ""), 0) + _stock_qty(qty)
+    return [[*key, [[size, qty] for size, qty in sorted(totals.items())]] for key, totals in sorted(quantities.items())]
 
 
 def _upper_key(value):
@@ -2866,7 +2962,7 @@ def _warehouse_usable_qty(line, warehouse, size, stock_buffer=SANMAR_WAREHOUSE_S
 
 def _choose_multi_warehouse_plan(product_lines, order_type, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
     lines = product_lines if isinstance(product_lines, list) else []
-    # NJ remains eligible for a complete single-warehouse order, but never a split.
+    # This allocation is one vendor purchase; NJ belongs in its own pickup order.
     priority = [warehouse for warehouse in _warehouse_priority(order_type) if warehouse != "Robbinsville, NJ"]
     expanded_lines = []
     pieces_by_warehouse = {}
@@ -2936,6 +3032,45 @@ def _single_warehouse_plan(product_lines, warehouse):
 
 
 def _choose_warehouse_plan(product_lines, order_type, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
+    nj_lines = []
+    remaining_lines = []
+    for line in product_lines if isinstance(product_lines, list) else []:
+        nj_quantities = {}
+        remaining_quantities = {}
+        for size, raw_qty in (line.get("quantities") or {}).items():
+            needed = _stock_qty(raw_qty)
+            if needed <= 0:
+                continue
+            nj_qty = min(needed, _warehouse_usable_qty(line, NJ_WAREHOUSE, size, stock_buffer=stock_buffer))
+            if nj_qty:
+                nj_quantities[size] = nj_qty
+            if needed > nj_qty:
+                remaining_quantities[size] = needed - nj_qty
+        if nj_quantities:
+            nj_lines.append(dict(line, quantities=nj_quantities))
+        if remaining_quantities:
+            remaining_lines.append(dict(
+                line,
+                quantities=remaining_quantities,
+                inventory=[row for name, row in _inventory_by_warehouse(line.get("inventory")).items() if name != NJ_WAREHOUSE],
+            ))
+    if nj_lines:
+        nj_plan = _single_warehouse_plan(nj_lines, NJ_WAREHOUSE)
+        if not remaining_lines:
+            return NJ_WAREHOUSE, nj_plan
+        add_warehouse = _choose_common_warehouse(remaining_lines, order_type, stock_buffer=stock_buffer)
+        add_plan = (
+            _single_warehouse_plan(remaining_lines, add_warehouse)
+            if add_warehouse else _choose_multi_warehouse_plan(remaining_lines, order_type, stock_buffer=stock_buffer)
+        )
+        if not add_plan:
+            return None, None
+        return None, {
+            "mode": "nj_pickup_and_add",
+            "warehouses": [NJ_WAREHOUSE, *add_plan["warehouses"]],
+            "nj_plan": nj_plan,
+            "add_plan": add_plan,
+        }
     warehouse = _choose_common_warehouse(product_lines, order_type, stock_buffer=stock_buffer)
     if warehouse:
         return warehouse, _single_warehouse_plan(product_lines, warehouse)
@@ -3021,6 +3156,32 @@ def _format_multi_warehouse_production_note(order, plan):
     for warehouse in (plan or {}).get("warehouses") or []:
         pieces = int(pieces_by_warehouse.get(warehouse, 0) or 0)
         lines.append(f"{pieces} pc from {_warehouse_short_name(warehouse)}")
+    return "\n".join(lines)
+
+
+def _format_add_box_production_note(order, plan):
+    po = f"ADD-{order['po']}"
+    header = f"tab {order.get('stock_tab_index') or 1}: Add box PO {po}"
+    warehouses = plan.get("warehouses") or []
+    if len(warehouses) > 1:
+        header += f" — {len(warehouses)} boxes from sanmar with the same PO"
+    lines = [header]
+    for warehouse in warehouses:
+        for line in plan.get("expanded_lines") or []:
+            if line.get("warehouse") != warehouse:
+                continue
+            product = line["product"]
+            # Each size includes its quantity, including single-warehouse ADD boxes.
+            crm_sizes = {
+                _sanmar_size_key_for_product(product, size): size
+                for size in (product.get("quantities") or {})
+            }
+            sizes = [f"{crm_sizes.get(size, size)} ({_stock_qty(qty)} pc)" for size, qty in line["quantities"].items() if _stock_qty(qty) > 0]
+            label = "size" if len(sizes) == 1 else "sizes"
+            lines.append(
+                f"Add box for {product['color']} {product['product_id']} for {label} "
+                f"{', '.join(sizes)} from {_warehouse_short_name(warehouse)}."
+            )
     return "\n".join(lines)
 
 
@@ -4106,6 +4267,8 @@ def _validate_sanmar_cart_contents(driver, product_lines, warehouse=None, cart_l
 
 
 def _select_shipping_destination(driver, order_type, warehouse=None, multi_warehouse=False):
+    if multi_warehouse and warehouse == NJ_WAREHOUSE:
+        raise RuntimeError("NJ stock must be ordered separately for pickup.")
     if multi_warehouse:
         _click_radio_near_text(driver, "Ship to an address")
         target = "Mach 6 Manufacturing" if order_type == "mach6" else "123 EZ TEES INC"
@@ -4114,9 +4277,11 @@ def _select_shipping_destination(driver, order_type, warehouse=None, multi_wareh
         _click_sanmar_button(driver, r"Confirm\s+Address")
         time.sleep(2.0)
         return {"ship_mode": "ship", "address": target}
-    if order_type == "inhouse" and warehouse == "Robbinsville, NJ":
+    if warehouse == NJ_WAREHOUSE:
         _click_radio_near_text(driver, "Pick Up at warehouse")
         _select_dropdown_option_containing(driver, "Robbinsville")
+        if not _sanmar_nj_pickup_selected(driver):
+            raise RuntimeError("Robbinsville pickup was not confirmed. No NJ order was submitted.")
         _click_sanmar_button(driver, r"Proceed\s+To\s+Payment")
         return {"ship_mode": "pickup", "address": "Robbinsville, NJ"}
     _click_radio_near_text(driver, "Ship to an address")
@@ -4126,6 +4291,27 @@ def _select_shipping_destination(driver, order_type, warehouse=None, multi_wareh
     _click_sanmar_button(driver, r"Confirm\s+Address")
     time.sleep(2.0)
     return {"ship_mode": "ship", "address": target}
+
+
+def _sanmar_nj_pickup_selected(driver):
+    return driver.execute_script(r"""
+const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+const visible = (node) => {
+  const rect = node.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+};
+const pickup = Array.from(document.querySelectorAll('input[type="radio"]:checked')).some((radio) => {
+  const labels = Array.from(radio.labels || []);
+  if (labels.some((label) => /pick\s*up\s+at\s+warehouse/i.test(normalize(label.textContent)))) return true;
+  const parentText = normalize(radio.parentElement && radio.parentElement.textContent);
+  return parentText.length < 180 && /pick\s*up\s+at\s+warehouse/i.test(parentText)
+    && !/ship\s+to\s+an?\s+address/i.test(parentText);
+});
+const robbinsville = Array.from(document.querySelectorAll('select')).filter(visible).some((select) =>
+  Array.from(select.selectedOptions || []).some((option) => /robbinsville/i.test(normalize(option.textContent || option.value)))
+);
+return pickup && robbinsville;
+""") is True
 
 
 def _click_radio_near_text(driver, text, timeout=15, poll_interval=0.25):
@@ -5085,7 +5271,7 @@ return inputs.some((node) => String(node.value || '').trim() === po);
 
 
 def _capture_sanmar_confirmation(driver, order_id, po):
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     safe_order_id = re.sub(r"[^0-9A-Za-z_-]+", "_", str(order_id or "order"))
     screenshot_dir = SCREENSHOTS_DIR
     os.makedirs(screenshot_dir, exist_ok=True)
@@ -5109,7 +5295,9 @@ def _capture_sanmar_confirmation(driver, order_id, po):
         web_reference = re.search(r"Web Reference\s*#?\s*:?\s*([A-Za-z0-9-]+)", text, flags=re.I)
         if web_reference:
             result["web_reference"] = web_reference.group(1)
-        result["po_confirmed"] = bool(normalized_po and re.search(re.escape(normalized_po), text, flags=re.I))
+        result["po_confirmed"] = bool(normalized_po and re.search(
+            rf"(?<![A-Za-z0-9_-]){re.escape(normalized_po)}(?![A-Za-z0-9_-])", text, flags=re.I,
+        ))
 
     try:
         text = _page_text()
@@ -5155,11 +5343,12 @@ def _reopen_crm_manual_order_target(driver, order_id, order_url=None):
     _open_target_order(driver, order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
 
 
-def _record_crm_manual_order(driver, order_id, po, dry_run=False, stock_tab_index=None, vendor_name=None, order_url=None):
+def _record_crm_manual_order(driver, order_id, po, dry_run=False, stock_tab_index=None, vendor_name=None, order_url=None, add_box=False):
     vendor_label = _manual_order_vendor_label(vendor_name)
     if dry_run:
         return "dry_run_manual_order_ready"
     script = r"""
+const addBoxOnly = Boolean(arguments[0]);
 function normalize(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
 function isVisible(node) {
   if (!node) return false;
@@ -5175,6 +5364,7 @@ const controls = Array.from(document.querySelectorAll('button,input[type="button
 let best = null;
 for (const control of controls) {
   const text = normalize(control.innerText || control.textContent || control.value || control.getAttribute('aria-label')).toLowerCase();
+  if (addBoxOnly && !/\badd\s+box\b/.test(text)) continue;
   if (!text.includes('order goods') && !text.includes('add box')) continue;
   let score = 999999;
   for (let scope = control; scope && scope !== document.body; scope = scope.parentElement) {
@@ -5206,7 +5396,7 @@ return best ? best.control : null;
             _activate_stock_tab(driver, int(stock_tab_index) - 1)
         time.sleep(0.8)
         try:
-            button = driver.execute_script(script)
+            button = driver.execute_script(script, True) if add_box else driver.execute_script(script)
         except Exception:
             button = None
         if button is not None:
@@ -5366,7 +5556,7 @@ const po = String(arguments[0] || '').toLowerCase();
 const vendorName = String(arguments[1] || '').replace(/\s+/g, ' ').trim();
 const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const escapedPo = po.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const poPattern = new RegExp(escapedPo + '(?:\\b|-[a-z0-9]+\\b)', 'i');
+const poPattern = new RegExp('(?:^|[^a-z0-9_-])' + escapedPo + '(?:\\b|-[a-z0-9]+\\b)', 'i');
 function escapeRegex(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -5497,7 +5687,7 @@ def _crm_stock_order_yellow_visual_exists(driver, po):
 const po = String(arguments[0] || '').toLowerCase();
 const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const escapedPo = po.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const poPattern = new RegExp(escapedPo + '(?:\\b|-[a-z0-9]+\\b)', 'i');
+const poPattern = new RegExp('(?:^|[^a-z0-9_-])' + escapedPo + '(?:\\b|-[a-z0-9]+\\b)', 'i');
 const stockVendorPattern = /\b(?:sanmar|s\s*&\s*s(?:\s+activewear)?|ssactivewear|s\s+and\s+s(?:\s+activewear)?)\b/i;
 function isVisible(node) {
   if (!node) return false;
@@ -5568,7 +5758,9 @@ def _shipping_bypasser_actionable_stock_tabs(driver, order_id, tabs):
             effective_label = _stock_tab_summary_label((activated or {}).get("label") or tab_label)
             order = _extract_order_data(driver, order_id, tab_context=tab)
             po = order.get("po")
-            if po and _crm_stock_order_yellow_visual_exists(driver, po):
+            if _nj_stock_order_known(order_id, po):
+                actionable.append((tab_index, tab, "nj_stock_order_receipt"))
+            elif po and _crm_stock_order_yellow_visual_exists(driver, po):
                 skipped.append({"tab_number": tab_number, "tab_label": effective_label, "po": po, "reason": "crm_yellow_manual_order"})
             elif po and _crm_manual_order_row_exists(driver, po):
                 skipped.append({"tab_number": tab_number, "tab_label": effective_label, "po": po, "reason": "crm_manual_order"})
@@ -5583,12 +5775,14 @@ def _shipping_bypasser_actionable_stock_tabs(driver, order_id, tabs):
     return actionable, skipped
 
 
-def _prepare_sanmar_shipping_plan(sanmar_driver, order_id, order, product_lines, warehouse_plan):
+def _prepare_sanmar_shipping_plan(sanmar_driver, order_id, order, product_lines, warehouse_plan, check_closed_warehouses=False):
     """Build and validate one allocation, then read its checkout delivery dates."""
     multi_warehouse = str(warehouse_plan.get("mode") or "") == "multi_warehouse"
     selected_warehouses = warehouse_plan.get("warehouses") or []
     warehouse = _single_warehouse_from_plan(None, warehouse_plan)
     cart_product_lines = warehouse_plan.get("expanded_lines") or []
+    if NJ_WAREHOUSE in selected_warehouses and selected_warehouses != [NJ_WAREHOUSE]:
+        return _result(order_id, False, "nj_pickup_required", "NJ stock must be in a separate pickup-only order.", retryable=False)
 
     for line_index, line in enumerate(cart_product_lines, start=1):
         product = line["product"]
@@ -5605,6 +5799,11 @@ def _prepare_sanmar_shipping_plan(sanmar_driver, order_id, order, product_lines,
             expected_style_keys=line.get("expected_style_keys"),
         )
         _select_sanmar_color(sanmar_driver, product["color"], product=product)
+        if check_closed_warehouses and line.get("warehouse") in _sanmar_closed_warehouses(sanmar_driver):
+            return _result(
+                order_id, False, "sanmar_warehouse_closed",
+                f"SanMar now marks {line['warehouse']} closed. No stock from this purchase was submitted.", retryable=False,
+            )
         _fill_sanmar_quantities(sanmar_driver, line.get("warehouse") or warehouse, line["quantities"])
         _add_current_product_to_box(sanmar_driver)
 
@@ -5638,6 +5837,8 @@ def _prepare_sanmar_shipping_plan(sanmar_driver, order_id, order, product_lines,
     _wait_for_text(sanmar_driver, r"Shipping\s+Details|Shipping\s+Address", timeout=20)
     _publish_status(f"Selecting SanMar shipping for order {order_id}.", stage="selecting_sanmar_shipping", order_id=order_id)
     shipping = _select_shipping_destination(sanmar_driver, order["order_type"], warehouse, multi_warehouse=multi_warehouse)
+    if warehouse == NJ_WAREHOUSE and shipping.get("ship_mode") != "pickup":
+        return _result(order_id, False, "nj_pickup_required", "NJ pickup was not confirmed. No NJ stock was ordered.", retryable=False)
     eta_state = {}
     if shipping.get("ship_mode") == "ship":
         try:
@@ -5683,6 +5884,263 @@ def _prepare_sanmar_shipping_plan(sanmar_driver, order_id, order, product_lines,
         "eta_by_warehouse": eta_state.get("eta_by_warehouse"),
         "freight_calculation_unavailable": bool(eta_state.get("freight_calculation_unavailable")),
     }
+
+
+def _nj_shipping_failure(order, group, shipping_state, stock_buffer):
+    if not shipping_state.get("success"):
+        return shipping_state
+    shipping = shipping_state.get("shipping") or {}
+    if group["kind"] == "nj":
+        if shipping.get("ship_mode") != "pickup":
+            return _result(order["order_id"], False, "nj_pickup_required", "NJ must use Robbinsville pickup only.")
+        return None
+    eta = shipping_state.get("eta")
+    if shipping.get("ship_mode") != "ship" or eta is None:
+        return _result(order["order_id"], False, "sanmar_ups_unavailable", "ADD stock delivery dates could not be confirmed. No ADD stock was ordered.")
+    target = _shipping_bypasser_production_target_for_eta(eta)
+    if order.get("shipping_class") == "free" and eta > order["due_date"]:
+        return None
+    if target >= order["due_date"]:
+        return _result(
+            order["order_id"], False, "eta_after_due_date",
+            _late_eta_failure_message(order, group["plan"]["expanded_lines"], group["plan"]["warehouses"], eta, target, stock_buffer=stock_buffer)
+            .replace("No SanMar stock was ordered.", "No ADD stock was ordered."),
+        )
+    return None
+
+
+def _saved_nj_warehouse_plan(plan):
+    return dict(plan, expanded_lines=[
+        {key: value for key, value in line.items() if key not in {"inventory", "multi_warehouse_source_line"}}
+        for line in plan["expanded_lines"]
+    ])
+
+
+def _prepare_nj_group_review(sanmar_driver, order, group, stock_buffer):
+    for attempt in range(2):
+        shipping_state = _prepare_sanmar_shipping_plan(
+            sanmar_driver, order["order_id"], order, group["plan"]["expanded_lines"], group["plan"], check_closed_warehouses=True,
+        )
+        failure = _nj_shipping_failure(order, group, shipping_state, stock_buffer)
+        if not failure:
+            break
+        if (
+            attempt or group["kind"] != "add" or failure.get("outcome") != "eta_after_due_date"
+            or group["plan"].get("mode") != "single_warehouse"
+        ):
+            return shipping_state, failure
+        # Preserve the existing late single-warehouse fallback for the ADD order.
+        cleanup = _clear_sanmar_cart(sanmar_driver, order_id=order["order_id"])
+        if not cleanup.get("success"):
+            return shipping_state, _result(order["order_id"], False, "sanmar_cart_cleanup_failed", "Could not replace the late ADD cart with split stock.", stop_run=True)
+        lines = []
+        for line in group["plan"]["expanded_lines"]:
+            product = line["product"]
+            _search_sanmar_product(sanmar_driver, line["search_id"], click_inventory_button=bool(line.get("click_inventory_button")), expected_style_keys=line.get("expected_style_keys"))
+            _select_sanmar_color(sanmar_driver, product["color"], product=product)
+            inventory = _wait_for_sanmar_inventory(sanmar_driver, line["search_id"])
+            inventory = _exclude_closed_sanmar_warehouses(inventory, _sanmar_closed_warehouses(sanmar_driver))
+            lines.append(dict(line, inventory=inventory))
+        split = _choose_multi_warehouse_plan(lines, order["order_type"], stock_buffer=stock_buffer)
+        if not split or split["mode"] != "multi_warehouse":
+            return shipping_state, failure
+        group["plan"] = _saved_nj_warehouse_plan(split)
+    if (shipping_state.get("shipping") or {}).get("ship_mode") == "ship":
+        _click_sanmar_button(sanmar_driver, r"Proceed\s+To\s+Payment")
+    _wait_for_text(sanmar_driver, r"Review\s+&\s+Submit|Review\s+and\s+Submit|Customer\s+PO", timeout=20)
+    # Validate the payment method and exact PO before setting a durable submit intent.
+    _fill_review_and_submit(sanmar_driver, group["po"], dry_run=True)
+    return shipping_state, None
+
+
+def _apply_nj_shipping_dates(crm_driver, order, shipping_state):
+    eta = shipping_state.get("eta")
+    if eta is None:
+        return
+    production_target = _shipping_bypasser_production_target_for_eta(eta)
+    if order.get("shipping_class") == "free" and eta > order["due_date"]:
+        due_target = _next_business_day_on_or_after(eta)
+        if due_target <= production_target:
+            due_target = _next_business_day_after(production_target)
+        order["due_date"] = _change_crm_due_date(crm_driver, order["order_id"], due_target)
+    if production_target > order["production_date"]:
+        order["production_date"] = _change_crm_production_date(crm_driver, order["order_id"], production_target)
+
+
+def _verify_crm_production_note(driver, order_id, note, timeout=12):
+    deadline = time.monotonic() + timeout
+    while True:
+        if driver.execute_script(r"""
+const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+const note = normalize(arguments[0]);
+return normalize(document.body && (document.body.innerText || document.body.textContent)).includes(note)
+  || Array.from(document.querySelectorAll('textarea')).some((node) => normalize(node.value).includes(note));
+""", note) is True:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"CRM production note did not persist after save and refresh for order {order_id}.")
+        time.sleep(0.5)
+
+
+def _process_nj_stock_order(crm_driver, sanmar_driver, order, warehouse_plan=None, receipt=None, dry_run=False, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
+    if receipt is None:
+        add_po = f"ADD-{order['po']}"
+        if (
+            _crm_manual_order_row_exists(crm_driver, add_po, vendor_name="Sanmar")
+            or _saved_shipping_bypass_confirmation(order["order_id"], add_po)
+            or _historical_shipping_bypass_po_exists(add_po)
+        ):
+            return _result(order["order_id"], False, "nj_stock_receipt_missing", "An ADD PO already exists without its saved allocation. Review before ordering any stock.", retryable=False, stock_order_complete=False)
+        groups = []
+        for kind, po, plan in (("nj", order["po"], warehouse_plan["nj_plan"]), ("add", add_po, warehouse_plan["add_plan"])):
+            groups.append({"kind": kind, "po": po, "plan": _saved_nj_warehouse_plan(plan), "state": "planned"})
+        receipt = {
+            "version": 1, "order_id": order["order_id"], "po": order["po"],
+            "product_signature": _nj_product_signature(order["products"]), "stock_buffer": stock_buffer,
+            "groups": groups, "note": _format_add_box_production_note(order, warehouse_plan["add_plan"]),
+            "note_recorded": False, "complete": False,
+        }
+        if not dry_run:
+            _save_nj_stock_order(receipt)
+    stock_buffer = receipt["stock_buffer"]
+    groups = receipt["groups"]
+
+    def prepare(group):
+        shipping_state, failure = _prepare_nj_group_review(sanmar_driver, order, group, stock_buffer)
+        if group["kind"] == "add":
+            receipt["note"] = _format_add_box_production_note(order, group["plan"])
+            if not dry_run:
+                _save_nj_stock_order(receipt)
+        return shipping_state, failure
+
+    def result(success, outcome, message, **extra):
+        stock_orders = [{
+            "po": group["po"], "kind": group["kind"], "state": group["state"],
+            "warehouses": group["plan"]["warehouses"], "shipping": (group.get("shipping_state") or {}).get("shipping"),
+            "sanmar_confirmation": group.get("confirmation"), "crm_record_state": group.get("crm_record_state"),
+        } for group in groups]
+        confirmed = [group["confirmation"] for group in groups if (group.get("confirmation") or {}).get("po_confirmed")]
+        return _result(
+            order["order_id"], success, outcome, message, order=order,
+            stock_orders=stock_orders, stock_order_complete=bool(success) if dry_run else bool(receipt.get("complete")),
+            sanmar_confirmation=confirmed[-1] if confirmed else None,
+            warehouses=[name for group in groups for name in group["plan"]["warehouses"]],
+            production_note=receipt["note"], production_note_state="recorded" if receipt.get("note_recorded") else "pending",
+            **extra,
+        )
+
+    try:
+        allocated_products = []
+        for index, group in enumerate(groups):
+            expected_po = order["po"] if index == 0 else f"ADD-{order['po']}"
+            warehouses = group["plan"]["warehouses"]
+            if (
+                group["po"] != expected_po or group["kind"] != ("nj" if index == 0 else "add")
+                or (index == 0 and warehouses != [NJ_WAREHOUSE])
+                or (index == 1 and (not warehouses or NJ_WAREHOUSE in warehouses))
+                or group["state"] not in {"planned", "submitting", "confirmed", "recorded"}
+            ):
+                raise RuntimeError("Saved NJ/ADD allocation is invalid; review its receipt before retrying.")
+            for line in group["plan"]["expanded_lines"]:
+                if line.get("warehouse") not in warehouses or any(_stock_qty(qty) <= 0 for qty in line["quantities"].values()):
+                    raise RuntimeError("Saved stock quantities or warehouse are invalid.")
+                allocated_products.append(dict(line["product"], quantities=line["quantities"]))
+            if group["state"] in {"confirmed", "recorded"}:
+                confirmation = group.get("confirmation") or {}
+                if not confirmation.get("po_confirmed") or confirmation.get("po") != group["po"]:
+                    raise RuntimeError("Saved stock confirmation does not match its PO.")
+        if (
+            receipt["product_signature"] != _nj_product_signature(order["products"])
+            or receipt["product_signature"] != _nj_product_signature(allocated_products)
+        ):
+            return result(False, "nj_stock_allocation_changed", "CRM products, colors, or quantities differ from the saved NJ/ADD allocation. Review before continuing.", retryable=False)
+        if any(group["state"] == "submitting" for group in groups):
+            return result(False, "nj_stock_submission_uncertain", "A previous NJ/ADD submission was not confirmed. Inspect SanMar and the saved receipt before retrying; no purchase was repeated.", retryable=False, stop_run=True)
+        if receipt.get("complete"):
+            if not receipt.get("note_recorded") or any(group["state"] != "recorded" for group in groups):
+                raise RuntimeError("Completed NJ receipt has unfinished purchases or notes.")
+            return result(True, "already_stock_ordered", "Both NJ and ADD purchases were already confirmed and recorded.", duplicate_guard="nj_stock_order_receipt")
+
+        if any(group["state"] == "planned" for group in groups):
+            safe_get_with_partial_load(sanmar_driver, SANMAR_URL, label="SanMar NJ/ADD order")
+            _ensure_sanmar_logged_in(sanmar_driver)
+            if _sanmar_cart_has_items(sanmar_driver).get("hasItems"):
+                return result(False, "sanmar_cart_not_empty", "SanMar shopping box already has items. Use Open SanMar Cart for review.", stop_run=True)
+
+        # Confirm every unfinished purchase is feasible before buying NJ stock.
+        preflight_states = []
+        for group in groups:
+            if group["state"] != "planned":
+                continue
+            if _crm_manual_order_row_exists(crm_driver, group["po"], vendor_name="Sanmar") or _saved_shipping_bypass_confirmation(order["order_id"], group["po"]):
+                return result(False, "nj_stock_receipt_conflict", "Stock is already recorded outside the saved allocation. Review before continuing.", retryable=False)
+            _publish_status(f"Checking {group['kind'].upper()} stock and PO {group['po']} before purchase.", stage="checking_nj_add_stock", order_id=order["order_id"])
+            shipping_state, failure = prepare(group)
+            if failure:
+                return result(False, failure["outcome"], failure["message"], retryable=False, stop_run=bool(failure.get("stop_run")))
+            preflight_states.append(shipping_state)
+            cleanup = _clear_sanmar_cart(sanmar_driver, order_id=order["order_id"])
+            if not cleanup.get("success"):
+                return result(False, "sanmar_cart_cleanup_failed", "Could not clear the preflight cart before the separate NJ/ADD purchases.", stop_run=True, sanmar_cart_cleanup=cleanup)
+        if dry_run:
+            return result(True, "shipping_bypass_ready", "NJ pickup and separate ADD stock reached review; no orders were submitted or CRM changes saved.", dry_run=True, dry_run_shipping_plans=preflight_states)
+        for shipping_state in preflight_states:
+            _apply_nj_shipping_dates(crm_driver, order, shipping_state)
+
+        for group in groups:
+            if group["state"] == "recorded":
+                continue
+            purchased_now = False
+            if group["state"] == "planned":
+                shipping_state, failure = prepare(group)
+                if failure:
+                    return result(False, failure["outcome"], failure["message"], retryable=False, stop_run=bool(failure.get("stop_run")))
+                _apply_nj_shipping_dates(crm_driver, order, shipping_state)
+                group["shipping_state"] = _json_safe(shipping_state)
+                group["state"] = "submitting"
+                _save_nj_stock_order(receipt)
+                _publish_status(f"Ordering {group['kind'].upper()} stock with PO {group['po']}.", stage="submitting_nj_add_stock", order_id=order["order_id"])
+                submit_state = _fill_review_and_submit(sanmar_driver, group["po"], dry_run=False)
+                if submit_state != "submitted":
+                    raise RuntimeError("SanMar did not confirm stock submission.")
+                confirmation = _capture_sanmar_confirmation(sanmar_driver, order["order_id"], group["po"])
+                group["confirmation"] = confirmation
+                if not confirmation.get("po_confirmed") or confirmation.get("po") != group["po"]:
+                    _save_nj_stock_order(receipt)
+                    return result(False, "nj_stock_submission_uncertain", "SanMar stock was submitted but the exact PO was not confirmed. Review before retrying.", retryable=False, stop_run=True)
+                group["state"] = "confirmed"
+                purchased_now = True
+                _save_nj_stock_order(receipt)
+                _remember_pending_shipping_bypass_submission(
+                    order["order_id"], group["po"], confirmation, vendor_name="Sanmar", nj_order_po=order["po"],
+                )
+            if _crm_manual_order_row_exists(crm_driver, group["po"], vendor_name="Sanmar"):
+                record_state = "already_recorded"
+            else:
+                record_state = _record_crm_manual_order(
+                    crm_driver, order["order_id"], group["po"], stock_tab_index=order.get("stock_tab_index"),
+                    vendor_name="Sanmar", add_box=group["kind"] == "add",
+                )
+            group["crm_record_state"] = record_state
+            group["state"] = "recorded"
+            _save_nj_stock_order(receipt)
+            _mark_pending_shipping_bypass_submission_recorded(order["order_id"], group["po"], record_state)
+            if purchased_now and _sanmar_cart_has_items(sanmar_driver).get("hasItems"):
+                return result(False, "sanmar_cart_not_empty", "SanMar cart is not empty after the confirmed purchase. Review before continuing.", stop_run=True)
+
+        if not receipt.get("note_recorded"):
+            _append_crm_production_note(crm_driver, order["order_id"], receipt["note"])
+            _verify_crm_production_note(crm_driver, order["order_id"], receipt["note"])
+            receipt["note_recorded"] = True
+        receipt["complete"] = True
+        _save_nj_stock_order(receipt)
+        return result(True, "shipping_bypass_ordered", "NJ pickup stock and separate ADD stock were ordered, recorded in CRM, and their production note verified.")
+    except Exception as exc:
+        uncertain = any(group["state"] == "submitting" for group in groups)
+        return result(
+            False, "nj_stock_submission_uncertain" if uncertain else "nj_stock_order_incomplete",
+            f"NJ/ADD stock order stopped for review: {exc}", retryable=False, stop_run=uncertain,
+        )
 
 
 def _process_open_order(
@@ -5748,6 +6206,16 @@ def _process_open_order(
         if stock_tab_count and stock_tab_count > 1 and stock_tab_index:
             _activate_stock_tab(crm_driver, int(stock_tab_index) - 1)
         order = _extract_order_data(crm_driver, order_id, tab_context=stock_tab_context)
+    nj_receipt = _load_nj_stock_order(order_id, order.get("po"))
+    if nj_receipt:
+        return done(_process_nj_stock_order(crm_driver, sanmar_driver, order, receipt=nj_receipt, dry_run=dry_run))
+    saved_submission = _saved_shipping_bypass_submission(order_id, order.get("po"))
+    if saved_submission and saved_submission.get("nj_order_po"):
+        return done(_result(
+            order_id, False, "nj_stock_receipt_missing",
+            "The NJ/ADD allocation receipt is missing but a purchase receipt exists. Review both POs before continuing.",
+            order=order, retryable=False, stock_order_complete=False,
+        ))
     pending_submission = _pending_shipping_bypass_submission(order_id, order.get("po"))
     saved_confirmation = _saved_shipping_bypass_confirmation(order_id, order.get("po"))
     already_ordered_source = ""
@@ -5945,9 +6413,14 @@ def _process_open_order(
             False,
             "no_single_warehouse",
             _single_warehouse_failure_message(product_lines, order["order_type"], stock_buffer=stock_buffer)
-            + " No complete split allocation is available with NJ excluded. Skipped for now; no SanMar stock was ordered.",
+            + " No complete warehouse allocation is available. Skipped for now; no SanMar stock was ordered.",
             order=order,
             products=product_lines,
+        ))
+
+    if warehouse_plan.get("mode") == "nj_pickup_and_add":
+        return done(_process_nj_stock_order(
+            crm_driver, sanmar_driver, order, warehouse_plan=warehouse_plan, dry_run=dry_run, stock_buffer=stock_buffer,
         ))
 
     for plan_attempt in range(2):
@@ -6280,7 +6753,9 @@ def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False, 
                 po = order.get("po")
                 saved_confirmation = _saved_shipping_bypass_confirmation(normalized_order_id, po)
                 skip_reason = ""
-                if po and _crm_stock_order_yellow_visual_exists(crm_driver, po):
+                if _nj_stock_order_known(normalized_order_id, po):
+                    pass  # A recorded NJ PO alone does not complete its separate ADD purchase.
+                elif po and _crm_stock_order_yellow_visual_exists(crm_driver, po):
                     skip_reason = "crm_yellow_manual_order"
                 elif po and _crm_manual_order_row_exists(crm_driver, po):
                     skip_reason = "crm_manual_order"
@@ -6446,11 +6921,19 @@ def _ordered_stock_success_details(items):
     details = []
     seen = set()
     for item in items if isinstance(items, list) else []:
-        detail = _report_item_ordered_stock_success_detail(item)
-        if not detail or detail in seen:
-            continue
-        seen.add(detail)
-        details.append(detail)
+        stock_orders = item.get("stock_orders") if isinstance(item, dict) else None
+        detail_items = [item]
+        if isinstance(stock_orders, list) and stock_orders:
+            detail_items = [dict(
+                item, success=group.get("state") == "recorded", outcome="shipping_bypass_ordered",
+                sanmar_confirmation=group.get("sanmar_confirmation"),
+            ) for group in stock_orders if isinstance(group, dict)]
+        for detail_item in detail_items:
+            detail = _report_item_ordered_stock_success_detail(detail_item)
+            if not detail or detail in seen:
+                continue
+            seen.add(detail)
+            details.append(detail)
     return details
 
 
@@ -6538,6 +7021,8 @@ def _report_orders_succeeded_or_partially_succeeded(report_items):
     rows = _stock_order_report_rows(report_items)
     if not rows:
         return True
+    if any(item.get("stock_order_complete") is False for item in rows):
+        return False
     order_groups = {}
     anonymous_rows = []
     for item in rows:

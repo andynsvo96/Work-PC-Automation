@@ -275,7 +275,7 @@ class ShippingBypassStockBufferTests(unittest.TestCase):
         self.assertIsNone(warehouse)
         self.assertIsNone(plan)
 
-    def test_split_across_products_excludes_nj_for_both_destinations(self):
+    def test_split_across_products_orders_nj_first_for_both_destinations(self):
         product_lines = [
             {
                 "product": {"index": 1, "product_id": "PC54"},
@@ -299,11 +299,12 @@ class ShippingBypassStockBufferTests(unittest.TestCase):
                     )
 
                     self.assertIsNone(warehouse)
-                    self.assertEqual(plan["warehouses"], ["Richmond, VA", "Cincinnati, OH"])
-                    self.assertEqual(plan["pieces_by_warehouse"], {"Richmond, VA": 2, "Cincinnati, OH": 3})
-                    self.assertEqual([line["quantities"] for line in plan["expanded_lines"]], [{"M": 2}, {"L": 3}])
+                    self.assertEqual(plan["mode"], "nj_pickup_and_add")
+                    self.assertEqual(plan["warehouses"], ["Robbinsville, NJ", "Cincinnati, OH"])
+                    self.assertEqual(plan["nj_plan"]["pieces_by_warehouse"], {"Robbinsville, NJ": 2})
+                    self.assertEqual(plan["add_plan"]["pieces_by_warehouse"], {"Cincinnati, OH": 3})
 
-    def test_same_size_split_is_rejected_when_nj_is_needed_to_complete_quantity(self):
+    def test_same_size_split_uses_nj_pickup_and_add_to_complete_quantity(self):
         for order_type in ("inhouse", "mach6"):
             for stock_buffer in (10, 0):
                 with self.subTest(order_type=order_type, stock_buffer=stock_buffer):
@@ -316,7 +317,8 @@ class ShippingBypassStockBufferTests(unittest.TestCase):
                     )
 
                     self.assertIsNone(warehouse)
-                    self.assertIsNone(plan)
+                    self.assertEqual(plan["nj_plan"]["expanded_lines"][0]["quantities"], {"M": 4})
+                    self.assertEqual(plan["add_plan"]["expanded_lines"][0]["quantities"], {"M": 1})
 
 
 class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
@@ -348,7 +350,7 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
         }
         if inventory is None:
             inventory = [
-                {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 17, "4XL": 0}},
+                {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 0, "4XL": 0}},
                 {"warehouse": "Richmond, VA", "stock": {"3XL": 17, "4XL": 0}},
                 {"warehouse": "Cincinnati, OH", "stock": {"3XL": 0, "4XL": 11}},
                 {"warehouse": "Phoenix, AZ", "stock": {"3XL": 1, "4XL": 13}},
@@ -418,7 +420,7 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
             "_wait_for_sanmar_cart_lines": {"side_effect": read_cart},
             "_click_sanmar_button": {},
             "_wait_for_text": {},
-            "_select_shipping_destination": {"return_value": {"ship_mode": "ship", "address": "123 EZ TEES INC"}},
+            "_select_shipping_destination": {"side_effect": lambda _driver, _order_type, warehouse, **kwargs: {"ship_mode": "pickup" if warehouse == "Robbinsville, NJ" else "ship", "address": warehouse or "123 EZ TEES INC"}},
             "_select_ups_eta_for_shipping_plan": {"side_effect": read_eta},
             "_clear_sanmar_cart": {"side_effect": clear_cart},
             "_change_crm_production_date": {"side_effect": lambda _driver, _order_id, target: target},
@@ -465,20 +467,20 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
         mocks["_fill_review_and_submit"].assert_called_once()
         mocks["_append_crm_production_note"].assert_not_called()
 
-    def test_nj_plus_other_warehouse_is_skipped_before_adding_partial_stock(self):
+    def test_nj_stock_shortage_is_skipped_before_adding_partial_stock(self):
         for override in (False, True):
             with self.subTest(buffer_override=override):
                 result, mocks, cart = self._run_order(
                     inventory=[
                         {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 17, "4XL": 0}},
-                        {"warehouse": "Richmond, VA", "stock": {"3XL": 0, "4XL": 11}},
+                        {"warehouse": "Richmond, VA", "stock": {"3XL": 0, "4XL": 0}},
                     ],
                     allow_low_stock_buffer=override,
                 )
 
                 self.assertFalse(result["success"])
                 self.assertEqual(result["outcome"], "no_single_warehouse")
-                self.assertIn("NJ excluded", result["message"])
+                self.assertIn("No complete warehouse allocation", result["message"])
                 self.assertIn("Skipped for now", result["message"])
                 self.assertEqual(cart, [])
                 mocks["_fill_sanmar_quantities"].assert_not_called()
@@ -486,11 +488,11 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
                 mocks["_select_ups_eta_for_shipping_plan"].assert_not_called()
                 self._assert_no_purchase(mocks)
 
-    def test_late_complete_order_does_not_use_nj_to_make_an_on_time_split(self):
+    def test_nj_stock_at_safety_buffer_does_not_create_pickup_allocation(self):
         day = lambda value: crm_shipping_bypasser.datetime(2026, 10, value).date()
         result, mocks, _cart = self._run_order(
             inventory=[
-                {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 17, "4XL": 0}},
+                {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 10, "4XL": 0}},
                 {"warehouse": "Richmond, VA", "stock": {"3XL": 0, "4XL": 11}},
                 {"warehouse": "Seattle, WA", "stock": {"3XL": 20, "4XL": 22}},
             ],
@@ -587,7 +589,7 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
 
     def test_split_retains_extension_override_and_default_buffer(self):
         inventory = [
-            {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 1, "4XL": 0}},
+            {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 0, "4XL": 0}},
             {"warehouse": "Richmond, VA", "stock": {"3XL": 1, "4XL": 0}},
             {"warehouse": "Cincinnati, OH", "stock": {"3XL": 0, "4XL": 1}},
             {"warehouse": "Phoenix, AZ", "stock": {"3XL": 1, "4XL": 13}},
@@ -612,7 +614,7 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
     def test_existing_split_plan_uses_same_po_without_an_extra_cart_attempt(self):
         result, mocks, _cart = self._run_order(
             inventory=[
-                {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 17, "4XL": 0}},
+                {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 0, "4XL": 0}},
                 {"warehouse": "Richmond, VA", "stock": {"3XL": 17, "4XL": 0}},
                 {"warehouse": "Cincinnati, OH", "stock": {"3XL": 0, "4XL": 11}},
             ],

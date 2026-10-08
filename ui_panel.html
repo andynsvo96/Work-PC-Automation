@@ -7504,6 +7504,7 @@ function normalizeCrmOrderDetails(details, orderIds = [], fallbackDetail = null)
       message: String(row.message || ''),
       duration_seconds: row.duration_seconds != null ? Number(row.duration_seconds) : null,
       sanmar_confirmation: row.sanmar_confirmation && typeof row.sanmar_confirmation === 'object' ? row.sanmar_confirmation : null,
+      stock_orders: Array.isArray(row.stock_orders) ? row.stock_orders : [],
       stock_tab_index: row.stock_tab_index != null ? Number(row.stock_tab_index) : null,
       stock_tab_count: row.stock_tab_count != null ? Number(row.stock_tab_count) : null,
       stock_tab_label: String(row.stock_tab_label || ''),
@@ -7526,6 +7527,7 @@ function normalizeCrmOrderDetails(details, orderIds = [], fallbackDetail = null)
       message: String(fallback.message || ''),
       duration_seconds: fallback.duration_seconds != null ? Number(fallback.duration_seconds) : null,
       sanmar_confirmation: fallback.sanmar_confirmation && typeof fallback.sanmar_confirmation === 'object' ? fallback.sanmar_confirmation : null,
+      stock_orders: Array.isArray(fallback.stock_orders) ? fallback.stock_orders : [],
       stock_tab_index: null,
       stock_tab_count: null,
       stock_tab_label: '',
@@ -7570,6 +7572,20 @@ function crmStockOrderedDetailText(row) {
   return ` | ${status.label}${details ? ` (${details})` : ''}`;
 }
 
+function crmSanmarConfirmations(row) {
+  const purchases = Array.isArray(row.stock_orders) ? row.stock_orders : [];
+  const confirmations = purchases.length
+    ? purchases.map((purchase) => purchase && purchase.sanmar_confirmation).filter((confirmation) => confirmation && confirmation.po_confirmed)
+    : (row.sanmar_confirmation ? [row.sanmar_confirmation] : []);
+  const seen = new Set();
+  return confirmations.filter((confirmation) => {
+    const key = `${confirmation.po || ''}|${confirmation.url || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function buildCrmOrderDetailsHtml(details, orderIds = []) {
   const rows = normalizeCrmOrderDetails(details, orderIds);
   if (!rows.length) return buildCrmOrderLinksHtml(orderIds);
@@ -7579,14 +7595,13 @@ function buildCrmOrderDetailsHtml(details, orderIds = []) {
     const resultText = functionLabel ? `${functionLabel}: ${row.message || row.status}` : row.status;
     const message = !functionLabel && row.message ? ` - ${esc(row.message)}` : '';
     const duration = row.duration_seconds != null ? ` <span class='muted'>${esc(fmtDuration(row.duration_seconds))}</span>` : '';
-    const confirmation = row.sanmar_confirmation && typeof row.sanmar_confirmation === 'object' ? row.sanmar_confirmation : null;
-    const sanmarUrl = confirmation && confirmation.url ? String(confirmation.url) : '';
-    const po = confirmation && confirmation.po ? String(confirmation.po) : '';
-    const webReference = confirmation && confirmation.web_reference ? String(confirmation.web_reference) : '';
-    const sanmarLabel = po ? `PO: ${esc(po)}` : (webReference ? `SanMar ${esc(webReference)}` : 'SanMar');
-    const sanmarLink = sanmarUrl
-      ? ` <a href="${esc(sanmarUrl)}" target="_blank" rel="noopener noreferrer">${sanmarLabel}</a>`
-      : '';
+    const sanmarLink = crmSanmarConfirmations(row).map((confirmation) => {
+      const sanmarUrl = confirmation.url ? String(confirmation.url) : '';
+      const po = confirmation.po ? String(confirmation.po) : '';
+      const webReference = confirmation.web_reference ? String(confirmation.web_reference) : '';
+      const sanmarLabel = po ? `PO: ${esc(po)}` : (webReference ? `SanMar ${esc(webReference)}` : 'SanMar');
+      return sanmarUrl ? ` <a href="${esc(sanmarUrl)}" target="_blank" rel="noopener noreferrer">${sanmarLabel}</a>` : '';
+    }).join('');
     const tabText = crmStockTabDetailText(row);
     const tabInfo = tabText ? ` <span class='muted'>${esc(tabText)}</span>` : '';
     const stockOrdered = crmStockOrderedDetailHtml(row);
@@ -7605,13 +7620,13 @@ function buildCrmOrderDetailsText(details, orderIds = []) {
     const resultText = functionLabel ? `${functionLabel}: ${row.message || row.status}` : row.status;
     const message = !functionLabel && row.message ? ` - ${row.message}` : '';
     const duration = row.duration_seconds != null ? ` (${fmtDuration(row.duration_seconds)})` : '';
-    const confirmation = row.sanmar_confirmation && typeof row.sanmar_confirmation === 'object' ? row.sanmar_confirmation : null;
-    const sanmarUrl = confirmation && confirmation.url ? ` | SanMar: ${confirmation.url}` : '';
-    const po = confirmation && confirmation.po ? ` | PO: ${confirmation.po}` : '';
+    const sanmar = crmSanmarConfirmations(row).map((confirmation) =>
+      `${confirmation.po ? ` | PO: ${confirmation.po}` : ''}${confirmation.url ? ` | SanMar: ${confirmation.url}` : ''}`
+    ).join('');
     const tabText = crmStockTabDetailText(row);
     const tabInfo = tabText ? ` ${tabText}` : '';
     const stockOrdered = crmStockOrderedDetailText(row);
-    return `${row.order_id}${tabInfo}: ${resultText}${duration}${stockOrdered}${po}${sanmarUrl}${message}`;
+    return `${row.order_id}${tabInfo}: ${resultText}${duration}${stockOrdered}${sanmar}${message}`;
   }).join('\n');
 }
 
