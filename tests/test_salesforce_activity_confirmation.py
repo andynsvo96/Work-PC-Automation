@@ -28,6 +28,8 @@ class ActivityConfirmationTests(unittest.TestCase):
         click = Mock(return_value=True)
         result = self.send(driver, click)
         self.assertTrue(result['activity_verified'])
+        self.assertFalse(result['refresh_used'])
+        self.assertNotIn('refresh_warning', result)
         self.assertEqual(result['timing']['polls'], 1)
         self.assertGreaterEqual(result['timing']['total_seconds'], result['timing']['after_click_seconds'])
         self.assertTrue(self.send(driver, click)['skipped'])
@@ -52,6 +54,11 @@ class ActivityConfirmationTests(unittest.TestCase):
         result = self.send(driver, click, timeout=0, prepare_retry=prepare, body='Email body')
         self.assertEqual(result['confirmation_phase'], 'after_refresh')
         self.assertEqual(result['send_attempts'], 1)
+        self.assertTrue(result['refresh_used'])
+        self.assertEqual(result['refresh_warning'], confirmation.refresh_warning('1234567'))
+        receipt = json.loads(next(Path(confirmation.STATE_DIR).rglob('*.json')).read_text())
+        self.assertTrue(receipt['refresh_used'])
+        self.assertEqual(receipt['refresh_warning'], result['refresh_warning'])
         click.assert_called_once_with(driver)
         prepare.assert_not_called()
         driver.refresh.assert_called_once()
@@ -85,6 +92,8 @@ class ActivityConfirmationTests(unittest.TestCase):
         self.assertEqual(result['send_attempts'], 2)
         self.assertEqual(result['confirmation_phase'], 'after_refresh')
         self.assertEqual(driver.refresh.call_count, 2)
+        self.assertTrue(result['refresh_used'])
+        self.assertEqual(result['refreshes'], 2)
 
     def test_two_unconfirmed_sends_stop_and_block_any_further_queue_retry(self):
         driver = Mock()
@@ -103,6 +112,8 @@ class ActivityConfirmationTests(unittest.TestCase):
         self.assertTrue(receipt['manual_review_required'])
         self.assertFalse(receipt['retryable'])
         self.assertFalse(receipt['activity_verified'])
+        self.assertTrue(receipt['refresh_used'])
+        self.assertIn(confirmation.refresh_warning('1234567'), receipt['message'])
 
     def test_delayed_first_email_during_preparation_does_not_trigger_second_send(self):
         driver = Mock()
@@ -135,6 +146,10 @@ class ActivityConfirmationTests(unittest.TestCase):
             self.send(driver, click, timeout=0, prepare_retry=prepare)
         click.assert_called_once_with(driver)
         prepare.assert_not_called()
+        receipt = json.loads(next(Path(confirmation.STATE_DIR).rglob('*.json')).read_text())
+        self.assertTrue(receipt['refresh_used'])
+        self.assertEqual(receipt['refreshes'], 1)
+        self.assertIn(confirmation.refresh_warning('1234567'), receipt['message'])
 
     def test_changed_labels_of_old_activity_do_not_confirm_after_refresh(self):
         driver = Mock()

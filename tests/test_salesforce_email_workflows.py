@@ -190,5 +190,95 @@ class SalesforceEmailNotificationTests(unittest.TestCase):
         notify.assert_called_once()
 
 
+class SalesforceRefreshIndicatorTests(unittest.TestCase):
+    warning = confirmation.refresh_warning('1234567')
+
+    def email_result(self, **fields):
+        return {'order_id': '1234567', 'activity_verified': True, 'refresh_used': True,
+                'refreshes': 1, 'refresh_warning': self.warning, **fields}
+
+    def test_success_after_refresh_stays_successful_and_notifies_once(self):
+        email = self.email_result()
+        payload = {'success': True, 'salesforce': {**email, 'confirmation': dict(email)}}
+        with patch.object(server, 'notify_user') as notify:
+            ok, message, result = server._report_salesforce_email_result(True, 'Completed.', payload)
+        self.assertTrue(ok)
+        self.assertTrue(result['success'])
+        self.assertIn(self.warning, message)
+        self.assertEqual(result['message'], message)
+        self.assertEqual(result['salesforce_refresh_warnings'], [self.warning])
+        notify.assert_called_once_with('Salesforce Activity Refresh Used', self.warning)
+
+    def test_success_without_refresh_has_no_warning_or_notification(self):
+        payload = {'success': True, 'salesforce': {'activity_verified': True, 'refreshes': 0}}
+        with patch.object(server, 'notify_user') as notify:
+            result = server._report_salesforce_email_result(True, 'Completed.', payload)
+        self.assertEqual(result, (True, 'Completed.', payload))
+        self.assertNotIn('salesforce_refresh_warnings', payload)
+        notify.assert_not_called()
+
+    def test_reused_receipt_does_not_notify_about_historical_refresh(self):
+        payload = {'success': True, 'salesforce': self.email_result(skipped=True)}
+        with patch.object(server, 'notify_user') as notify:
+            result = server._report_salesforce_email_result(True, 'Previously sent.', payload)
+        self.assertEqual(result[1], 'Previously sent.')
+        self.assertNotIn('salesforce_refresh_warnings', payload)
+        notify.assert_not_called()
+
+    def test_refresh_warning_and_stop_notice_survive_wrapped_failure(self):
+        message = SalesforceEmailNotificationTests.message + ' ' + self.warning
+        payload = {'success': False, 'stages': [{'message': message}], 'error': message}
+        with patch.object(server, 'notify_user') as notify:
+            ok, reported, result = server._report_salesforce_email_result(False, message, payload)
+        self.assertFalse(ok)
+        self.assertEqual(reported.count(self.warning), 1)
+        self.assertEqual(result['salesforce_refresh_warnings'], [self.warning])
+        self.assertEqual(notify.call_count, 2)
+        self.assertEqual(notify.call_args_list[0].args[0], 'Salesforce Activity Refresh Used')
+        self.assertEqual(notify.call_args_list[1].args[0], 'Salesforce Email Needs Review')
+
+    def test_all_direct_queued_email_workflows_surface_successful_refresh(self):
+        workflows = (
+            (server.run_crm_stock_issue_extension_queued, extension, 'run_stock_issue_extension_order', (5, [])),
+            (server.run_crm_stock_issue_color_queued, color, 'run_stock_issue_color_order', (['Navy'], [])),
+            (server.run_crm_stock_issue_size_queued, size, 'run_stock_issue_size_order', (['M'], [])),
+            (server.run_crm_sleeve_prints_queued, sleeves, 'run_sleeve_prints_order', ([],)),
+        )
+        for runner, worker, name, args in workflows:
+            with self.subTest(runner=runner.__name__), \
+                    patch.object(worker, name, return_value=(True, 'Completed.', {'salesforce': self.email_result()})), \
+                    patch.object(server, 'notify_user') as notify, patch.object(server, 'crm_lock') as lock:
+                lock.acquire.return_value = True
+                ok, message, payload = runner('1234567', *args)
+                self.assertTrue(ok)
+                self.assertIn(self.warning, message)
+                self.assertEqual(payload['salesforce_refresh_warnings'], [self.warning])
+                notify.assert_called_once_with('Salesforce Activity Refresh Used', self.warning)
+                lock.release.assert_called_once()
+
+    def test_batch_refresh_is_visible_in_summary_and_persisted_order_details(self):
+        other = confirmation.refresh_warning('7654321')
+        payload = {'success': True, 'processed': [
+            {'order_id': '1234567', 'process': 'copyright_reachout', 'salesforce': self.email_result()},
+            {'order_id': '7654321', 'process': 'complicated_emb_to_hdd',
+             'salesforce': self.email_result(order_id='7654321', refresh_warning=other)},
+        ]}
+        with patch.object(server, '_run_script', return_value=(True, 'Processed 2 orders.', payload)), \
+                patch.object(server, 'notify_user') as notify:
+            ok, message, result = server._execute_crm_mass_emailer_worker(dry_run=False)
+        self.assertTrue(ok)
+        self.assertIn(self.warning, message)
+        self.assertIn(other, message)
+        self.assertEqual(notify.call_count, 2)
+        details = server._crm_mass_emailer_order_details_from_payload(result)
+        self.assertIn(self.warning, details[0]['message'])
+        self.assertIn(other, details[1]['message'])
+        history = server._normalize_crm_mass_emailer_history([{
+            'success': True, 'action': 'process_queue', 'message': message, 'order_details': details,
+        }])
+        self.assertEqual(history[0]['message'], message)
+        self.assertEqual(history[0]['order_details'][0]['message'].count(self.warning), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -78,7 +78,11 @@ from workers.salesforce_verification import (
     list_pending_requests as list_pending_salesforce_verification_requests,
     submit_code as submit_salesforce_verification_code,
 )
-from workers.salesforce_activity_confirmation import FAILURE_MARKER as SALESFORCE_EMAIL_FAILURE_MARKER
+from workers.salesforce_activity_confirmation import (
+    FAILURE_MARKER as SALESFORCE_EMAIL_FAILURE_MARKER,
+    REFRESH_MARKER as SALESFORCE_EMAIL_REFRESH_MARKER,
+    refresh_warning as salesforce_email_refresh_warning,
+)
 from slack_message_rotation import select_slack_day_message
 from slack_post_history import get_todays_slack_posts
 from version_state import get_git_version_state, refresh_origin_main
@@ -3655,6 +3659,48 @@ def _notify_unconfirmed_salesforce_emails(payload, message=""):
             f"Email sending stopped for order #{order_id}: Salesforce Activity could not confirm the email. "
             "Review Activity before retrying; automatic resending is blocked.",
         )
+
+
+def _salesforce_email_refresh_warnings(payload, message=""):
+    """Find fresh refresh events in direct, batch, and wrapped failure results."""
+    order_ids = {}
+
+    def collect(value):
+        if isinstance(value, dict):
+            # A receipt reused on a later run describes an earlier refresh.
+            if value.get("skipped") is True:
+                return
+            for item in value.values():
+                collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+        elif isinstance(value, str):
+            for order_id in re.findall(re.escape(SALESFORCE_EMAIL_REFRESH_MARKER) + r"\s+#(\d{7})\b", value):
+                order_ids[order_id] = None
+
+    collect(payload)
+    collect(str(message or ""))
+    return [salesforce_email_refresh_warning(order_id) for order_id in order_ids]
+
+
+def _append_salesforce_refresh_warnings(message, warnings):
+    missing = [warning for warning in warnings if warning not in str(message or "")]
+    return str(message or "") + (" Warning: " + " ".join(missing) if missing else "")
+
+
+def _report_salesforce_email_result(ok, message, payload):
+    """Surface refreshes even when Activity is eventually confirmed successfully."""
+    warnings = _salesforce_email_refresh_warnings(payload, message)
+    if warnings:
+        message = _append_salesforce_refresh_warnings(message, warnings)
+        payload["salesforce_refresh_warnings"] = warnings
+        payload["message"] = message
+        for warning in warnings:
+            notify_user("Salesforce Activity Refresh Used", warning)
+    if not ok:
+        _notify_unconfirmed_salesforce_emails(payload, message)
+    return ok, message, payload
 
 
 def _record_sync_result(state, success, message, week_hours=None):
@@ -10387,6 +10433,7 @@ def _crm_mass_emailer_order_details_from_payload(payload):
             return
         order_id = order_id[0]
         message = _row_message(row) or default_message
+        message = _append_salesforce_refresh_warnings(message, _salesforce_email_refresh_warnings(row))
         process_key = str(row.get("process") or "").strip()
         legacy_outcome = str(row.get("outcome") or "").strip()
         if not process_key and legacy_outcome in CRM_SHEET_SCANNER_RETRYABLE_PROCESSES:
@@ -10673,9 +10720,7 @@ def _execute_crm_mass_emailer_worker(
     payload.setdefault("action", normalized_action)
     payload.setdefault("dry_run", bool(dry_run))
     payload.setdefault("parallel_workers", normalized_parallel_workers if normalized_action == "process_queue" else 1)
-    if not ok:
-        _notify_unconfirmed_salesforce_emails(payload, message)
-    return ok, message, payload
+    return _report_salesforce_email_result(ok, message, payload)
 
 
 def _persist_crm_mass_emailer_run_result(ok, message, payload, dry_run=True):
@@ -12534,9 +12579,7 @@ def run_crm_stock_issue_extension_queued(order_id, days, products, progress_call
             dry_run=False,
             progress_callback=progress_callback,
         )
-        if not result[0]:
-            _notify_unconfirmed_salesforce_emails(result[2], result[1])
-        return result
+        return _report_salesforce_email_result(*result)
     finally:
         crm_lock.release()
 
@@ -12593,9 +12636,7 @@ def run_crm_sleeve_prints_queued(order_id, sleeves, ink_price=None, embroidery_p
             dry_run=False,
             progress_callback=progress_callback,
         )
-        if not result[0]:
-            _notify_unconfirmed_salesforce_emails(result[2], result[1])
-        return result
+        return _report_salesforce_email_result(*result)
     finally:
         crm_lock.release()
 
@@ -12649,9 +12690,7 @@ def run_crm_stock_issue_color_queued(order_id, colors, products, progress_callba
             dry_run=False,
             progress_callback=progress_callback,
         )
-        if not result[0]:
-            _notify_unconfirmed_salesforce_emails(result[2], result[1])
-        return result
+        return _report_salesforce_email_result(*result)
     finally:
         crm_lock.release()
 
@@ -12701,9 +12740,7 @@ def run_crm_stock_issue_size_queued(order_id, sizes, products, progress_callback
             dry_run=False,
             progress_callback=progress_callback,
         )
-        if not result[0]:
-            _notify_unconfirmed_salesforce_emails(result[2], result[1])
-        return result
+        return _report_salesforce_email_result(*result)
     finally:
         crm_lock.release()
 

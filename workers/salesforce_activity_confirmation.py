@@ -55,6 +55,11 @@ return matches;
 
 
 FAILURE_MARKER = 'Salesforce email confirmation stopped for order'
+REFRESH_MARKER = 'Salesforce refresh used for order'
+
+
+def refresh_warning(order_id):
+    return f'{REFRESH_MARKER} #{order_id}: email Activity was missing after Send.'
 
 
 class UnconfirmedEmailError(RuntimeError):
@@ -109,7 +114,7 @@ def send_and_confirm(driver, order_id, subject, recipient, click_send, *, timeou
     baseline_seconds = time.perf_counter() - check_started
     path.parent.mkdir(parents=True, exist_ok=True)
     receipt = {'order_id': str(order_id), 'subject': subject, 'activity_verified': False,
-               'send_attempts': 0, 'refreshes': 0, 'baseline_count': len(baseline)}
+               'send_attempts': 0, 'refreshes': 0, 'refresh_used': False, 'baseline_count': len(baseline)}
     # Keep the existing receipt folder/identity for Extra Print Areas and Extension Required.
     # Exclusive creation prevents concurrent sends; a partial file also blocks retry.
     with path.open('x', encoding='utf-8') as stream:
@@ -121,6 +126,8 @@ def send_and_confirm(driver, order_id, subject, recipient, click_send, *, timeou
     def stop(reason):
         message = (f'{FAILURE_MARKER} {order_id} after {receipt["send_attempts"]} send attempt(s): '
                    f'{reason} No further email will be sent automatically; review Salesforce Activity.')
+        if receipt.get('refresh_warning'):
+            message += ' ' + receipt['refresh_warning']
         receipt.update({'manual_review_required': True, 'retryable': False, 'message': message})
         try:
             _write_receipt(path, receipt)
@@ -184,9 +191,11 @@ def send_and_confirm(driver, order_id, subject, recipient, click_send, *, timeou
             row = wait_for_activity()
             if row is not None:
                 return confirmed(row, 'after_send')
-            driver.refresh()
             receipt['refreshes'] += 1
+            receipt['refresh_used'] = True
+            receipt['refresh_warning'] = refresh_warning(order_id)
             _write_receipt(path, receipt)
+            driver.refresh()
             row = wait_for_activity()
             if row is not None:
                 return confirmed(row, 'after_refresh')
