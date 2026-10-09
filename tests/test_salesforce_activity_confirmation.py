@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from contextlib import ExitStack
@@ -15,6 +16,7 @@ class ActivityConfirmationTests(unittest.TestCase):
         state.start()
         self.addCleanup(state.stop)
         self.row = {'subject': 'Order #1234567', 'sender': 'Staff', 'recipient': 'Customer'}
+        self.draft = {'sent': False, 'dry_run': True, 'subject': 'Order #1234567', 'body': 'Email body'}
 
     def send(self, driver, click, **kwargs):
         return confirmation.send_and_confirm(driver, '1234567', 'Order #1234567',
@@ -35,10 +37,129 @@ class ActivityConfirmationTests(unittest.TestCase):
         driver = Mock()
         driver.execute_script.return_value = [self.row]
         click = Mock(return_value=True)
-        with patch.object(confirmation.time, 'monotonic', side_effect=[0, 0, 2]), patch.object(confirmation.time, 'sleep'):
-            with self.assertRaisesRegex(confirmation.UnconfirmedEmailError, 'no new matching'):
-                self.send(driver, click, timeout=1)
+        with self.assertRaisesRegex(confirmation.UnconfirmedEmailError, 'No new matching'):
+            self.send(driver, click, timeout=0)
         with self.assertRaisesRegex(confirmation.UnconfirmedEmailError, 'previous email send attempt'):
+            self.send(driver, click)
+        click.assert_called_once_with(driver)
+        driver.refresh.assert_called_once()
+
+    def test_activity_after_refresh_prevents_resend(self):
+        driver = Mock()
+        driver.execute_script.side_effect = [[], [], [self.row]]
+        click = Mock(return_value=True)
+        prepare = Mock(return_value=self.draft)
+        result = self.send(driver, click, timeout=0, prepare_retry=prepare, body='Email body')
+        self.assertEqual(result['confirmation_phase'], 'after_refresh')
+        self.assertEqual(result['send_attempts'], 1)
+        click.assert_called_once_with(driver)
+        prepare.assert_not_called()
+        driver.refresh.assert_called_once()
+
+    def test_second_send_only_after_empty_refresh_and_revalidated_draft(self):
+        driver = Mock()
+        driver.execute_script.side_effect = [[], [], [], [], [self.row]]
+        attempts = []
+
+        def click_send(_driver):
+            receipt = next(Path(confirmation.STATE_DIR).rglob('*.json'))
+            attempts.append(json.loads(receipt.read_text())['send_attempts'])
+            return True
+
+        prepare = Mock(return_value=self.draft)
+        result = self.send(driver, click_send, timeout=0, prepare_retry=prepare, body='Email body')
+        self.assertTrue(result['activity_verified'])
+        self.assertEqual(result['send_attempts'], 2)
+        self.assertEqual(attempts, [1, 2])
+        driver.refresh.assert_called_once()
+        prepare.assert_called_once_with()
+        # A later queue retry cannot send again, even after a successful resend.
+        self.assertTrue(self.send(driver, Mock(), prepare_retry=prepare)['skipped'])
+        prepare.assert_called_once_with()
+
+    def test_second_send_can_confirm_after_its_refresh(self):
+        driver = Mock()
+        driver.execute_script.side_effect = [[], [], [], [], [], [self.row]]
+        click = Mock(return_value=True)
+        result = self.send(driver, click, timeout=0, prepare_retry=Mock(return_value=self.draft))
+        self.assertEqual(result['send_attempts'], 2)
+        self.assertEqual(result['confirmation_phase'], 'after_refresh')
+        self.assertEqual(driver.refresh.call_count, 2)
+
+    def test_two_unconfirmed_sends_stop_and_block_any_further_queue_retry(self):
+        driver = Mock()
+        driver.execute_script.return_value = []
+        click = Mock(return_value=True)
+        prepare = Mock(return_value=self.draft)
+        with self.assertRaisesRegex(confirmation.UnconfirmedEmailError, 'after 2 send attempt'):
+            self.send(driver, click, timeout=0, prepare_retry=prepare)
+        with self.assertRaisesRegex(confirmation.UnconfirmedEmailError, 'previous email send attempt'):
+            self.send(driver, click, timeout=0, prepare_retry=prepare)
+        self.assertEqual(click.call_count, 2)
+        self.assertEqual(driver.refresh.call_count, 2)
+        prepare.assert_called_once_with()
+        receipt = json.loads(next(Path(confirmation.STATE_DIR).rglob('*.json')).read_text())
+        self.assertEqual(receipt['send_attempts'], 2)
+        self.assertTrue(receipt['manual_review_required'])
+        self.assertFalse(receipt['retryable'])
+        self.assertFalse(receipt['activity_verified'])
+
+    def test_delayed_first_email_during_preparation_does_not_trigger_second_send(self):
+        driver = Mock()
+        driver.execute_script.side_effect = [[], [], [], [self.row]]
+        click = Mock(return_value=True)
+        result = self.send(driver, click, timeout=0, prepare_retry=Mock(return_value=self.draft))
+        self.assertEqual(result['confirmation_phase'], 'before_resend')
+        self.assertEqual(result['send_attempts'], 1)
+        click.assert_called_once_with(driver)
+
+    def test_changed_subject_or_body_stops_before_second_send(self):
+        for replacement in ({'subject': 'Other order #1234567'}, {'body': 'Changed email'}):
+            with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as folder, \
+                    patch.object(confirmation, 'STATE_DIR', folder):
+                driver = Mock()
+                driver.execute_script.return_value = []
+                click = Mock(return_value=True)
+                prepare = Mock(return_value={**self.draft, **replacement})
+                with self.assertRaisesRegex(confirmation.UnconfirmedEmailError, 'rebuilt email'):
+                    self.send(driver, click, timeout=0, prepare_retry=prepare, body='Email body')
+                click.assert_called_once_with(driver)
+
+    def test_refresh_failure_stops_without_resend(self):
+        driver = Mock()
+        driver.execute_script.return_value = []
+        driver.refresh.side_effect = RuntimeError('navigation timed out')
+        click = Mock(return_value=True)
+        prepare = Mock(return_value=self.draft)
+        with self.assertRaisesRegex(confirmation.UnconfirmedEmailError, 'navigation timed out'):
+            self.send(driver, click, timeout=0, prepare_retry=prepare)
+        click.assert_called_once_with(driver)
+        prepare.assert_not_called()
+
+    def test_changed_labels_of_old_activity_do_not_confirm_after_refresh(self):
+        driver = Mock()
+        changed = {**self.row, 'sender': 'Staff Name', 'recipient': 'Customer Name'}
+        driver.execute_script.side_effect = [[self.row], [changed], [changed], [changed], [changed, self.row]]
+        click = Mock(return_value=True)
+        result = self.send(driver, click, timeout=0, prepare_retry=Mock(return_value=self.draft))
+        self.assertEqual(result['send_attempts'], 2)
+        self.assertEqual(click.call_count, 2)
+
+    def test_distinct_workflows_with_same_subject_use_separate_receipts(self):
+        driver = Mock()
+        driver.execute_script.side_effect = [[], [self.row], [self.row], [self.row, self.row]]
+        click = Mock(return_value=True)
+        self.send(driver, click, receipt_scope='stock_issue_color')
+        self.send(driver, click, receipt_scope='stock_issue_size')
+        self.assertEqual(click.call_count, 2)
+
+    def test_malformed_receipt_blocks_resend(self):
+        driver = Mock()
+        driver.execute_script.side_effect = [[], [self.row]]
+        click = Mock(return_value=True)
+        self.send(driver, click)
+        next(Path(confirmation.STATE_DIR).rglob('*.json')).write_text('{')
+        with self.assertRaisesRegex(confirmation.UnconfirmedEmailError, 'receipt cannot be read'):
             self.send(driver, click)
         click.assert_called_once_with(driver)
 

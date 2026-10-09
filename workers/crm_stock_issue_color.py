@@ -531,11 +531,18 @@ def _prepare_and_send_salesforce_email(
             **content,
         }
     activity["email_send_attempted"] = True
-    if not shared._click_salesforce_send_button(driver):
-        raise StockIssueColorError("Salesforce Send button was not found.")
-    confirmation = extension._wait_for_send_confirmation(driver)
+    from workers.salesforce_activity_confirmation import send_and_confirm
+    confirmation = send_and_confirm(
+        driver, order_id, content["subject"], customer_email, shared._click_salesforce_send_button,
+        body=content["body"], receipt_scope=STOCK_COLOR_PROCESS.key,
+        prepare_retry=lambda: _prepare_and_send_salesforce_email(
+            driver, crm_handle, order_id, customer_email, stock_text, color_text, products, activity,
+            dry_run=True, login_wait_seconds=login_wait_seconds,
+        ),
+    )
     activity["email_sent"] = True
     return {
+        **confirmation,
         "sent": True,
         "dry_run": False,
         "salesforce_handle": sf_handle,

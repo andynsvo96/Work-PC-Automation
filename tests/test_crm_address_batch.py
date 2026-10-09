@@ -587,16 +587,16 @@ class CrmCopyrightCancelTests(unittest.TestCase):
                 crm_copyright_cancel._salesforce_sent_email_activity_visible(driver, "5076174", subject)
             )
 
-    def test_salesforce_send_click_is_success_without_activity_verification(self):
+    def test_salesforce_send_requires_shared_activity_confirmation(self):
+        from workers import salesforce_activity_confirmation as confirmation
         driver = mock.Mock()
         subject = "RushOrderTees Order #5076174 - A Refund Has Been Issued to Your Account"
         ready_state = {"subject": subject, "body": "Refund body", "from": "Orders"}
         with mock.patch.object(
             crm_copyright_cancel, "_verify_salesforce_email_ready_to_send", return_value=ready_state
         ), mock.patch.object(
-            crm_copyright_cancel, "_click_salesforce_send_button", return_value=True
-        ), mock.patch.object(
-            crm_copyright_cancel, "_wait_for_salesforce_sent_email_activity"
+            confirmation, "send_and_confirm",
+            return_value={"sent": True, "send_clicked": True, "activity_verified": True},
         ) as verify_activity:
             result = crm_copyright_cancel._send_salesforce_email(
                 driver,
@@ -604,12 +604,14 @@ class CrmCopyrightCancelTests(unittest.TestCase):
                 "5076174",
                 subject,
                 "Refund body",
+                customer_email="customer@example.test",
             )
 
-        verify_activity.assert_not_called()
+        verify_activity.assert_called_once()
+        self.assertEqual(verify_activity.call_args.args[3], "customer@example.test")
         self.assertTrue(result["sent"])
         self.assertTrue(result["send_clicked"])
-        self.assertFalse(result["activity_verified"])
+        self.assertTrue(result["activity_verified"])
 
     def test_salesforce_contact_skips_email_and_allows_hdd_crm_changes(self):
         for email_only in (False, True):

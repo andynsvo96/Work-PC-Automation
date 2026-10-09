@@ -78,6 +78,7 @@ from workers.salesforce_verification import (
     list_pending_requests as list_pending_salesforce_verification_requests,
     submit_code as submit_salesforce_verification_code,
 )
+from workers.salesforce_activity_confirmation import FAILURE_MARKER as SALESFORCE_EMAIL_FAILURE_MARKER
 from slack_message_rotation import select_slack_day_message
 from slack_post_history import get_todays_slack_posts
 from version_state import get_git_version_state, refresh_origin_main
@@ -3642,6 +3643,20 @@ def notify_user(title, message):
             pass
 
 
+def _notify_unconfirmed_salesforce_emails(payload, message=""):
+    """Report each affected order once, including errors nested in a batch result."""
+    text = f"{message} {json.dumps(payload, default=str)}"
+    order_ids = dict.fromkeys(re.findall(
+        re.escape(SALESFORCE_EMAIL_FAILURE_MARKER) + r"\s+(\d{7})\b", text,
+    ))
+    for order_id in order_ids:
+        notify_user(
+            "Salesforce Email Needs Review",
+            f"Email sending stopped for order #{order_id}: Salesforce Activity could not confirm the email. "
+            "Review Activity before retrying; automatic resending is blocked.",
+        )
+
+
 def _record_sync_result(state, success, message, week_hours=None):
     entry = {"at": datetime.now().isoformat(), "success": bool(success), "message": str(message)}
     if week_hours is not None:
@@ -6919,10 +6934,11 @@ def _is_crm_transient_failure(message, payload):
         return False
     if "force-stopped" in str(message or "").lower() or "force stopped" in str(message or "").lower():
         return False
+    text = f"{message} {json.dumps(payload, default=str) if isinstance(payload, dict) else payload}".lower()
+    if SALESFORCE_EMAIL_FAILURE_MARKER.lower() in text:
+        return False
     if isinstance(payload, dict) and payload.get("retryable") is True:
         return True
-
-    text = f"{message} {json.dumps(payload, default=str) if isinstance(payload, dict) else payload}".lower()
     signals = (
         "timeout",
         "timed out",
@@ -10657,6 +10673,8 @@ def _execute_crm_mass_emailer_worker(
     payload.setdefault("action", normalized_action)
     payload.setdefault("dry_run", bool(dry_run))
     payload.setdefault("parallel_workers", normalized_parallel_workers if normalized_action == "process_queue" else 1)
+    if not ok:
+        _notify_unconfirmed_salesforce_emails(payload, message)
     return ok, message, payload
 
 
@@ -12509,13 +12527,16 @@ def run_crm_stock_issue_extension_queued(order_id, days, products, progress_call
     try:
         from workers.crm_stock_issue_extension import run_stock_issue_extension_order
 
-        return run_stock_issue_extension_order(
+        result = run_stock_issue_extension_order(
             normalized_order_id,
             days,
             products,
             dry_run=False,
             progress_callback=progress_callback,
         )
+        if not result[0]:
+            _notify_unconfirmed_salesforce_emails(result[2], result[1])
+        return result
     finally:
         crm_lock.release()
 
@@ -12563,7 +12584,7 @@ def run_crm_sleeve_prints_queued(order_id, sleeves, ink_price=None, embroidery_p
     try:
         from workers.crm_sleeve_prints import run_sleeve_prints_order
 
-        return run_sleeve_prints_order(
+        result = run_sleeve_prints_order(
             normalized_order_id,
             sleeves,
             ink_price,
@@ -12572,6 +12593,9 @@ def run_crm_sleeve_prints_queued(order_id, sleeves, ink_price=None, embroidery_p
             dry_run=False,
             progress_callback=progress_callback,
         )
+        if not result[0]:
+            _notify_unconfirmed_salesforce_emails(result[2], result[1])
+        return result
     finally:
         crm_lock.release()
 
@@ -12618,13 +12642,16 @@ def run_crm_stock_issue_color_queued(order_id, colors, products, progress_callba
     try:
         from workers.crm_stock_issue_color import run_stock_issue_color_order
 
-        return run_stock_issue_color_order(
+        result = run_stock_issue_color_order(
             normalized_order_id,
             colors,
             products,
             dry_run=False,
             progress_callback=progress_callback,
         )
+        if not result[0]:
+            _notify_unconfirmed_salesforce_emails(result[2], result[1])
+        return result
     finally:
         crm_lock.release()
 
@@ -12667,13 +12694,16 @@ def run_crm_stock_issue_size_queued(order_id, sizes, products, progress_callback
     try:
         from workers.crm_stock_issue_size import run_stock_issue_size_order
 
-        return run_stock_issue_size_order(
+        result = run_stock_issue_size_order(
             normalized_order_id,
             sizes,
             products,
             dry_run=False,
             progress_callback=progress_callback,
         )
+        if not result[0]:
+            _notify_unconfirmed_salesforce_emails(result[2], result[1])
+        return result
     finally:
         crm_lock.release()
 

@@ -133,7 +133,7 @@ Before clicking Send:
 10. Immediately before Send, read the composer's **To** recipient and compare it to the CRM customer email after safe normalization (case and surrounding whitespace).
 11. Refuse to send if the recipient is blank, different, or includes an unexpected To/Cc/Bcc recipient.
 
-After clicking Send, confirm Salesforce's existing sent-success indicator. If recipient or content verification fails, do not send the email, do not post Slack, and do not apply Issue - Stock.
+After clicking Send, require a new matching outgoing email in Salesforce Activity, using the shared confirmation helper. Wait up to 30 seconds; if missing, refresh Salesforce and check for another 30 seconds. If still missing, rebuild and revalidate the same email and allow one resend. Repeat the Activity/refresh checks for the second attempt; if unconfirmed, stop the affected order, report the error in the dashboard, and notify through the app's tray icon when available. Durable receipts block later automatic sends, including queue retries and older unconfirmed attempts. Delayed Activity can cause this permitted resend to deliver a duplicate. If recipient or content verification fails, do not send the email, do not post Slack, and do not apply Issue - Stock.
 
 ## CRM Sales Note
 
@@ -456,4 +456,3 @@ Before using a real customer order:
 6. Implement the feature end to end, including tests and failure-state verification.
 7. Do not add Google Sheets support.
 8. Report any remaining ambiguity before making a materially different product decision.
-

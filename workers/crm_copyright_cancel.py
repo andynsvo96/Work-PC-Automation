@@ -6073,22 +6073,22 @@ def _wait_for_salesforce_sent_email_activity(driver, order_id, subject, timeout=
     )
 
 
-def _send_salesforce_email(driver, dry_run, order_id, subject, body, skip_ready_verify=False, process=COPYRIGHT_CANCEL_PROCESS):
+def _send_salesforce_email(driver, dry_run, order_id, subject, body, skip_ready_verify=False,
+                           process=COPYRIGHT_CANCEL_PROCESS, *, customer_email="", prepare_retry=None):
     ready_state = _read_salesforce_email_state(driver) if skip_ready_verify else _verify_salesforce_email_ready_to_send(driver, order_id, subject, body, process=process)
     if dry_run:
         return {"sent": False, "dry_run": True, "email_state": ready_state, "message": "Skipped Salesforce Send in dry-run mode."}
-    if not _click_salesforce_send_button(driver):
-        raise CopyrightCancelError("Salesforce Send button was not found.")
-    # Treat a completed click on Salesforce's Send control as success. The
-    # activity feed is eventually consistent and can remain stale even after a
-    # successful send, so its visibility must not turn a sent order into a
-    # failed/retryable order (which could also cause a duplicate email).
+    if not customer_email:
+        raise CopyrightCancelError("Salesforce email confirmation requires the customer email.")
+    from workers.salesforce_activity_confirmation import send_and_confirm
+    confirmation = send_and_confirm(
+        driver, order_id, subject, customer_email, _click_salesforce_send_button,
+        prepare_retry=prepare_retry, body=body, receipt_scope=process.key,
+    )
     return {
-        "sent": True,
+        **confirmation,
         "dry_run": False,
         "email_state": ready_state,
-        "send_clicked": True,
-        "activity_verified": False,
     }
 
 
@@ -6263,6 +6263,12 @@ def _prepare_and_maybe_send_salesforce_email(
         body=body,
         skip_ready_verify=skip_ready_verify,
         process=process,
+        customer_email=customer_email,
+        prepare_retry=lambda: _prepare_and_maybe_send_salesforce_email(
+            driver, crm_handle, order_id, customer_email, True, process=process,
+            reason=reason, login_wait_seconds=login_wait_seconds,
+            contact=contact, designs=designs,
+        ),
     )
     return {
         "salesforce_handle": sf_handle,

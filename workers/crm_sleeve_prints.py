@@ -955,7 +955,12 @@ def _prepare_and_send_salesforce_email(driver, crm_handle, order_id, customer_em
         }
     from workers.salesforce_activity_confirmation import send_and_confirm
     confirmation = send_and_confirm(
-        driver, order_id, final_subject, customer_email, shared._click_salesforce_send_button
+        driver, order_id, final_subject, customer_email, shared._click_salesforce_send_button,
+        body=final_body,
+        prepare_retry=lambda: _prepare_and_send_salesforce_email(
+            driver, crm_handle, order_id, customer_email, request_text, cost_text, invoice_link,
+            process=process, dry_run=True, login_wait_seconds=login_wait_seconds,
+        ),
     )
     return {
         **confirmation,

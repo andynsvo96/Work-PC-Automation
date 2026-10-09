@@ -899,9 +899,15 @@ def _prepare_and_send_salesforce_email(
     confirmation = send_and_confirm(
         driver, order_id, content["subject"], customer_email,
         shared._click_salesforce_send_button,
+        body=content["body"],
+        prepare_retry=lambda: _prepare_and_send_salesforce_email(
+            driver, crm_handle, order_id, customer_email, stock_text, days, products, activity,
+            dry_run=True, login_wait_seconds=login_wait_seconds,
+        ),
     )
     activity["email_sent"] = True
     return {
+        **confirmation,
         "sent": True,
         "dry_run": False,
         "salesforce_handle": sf_handle,
