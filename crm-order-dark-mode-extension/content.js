@@ -1363,10 +1363,14 @@ async function scanOversizeEmbDesigns(onProgress) {
   return scanComplicatedEmbDesigns(onProgress, true);
 }
 
+async function scanComplicatedEmbPrintDesigns(onProgress) {
+  return scanComplicatedEmbDesigns(onProgress, true);
+}
+
 function showOrderAutomationConfirmation(automation, triggerButton, autoProcessButton) {
   document.getElementById("crm-order-automation-confirmation")?.remove();
   const asksFeedback = automation.key === "complicated_emb_to_hdd";
-  const selectsPrintAreas = automation.key === "oversize_emb_to_hdd";
+  const selectsPrintAreas = asksFeedback || automation.key === "oversize_emb_to_hdd";
   const selectsDesigns = asksFeedback || selectsPrintAreas;
   const requiresReason = automation.requiresReason === true;
   const overlay = document.createElement("div");
@@ -1486,7 +1490,7 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
   overlay.append(dialog);
   document.body.append(overlay);
   if (selectsDesigns) {
-    const scan = selectsPrintAreas ? scanOversizeEmbDesigns : scanComplicatedEmbDesigns;
+    const scan = asksFeedback ? scanComplicatedEmbPrintDesigns : scanOversizeEmbDesigns;
     scan(message => { designPicker.textContent = message; }).then(designs => {
       if (!overlay.isConnected) return;
       embroideryDesigns = designs;

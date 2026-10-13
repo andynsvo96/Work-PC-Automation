@@ -46,11 +46,12 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
             window.queued = [];
             window.queueManualOrderAutomation = (...args) => window.queued.push({key: args[0].key, data: args[4]});
             window.scanComplicatedEmbDesigns = async () => arguments[0];
+            window.scanComplicatedEmbPrintDesigns = async () => arguments[0];
             window.scanOversizeEmbDesigns = async () => arguments[0];
         ''' + choices + popup + '''
             window.embChoice = REACHOUT_ORDER_AUTOMATIONS.find(choice => choice.key === arguments[1]);
             showOrderAutomationConfirmation(window.embChoice, null, null);
-        ''', designs or [{"tab_number": 2, "design_name": "Schuti Hats"}], key)
+        ''', designs or [{"tab_number": 2, "design_name": "Schuti Hats", "print_areas": ["Back"]}], key)
         WebDriverWait(self.driver, 5).until(lambda d: d.find_elements(By.CSS_SELECTOR, 'input[data-emb-tab]'))
 
     def test_choices_queue_immediately_and_back_abandons(self):
@@ -66,11 +67,12 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
                 dialog.find_element(By.XPATH, f'.//button[text()="{label}"]').click()
                 self.assertEqual(self.driver.execute_script("return window.queued.map(item => item.key)"), expected)
                 if expected:
-                    self.assertEqual(self.driver.execute_script("return window.queued[0].data.designs"), [{"tab_number": 2, "design_name": "Schuti Hats"}])
+                    self.assertEqual(self.driver.execute_script("return window.queued[0].data.designs"), [{"tab_number": 2, "design_name": "Schuti Hats", "print_areas": ["Back"]}])
                 self.assertFalse(self.driver.find_elements(By.CSS_SELECTOR, '[role="dialog"]'))
 
     def test_multiple_designs_require_selection_and_share_one_email(self):
-        designs = [{"tab_number": 1, "design_name": "A"}, {"tab_number": 3, "design_name": "B"}]
+        designs = [{"tab_number": 1, "design_name": "A", "print_areas": ["Back"]},
+                   {"tab_number": 3, "design_name": "B", "print_areas": ["Front-left Chest"]}]
         self.show_popup(designs)
         yes = self.driver.find_element(By.XPATH, '//button[text()="Yes"]')
         no = self.driver.find_element(By.XPATH, '//button[text()="No"]')
@@ -81,24 +83,27 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
         yes.click()
         self.assertEqual(self.driver.execute_script('return window.queued'), [{"key": "complicated_emb_feedback", "data": {"designs": designs}}])
 
-    def test_oversize_picker_queues_only_selected_areas_with_their_designs(self):
+    def test_embroidery_pickers_queue_only_selected_areas_with_their_designs(self):
         designs = [
             {"tab_number": 1, "design_name": "Logo", "print_areas": ["Front-left Chest", "Back"]},
             {"tab_number": 3, "design_name": "Crest", "print_areas": ["Back"]},
         ]
-        self.show_popup(designs, key="oversize_emb_to_hdd")
-        queue = self.driver.find_element(By.XPATH, '//button[text()="Queue task"]')
-        self.assertFalse(queue.is_enabled())
-        self.assertFalse(self.driver.find_elements(By.XPATH, '//button[text()="Yes" or text()="No"]'))
-        self.driver.find_element(By.CSS_SELECTOR, 'input[data-emb-tab="1"][data-emb-area="1"]').click()
-        self.driver.find_element(By.CSS_SELECTOR, 'input[data-emb-tab="3"]').click()
-        self.assertTrue(queue.is_enabled())
-        queue.click()
-        self.assertEqual(self.driver.execute_script('return window.queued'), [{
-            "key": "oversize_emb_to_hdd", "data": {"designs": [
-                {**designs[0], "print_areas": ["Back"]}, designs[1],
-            ]},
-        }])
+        for key, label, expected_key in (("oversize_emb_to_hdd", "Queue task", "oversize_emb_to_hdd"),
+                                         ("complicated_emb_to_hdd", "Yes", "complicated_emb_feedback"),
+                                         ("complicated_emb_to_hdd", "No", "complicated_emb_to_hdd")):
+            with self.subTest(key=key, label=label):
+                self.show_popup(designs, key=key)
+                queue = self.driver.find_element(By.XPATH, f'//button[text()="{label}"]')
+                self.assertFalse(queue.is_enabled())
+                self.driver.find_element(By.CSS_SELECTOR, 'input[data-emb-tab="1"][data-emb-area="1"]').click()
+                self.driver.find_element(By.CSS_SELECTOR, 'input[data-emb-tab="3"]').click()
+                self.assertTrue(queue.is_enabled())
+                queue.click()
+                self.assertEqual(self.driver.execute_script('return window.queued'), [{
+                    "key": expected_key, "data": {"designs": [
+                        {**designs[0], "print_areas": ["Back"]}, designs[1],
+                    ]},
+                }])
 
     def test_oversize_preselects_only_one_unambiguous_area(self):
         for areas in (["Back"], ["Front-left Chest", "Back"]):
@@ -134,7 +139,7 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
         bridge = (ROOT / 'crm-order-dark-mode-extension/emb-design-bridge.js').read_text(encoding='utf-8')
         self.driver.execute_script('''
           document.body.innerHTML = '<button>1 - QTY: 12 View Proofs</button><p>Design Name: Omc | admin</p>';
-          const designs = [{printAreas: [{printMethodDescription: 'HD Digital'}]}];
+          const designs = [{printAreas: [{description: 'Back', printMethodDescription: 'HD Digital'}]}];
           const scope = {copyOrder() {}, order: {getResource: () => ({designs})}};
           window.angular = {element: () => ({scope: () => scope})};
           window.queued = [];
@@ -149,7 +154,7 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
         self.assertTrue(no.is_enabled())
         no.click()
         self.assertEqual(self.driver.execute_script('return window.queued'), [{
-            "key": "complicated_emb_to_hdd", "data": {"designs": [{"tab_number": 1, "design_name": "Omc"}]},
+            "key": "complicated_emb_to_hdd", "data": {"designs": [{"tab_number": 1, "design_name": "Omc", "print_areas": ["Back"]}]},
         }])
 
     def test_rich_text_replacement_preserves_links_and_literal_names(self):
@@ -242,6 +247,7 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
             {**rows[2], "print_areas": ["Back", "Front-left Chest"]},
         ])
         self.assertEqual(oversize_emb.resolve_designs(self.driver, oversize_rows[1:]), oversize_rows[1:])
+        self.assertEqual(complicated_emb.resolve_print_designs(self.driver, oversize_rows[1:]), oversize_rows[1:])
         self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, 'button[aria-selected="true"]').text, '3 - QTY: 20 Design Previews')
 
 

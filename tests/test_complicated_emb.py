@@ -12,11 +12,61 @@ sys.path.insert(0, str(ROOT))
 import crm_copyright_cancel as worker
 import server
 import complicated_emb
+import oversize_emb
 
 DESIGNS = [{"tab_number": 2, "design_name": "Schuti Hats"}]
+PRINT_DESIGNS = [{**DESIGNS[0], "print_areas": ["Back"]}]
 
 
 class ComplicatedEmbTests(unittest.TestCase):
+    def test_print_templates_keep_selected_areas_paired_with_quoted_designs(self):
+        selections = [
+            {"tab_number": 1, "design_name": "Team Logo", "print_areas": ["Front", "Back", "Sleeve Print"]},
+            {"tab_number": 2, "design_name": "Crest", "print_areas": ["Front-left Chest"]},
+        ]
+        replacement = 'front print, back print, and sleeve print for "Team Logo" and the front-left chest print for "Crest"'
+        for process in (worker.COMPLICATED_EMB_TO_HDD_PROCESS, worker.COMPLICATED_EMB_FEEDBACK_PROCESS):
+            with self.subTest(process=process.key):
+                body = ' '.join(process.body_markers) + ' We have updated the [PRINT] for "[DESIGN]", from embroidery to ink printing instead.'
+                before = {"subject": "Order 1234567 - Embroidery Request", "body": body}
+                after = {**before, "body": body.replace('[PRINT] for "[DESIGN]"', replacement)}
+                with mock.patch.object(worker, "_insert_cancel_template"), \
+                     mock.patch.object(worker, "_read_salesforce_email_state", side_effect=[before, before, after]), \
+                     mock.patch.object(oversize_emb, "replace_print_design_placeholder", return_value=1) as replace, \
+                     mock.patch.object(complicated_emb, "replace_design_placeholder") as design_replace, \
+                     mock.patch.object(worker.time, "sleep"):
+                    result = worker._fill_salesforce_email_from_salesforce_template(mock.sentinel.driver, "1234567", process=process, designs=selections)
+                replace.assert_called_once_with(mock.sentinel.driver, replacement)
+                design_replace.assert_not_called()
+                self.assertEqual(result["state"], after)
+                self.assertEqual(result["template"], process.salesforce_template)
+
+    def test_print_template_requires_valid_pair_and_selected_areas(self):
+        process = worker.COMPLICATED_EMB_TO_HDD_PROCESS
+        for body, selections in (
+            ('[PRINT] for "[DESIGN]"', DESIGNS),
+            ('[PRINT] for "[DESIGN]', PRINT_DESIGNS),
+            ('[PRINT] but no Design Name placeholder', PRINT_DESIGNS),
+        ):
+            state = {"subject": "Order 1234567", "body": ' '.join(process.body_markers) + ' ' + body}
+            with self.subTest(body=body), mock.patch.object(worker, "_insert_cancel_template"), \
+                 mock.patch.object(worker, "_read_salesforce_email_state", return_value=state), \
+                 mock.patch.object(worker.time, "sleep"), self.assertRaises((ValueError, worker.CopyrightCancelError)):
+                worker._fill_salesforce_email_from_salesforce_template(mock.Mock(), "1234567", process=process, designs=selections)
+
+    def test_legacy_queued_designs_resolve_only_one_unambiguous_area(self):
+        for areas in (["Back"], ["Front", "Back"]):
+            metadata = [{"tab_number": 2, "eligible": True, "print_areas": [{"description": area} for area in areas]}]
+            with self.subTest(areas=areas), mock.patch.object(complicated_emb, "resolve_designs", return_value=DESIGNS), \
+                 mock.patch.object(oversize_emb, "_read_methods", return_value=metadata):
+                if len(areas) == 1:
+                    self.assertEqual(complicated_emb.resolve_print_designs(mock.Mock(), DESIGNS), PRINT_DESIGNS)
+                else:
+                    with self.assertRaisesRegex(ValueError, "Complicated EMB"):
+                        complicated_emb.resolve_print_designs(mock.Mock(), DESIGNS)
+        with self.assertRaisesRegex(ValueError, "print area"):
+            complicated_emb.normalize_print_designs(DESIGNS)
+
     def test_hdd_template_accepts_current_design_wording_before_and_after_replacement(self):
         process = worker.COMPLICATED_EMB_TO_HDD_PROCESS
         body = (
@@ -88,7 +138,7 @@ class ComplicatedEmbTests(unittest.TestCase):
             with self.subTest(email_result=email_result), ExitStack() as stack:
                 driver = mock.Mock(current_window_handle="crm-tab")
                 steps = []
-                stack.enter_context(mock.patch.object(complicated_emb, "resolve_designs", return_value=DESIGNS))
+                stack.enter_context(mock.patch.object(complicated_emb, "resolve_print_designs", return_value=PRINT_DESIGNS))
                 for name in ("safe_get_with_partial_load", "_login_to_crm_if_needed",
                              "_switch_to_crm_app_frame", "_wait_for_order_scope",
                              "safe_driver_quit", "safe_take_screenshot"):
@@ -124,7 +174,7 @@ class ComplicatedEmbTests(unittest.TestCase):
                         worker.process_single_order("1234567", "", dry_run=False, process="complicated_emb_feedback")
                     self.assertEqual(steps, ["note", "email"])
                     apply.assert_not_called()
-                note.assert_called_once_with(driver, "", dry_run=False, process=worker.COMPLICATED_EMB_FEEDBACK_PROCESS, designs=DESIGNS)
+                note.assert_called_once_with(driver, "", dry_run=False, process=worker.COMPLICATED_EMB_FEEDBACK_PROCESS, designs=PRINT_DESIGNS)
                 cancel.assert_not_called()
 
     def test_both_sales_notes_identify_selected_tabs_and_keep_followup_text(self):
@@ -207,15 +257,15 @@ class ComplicatedEmbTests(unittest.TestCase):
             with self.subTest(key=key), mock.patch.object(
                 server, "enqueue_automation", return_value=(True, "Queued", {"id": "emb-test"})
             ) as enqueue:
-                ok, _, _ = server.queue_crm_extension_manual_order_run("1234567", key, request_payload={"designs": DESIGNS})
+                ok, _, _ = server.queue_crm_extension_manual_order_run("1234567", key, request_payload={"designs": PRINT_DESIGNS})
                 self.assertTrue(ok)
                 self.assertEqual(enqueue.call_args.kwargs["task_arguments"], {
                     "order_id": "1234567", "process": key, "reason": "",
-                    "designs": DESIGNS,
+                    "designs": PRINT_DESIGNS,
                 })
                 with mock.patch.object(server, "run_crm_sheet_scanner_order_queued", return_value=(True, "Done")) as run:
-                    server.CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS[key]["runner"]("1234567", "", {"designs": DESIGNS})
-                    run.assert_called_once_with("1234567", key, "", designs=DESIGNS)
+                    server.CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS[key]["runner"]("1234567", "", {"designs": PRINT_DESIGNS})
+                    run.assert_called_once_with("1234567", key, "", designs=PRINT_DESIGNS)
 
     def test_invalid_selection_and_unresolved_design_are_rejected(self):
         for designs in (None, [], [{"tab_number": True, "design_name": "Hat"}], DESIGNS * 2):
@@ -255,15 +305,15 @@ class ComplicatedEmbTests(unittest.TestCase):
 
     def test_selection_reaches_worker_command_and_order_processing(self):
         with mock.patch.object(server, "_run_script", return_value=(True, "Done", {})) as run:
-            server._execute_crm_mass_emailer_worker(action="process_order", order_id="1234567", process="complicated_emb_feedback", designs=DESIGNS)
+            server._execute_crm_mass_emailer_worker(action="process_order", order_id="1234567", process="complicated_emb_feedback", designs=PRINT_DESIGNS)
         args = run.call_args.args[1]
-        self.assertEqual(json.loads(args[args.index("--emb-designs-json") + 1]), DESIGNS)
+        self.assertEqual(json.loads(args[args.index("--emb-designs-json") + 1]), PRINT_DESIGNS)
         args = mock.Mock(order_id="1234567", order_url="", reason="", process="complicated_emb_feedback",
-                         emb_designs_json=json.dumps(DESIGNS), dry_run=True, delete_sheet_row=False)
+                         emb_designs_json=json.dumps(PRINT_DESIGNS), dry_run=True, delete_sheet_row=False)
         with mock.patch.object(worker, "process_single_order", return_value={"order_id": "1234567"}) as process, \
              mock.patch.object(worker, "_write_result"):
             worker.run_process_order(args)
-        self.assertEqual(process.call_args.kwargs["designs"], DESIGNS)
+        self.assertEqual(process.call_args.kwargs["designs"], PRINT_DESIGNS)
 
 
 if __name__ == "__main__":

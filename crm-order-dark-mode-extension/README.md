@@ -106,13 +106,26 @@ The worker prefers one warehouse, but checks a closer split before stopping when
 
 Reachout > Complicated EMB scans the order design tabs and offers tabs with
 readable print methods, including ink and mixed-method designs. Designs already
-switched from embroidery to ink printing remain selectable. Select one or more
-designs, then answer "Feedback required?" with Yes or No. A single available
-design is preselected, including tabs labelled View Proofs after proof creation.
-The existing feedback/HDD routing is retained. Selected Design Names replace
-`[DESIGN]` in one Salesforce email; the worker rechecks each selection before
-processing and stops if its name has changed, the tab is unavailable, or its
-print methods cannot be read. A change to another readable print method is allowed.
+switched from embroidery to ink printing remain selectable. Choose the affected
+print area(s) under each Design Name, then answer "Feedback required?" with Yes
+or No. A single design with one area is preselected, including tabs labelled
+View Proofs after proof creation. Multiple designs or areas require selection.
+The scan returns to the tab that was open before scanning.
+
+Both feedback and HDD routes retain their selected areas. Templates containing
+`[PRINT] for [DESIGN]` or `[PRINT] for "[DESIGN]"` list each selected area with
+its own design in one email, for example `front print and back print for
+"Team Logo" and the front-left chest print for "Crest"`. Area names use lowercase
+and include `print`; Design Names keep their original case and template quotes.
+Straight and smart quotes are supported. Earlier `[DESIGN]`-only templates,
+including feedback templates, remain supported.
+
+The worker rechecks each selection before processing and stops if its name or
+area changed, the tab is unavailable, or its print methods cannot be read.
+A change to another readable print method is allowed. Older queued requests
+without area selections can resolve one unambiguous area per selected design;
+multiple areas stop for selection through the extension. Sheets Scanner runs
+without design selections require one available design with one area.
 
 For an order with one active design tab, the sales note starts with
 `Complicated embroidery` and omits the tab number. Orders with multiple tabs keep
@@ -120,13 +133,13 @@ the selected tab numbers, even when only one tab is selected. Retrying an order
 with the earlier `Tab 1 is Complicated Embroidery` note does not add another note.
 
 The HDD template check accepts the current Salesforce wording
-`updated the design, [DESIGN], from embroidery to ink printing instead` as well
-as the earlier order-level wording. It still requires the embroidery-detail
+`updated the [PRINT] for "[DESIGN]", from embroidery to ink printing instead`,
+the earlier `updated the design, [DESIGN]` wording, and order-level wording.
+It still requires the embroidery-detail
 explanation and the ink-conversion text before sending.
 
-After updating to 1.5.8, reload CRM Order Assistant at `chrome://extensions`,
-then refresh open CRM order pages. The worker changes load with the next queued
-task; an Automation app restart is not required for this update.
+After updating to 1.5.11, restart the local Automation app, reload CRM Order
+Assistant at `chrome://extensions`, and refresh open CRM order pages.
 
 ## Oversize EMB print-area selection
 

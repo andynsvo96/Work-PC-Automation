@@ -12784,8 +12784,8 @@ for _process_key, _process_automation in CRM_EXTENSION_SHEET_SCANNER_ORDER_AUTOM
 
 
 def _normalize_complicated_emb_request(data):
-    from workers.complicated_emb import normalize_designs
-    return {"designs": normalize_designs((data or {}).get("designs"))}
+    from workers.complicated_emb import normalize_print_designs
+    return {"designs": normalize_print_designs((data or {}).get("designs"))}
 
 
 def _normalize_oversize_emb_request(data):

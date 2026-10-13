@@ -69,6 +69,22 @@ def design_text(designs):
     return ", ".join(names[:-1]) + ", and " + names[-1]
 
 
+def normalize_print_designs(designs):
+    try:
+        from .oversize_emb import normalize_designs as normalize_print_areas
+    except ImportError:
+        from oversize_emb import normalize_designs as normalize_print_areas
+    return normalize_print_areas(designs, workflow="Complicated EMB")
+
+
+def resolve_print_designs(driver, selections=None):
+    try:
+        from .oversize_emb import resolve_designs as resolve_print_areas
+    except ImportError:
+        from oversize_emb import resolve_designs as resolve_print_areas
+    return resolve_print_areas(driver, selections, workflow="Complicated EMB", allow_legacy=True)
+
+
 def replace_design_placeholder(driver, replacement):
     return replace_email_body_pattern(driver, replacement, r"\[\s*DESIGN\s*\]")
 

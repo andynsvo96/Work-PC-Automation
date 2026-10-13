@@ -5730,14 +5730,16 @@ def _fill_salesforce_email_from_salesforce_template(
     if missing:
         raise CopyrightCancelError(f"Salesforce template body is missing expected text: {', '.join(missing)}")
     body_replacement = None
-    if process.key == OVERSIZE_EMB_TO_HDD_PROCESS.key:
+    complicated_emb_process = process.key in (COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key)
+    if process.key == OVERSIZE_EMB_TO_HDD_PROCESS.key or (complicated_emb_process and re.search(r"\[\s*PRINT\s*\]", body_text, re.IGNORECASE)):
         from oversize_emb import PRINT_DESIGN_PATTERN, print_design_text, replace_print_design_placeholder
         match = re.search(PRINT_DESIGN_PATTERN, body_text, re.IGNORECASE)
         if not match:
             raise CopyrightCancelError(f"{process.salesforce_template} template is missing [PRINT] for [DESIGN].")
         design_token = match.group(1).strip()
         design_quotes = ("", "") if design_token.startswith("[") else (design_token[0], design_token[-1])
-        replacement = print_design_text(designs, design_quotes=design_quotes)
+        replacement = print_design_text(designs, design_quotes=design_quotes,
+                                      workflow="Complicated EMB" if complicated_emb_process else "Oversize EMB")
         if not replace_print_design_placeholder(driver, replacement):
             raise CopyrightCancelError("Could not replace [PRINT] for [DESIGN] in the Salesforce email.")
         state = _read_salesforce_email_state(driver)
@@ -5746,7 +5748,7 @@ def _fill_salesforce_email_from_salesforce_template(
             raise CopyrightCancelError("Salesforce email print areas and design names could not be verified.")
         _validate_no_unresolved_email_placeholders(state.get("subject", ""), updated_body)
         body_replacement = {"placeholder": "[PRINT] for [DESIGN]", "replacement": replacement, "state": state}
-    if process.key in (COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key):
+    elif complicated_emb_process:
         from complicated_emb import design_text, replace_design_placeholder
         replacement = design_text(designs)
         if re.search(r"\[\s*DESIGN\s*\]", body_text, re.IGNORECASE):
@@ -8789,10 +8791,14 @@ def send_salesforce_email_single_order(
         _wait_for_order_scope(driver, order_id=order_id)
         crm_handle = driver.current_window_handle
         contact = _wait_for_crm_contact_info(driver, order_id=order_id)
-        if (process.key == OVERSIZE_EMB_TO_HDD_PROCESS.key
+        if (process.key in (OVERSIZE_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key)
                 and _clean_text(contact.get("salesforce_label", "")).casefold() != "salesforce contact"):
-            from oversize_emb import resolve_designs
-            designs = resolve_designs(driver, designs)
+            if process.key == OVERSIZE_EMB_TO_HDD_PROCESS.key:
+                from oversize_emb import resolve_designs
+                designs = resolve_designs(driver, designs)
+            else:
+                from complicated_emb import resolve_print_designs
+                designs = resolve_print_designs(driver, designs)
         salesforce = _prepare_and_maybe_send_salesforce_email(
             driver,
             crm_handle,
@@ -9101,8 +9107,8 @@ def process_single_order(
             from oversize_emb import resolve_designs
             designs = resolve_designs(driver, designs)
         if process.key in (COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key):
-            from complicated_emb import resolve_designs
-            designs = resolve_designs(driver, designs)
+            from complicated_emb import resolve_print_designs
+            designs = resolve_print_designs(driver, designs)
         if not process.cancel_and_refund:
             crm_action = _prepare_no_cancel_crm_action(
                 driver,
