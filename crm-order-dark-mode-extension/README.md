@@ -137,7 +137,9 @@ the affected area(s) under each Design Name, then select **Queue task**. A singl
 design with one area is preselected; multiple designs or areas require selection.
 The scan returns you to the design tab that was open before scanning.
 
-The `[AUTO] Oversize Embroidery` template must contain `[PRINT] for [DESIGN]`.
+The `[AUTO] Oversize Embroidery` template must contain `[PRINT] for [DESIGN]` or
+a quoted Design Name placeholder, such as `[PRINT] for "[DESIGN]"`. Straight
+and smart quotation marks are supported and retained around each design name.
 One email names each selected area with its own design: for example,
 `the back print for Team Logo and the front-left chest print for Crest`. Area
 names use lowercase and include `print`; Design Names keep their original case.

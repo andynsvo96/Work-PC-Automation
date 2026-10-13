@@ -8,7 +8,14 @@ except ImportError:
     from complicated_emb import normalize_designs as normalize_design_names, replace_email_body_pattern
 
 
-PRINT_DESIGN_PATTERN = r"\[\s*PRINT\s*\]\s+for\s+\[\s*DESIGN\s*\]"
+_DESIGN_TOKEN = r"\[\s*DESIGN\s*\]"
+# Keep the capture compatible with both Python re and JavaScript RegExp.
+# Salesforce templates may wrap the Design Name in straight or smart quotes.
+PRINT_DESIGN_PATTERN = (
+    rf"\[\s*PRINT\s*\]\s+for\s+({_DESIGN_TOKEN}"
+    rf'|"\s*{_DESIGN_TOKEN}\s*"|“\s*{_DESIGN_TOKEN}\s*”'
+    rf"|'\s*{_DESIGN_TOKEN}\s*'|‘\s*{_DESIGN_TOKEN}\s*’)"
+)
 PLACEHOLDER_PATTERN = re.compile(r"\[\s*(?:PRINT|DESIGN|REASON|ORDER[\s_-]*NUMBER)\s*\]|XXXXXX", re.I)
 
 
@@ -90,8 +97,9 @@ def _print_area_text(area):
     return name if name.endswith(" print") else f"{name} print"
 
 
-def print_design_text(designs):
-    pairs = [f"{_join([_print_area_text(area) for area in row['print_areas']])} for {row['design_name']}"
+def print_design_text(designs, design_quotes=("", "")):
+    opening, closing = design_quotes
+    pairs = [f"{_join([_print_area_text(area) for area in row['print_areas']])} for {opening}{row['design_name']}{closing}"
              for row in normalize_designs(designs)]
     # The template already supplies "the" before [PRINT]. Repeat it for each
     # following design so different designs retain their own selected areas.

@@ -90,23 +90,30 @@ class OversizeEmbTests(unittest.TestCase):
 
     def test_template_replaces_both_fields_and_checks_result(self):
         process = worker.OVERSIZE_EMB_TO_HDD_PROCESS
-        body = "For embroidery, we have updated the [PRINT] for [DESIGN], from embroidery to ink printing instead."
-        before = {"subject": "Order 1234567 - Embroidery Updated", "body": body}
-        replacement = "back print for Team Logo"
-        after = {**before, "body": body.replace("[PRINT] for [DESIGN]", replacement)}
-        with mock.patch.object(worker, "_insert_cancel_template"), \
-             mock.patch.object(worker, "_read_salesforce_email_state", side_effect=[before, before, after]), \
-             mock.patch.object(oversize_emb, "replace_print_design_placeholder", return_value=1) as replace, \
-             mock.patch.object(worker.time, "sleep"):
-            result = worker._fill_salesforce_email_from_salesforce_template(mock.sentinel.driver, "1234567", process=process, designs=DESIGNS)
-        replace.assert_called_once_with(mock.sentinel.driver, replacement)
-        self.assertEqual(result["state"], after)
-        self.assertEqual(result["body_placeholder_replacement"]["replacement"], replacement)
+        for opening, closing in (("", ""), ('"', '"'), ("“", "”"), ("'", "'"), ("‘", "’")):
+            for designs in (DESIGNS, DESIGNS + [{"tab_number": 3, "design_name": "Crest", "print_areas": ["Front-left Chest"]}]):
+                with self.subTest(quotes=(opening, closing), designs=designs):
+                    placeholder = f"[PRINT] for {opening}[DESIGN]{closing}"
+                    body = f"For embroidery, we have updated the {placeholder}, from embroidery to ink printing instead."
+                    before = {"subject": "Order 1234567 - Embroidery Updated", "body": body}
+                    replacement = f"back print for {opening}Team Logo{closing}"
+                    if len(designs) > 1:
+                        replacement += f" and the front-left chest print for {opening}Crest{closing}"
+                    after = {**before, "body": body.replace(placeholder, replacement)}
+                    with mock.patch.object(worker, "_insert_cancel_template"), \
+                         mock.patch.object(worker, "_read_salesforce_email_state", side_effect=[before, before, after]), \
+                         mock.patch.object(oversize_emb, "replace_print_design_placeholder", return_value=1) as replace, \
+                         mock.patch.object(worker.time, "sleep"):
+                        result = worker._fill_salesforce_email_from_salesforce_template(mock.sentinel.driver, "1234567", process=process, designs=designs)
+                    replace.assert_called_once_with(mock.sentinel.driver, replacement)
+                    self.assertEqual(result["state"], after)
+                    self.assertEqual(result["body_placeholder_replacement"]["replacement"], replacement)
 
     def test_template_missing_fields_or_unverified_replacement_stops(self):
         process = worker.OVERSIZE_EMB_TO_HDD_PROCESS
         for body, after_body, replaced in (
             ("Embroidery [DESIGN]", "", 1),
+            ('Embroidery [PRINT] for "[DESIGN]', "", 1),
             ("Embroidery [PRINT] for [DESIGN]", "Embroidery unchanged", 1),
             ("Embroidery [PRINT] for [DESIGN]", "Embroidery back print for Team Logo [PRINT]", 1),
             ("Embroidery [PRINT] for [DESIGN]", "", 0),

@@ -5732,9 +5732,12 @@ def _fill_salesforce_email_from_salesforce_template(
     body_replacement = None
     if process.key == OVERSIZE_EMB_TO_HDD_PROCESS.key:
         from oversize_emb import PRINT_DESIGN_PATTERN, print_design_text, replace_print_design_placeholder
-        replacement = print_design_text(designs)
-        if not re.search(PRINT_DESIGN_PATTERN, body_text, re.IGNORECASE):
+        match = re.search(PRINT_DESIGN_PATTERN, body_text, re.IGNORECASE)
+        if not match:
             raise CopyrightCancelError(f"{process.salesforce_template} template is missing [PRINT] for [DESIGN].")
+        design_token = match.group(1).strip()
+        design_quotes = ("", "") if design_token.startswith("[") else (design_token[0], design_token[-1])
+        replacement = print_design_text(designs, design_quotes=design_quotes)
         if not replace_print_design_placeholder(driver, replacement):
             raise CopyrightCancelError("Could not replace [PRINT] for [DESIGN] in the Salesforce email.")
         state = _read_salesforce_email_state(driver)

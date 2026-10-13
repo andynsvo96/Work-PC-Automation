@@ -107,17 +107,22 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
                 self.assertEqual(self.driver.find_element(By.XPATH, '//button[text()="Queue task"]').is_enabled(), len(areas) == 1)
 
     def test_oversize_replacement_preserves_rich_text_and_correct_pairing(self):
-        self.driver.get('about:blank')
-        self.driver.execute_script('''document.body.innerHTML = '<div contenteditable="true"><p>We have updated the <b>[PR</b><i>INT]</i> for <b>[DESIGN]</b>, from embroidery to ink printing instead.</p><a href="https://example.com">Keep link</a></div>';''')
         designs = [{"tab_number": 1, "design_name": 'A & <Hat> $&', "print_areas": ["Back"]},
                    {"tab_number": 2, "design_name": "Crest", "print_areas": ["Front-left Chest"]}]
-        replacement = oversize_emb.print_design_text(designs)
-        self.assertEqual(replacement, 'back print for A & <Hat> $& and the front-left chest print for Crest')
-        self.assertEqual(oversize_emb.replace_print_design_placeholder(self.driver, replacement), 1)
-        self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, '[contenteditable]').text,
-                         f"We have updated the {replacement}, from embroidery to ink printing instead.\nKeep link")
-        self.assertEqual(self.driver.find_element(By.TAG_NAME, 'a').get_attribute('href'), 'https://example.com/')
-        self.assertFalse(self.driver.find_elements(By.TAG_NAME, 'hat'))
+        for opening, closing in (("", ""), ('"', '"'), ("“", "”"), ("'", "'"), ("‘", "’")):
+            with self.subTest(quotes=(opening, closing)):
+                self.driver.get('about:blank')
+                self.driver.execute_script('''
+                    document.body.innerHTML = '<div contenteditable="true"><p></p><a href="https://example.com">Keep link</a></div>';
+                    document.querySelector('p').innerHTML = arguments[0];
+                ''', f'We have updated the <b>[PR</b><i>INT]</i> for {opening}<b>[DESIGN]</b>{closing}, from embroidery to ink printing instead.')
+                replacement = oversize_emb.print_design_text(designs, design_quotes=(opening, closing))
+                self.assertEqual(replacement, f'back print for {opening}A & <Hat> $&{closing} and the front-left chest print for {opening}Crest{closing}')
+                self.assertEqual(oversize_emb.replace_print_design_placeholder(self.driver, replacement), 1)
+                self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, '[contenteditable]').text,
+                                 f"We have updated the {replacement}, from embroidery to ink printing instead.\nKeep link")
+                self.assertEqual(self.driver.find_element(By.TAG_NAME, 'a').get_attribute('href'), 'https://example.com/')
+                self.assertFalse(self.driver.find_elements(By.TAG_NAME, 'hat'))
 
     def test_single_proof_tab_is_scanned_and_selected_automatically(self):
         self.driver.get('about:blank')
