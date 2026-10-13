@@ -85,8 +85,14 @@ def _join(values):
     return ", ".join(values[:-1]) + ", and " + values[-1]
 
 
+def _print_area_text(area):
+    name = area.lower()
+    return name if name.endswith(" print") else f"{name} print"
+
+
 def print_design_text(designs):
-    pairs = [f"{_join(row['print_areas'])} for {row['design_name']}" for row in normalize_designs(designs)]
+    pairs = [f"{_join([_print_area_text(area) for area in row['print_areas']])} for {row['design_name']}"
+             for row in normalize_designs(designs)]
     # The template already supplies "the" before [PRINT]. Repeat it for each
     # following design so different designs retain their own selected areas.
     return _join([pairs[0]] + [f"the {pair}" for pair in pairs[1:]])

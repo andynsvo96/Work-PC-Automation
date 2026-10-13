@@ -139,7 +139,9 @@ The scan returns you to the design tab that was open before scanning.
 
 The `[AUTO] Oversize Embroidery` template must contain `[PRINT] for [DESIGN]`.
 One email names each selected area with its own design: for example,
-`the Back for Team Logo and the Front-left Chest for Crest`. The worker preserves
+`the back print for Team Logo and the front-left chest print for Crest`. Area
+names use lowercase and include `print`; Design Names keep their original case.
+This email wording update loads with the next queued task. The worker preserves
 surrounding template formatting and links, rechecks selected Design Names and
 print areas before CRM notes and email preparation, and stops for review when
 an area changed, is unavailable, or cannot be identified uniquely. The existing

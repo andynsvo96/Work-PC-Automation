@@ -29,11 +29,15 @@ class OversizeEmbTests(unittest.TestCase):
         self.assertEqual(oversize_emb.normalize_designs([{**DESIGNS[0], "print_areas": [" Back "]}]), DESIGNS)
 
     def test_multiple_designs_keep_each_print_area_with_its_name(self):
-        self.assertEqual(oversize_emb.print_design_text(DESIGNS), "Back for Team Logo")
+        for area, expected in (("Back", "back print"), ("Front", "front print"),
+                               ("Front-left Chest", "front-left chest print"), ("Back Print", "back print")):
+            with self.subTest(area=area):
+                self.assertEqual(oversize_emb.print_design_text([{**DESIGNS[0], "print_areas": [area]}]),
+                                 f"{expected} for Team Logo")
         self.assertEqual(oversize_emb.print_design_text([
             {"tab_number": 3, "design_name": "Crest", "print_areas": ["Front-left Chest"]},
             {"tab_number": 1, "design_name": "Team Logo", "print_areas": ["Front", "Back"]},
-        ]), "Front and Back for Team Logo and the Front-left Chest for Crest")
+        ]), "front print and back print for Team Logo and the front-left chest print for Crest")
 
     def test_queue_retains_areas_and_worker_process_without_reason(self):
         key = "oversize_emb_to_hdd"
@@ -88,7 +92,7 @@ class OversizeEmbTests(unittest.TestCase):
         process = worker.OVERSIZE_EMB_TO_HDD_PROCESS
         body = "For embroidery, we have updated the [PRINT] for [DESIGN], from embroidery to ink printing instead."
         before = {"subject": "Order 1234567 - Embroidery Updated", "body": body}
-        replacement = "Back for Team Logo"
+        replacement = "back print for Team Logo"
         after = {**before, "body": body.replace("[PRINT] for [DESIGN]", replacement)}
         with mock.patch.object(worker, "_insert_cancel_template"), \
              mock.patch.object(worker, "_read_salesforce_email_state", side_effect=[before, before, after]), \
@@ -104,7 +108,7 @@ class OversizeEmbTests(unittest.TestCase):
         for body, after_body, replaced in (
             ("Embroidery [DESIGN]", "", 1),
             ("Embroidery [PRINT] for [DESIGN]", "Embroidery unchanged", 1),
-            ("Embroidery [PRINT] for [DESIGN]", "Embroidery Back for Team Logo [PRINT]", 1),
+            ("Embroidery [PRINT] for [DESIGN]", "Embroidery back print for Team Logo [PRINT]", 1),
             ("Embroidery [PRINT] for [DESIGN]", "", 0),
         ):
             before = {"subject": "Order 1234567", "body": body}

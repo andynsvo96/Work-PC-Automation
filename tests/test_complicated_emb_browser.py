@@ -112,6 +112,7 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
         designs = [{"tab_number": 1, "design_name": 'A & <Hat> $&', "print_areas": ["Back"]},
                    {"tab_number": 2, "design_name": "Crest", "print_areas": ["Front-left Chest"]}]
         replacement = oversize_emb.print_design_text(designs)
+        self.assertEqual(replacement, 'back print for A & <Hat> $& and the front-left chest print for Crest')
         self.assertEqual(oversize_emb.replace_print_design_placeholder(self.driver, replacement), 1)
         self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, '[contenteditable]').text,
                          f"We have updated the {replacement}, from embroidery to ink printing instead.\nKeep link")
