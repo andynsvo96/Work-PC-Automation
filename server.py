@@ -9666,7 +9666,7 @@ def _crm_auto_splitter_recovery_candidates(payload):
     ]
 
 
-def _crm_auto_splitter_recovery_order_ids(order_id, tab_count, divisions):
+def _crm_auto_splitter_recovery_payload(order_id, tab_count=None, divisions=None):
     with crm_state_lock:
         state = load_crm_state()
         candidates = [
@@ -9675,9 +9675,19 @@ def _crm_auto_splitter_recovery_order_ids(order_id, tab_count, divisions):
         ]
     for candidate in candidates:
         for payload in _crm_auto_splitter_recovery_candidates(candidate):
-            if _crm_auto_splitter_recovery_payload_is_usable(payload, order_id, tab_count, divisions):
-                return _crm_auto_splitter_recovery_order_ids_from_payload(payload)
-    return []
+            if _crm_auto_splitter_recovery_payload_is_usable(
+                payload, order_id,
+                payload.get("expected_tab_count") if tab_count in (None, "") else tab_count,
+                payload.get("divisions") if divisions in (None, "") else divisions,
+            ):
+                return payload
+    return None
+
+
+def _crm_auto_splitter_recovery_order_ids(order_id, tab_count, divisions):
+    return _crm_auto_splitter_recovery_order_ids_from_payload(
+        _crm_auto_splitter_recovery_payload(order_id, tab_count, divisions)
+    )
 
 
 def _crm_auto_splitter_payload_matches_request(payload, order_target, tab_count, divisions, minimum_tabs):
@@ -9822,20 +9832,34 @@ def _execute_crm_auto_splitter_worker(order_target, tab_count, divisions, minimu
         args.extend(["--order-id", order_id])
     else:
         return False, "Enter a valid order number or CRM order link.", {"success": False, "message": "Enter a valid order number or CRM order link."}
+    recovery_file = None
+    recovery = _crm_auto_splitter_recovery_payload(order_id, tab_count, divisions)
+    recovery_report = recovery.get("report") if recovery else {}
+    if (recovery_report.get("retain_original") is True or recovery_report.get("stock_method_transition")) and recovery_report.get("split_plan"):
+        recovery_file = result_file(f"crm_auto_splitter_resume_{uuid.uuid4().hex}.json")
+        with open(recovery_file, "w", encoding="utf-8") as handle:
+            json.dump(recovery_report, handle)
+        args.extend(["--resume-report-file", recovery_file])
+        for resume_order_id in _crm_auto_splitter_recovery_order_ids_from_payload(recovery):
+            args.extend(["--resume-existing-order-id", resume_order_id])
     if dry_run:
         args.append("--dry-run")
     else:
         args.append("--real")
-        if tab_count not in (None, "") and divisions not in (None, ""):
+        if not recovery_file and tab_count not in (None, "") and divisions not in (None, ""):
             for resume_order_id in _crm_auto_splitter_recovery_order_ids(order_id, tab_count, divisions):
                 args.extend(["--resume-existing-order-id", resume_order_id])
-    ok, message, payload = _run_script(
-        CRM_AUTO_SPLITTER_SCRIPT,
-        args,
-        "CRMAutoSplitter",
-        timeout=max(1800, CRM_ACTION_TIMEOUT * 120),
-        show_terminal=bool(dry_run) if show_terminal is None else bool(show_terminal),
-    )
+    try:
+        ok, message, payload = _run_script(
+            CRM_AUTO_SPLITTER_SCRIPT,
+            args,
+            "CRMAutoSplitter",
+            timeout=max(1800, CRM_ACTION_TIMEOUT * 120),
+            show_terminal=bool(dry_run) if show_terminal is None else bool(show_terminal),
+        )
+    finally:
+        if recovery_file and os.path.isfile(recovery_file):
+            os.remove(recovery_file)
     if not isinstance(payload, dict):
         payload = {"success": bool(ok), "message": str(message)}
     payload.setdefault("action", "split_order")

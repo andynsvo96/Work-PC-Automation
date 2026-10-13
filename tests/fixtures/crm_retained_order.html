@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Retained original split verification fixture</title>
+<style>.tab {display: inline-block; min-width: 120px; padding: 12px; border: 1px solid #333;} td {padding: 6px;}</style>
+<body>
+<h1>Retained original order</h1>
+<div class="tab" id="keep-tab">Design 1<br>1 - QTY: 1<br>Design Previews</div>
+<div class="tab" id="moved-tab">Design 2<br>2 - QTY: 0<br>Design Previews</div>
+<table>
+<tr><td>Design 1 Total:</td><td>1 pieces</td><td>$10.00</td></tr>
+<tr><td>Design 2 Total:</td><td id="moved-quantity">0 pieces</td><td id="moved-total">$0.00</td></tr>
+</table>
+<script>
+window.fixtureResource = {id: '5000001', shippingCharges: '10.00', designs: [{designId: 101}, {designId: 202}]};
+const scope = {copyOrder() {}, order: {getResource() {return window.fixtureResource;}}};
+window.angular = {element() {return {scope() {return scope;}};}};
+</script>
+</body>
+</html>

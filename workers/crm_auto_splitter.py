@@ -9,6 +9,7 @@ This file is safe by default:
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
 import os
 import re
 import shutil
@@ -750,6 +751,11 @@ def _build_split_plan(designs, divisions, original_order_id, shipping_amount=Dec
                 **split_range,
                 "keep_design_names": keep_names,
                 "keep_design_ids": keep_ids,
+                "keep_design_quantities": {
+                    str(design["design_id"]): int(design["quantity"])
+                    for design in keep
+                    if str(design.get("design_id") or "").isdigit() and design.get("quantity") is not None
+                },
                 "delete_design_names": delete_names,
                 "delete_design_ids": delete_ids,
                 "sales_note": f"transferred from {original_order_id}",
@@ -1611,6 +1617,57 @@ def _order_design_ids(driver):
     ]
 
 
+def _verify_retained_original_designs(driver, retained_split):
+    """Allow only planned removed tabs whose persisted quantity and total are zero."""
+    keep_ids = sorted(int(value) for value in retained_split.get("keep_design_ids") or [])
+    delete_ids = {int(value) for value in retained_split.get("delete_design_ids") or []}
+    actual_ids = sorted(_order_design_ids(driver))
+    extras = sorted(set(actual_ids) - set(keep_ids))
+    if not set(keep_ids).issubset(actual_ids) or set(extras) - delete_ids:
+        raise RecoverableCrmError(
+            f"Retained original design verification failed. Expected {keep_ids}, found {actual_ids}."
+        )
+    quantities = retained_split.get("keep_design_quantities") or {}
+    if not extras and not quantities:
+        return {"passed": True, "empty_design_ids": []}
+    state = _order_scope(
+        driver,
+        """
+        return {
+          designs: (r.designs || []).map((design, index) => ({
+            design_id: Number(design.designId), tab_number: index + 1
+          })),
+          shipping_charges: r.shippingCharges,
+          body_text: document.body ? document.body.innerText : ''
+        };
+        """,
+    )
+    if state.get("shipping_charges") is None or _money_text(_parse_money(state["shipping_charges"])) != _money_text(_parse_money(retained_split.get("shipping_charge"))):
+        raise RecoverableCrmError("Retained original shipping charge did not persist after saving.")
+    totals_by_tab = _design_totals_from_text(state.get("body_text") or "")
+    tabs = {
+        int(tab["tab_number"]): tab
+        for tab in _visible_design_tab_numbers(driver) or []
+    }
+    by_id = {int(design["design_id"]): int(design["tab_number"]) for design in state.get("designs") or []}
+    for design_id in extras + keep_ids:
+        tab_number = by_id.get(design_id)
+        total = totals_by_tab.get(tab_number, {})
+        marker = re.search(r"\bQTY\s*:\s*(\d+)\b", str(tabs.get(tab_number, {}).get("text") or ""), re.IGNORECASE)
+        marker_quantity = int(marker.group(1)) if marker else None
+        expected_quantity = 0 if design_id in extras else quantities.get(str(design_id))
+        if expected_quantity is None:
+            continue
+        if total.get("quantity") != int(expected_quantity) or marker_quantity != int(expected_quantity):
+            raise RecoverableCrmError(
+                f"Retained original design {design_id} quantity verification failed. "
+                f"Expected {expected_quantity}, found total {total.get('quantity')} and tab {marker_quantity}."
+            )
+        if design_id in extras and total.get("subtotal") != "0.00":
+            raise RecoverableCrmError(f"Removed original design {design_id} still has a nonzero or unreadable total.")
+    return {"passed": True, "empty_design_ids": extras}
+
+
 def _remove_order_design_by_id(driver, design_id):
     """Remove one whole design tab from an editable order and verify it left the model."""
     design_id = int(design_id)
@@ -1712,11 +1769,7 @@ def _configure_retained_original_order(driver, original_order_id, original_order
                 order_id=original_order_id,
                 label="retained original order verification reload",
             )
-            verified_ids = sorted(_order_design_ids(driver))
-            if verified_ids != keep_ids:
-                raise RecoverableCrmError(
-                    f"Retained original design verification failed. Expected {keep_ids}, found {verified_ids}."
-                )
+            design_verification = _verify_retained_original_designs(driver, retained_split)
             totals = _read_order_totals(driver)
             return {
                 "split_index": int(retained_split.get("split_index") or 1),
@@ -1731,6 +1784,7 @@ def _configure_retained_original_order(driver, original_order_id, original_order
                 "promo_code": retained_split.get("promo_code", ""),
                 "stock_transfer_records": [],
                 "save_result": save_result,
+                "design_verification": design_verification,
                 "totals": totals,
             }
         except RecoverableCrmError as err:
@@ -2948,6 +3002,12 @@ def _inspect_existing_split_order(driver, split_order_id, plan, used_split_index
     if len(matches) > 1:
         raise SplitterError(f"Existing split order {split_order_id} matched multiple split plans. Stopping before creating more split orders.")
     split = matches[0]
+    expected_quantities = split.get("keep_design_quantities") or {}
+    quantities_by_name = {_clean_text(design.get("design_name")).lower(): design.get("quantity") for design in scan.get("designs") or []}
+    for design_id, name in zip(split.get("keep_design_ids") or [], split.get("keep_design_names") or []):
+        expected_quantity = expected_quantities.get(str(design_id))
+        if expected_quantity is not None and quantities_by_name.get(_clean_text(name).lower()) != int(expected_quantity):
+            raise SplitterError(f"Existing split order {split_order_id} quantity does not match the saved plan for {name}.")
     promo_discount_fee = _add_discount_fee_to_split_order(driver, split.get("promo_credit", "0.00"))
     totals = _read_order_totals(driver)
     payment_correction = _reconcile_existing_split_payment_after_discount(
@@ -3046,6 +3106,176 @@ def _records_with_new_tab_matches(records, new_scan):
             }
         )
     return matched
+
+
+def _recheck_split_stock(driver, original_order_id, original_order_url, plan, split_orders, report):
+    """Read current stock and refresh every split's source records without changing orders."""
+    _open_order_scope_with_reload(
+        driver, original_order_url, order_id=original_order_id, label="retained original stock recheck",
+    )
+    scan = _scan_original_order(driver)
+    summary = scan.get("stock_summary") or {}
+    report["retained_stock_recheck"] = summary
+    designs = {int(design["design_id"]): design for design in scan.get("designs") or [] if str(design.get("design_id") or "").isdigit()}
+    source_ids = {int(value) for split in plan for value in split.get("keep_design_ids") or []}
+    if set(designs) - source_ids:
+        raise SplitterError("Original designs changed during splitting; stopping for stock review.")
+    originals = {int(design["design_id"]): design for design in report.get("designs") or [] if str(design.get("design_id") or "").isdigit()}
+    retained_ids = set(plan[0].get("keep_design_ids") or [])
+    for design_id, design in designs.items():
+        previous = originals.get(design_id) or {}
+        expected_quantity = previous.get("quantity")
+        if _clean_text(design.get("design_name")) != _clean_text(previous.get("design_name")):
+            raise SplitterError(f"Original design {design_id} name changed during splitting; stopping for review.")
+        allowed = [expected_quantity] if design_id in retained_ids else [expected_quantity, 0]
+        if expected_quantity is None or design.get("quantity") not in allowed:
+            raise SplitterError(f"Original design {design_id} quantity changed during splitting; stopping for review.")
+    if not retained_ids.issubset(designs):
+        raise SplitterError("Original retained designs disappeared during splitting; stopping for review.")
+    if not summary.get("stock_ordered") and not (summary.get("order_stock_status") or {}).get("stock_status_needs_order"):
+        raise SplitterError("Original stock state became unreadable during splitting; stopping for review.")
+    for split in plan:
+        previous_records = split.get("stock_transfer_records") or []
+        records = []
+        for design_id in split.get("keep_design_ids") or []:
+            design_id = int(design_id)
+            design = designs.get(design_id)
+            previous = [record for record in previous_records if int(record.get("source_design_id") or 0) == design_id]
+            current = _stock_transfer_records_for_design(design) if design else previous
+            records.extend({
+                **record,
+                "source_quantity": (originals.get(design_id) or {}).get("quantity"),
+                "source_subtotal": (originals.get(design_id) or {}).get("subtotal", ""),
+            } for record in current)
+        split["stock_transfer_records"] = records
+        for split_order in split_orders:
+            if int(split_order.get("split_index") or 0) == int(split["split_index"]):
+                split_order["stock_transfer_records"] = records
+    routing = _planned_stock_routing(summary, scan.get("subcontractor") or "")
+    report["stock_routing"] = routing
+    if routing.get("action") == "manual_review":
+        raise SplitterError(
+            "Stock changed while splitting and requires manual review: "
+            f"{routing.get('reason') or 'unknown stock state'}. Existing split orders were preserved."
+        )
+    return scan
+
+
+def _switch_split_method_for_ordered_stock(
+    driver, original_order_id, original_order_url, plan, split_orders, report, scan,
+    payment_type, transaction_id, result_file, expected_tab_count, divisions, started,
+):
+    """Replace split 1, settle all new orders, then leave original cleanup to the stocked flow."""
+    state = _get_order_live_state(driver)
+    transition = report.get("stock_method_transition")
+    if not transition:
+        source_plan = json.loads(json.dumps(plan))
+        previous_new_ids = [
+            str(item["order_id"]) for item in sorted(split_orders, key=lambda item: int(item["split_index"]))
+            if item.get("order_id") and not item.get("retained_original")
+        ]
+        retained_transfer_note = (
+            f"split 1 retained on original {original_order_id}; transferred to {_format_order_list(previous_new_ids)}"
+        )
+        current_paid = _paid_amount_from_state(state)
+        previously_transferred = _retained_payment_transfer_from_state(state, retained_transfer_note)
+        existing_fee = _existing_original_refund_fee_amount(driver)
+        transition = {
+            "from": "retain_as_split_1", "to": "cancel_after_split",
+            "reason": "stock_ordered_during_split", "source_split_plan": source_plan,
+            "allocation_original_paid": _money_text(current_paid + previously_transferred),
+            "original_refund_payment_amount": _money_text(current_paid),
+            "original_refund_fee_amount": _money_text(_resolve_original_refund_fee_amount(
+                scan, state, existing_fee, previous_new_ids, Decimal("0.00"),
+            )),
+            "previous_retained_payment_transfer": _money_text(previously_transferred),
+        }
+        report["stock_method_transition"] = transition
+    report["retain_original"] = False
+    report["original_order_mode"] = "cancel_after_split"
+    for split in plan:
+        split["retained_original"] = False
+        split["promo_retained_on_original"] = False
+    split_orders[:] = [item for item in split_orders if not item.get("retained_original")]
+    report["split_orders"] = split_orders
+    report["split_plan"] = plan
+    report["remaining_split_count"] = max(len(plan) - len(split_orders), 0)
+    _write_split_progress_checkpoint(
+        result_file, report, split_orders, original_order_id, original_order_url,
+        expected_tab_count, divisions, started, stage="stock_method_switched",
+    )
+    completed = {int(item["split_index"]) for item in split_orders}
+    pending = [split for split in plan if int(split["split_index"]) not in completed]
+    if any(int(split["split_index"]) != 1 for split in pending):
+        raise SplitterError("Stock method changed before the other split orders were verified; stopping for review.")
+    if pending and (transition.get("replacement_creation") or {}).get("state") == "conversion_started":
+        raise SplitterError("Replacement split conversion is unconfirmed. Review CRM before creating another replacement order.")
+    if pending and _original_order_is_cancelled(driver):
+        raise SplitterError("The stock-ordered original is cancelled but its replacement split is missing; stopping for review.")
+    for split in pending:
+        configured, _discount, saved_quote = _prepare_and_save_split_quote(
+            driver, original_order_url, original_order_id, int(scan["detected_tab_count"]), split, state,
+        )
+        transition["replacement_creation"] = {"state": "conversion_started", "quote_id": saved_quote.get("quote_id")}
+        _write_split_progress_checkpoint(
+            result_file, report, split_orders, original_order_id, original_order_url,
+            expected_tab_count, divisions, started, stage="replacement_conversion_started",
+        )
+        new_id, discount, totals, payment_verification = _finalize_split_quote_with_order_discount(
+            driver, payment_type, "", split.get("promo_credit", "0.00"),
+        )
+        transition["replacement_creation"] = {"state": "confirmed", "order_id": new_id, "quote_id": saved_quote.get("quote_id")}
+        split_orders.append({
+            "split_index": split["split_index"], "order_id": new_id, "existing_order": False,
+            "kept_design_names": split["keep_design_names"], "kept_design_ids": split["keep_design_ids"],
+            "deleted_design_ids": split["delete_design_ids"], "shipping_charge": split["shipping_charge"],
+            "promo_credit": split.get("promo_credit", "0.00"), "promo_code": split.get("promo_code", ""),
+            "stock_transfer_records": split.get("stock_transfer_records", []),
+            "configure_result": configured, "quote_save": saved_quote, "promo_discount_fee": discount,
+            "totals": totals, "payment_verification": payment_verification,
+        })
+        _write_split_progress_checkpoint(
+            result_file, report, split_orders, original_order_id, original_order_url,
+            expected_tab_count, divisions, started, stage="replacement_split_created",
+        )
+    if {int(item["split_index"]) for item in split_orders} != {int(split["split_index"]) for split in plan}:
+        raise SplitterError("Every split must be verified before cancelling the stock-ordered original.")
+    split_orders.sort(key=lambda item: int(item["split_index"]))
+    verified_indexes = set()
+    for item in split_orders:
+        verified = _inspect_existing_split_order(driver, item["order_id"], plan, used_split_indexes=verified_indexes)
+        if int(verified["split_index"]) != int(item["split_index"]):
+            raise SplitterError("A replacement order matched a different split; stopping before cancelling the original.")
+        verified_indexes.add(int(verified["split_index"]))
+        item.update({**verified, "existing_order": item.get("existing_order", True)})
+    _open_order_scope_with_reload(driver, original_order_url, order_id=original_order_id, label="stocked original before payment allocation")
+    current_paid = _paid_amount_from_state(_get_order_live_state(driver))
+    expected_refund = _parse_money(transition["original_refund_payment_amount"])
+    transfer_note = f"transferred to {_format_order_list([item['order_id'] for item in split_orders])}"
+    if current_paid != expected_refund and not (
+        current_paid == Decimal("0.00") and _original_refund_transaction_is_present(driver, transfer_note, expected_refund)
+    ):
+        raise SplitterError("Original payment changed after the stock-method switch; stopping before further payment actions.")
+    if report["stock_routing"].get("action") == "copy_to_split_orders":
+        report["stock_transfer"] = _copy_stock_records_to_split_orders(driver, split_orders)
+    report["proportional_payment_allocation"] = _allocate_retained_split_payments(
+        driver, split_orders, _parse_money(transition["allocation_original_paid"]),
+        payment_type, transaction_id, transfer_note,
+    )
+    report["completed_split_count"] = len(split_orders)
+    report["remaining_split_count"] = 0
+    report["original_order_final_steps"].update({
+        "cancel_status": "cancel order", "refund_fee_amount": transition["original_refund_fee_amount"],
+        "refund_transaction_tag": "Refund" if expected_refund else "",
+        "refund_transaction_id": transfer_note if expected_refund else "",
+        "sales_note": transfer_note, "payment_allocation_mode": "proportional",
+        "payment_actions_skipped": not bool(expected_refund),
+    })
+    _write_split_progress_checkpoint(
+        result_file, report, split_orders, original_order_id, original_order_url,
+        expected_tab_count, divisions, started, stage="stock_method_payment_allocated",
+    )
+    return transfer_note
 
 
 def _copy_stock_records_to_split_orders(driver, split_orders, login_wait_seconds=0):
@@ -3803,6 +4033,16 @@ def _design_total_tab_numbers_from_page_text(driver):
     return numbers
 
 
+def _design_totals_from_text(body_text):
+    return {
+        int(match.group(1)): {"quantity": int(match.group(2)), "subtotal": _money_text(_parse_money(match.group(3)))}
+        for match in re.finditer(
+            r"\bDesign\s+(\d{1,3})\s+Total\s*:\s*(\d+)\s+pieces?\s*\$?(-?[0-9,]+\.\d{2})",
+            str(body_text or ""), re.IGNORECASE,
+        )
+    }
+
+
 def _scan_current_design_detail(driver, tab_number):
     body_text = driver.execute_script("return document.body ? document.body.innerText : '';")
     name_match = re.search(r"Design Name:\s*([^\|\n\r]+)", body_text, re.IGNORECASE)
@@ -3944,6 +4184,15 @@ def _scan_original_order(driver, expected_tab_count=None):
         designs.append(design)
 
     body_text = driver.execute_script("return document.body ? document.body.innerText : '';")
+    design_totals = _design_totals_from_text(body_text)
+    for design, tab in zip(designs, tabs):
+        total = design_totals.get(int(tab["tab_number"]))
+        if total:
+            design.update(total)
+        else:
+            marker = re.search(r"\bQTY\s*:\s*(\d+)\b", str(tab.get("text") or ""), re.IGNORECASE)
+            if marker:
+                design["quantity"] = int(marker.group(1))
     totals = _extract_order_totals_from_text(body_text)
     order_stock_status = _product_separator._order_stock_status_from_text(body_text)
     stock_summary = _summarize_original_stock(designs, order_stock_status=order_stock_status)
@@ -4196,6 +4445,66 @@ def run_process_batch(list_url=None, dry_run=True, visible=False, result_file=No
         safe_driver_quit(driver, profile_path=_profile_path())
 
 
+def _retained_resume_plan(report, order_id, expected_tab_count, divisions, minimum_tabs, scan):
+    """Validate a saved retained-original plan instead of replanning a partially trimmed order."""
+    transition = report.get("stock_method_transition") or {}
+    switched = transition.get("from") == "retain_as_split_1" and transition.get("to") == "cancel_after_split"
+    if str(report.get("original_order_id") or "") != str(order_id) or not (report.get("retain_original") is True or switched):
+        raise SplitterError("Saved split recovery does not match the retained original order.")
+    source = report.get("designs") or []
+    source_by_id = {int(design["design_id"]): design for design in source if str(design.get("design_id") or "").isdigit()}
+    if len(source_by_id) != len(source) or len(source) != int(report.get("expected_tab_count") or 0):
+        raise SplitterError("Saved split recovery has incomplete source designs.")
+    if expected_tab_count is not None and int(expected_tab_count) != len(source):
+        raise SplitterError("Saved split recovery tab count does not match the request.")
+    saved_divisions = int(report.get("divisions") or 0)
+    if divisions is not None and int(divisions) != saved_divisions:
+        raise SplitterError("Saved split recovery divisions do not match the request.")
+    if int(report.get("minimum_tabs") or DEFAULT_MINIMUM_SPLIT_TABS) != minimum_tabs:
+        raise SplitterError("Saved split recovery tab limit does not match the request.")
+    totals = report.get("totals") or {}
+    rebuilt = _plan_with_original_retained(_build_split_plan(
+        source, saved_divisions, order_id,
+        shipping_amount=_parse_money(totals.get("shipping")),
+        promo_amount=_parse_money(totals.get("promo")).copy_abs(), promo_code=totals.get("promo_code", ""),
+    ))
+    saved_plan = transition.get("source_split_plan") if switched else report.get("split_plan")
+    saved_plan = saved_plan or []
+    keys = ("split_index", "keep_design_ids", "delete_design_ids", "keep_design_names", "shipping_charge", "promo_credit", "retained_original")
+    if len(saved_plan) != len(rebuilt) or any(
+        any(saved.get(key) != expected.get(key) for key in keys)
+        for saved, expected in zip(saved_plan, rebuilt)
+    ):
+        raise SplitterError("Saved split recovery plan is inconsistent; stopping before creating more orders.")
+    _validate_split_ranges_within_limit(_split_ranges(len(source), saved_divisions), minimum_tabs)
+    keep_ids = set(rebuilt[0]["keep_design_ids"])
+    current_ids = set()
+    for design in scan.get("designs") or []:
+        design_id = int(design.get("design_id") or 0)
+        previous = source_by_id.get(design_id)
+        if not previous or _clean_text(previous.get("design_name")) != _clean_text(design.get("design_name")):
+            raise SplitterError("Original designs changed since the saved split; stopping for review.")
+        current_ids.add(design_id)
+        expected_quantity = previous.get("quantity")
+        allowed_quantities = [expected_quantity] if design_id in keep_ids else [expected_quantity, 0]
+        if expected_quantity is None or design.get("quantity") not in allowed_quantities:
+            raise SplitterError(f"Original design {design_id} quantity changed since the saved split; stopping for review.")
+    if not keep_ids.issubset(current_ids):
+        raise SplitterError("The retained original is missing designs from the saved split.")
+    current_plan = report.get("split_plan") or []
+    for saved, expected in zip(current_plan, rebuilt):
+        expected["stock_transfer_records"] = saved.get("stock_transfer_records") or expected["stock_transfer_records"]
+        if switched:
+            expected["retained_original"] = False
+            expected["promo_retained_on_original"] = False
+    if switched and (len(current_plan) != len(rebuilt) or any(
+        any(saved.get(key) != expected.get(key) for key in keys)
+        for saved, expected in zip(current_plan, rebuilt)
+    )):
+        raise SplitterError("Saved stock-method transition plan is inconsistent; stopping for review.")
+    return rebuilt
+
+
 def run_split_order(
     order_id=None,
     order_url=None,
@@ -4210,6 +4519,7 @@ def run_split_order(
     result_file=None,
     resume_existing_order_ids=None,
     parallel_workers=1,
+    resume_report_file=None,
 ):
     started = time.monotonic()
     resolved_order_id = _extract_order_id(order_id=order_id, order_url=order_url)
@@ -4222,6 +4532,12 @@ def run_split_order(
         expected_tab_count = int(expected_tab_count) if expected_tab_count is not None else None
         divisions = int(divisions) if divisions is not None else None
         minimum_tabs = int(minimum_tabs)
+        resume_report = None
+        if resume_report_file:
+            with open(resume_report_file, "r", encoding="utf-8") as handle:
+                resume_report = json.load(handle)
+            if not isinstance(resume_report, dict) or not resume_existing_order_ids:
+                raise SplitterError("Saved split recovery requires an original plan and existing split orders.")
         if expected_tab_count is not None and expected_tab_count <= minimum_tabs:
             raise SplitterError(
                 f"Order has {expected_tab_count} tab(s). Auto Splitter only splits orders with more than {minimum_tabs} tabs."
@@ -4265,25 +4581,37 @@ def run_split_order(
         _handle_login_if_needed(driver, target_url, login_wait_seconds=login_wait_seconds)
         _switch_to_crm_app_frame(driver)
 
-        scan = _scan_original_order(driver, expected_tab_count=expected_tab_count)
+        scan = _scan_original_order(driver, expected_tab_count=None if resume_report else expected_tab_count)
         detected_tab_count = int(scan["detected_tab_count"])
-        if expected_tab_count is None:
+        resume_plan = _retained_resume_plan(
+            resume_report, resolved_order_id, expected_tab_count, divisions, minimum_tabs, scan,
+        ) if resume_report else None
+        if not resume_plan and any(design.get("quantity") == 0 for design in scan.get("designs") or []):
+            raise SplitterError(
+                "Original order contains empty design tabs and may already be partially split. "
+                "Use its saved split recovery or review the existing orders before creating more splits."
+            )
+        if resume_plan:
+            expected_tab_count = int(resume_report["expected_tab_count"])
+            divisions = int(resume_report["divisions"])
+        elif expected_tab_count is None:
             expected_tab_count = detected_tab_count
-        if detected_tab_count <= minimum_tabs:
+        if detected_tab_count <= minimum_tabs and not resume_plan:
             raise SplitterError(
                 f"Order has {detected_tab_count} tab(s). Auto Splitter only splits orders with more than {minimum_tabs} tabs."
             )
         if divisions is None:
             divisions = _auto_divisions_for_tab_count(detected_tab_count, minimum_tabs)
-        ranges = _split_ranges(detected_tab_count, divisions)
+        ranges = _split_ranges(expected_tab_count if resume_plan else detected_tab_count, divisions)
         _validate_split_ranges_within_limit(ranges, minimum_tabs)
         parallel_workers = _normalize_parallel_workers(parallel_workers, divisions=divisions)
         if not worker_profiles:
             parallel_workers = 1
-        shipping_amount = _parse_money(scan.get("totals", {}).get("shipping"))
-        promo_amount = _parse_money(scan.get("totals", {}).get("promo")).copy_abs()
-        promo_code = scan.get("totals", {}).get("promo_code", "")
-        plan = _build_split_plan(
+        source_totals = resume_report["totals"] if resume_plan else scan.get("totals", {})
+        shipping_amount = _parse_money(source_totals.get("shipping"))
+        promo_amount = _parse_money(source_totals.get("promo")).copy_abs()
+        promo_code = source_totals.get("promo_code", "")
+        plan = resume_plan or _build_split_plan(
             scan["designs"],
             divisions,
             resolved_order_id or "UNKNOWN",
@@ -4294,8 +4622,11 @@ def run_split_order(
         stock_summary = scan.get("stock_summary") or {}
         subcontractor = _clean_text(scan.get("subcontractor"))
         stock_routing = _planned_stock_routing(stock_summary, subcontractor)
-        retain_original = not bool(stock_summary.get("stock_ordered"))
-        if retain_original:
+        retain_original = bool(resume_plan[0].get("retained_original")) if resume_plan else not bool(stock_summary.get("stock_ordered"))
+        if resume_plan:
+            plan = resume_plan
+            stock_routing = {"action": "recheck_before_completion", "reason": "saved_retained_original_plan"}
+        elif retain_original:
             plan = _plan_with_original_retained(plan)
         if stock_routing.get("action") == "slack_mach6_cancelled":
             stock_routing["message"] = f"{target_url} cancelled"
@@ -4325,8 +4656,10 @@ def run_split_order(
             "divisions": divisions,
             "minimum_tabs": minimum_tabs,
             "parallel_workers": parallel_workers if not dry_run else 1,
-            "designs": scan["designs"],
-            "totals": scan["totals"],
+            "designs": resume_report["designs"] if resume_plan else scan["designs"],
+            "totals": resume_report["totals"] if resume_plan else scan["totals"],
+            "resumed_retained_original": bool(resume_plan),
+            "stock_method_transition": resume_report.get("stock_method_transition") if resume_plan else None,
             "order_stock_status": scan.get("order_stock_status", {}),
             "stock_summary": stock_summary,
             "subcontractor": subcontractor,
@@ -4369,10 +4702,17 @@ def run_split_order(
                 )
             original_state = _get_order_live_state(driver)
             payment_detected = _payment_is_detected(original_state)
+            resumed_transition = report.get("stock_method_transition") or {}
+            if resumed_transition:
+                payment_detected = bool(_parse_money(resumed_transition.get("allocation_original_paid")))
             transaction_id = ""
             if payment_detected:
-                payment_info = _get_original_payment_info(driver)
-                payment_type = payment_info.get("payment_type") or payment_type
+                payment_info = (
+                    (resume_report.get("payment_transfer") or {})
+                    if resumed_transition and not _payment_is_detected(original_state)
+                    else _get_original_payment_info(driver)
+                )
+                payment_type = payment_info.get("payment_type") or payment_info.get("original_payment_type") or payment_type
                 transaction_id = payment_info.get("transaction_id", "")
                 if not transaction_id:
                     raise SplitterError("Original payment transaction ID could not be read from the payment view popup.")
@@ -4389,6 +4729,8 @@ def run_split_order(
                     or "0"
                 )
             )
+            if resume_plan:
+                original_grand_total = _parse_money(resume_report["totals"].get("grand_total"))
             report.update(
                 {
                     "dry_run": False,
@@ -4424,7 +4766,12 @@ def run_split_order(
                 split
                 for split in plan
                 if int(split.get("split_index") or 0) not in completed_split_indexes
+                and not (resumed_transition and int(split.get("split_index") or 0) == 1)
             ]
+            defer_split_payment = retain_original or bool(resumed_transition)
+            copy_source_count = detected_tab_count if resume_plan else expected_tab_count
+            if resumed_transition and pending_splits and _original_order_is_cancelled(driver):
+                raise SplitterError("The original is already cancelled but replacement splits are missing; stopping for review.")
             if parallel_workers > 1 and len(pending_splits) > 1:
                 worker_count = min(parallel_workers, len(pending_splits), len(worker_profiles))
                 pending_iter = iter(pending_splits)
@@ -4439,10 +4786,10 @@ def run_split_order(
                         next_split,
                         resolved_order_id,
                         target_url,
-                        expected_tab_count,
+                        copy_source_count,
                         original_state,
                         payment_type,
-                        "" if retain_original else transaction_id,
+                        "" if defer_split_payment else transaction_id,
                         profile_for_split,
                         visible,
                     )
@@ -4505,7 +4852,7 @@ def run_split_order(
                         driver,
                         target_url,
                         resolved_order_id,
-                        expected_tab_count,
+                        copy_source_count,
                         split,
                         original_state,
                     )
@@ -4513,7 +4860,7 @@ def run_split_order(
                         _finalize_split_quote_with_order_discount(
                             driver,
                             payment_type,
-                            "" if retain_original else transaction_id,
+                            "" if defer_split_payment else transaction_id,
                             split.get("promo_credit", "0.00"),
                         )
                     )
@@ -4568,11 +4915,31 @@ def run_split_order(
                 else transfer_note
             )
 
-            if retain_original:
+            def switch_to_stocked_method(current_scan):
+                nonlocal retain_original, transfer_note, original_sales_note, stock_routing, split_total
+                transfer_note = _switch_split_method_for_ordered_stock(
+                    driver, resolved_order_id, target_url, plan, split_orders, report, current_scan,
+                    payment_type, transaction_id, result_file, expected_tab_count, divisions, started,
+                )
+                retain_original = False
+                original_sales_note = transfer_note
+                stock_routing = report["stock_routing"]
+                split_total = sum((Decimal(item["totals"]["grand_total"]) for item in split_orders), Decimal("0.00"))
+                report["split_total_so_far"] = _money_text(split_total)
+
+            if report.get("stock_method_transition"):
+                current_scan = _recheck_split_stock(driver, resolved_order_id, target_url, plan, split_orders, report)
+                switch_to_stocked_method(current_scan)
+
+            while retain_original:
                 if len(split_orders) != max(len(plan) - 1, 0):
                     raise SplitterError(
                         "The original order was not modified because every new split order was not verified first."
                     )
+                current_scan = _recheck_split_stock(driver, resolved_order_id, target_url, plan, split_orders, report)
+                if (current_scan.get("stock_summary") or {}).get("stock_ordered"):
+                    switch_to_stocked_method(current_scan)
+                    break
                 recovered_payment_transfer = _retained_payment_transfer_from_state(
                     original_state,
                     transfer_note,
@@ -4626,12 +4993,23 @@ def run_split_order(
                 )
                 if not _original_transfer_note_is_present(driver, original_sales_note):
                     _add_original_transfer_note(driver, original_sales_note)
-                configured_retained_order = _configure_retained_original_order(
-                    driver,
-                    resolved_order_id,
-                    target_url,
-                    retained_original_split,
-                )
+                try:
+                    configured_retained_order = _configure_retained_original_order(
+                        driver,
+                        resolved_order_id,
+                        target_url,
+                        retained_original_split,
+                    )
+                except RecoverableCrmError:
+                    current_scan = _recheck_split_stock(driver, resolved_order_id, target_url, plan, split_orders, report)
+                    if (current_scan.get("stock_summary") or {}).get("stock_ordered"):
+                        switch_to_stocked_method(current_scan)
+                        break
+                    raise
+                current_scan = _recheck_split_stock(driver, resolved_order_id, target_url, plan, split_orders, report)
+                if (current_scan.get("stock_summary") or {}).get("stock_ordered"):
+                    switch_to_stocked_method(current_scan)
+                    break
                 split_orders = [
                     configured_retained_order if item.get("retained_original") else item
                     for item in split_orders
@@ -4653,12 +5031,7 @@ def run_split_order(
                     order_id=resolved_order_id,
                     label="retained original final verification",
                 )
-                verified_ids = sorted(_order_design_ids(driver))
-                expected_ids = sorted(int(value) for value in retained_original_split.get("keep_design_ids") or [])
-                if verified_ids != expected_ids:
-                    raise SplitterError(
-                        f"Retained original final design verification failed. Expected {expected_ids}, found {verified_ids}."
-                    )
+                configured_retained_order["design_verification"] = _verify_retained_original_designs(driver, retained_original_split)
                 configured_retained_order["totals"] = _read_order_totals(driver)
                 configured_retained_order["payment_verification"] = _verify_order_payment_allocation(
                     configured_retained_order["totals"],
@@ -4666,6 +5039,10 @@ def run_split_order(
                 )
                 if _original_order_is_cancelled(driver):
                     raise SplitterError("The retained original order is unexpectedly cancelled.")
+                current_scan = _recheck_split_stock(driver, resolved_order_id, target_url, plan, split_orders, report)
+                if (current_scan.get("stock_summary") or {}).get("stock_ordered"):
+                    switch_to_stocked_method(current_scan)
+                    break
                 split_orders = [
                     configured_retained_order if item.get("retained_original") else item
                     for item in split_orders
@@ -4676,8 +5053,9 @@ def run_split_order(
                 report["remaining_split_count"] = 0
                 report["split_orders"] = split_orders
                 report["split_total_so_far"] = _money_text(split_total)
+                break
 
-            if stock_routing.get("action") == "copy_to_split_orders":
+            if stock_routing.get("action") == "copy_to_split_orders" and not report.get("stock_method_transition"):
                 stock_transfer_result = _copy_stock_records_to_split_orders(
                     driver,
                     split_orders,
@@ -4746,6 +5124,12 @@ def run_split_order(
                 resume_existing_order_ids,
                 split_total,
             )
+            refund_payment_amount = original_grand_total
+            if report.get("stock_method_transition"):
+                transition = report["stock_method_transition"]
+                refund_amount = _parse_money(transition["original_refund_fee_amount"])
+                refund_payment_amount = _parse_money(transition["original_refund_payment_amount"])
+                payment_detected = bool(refund_payment_amount)
             if retain_original:
                 original_finalization = {
                     "retained_original": True,
@@ -4793,7 +5177,7 @@ def run_split_order(
                     driver,
                     payment_detected,
                     refund_amount,
-                    original_grand_total,
+                    refund_payment_amount,
                     transfer_note,
                     resolved_order_id,
                     progress=original_cleanup_progress,
@@ -5172,6 +5556,7 @@ def main(argv=None):
     parser.add_argument("--visible", action="store_true", help="Force visible Chrome even if config enables headless mode.")
     parser.add_argument("--open-browser", action="store_true", help="For smoke_test, open the configured page in Chrome.")
     parser.add_argument("--result-file", default=RESULT_FILE)
+    parser.add_argument("--resume-report-file", default=None, help="Saved retained-original split plan for targeted recovery.")
     parser.add_argument(
         "--resume-existing-order-id",
         action="append",
@@ -5208,6 +5593,7 @@ def main(argv=None):
             result_file=args.result_file,
             resume_existing_order_ids=args.resume_existing_order_id,
             parallel_workers=args.parallel_workers,
+            resume_report_file=args.resume_report_file,
         )
     if args.action == "inspect_order":
         return run_inspect_order(
