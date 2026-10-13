@@ -70,10 +70,15 @@ def design_text(designs):
 
 
 def replace_design_placeholder(driver, replacement):
+    return replace_email_body_pattern(driver, replacement, r"\[\s*DESIGN\s*\]")
+
+
+def replace_email_body_pattern(driver, replacement, pattern):
     # Work on text nodes, including tokens split by rich-text formatting. Range
     # insertion treats names as text, preserving links and surrounding HTML.
     return driver.execute_script(r"""
       const replacement = String(arguments[0]);
+      const pattern = String(arguments[1]);
       let count = 0;
       const seen = new Set();
       function replace(root) {
@@ -88,7 +93,7 @@ def replace_design_placeholder(driver, replacement):
           nodes.push({node, start: text.length, end: text.length + node.data.length});
           text += node.data;
         }
-        for (const match of Array.from(text.matchAll(/\[\s*DESIGN\s*\]/gi)).reverse()) {
+        for (const match of Array.from(text.matchAll(new RegExp(pattern, 'gi'))).reverse()) {
           const start = match.index, end = start + match[0].length;
           const first = nodes.find(item => item.end > start);
           const last = nodes.find(item => item.end >= end);
@@ -110,8 +115,8 @@ def replace_design_placeholder(driver, replacement):
           if (el.tagName === 'IFRAME' && el.getBoundingClientRect().width) {
             try { inspect(el.contentDocument); } catch (_) {}
           }
-          if (el.tagName === 'TEXTAREA' && el.getBoundingClientRect().width && /\[\s*DESIGN\s*\]/i.test(el.value)) {
-            el.value = el.value.replace(/\[\s*DESIGN\s*\]/gi, () => { count++; return replacement; });
+          if (el.tagName === 'TEXTAREA' && el.getBoundingClientRect().width && new RegExp(pattern, 'i').test(el.value)) {
+            el.value = el.value.replace(new RegExp(pattern, 'gi'), () => { count++; return replacement; });
             el.dispatchEvent(new Event('input', {bubbles: true}));
             el.dispatchEvent(new Event('change', {bubbles: true}));
           }
@@ -134,4 +139,4 @@ def replace_design_placeholder(driver, replacement):
       }
       inspect(document);
       return count;
-    """, replacement)
+    """, replacement, pattern)

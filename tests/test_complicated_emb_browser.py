@@ -11,6 +11,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "workers"))
 import complicated_emb
+import oversize_emb
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,13 +29,15 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
         options = webdriver.ChromeOptions()
         for arg in ("--headless=new", "--disable-background-networking", "--disable-gpu", "--no-sandbox", "--window-size=1000,900"):
             options.add_argument(arg)
-        cls.profile = tempfile.TemporaryDirectory(prefix="emb-popup-test-", dir=ROOT / "tmp")
+        artifacts = ROOT / "runtime" / "debug"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        cls.profile = tempfile.TemporaryDirectory(prefix="emb-popup-test-", dir=artifacts)
         cls.addClassCleanup(cls.profile.cleanup)
         options.add_argument(f"--user-data-dir={cls.profile.name}")
         cls.driver = webdriver.Chrome(service=Service(driver_path), options=options)
         cls.addClassCleanup(cls.driver.quit)
 
-    def show_popup(self, designs=None):
+    def show_popup(self, designs=None, key="complicated_emb_to_hdd"):
         self.driver.get("about:blank")
         source = (ROOT / "crm-order-dark-mode-extension/content.js").read_text(encoding="utf-8")
         choices = source[source.index("const REACHOUT_ORDER_AUTOMATIONS"):source.index("const STOCK_ISSUE_AUTOMATIONS")]
@@ -43,10 +46,11 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
             window.queued = [];
             window.queueManualOrderAutomation = (...args) => window.queued.push({key: args[0].key, data: args[4]});
             window.scanComplicatedEmbDesigns = async () => arguments[0];
+            window.scanOversizeEmbDesigns = async () => arguments[0];
         ''' + choices + popup + '''
-            window.embChoice = REACHOUT_ORDER_AUTOMATIONS[0];
+            window.embChoice = REACHOUT_ORDER_AUTOMATIONS.find(choice => choice.key === arguments[1]);
             showOrderAutomationConfirmation(window.embChoice, null, null);
-        ''', designs or [{"tab_number": 2, "design_name": "Schuti Hats"}])
+        ''', designs or [{"tab_number": 2, "design_name": "Schuti Hats"}], key)
         WebDriverWait(self.driver, 5).until(lambda d: d.find_elements(By.CSS_SELECTOR, 'input[data-emb-tab]'))
 
     def test_choices_queue_immediately_and_back_abandons(self):
@@ -76,6 +80,43 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
             checkbox.click()
         yes.click()
         self.assertEqual(self.driver.execute_script('return window.queued'), [{"key": "complicated_emb_feedback", "data": {"designs": designs}}])
+
+    def test_oversize_picker_queues_only_selected_areas_with_their_designs(self):
+        designs = [
+            {"tab_number": 1, "design_name": "Logo", "print_areas": ["Front-left Chest", "Back"]},
+            {"tab_number": 3, "design_name": "Crest", "print_areas": ["Back"]},
+        ]
+        self.show_popup(designs, key="oversize_emb_to_hdd")
+        queue = self.driver.find_element(By.XPATH, '//button[text()="Queue task"]')
+        self.assertFalse(queue.is_enabled())
+        self.assertFalse(self.driver.find_elements(By.XPATH, '//button[text()="Yes" or text()="No"]'))
+        self.driver.find_element(By.CSS_SELECTOR, 'input[data-emb-tab="1"][data-emb-area="1"]').click()
+        self.driver.find_element(By.CSS_SELECTOR, 'input[data-emb-tab="3"]').click()
+        self.assertTrue(queue.is_enabled())
+        queue.click()
+        self.assertEqual(self.driver.execute_script('return window.queued'), [{
+            "key": "oversize_emb_to_hdd", "data": {"designs": [
+                {**designs[0], "print_areas": ["Back"]}, designs[1],
+            ]},
+        }])
+
+    def test_oversize_preselects_only_one_unambiguous_area(self):
+        for areas in (["Back"], ["Front-left Chest", "Back"]):
+            with self.subTest(areas=areas):
+                self.show_popup([{"tab_number": 1, "design_name": "Logo", "print_areas": areas}], key="oversize_emb_to_hdd")
+                self.assertEqual(self.driver.find_element(By.XPATH, '//button[text()="Queue task"]').is_enabled(), len(areas) == 1)
+
+    def test_oversize_replacement_preserves_rich_text_and_correct_pairing(self):
+        self.driver.get('about:blank')
+        self.driver.execute_script('''document.body.innerHTML = '<div contenteditable="true"><p>We have updated the <b>[PR</b><i>INT]</i> for <b>[DESIGN]</b>, from embroidery to ink printing instead.</p><a href="https://example.com">Keep link</a></div>';''')
+        designs = [{"tab_number": 1, "design_name": 'A & <Hat> $&', "print_areas": ["Back"]},
+                   {"tab_number": 2, "design_name": "Crest", "print_areas": ["Front-left Chest"]}]
+        replacement = oversize_emb.print_design_text(designs)
+        self.assertEqual(oversize_emb.replace_print_design_placeholder(self.driver, replacement), 1)
+        self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, '[contenteditable]').text,
+                         f"We have updated the {replacement}, from embroidery to ink printing instead.\nKeep link")
+        self.assertEqual(self.driver.find_element(By.TAG_NAME, 'a').get_attribute('href'), 'https://example.com/')
+        self.assertFalse(self.driver.find_elements(By.TAG_NAME, 'hat'))
 
     def test_single_proof_tab_is_scanned_and_selected_automatically(self):
         self.driver.get('about:blank')
@@ -129,6 +170,21 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
         ''' + reader + '\nreturn readEmbDesignMethods();')
         self.assertEqual([row['tab_number'] for row in rows if row['eligible']], [1, 2, 3, 5, 6, 7])
 
+    def test_area_reader_uses_crm_labels_and_ignores_deleted_areas(self):
+        self.driver.get('about:blank')
+        reader = (ROOT / 'crm-order-dark-mode-extension/emb-design-reader.js').read_text(encoding='utf-8')
+        rows = self.driver.execute_script('''
+          const areas = [{description: ' Back '}, {printAreaDescription: 'Front-left Chest'},
+                         {printArea: {description: 'Left Sleeve'}}, {printAreaTemplate: {description: 'Right Sleeve'}},
+                         {fallback: 'Front'}, {description: 'Deleted', crudAction: 'd'}];
+          for (const area of areas) area.printMethodDescription = 'HDD';
+          const scope = {copyOrder() {}, order: {getResource: () => ({designs: [{printAreas: areas}]})},
+                         $parent: {setPrintAreaTemplateDescription: area => area.fallback}};
+          window.angular = {element: () => ({scope: () => scope})};
+        ''' + reader + '\nreturn readEmbDesignMethods();')
+        self.assertEqual([area['description'] for area in rows[0]['print_areas']],
+                         ['Back', 'Front-left Chest', 'Left Sleeve', 'Right Sleeve', 'Front'])
+
     def test_scan_and_worker_include_ink_and_mixed_methods(self):
         self.driver.get('about:blank')
         source = (ROOT / 'crm-order-dark-mode-extension/content.js').read_text(encoding='utf-8')
@@ -150,11 +206,13 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
             document.getElementById('main-header-design-tabs').append(button);
           }
           const designs = ['Embroidery', 'HDD', 'Embroidery'].map(method => ({printAreas: [{printMethodDescription: method}]}));
-          designs[2].printAreas.push({printMethodDescription: 'Screen Printing'});
+          for (const design of designs) design.printAreas[0].description = 'Back';
+          designs[2].printAreas.push({description: 'Front-left Chest', printMethodDescription: 'Screen Printing'});
           const scope = {copyOrder() {}, order: {getResource: () => ({designs})}};
           window.angular = {element: () => ({scope: () => scope})};
         ''' + reader + bridge + helpers + scan + '''
           window.scanResult = null;
+          window.scanOversizeEmbDesigns = scanOversizeEmbDesigns;
           scanComplicatedEmbDesigns(() => {}).then(rows => window.scanResult = rows).catch(error => window.scanResult = {error: error.message});
         ''')
         rows = WebDriverWait(self.driver, 15).until(lambda d: d.execute_script('return window.scanResult'))
@@ -168,6 +226,17 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
             .printAreas[0].printMethodDescription = 'Screen Printing';
         ''')
         self.assertEqual(complicated_emb.resolve_designs(self.driver, rows[1:]), rows[1:])
+        self.driver.execute_script('''
+          window.scanResult = null;
+          scanOversizeEmbDesigns(() => {}).then(rows => window.scanResult = rows).catch(error => window.scanResult = {error: error.message});
+        ''')
+        oversize_rows = WebDriverWait(self.driver, 15).until(lambda d: d.execute_script('return window.scanResult'))
+        self.assertEqual(oversize_rows, [
+            {**rows[0], "print_areas": ["Back"]}, {**rows[1], "print_areas": ["Back"]},
+            {**rows[2], "print_areas": ["Back", "Front-left Chest"]},
+        ])
+        self.assertEqual(oversize_emb.resolve_designs(self.driver, oversize_rows[1:]), oversize_rows[1:])
+        self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, 'button[aria-selected="true"]').text, '3 - QTY: 20 Design Previews')
 
 
 if __name__ == "__main__":

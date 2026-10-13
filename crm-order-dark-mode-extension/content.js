@@ -1311,7 +1311,7 @@ function readComplicatedEmbMethods() {
   });
 }
 
-async function scanComplicatedEmbDesigns(onProgress) {
+async function scanComplicatedEmbDesigns(onProgress, includePrintAreas = false) {
   const tabs = visibleStockIssueDesignTabs();
   const original = activeStockIssueDesignTabNumber(tabs);
   if (!tabs.length || original === null) throw new Error('Could not identify the order design tabs. Refresh the order and try again.');
@@ -1319,6 +1319,8 @@ async function scanComplicatedEmbDesigns(onProgress) {
   const found = [];
   try {
     for (const tab of tabs) {
+      const metadata = methods.find(item => item.tab_number === tab.tabNumber);
+      if (metadata?.available === false) continue;
       onProgress(`Reading design tab ${tab.tabNumber} of ${tabs.length}...`);
       clickStockIssueDesignTab(tab.tabNumber);
       await stockIssueDelay(750);
@@ -1333,13 +1335,20 @@ async function scanComplicatedEmbDesigns(onProgress) {
         name = '';
         await stockIssueDelay(200);
       }
-      const metadata = methods.find(item => item.tab_number === tab.tabNumber);
       if (!metadata || !metadata.methods.length || metadata.methods.some(method => !method)) {
         throw new Error(`Could not determine the print method for tab ${tab.tabNumber}.`);
       }
       if (metadata.eligible) {
         if (!name) throw new Error(`Could not read Design Name for design tab ${tab.tabNumber}.`);
-        found.push({ tab_number: tab.tabNumber, design_name: name });
+        const design = { tab_number: tab.tabNumber, design_name: name };
+        if (includePrintAreas) {
+          const areas = (metadata.print_areas || []).map(area => area.description);
+          if (!areas.length || areas.some(area => !area) || new Set(areas.map(area => area.toLowerCase())).size !== areas.length) {
+            throw new Error(`Could not identify distinct print areas for tab ${tab.tabNumber}.`);
+          }
+          design.print_areas = areas;
+        }
+        found.push(design);
       }
     }
   } finally {
@@ -1350,9 +1359,15 @@ async function scanComplicatedEmbDesigns(onProgress) {
   return found;
 }
 
+async function scanOversizeEmbDesigns(onProgress) {
+  return scanComplicatedEmbDesigns(onProgress, true);
+}
+
 function showOrderAutomationConfirmation(automation, triggerButton, autoProcessButton) {
   document.getElementById("crm-order-automation-confirmation")?.remove();
   const asksFeedback = automation.key === "complicated_emb_to_hdd";
+  const selectsPrintAreas = automation.key === "oversize_emb_to_hdd";
+  const selectsDesigns = asksFeedback || selectsPrintAreas;
   const requiresReason = automation.requiresReason === true;
   const overlay = document.createElement("div");
   overlay.id = "crm-order-automation-confirmation";
@@ -1368,6 +1383,8 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
     width: "min(430px, 100%)", padding: "20px", borderRadius: "7px", color: "#0f172a", background: "#fff",
     boxShadow: "0 20px 45px rgba(15,23,42,.34)"
   });
+  dialog.style.maxHeight = '85vh';
+  dialog.style.overflowY = 'auto';
   const title = document.createElement("div");
   title.textContent = asksFeedback ? "Feedback required?" : `Queue ${automation.label}?`;
   Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "8px" });
@@ -1378,11 +1395,18 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
   Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
   dialog.append(title, explanation);
   let embroideryDesigns = null;
-  const selectedDesigns = () => Array.from(dialog.querySelectorAll('input[data-emb-tab]:checked'))
-    .map(input => embroideryDesigns.find(design => design.tab_number === Number(input.dataset.embTab)));
+  const selectedDesigns = () => {
+    if (!selectsPrintAreas) return Array.from(dialog.querySelectorAll('input[data-emb-tab]:checked'))
+      .map(input => embroideryDesigns.find(design => design.tab_number === Number(input.dataset.embTab)));
+    return (embroideryDesigns || []).map(design => ({
+      ...design,
+      print_areas: Array.from(dialog.querySelectorAll(`input[data-emb-tab="${design.tab_number}"][data-emb-area]:checked`))
+        .map(input => design.print_areas[Number(input.dataset.embArea)])
+    })).filter(design => design.print_areas.length);
+  };
   const designPicker = document.createElement('div');
-  if (asksFeedback) {
-    title.textContent = 'Complicated EMB';
+  if (selectsDesigns) {
+    title.textContent = automation.label;
     designPicker.textContent = 'Scanning order designs...';
     dialog.append(designPicker);
   }
@@ -1418,7 +1442,7 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
   });
   const refreshContinueButtonState = () => {
     const enabled = (!requiresReason || Boolean(String(reasonInput?.value || "").trim())) &&
-      (!asksFeedback || (embroideryDesigns !== null && selectedDesigns().length > 0));
+      (!selectsDesigns || (embroideryDesigns !== null && selectedDesigns().length > 0));
     continueButton.disabled = !enabled;
     const noButton = actions.querySelector('[data-emb-no]');
     if (noButton) noButton.disabled = !enabled;
@@ -1432,8 +1456,8 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
   continueButton.addEventListener("click", () => {
     const reason = String(reasonInput?.value || "").trim();
     if (requiresReason && !reason) return;
-    if (asksFeedback && (!embroideryDesigns || !selectedDesigns().length)) return;
-    const designs = asksFeedback ? selectedDesigns() : null;
+    if (selectsDesigns && (!embroideryDesigns || !selectedDesigns().length)) return;
+    const designs = selectsDesigns ? selectedDesigns() : null;
     overlay.remove();
     const selectedAutomation = asksFeedback
       ? { key: "complicated_emb_feedback", label: "Complicated EMB (Feedback)" }
@@ -1461,21 +1485,31 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
   dialog.append(actions);
   overlay.append(dialog);
   document.body.append(overlay);
-  if (asksFeedback) {
-    scanComplicatedEmbDesigns(message => { designPicker.textContent = message; }).then(designs => {
+  if (selectsDesigns) {
+    const scan = selectsPrintAreas ? scanOversizeEmbDesigns : scanComplicatedEmbDesigns;
+    scan(message => { designPicker.textContent = message; }).then(designs => {
       if (!overlay.isConnected) return;
       embroideryDesigns = designs;
-      designPicker.textContent = 'Select the design(s) for Complicated EMB:';
+      designPicker.textContent = selectsPrintAreas ? 'Select the affected print area(s) for each design:' : 'Select the design(s) for Complicated EMB:';
       for (const design of designs) {
-        const label = document.createElement('label');
-        Object.assign(label.style, { display: 'block', marginTop: '8px' });
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.dataset.embTab = String(design.tab_number);
-        input.checked = designs.length === 1;
-        input.addEventListener('change', refreshContinueButtonState);
-        label.append(input, document.createTextNode(` Tab ${design.tab_number}: ${design.design_name}`));
-        designPicker.append(label);
+        if (selectsPrintAreas) {
+          const heading = document.createElement('div');
+          heading.textContent = `Tab ${design.tab_number}: ${design.design_name}`;
+          Object.assign(heading.style, { marginTop: '12px', fontWeight: '700' });
+          designPicker.append(heading);
+        }
+        for (const [areaIndex, area] of (selectsPrintAreas ? design.print_areas.entries() : [[null, null]])) {
+          const label = document.createElement('label');
+          Object.assign(label.style, { display: 'block', marginTop: '8px' });
+          const input = document.createElement('input');
+          input.type = 'checkbox';
+          input.dataset.embTab = String(design.tab_number);
+          if (selectsPrintAreas) input.dataset.embArea = String(areaIndex);
+          input.checked = designs.length === 1 && (!selectsPrintAreas || design.print_areas.length === 1);
+          input.addEventListener('change', refreshContinueButtonState);
+          label.append(input, document.createTextNode(selectsPrintAreas ? ` ${area}` : ` Tab ${design.tab_number}: ${design.design_name}`));
+          designPicker.append(label);
+        }
       }
       refreshContinueButtonState();
     }).catch(error => { designPicker.textContent = error.message; });

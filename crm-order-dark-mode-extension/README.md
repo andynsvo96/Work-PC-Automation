@@ -127,3 +127,27 @@ explanation and the ink-conversion text before sending.
 After updating to 1.5.8, reload CRM Order Assistant at `chrome://extensions`,
 then refresh open CRM order pages. The worker changes load with the next queued
 task; an Automation app restart is not required for this update.
+
+## Oversize EMB print-area selection
+
+Reachout > Oversize EMB to HDD scans all available design tabs and lists their
+current print areas, such as `Front-left Chest` and `Back`. Readable ink and
+mixed-method designs remain available after switching from embroidery. Choose
+the affected area(s) under each Design Name, then select **Queue task**. A single
+design with one area is preselected; multiple designs or areas require selection.
+The scan returns you to the design tab that was open before scanning.
+
+The `[AUTO] Oversize Embroidery` template must contain `[PRINT] for [DESIGN]`.
+One email names each selected area with its own design: for example,
+`the Back for Team Logo and the Front-left Chest for Crest`. The worker preserves
+surrounding template formatting and links, rechecks selected Design Names and
+print areas before CRM notes and email preparation, and stops for review when
+an area changed, is unavailable, or cannot be identified uniquely. The existing
+email Activity confirmation, resend limit, and durable receipts still apply.
+
+Sheets Scanner runs without extension selections can resolve a single available
+design with one print area. Multiple designs or areas stop for selection through
+the extension instead of guessing which area is oversized.
+
+After updating to 1.5.10, restart the local Automation app, reload CRM Order
+Assistant at `chrome://extensions`, and refresh open CRM order pages.

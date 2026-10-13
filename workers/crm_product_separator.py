@@ -341,8 +341,12 @@ def _order_scope(driver, script, *args):
     return driver.execute_script(ORDER_SCOPE_BOOTSTRAP + "\n" + ANGULAR_APPLY_JS + "\n" + script, *args)
 
 
-def _order_has_screenprinting(driver):
+def _split_tabs_have_screenprinting(driver, plan):
+    source_tab_numbers = [int(split["source_tab_number"]) for split in plan.get("split_tabs") or []]
+    if not source_tab_numbers:
+        return False
     return _order_scope(driver, r"""
+        const sourceTabNumbers = new Set(arguments[0]);
         let describeMethod = null;
         for (let scope = s; scope; scope = scope.$parent) {
           if (typeof scope.setPrintMethodDescription === 'function') {
@@ -350,7 +354,8 @@ def _order_has_screenprinting(driver):
             break;
           }
         }
-        return (r.designs || []).filter(d => d && d.crudAction !== 'd').some(d =>
+        return (r.designs || []).some((d, index) =>
+          sourceTabNumbers.has(index + 1) && d && d.crudAction !== 'd' &&
           (d.printAreas || []).filter(a => a && a.crudAction !== 'd').some(a => {
             let method = a.printMethodDescription || a.methodDescription ||
               (a.printMethod || {}).description || (a.printMethodTemplate || {}).description;
@@ -358,7 +363,7 @@ def _order_has_screenprinting(driver):
             return /^screenprint(?:ing)?$/i.test(String(method || '').replace(/[\s_-]+/g, ''));
           })
         );
-    """) is True
+    """, source_tab_numbers) is True
 
 
 def _is_login_page(driver):
@@ -2787,8 +2792,8 @@ def run_product_separator_order(
             )
             return 0
 
-        # Capture the source print method before separation changes the designs.
-        report["screenprinting_warning"] = _order_has_screenprinting(driver)
+        # Only check source tabs being separated, before the split changes the designs.
+        report["screenprinting_warning"] = _split_tabs_have_screenprinting(driver, plan)
         live = _apply_live_split(driver, plan)
         report["live"] = live
         verification, remaining_split_tabs = _verify_split_persisted_after_save(

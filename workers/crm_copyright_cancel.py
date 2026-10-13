@@ -1094,6 +1094,7 @@ def _unresolved_placeholder_labels(text):
     value = str(text or "")
     labels = []
     checks = (
+        (re.compile(r"\[\s*PRINT\s*\]", re.IGNORECASE), "[PRINT]"),
         (re.compile(r"\[\s*DESIGN\s*\]", re.IGNORECASE), "[DESIGN]"),
         (ORDER_NUMBER_PLACEHOLDER_RE, ORDER_NUMBER_PLACEHOLDER_LABEL),
         (REASON_PLACEHOLDER_RE, REASON_PLACEHOLDER_LABEL),
@@ -5729,6 +5730,19 @@ def _fill_salesforce_email_from_salesforce_template(
     if missing:
         raise CopyrightCancelError(f"Salesforce template body is missing expected text: {', '.join(missing)}")
     body_replacement = None
+    if process.key == OVERSIZE_EMB_TO_HDD_PROCESS.key:
+        from oversize_emb import PRINT_DESIGN_PATTERN, print_design_text, replace_print_design_placeholder
+        replacement = print_design_text(designs)
+        if not re.search(PRINT_DESIGN_PATTERN, body_text, re.IGNORECASE):
+            raise CopyrightCancelError(f"{process.salesforce_template} template is missing [PRINT] for [DESIGN].")
+        if not replace_print_design_placeholder(driver, replacement):
+            raise CopyrightCancelError("Could not replace [PRINT] for [DESIGN] in the Salesforce email.")
+        state = _read_salesforce_email_state(driver)
+        updated_body = _clean_text(state.get("body", ""))
+        if replacement not in updated_body:
+            raise CopyrightCancelError("Salesforce email print areas and design names could not be verified.")
+        _validate_no_unresolved_email_placeholders(state.get("subject", ""), updated_body)
+        body_replacement = {"placeholder": "[PRINT] for [DESIGN]", "replacement": replacement, "state": state}
     if process.key in (COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key):
         from complicated_emb import design_text, replace_design_placeholder
         replacement = design_text(designs)
@@ -8757,6 +8771,7 @@ def send_salesforce_email_single_order(
     keep_browser_open_on_error=False,
     skip_from_selection=False,
     skip_ready_verify=False,
+    designs=None,
 ):
     process = _cancel_process_for_key(process) if isinstance(process, str) else process
     order_id = _normalize_order_id(order_id)
@@ -8771,12 +8786,17 @@ def send_salesforce_email_single_order(
         _wait_for_order_scope(driver, order_id=order_id)
         crm_handle = driver.current_window_handle
         contact = _wait_for_crm_contact_info(driver, order_id=order_id)
+        if (process.key == OVERSIZE_EMB_TO_HDD_PROCESS.key
+                and _clean_text(contact.get("salesforce_label", "")).casefold() != "salesforce contact"):
+            from oversize_emb import resolve_designs
+            designs = resolve_designs(driver, designs)
         salesforce = _prepare_and_maybe_send_salesforce_email(
             driver,
             crm_handle,
             order_id,
             contact["email"],
             contact=contact,
+            **({"designs": designs} if designs is not None else {}),
             dry_run=dry_run,
             process=process,
             reason=reason,
@@ -9021,6 +9041,16 @@ def _concise_sheet_scanner_error(error):
     return message
 
 
+def _sheet_scanner_email_error(details):
+    """An unsupported Contact email remains incomplete even after CRM edits."""
+    salesforce = (details or {}).get("salesforce") or {}
+    if salesforce.get("skip_reason") == "salesforce_contact":
+        return salesforce.get("message") or (
+            "Salesforce Contact account detected. Email not sent because this business account uses a different email structure."
+        )
+    return ""
+
+
 def process_single_order(
     order_id,
     reason,
@@ -9064,6 +9094,9 @@ def process_single_order(
         _wait_for_order_scope(driver, order_id=order_id)
         crm_handle = driver.current_window_handle
         contact = _wait_for_crm_contact_info(driver, order_id=order_id)
+        if process.key == OVERSIZE_EMB_TO_HDD_PROCESS.key:
+            from oversize_emb import resolve_designs
+            designs = resolve_designs(driver, designs)
         if process.key in (COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key):
             from complicated_emb import resolve_designs
             designs = resolve_designs(driver, designs)
@@ -9571,18 +9604,23 @@ def run_process_order(args):
             keep_browser_open_on_error=args.keep_browser_open_on_error,
             **({"designs": json.loads(args.emb_designs_json)} if getattr(args, "emb_designs_json", "") else {}),
         )
+        email_error = _sheet_scanner_email_error(details)
         cleared_sheet_row = None
-        if delete_sheet_row and not args.dry_run:
+        if not email_error and delete_sheet_row and not args.dry_run:
             cleared_sheet_row = _clear_retried_sheet_queue_row(
                 details["order_id"],
                 args.process,
                 args.reason,
                 expected_row_number=args.sheet_row_number,
             )
+        message = f"Sheet scanner {'dry run' if args.dry_run else 'automation'} complete for order {details['order_id']}."
+        if email_error:
+            message = f"Sheet scanner order failed: {email_error}"
+        elif (details.get("salesforce") or {}).get("skipped"):
+            message += f" {(details.get('salesforce') or {}).get('message')}"
         _write_result(
-            True,
-            f"Sheet scanner {'dry run' if args.dry_run else 'automation'} complete for order {details['order_id']}."
-            + (f" {(details.get('salesforce') or {}).get('message')}" if (details.get("salesforce") or {}).get("skipped") else ""),
+            not email_error,
+            message,
             result_file=args.result_file,
             action="process_order",
             cleared_sheet_row=cleared_sheet_row,
@@ -9590,7 +9628,7 @@ def run_process_order(args):
             **details,
         )
         _hold_browser_after_result_if_requested(args)
-        return 0
+        return 1 if email_error else 0
     except Exception as exc:
         _write_result(
             False,
@@ -9626,19 +9664,24 @@ def run_send_email_order(args):
             keep_browser_open_on_error=args.keep_browser_open_on_error,
             skip_from_selection=args.skip_from_selection,
             skip_ready_verify=args.skip_ready_verify,
+            **({"designs": json.loads(args.emb_designs_json)} if getattr(args, "emb_designs_json", "") else {}),
         )
+        email_error = _sheet_scanner_email_error(details)
+        message = f"Copyright-cancel Salesforce email {'dry run' if args.dry_run else 'send'} complete for order {details['order_id']}."
+        if email_error:
+            message = f"Copyright-cancel Salesforce email recovery failed: {email_error}"
+        elif (details.get("salesforce") or {}).get("skipped"):
+            message = (details.get("salesforce") or {}).get("message")
         _write_result(
-            True,
-            (details.get("salesforce") or {}).get("message")
-            if (details.get("salesforce") or {}).get("skipped") else
-            f"Copyright-cancel Salesforce email {'dry run' if args.dry_run else 'send'} complete for order {details['order_id']}.",
+            not email_error,
+            message,
             result_file=args.result_file,
             action="send_email_order",
             duration_seconds=round(time.monotonic() - started, 2),
             **details,
         )
         _hold_browser_after_result_if_requested(args)
-        return 0
+        return 1 if email_error else 0
     except Exception as exc:
         _write_result(
             False,
@@ -9981,6 +10024,9 @@ def run_process_queue(args):
             total=total_orders,
             order_id=row.order_id,
         )
+        email_error = _sheet_scanner_email_error(details)
+        if error is None and email_error:
+            error = CopyrightCancelError(email_error)
         if error is None:
             processed.append(
                 {
@@ -9997,13 +10043,16 @@ def run_process_queue(args):
         error_text = _concise_sheet_scanner_error(error)
         failures.append(
             {
+                **(details or {}),
                 "row_number": row.row_number,
                 "order_id": row.order_id,
                 "issue_type": row.issue_type,
                 "process": row.process_key,
                 "reason": row.reason,
                 "error": error_text,
+                "message": error_text,
                 "error_type": type(error).__name__,
+                "success": False,
             }
         )
         if not args.dry_run:
@@ -10045,15 +10094,6 @@ def run_process_queue(args):
         if eligible
         else "No eligible sheet scanner rows found."
     )
-    unsent_contact_orders = [
-        str(details["order_id"]) for details in processed
-        if (details.get("salesforce") or {}).get("skip_reason") == "salesforce_contact"
-    ]
-    if unsent_contact_orders:
-        message += (
-            " Salesforce Contact account detected; email not sent for order(s): "
-            + ", ".join(unsent_contact_orders) + "."
-        )
     _write_result(
         ok,
         message,
@@ -10091,7 +10131,7 @@ def main(argv=None):
     parser.add_argument("--order-id", default="")
     parser.add_argument("--order-url", default="")
     parser.add_argument("--reason", default="", help="Required for full cancellation processing; written to CRM Sales Notes.")
-    parser.add_argument("--emb-designs-json", default="", help="Selected embroidery tabs and Design Names from the extension.")
+    parser.add_argument("--emb-designs-json", default="", help="Selected embroidery tabs, Design Names, and Oversize EMB print areas from the extension.")
     parser.add_argument("--process", choices=sorted(CANCEL_PROCESSES_BY_KEY), default=COPYRIGHT_CANCEL_PROCESS.key)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument(

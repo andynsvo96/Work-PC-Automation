@@ -12788,10 +12788,15 @@ def _normalize_complicated_emb_request(data):
     return {"designs": normalize_designs((data or {}).get("designs"))}
 
 
-for _emb_key in ("complicated_emb_to_hdd", "complicated_emb_feedback"):
+def _normalize_oversize_emb_request(data):
+    from workers.oversize_emb import normalize_designs
+    return {"designs": normalize_designs((data or {}).get("designs"))}
+
+
+for _emb_key in ("complicated_emb_to_hdd", "complicated_emb_feedback", "oversize_emb_to_hdd"):
     CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS[_emb_key].update({
         "structured_request": True,
-        "request_validator": _normalize_complicated_emb_request,
+        "request_validator": _normalize_oversize_emb_request if _emb_key == "oversize_emb_to_hdd" else _normalize_complicated_emb_request,
         "task_arguments": lambda order_id, reason="", request_data=None, process_key=_emb_key: {
             "order_id": order_id, "process": process_key, "reason": str(reason or "").strip(),
             "designs": (request_data or {}).get("designs"),
