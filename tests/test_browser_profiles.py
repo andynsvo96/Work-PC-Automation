@@ -1,4 +1,5 @@
 import os
+import socket
 import sys
 import unittest
 from pathlib import Path
@@ -14,6 +15,45 @@ import paycom_hours
 
 
 class BrowserProfileRuntimeTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows socket handle inheritance regression")
+    def test_chromedriver_does_not_keep_parent_dashboard_port_open(self):
+        # Use an inheritable dashboard socket and a harmless Python child in
+        # place of ChromeDriver. The port must be reusable while the child is
+        # still alive, just as it must be after a dashboard restart.
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            listener.set_inheritable(True)
+            address = listener.getsockname()
+            services = []
+
+            def start_child(*, service, options):
+                services.append(service)
+                service._start_process(service.path)
+                return mock.Mock()
+
+            with (
+                mock.patch.object(automation_runtime.ChromeDriverManager, "install", return_value=sys.executable),
+                mock.patch.object(automation_runtime.Service, "command_line_args", return_value=[
+                    "-c", "import sys; sys.stdin.buffer.read(1)",
+                ]),
+                mock.patch.object(automation_runtime.webdriver, "Chrome", side_effect=start_child),
+            ):
+                try:
+                    automation_runtime._start_chrome_driver(mock.Mock())
+                    child = services[0].process
+                    self.assertIsNone(child.poll())
+                    listener.close()
+                    with socket.socket() as replacement:
+                        replacement.bind(address)
+                        replacement.listen(1)
+                finally:
+                    for service in services:
+                        child = service.process
+                        if child.poll() is None:
+                            child.terminate()
+                        child.communicate(timeout=5)
+
     def test_profile_in_use_matches_only_the_exact_chrome_profile(self):
         profile = "/tmp/profile-in-use"
         with mock.patch.object(
