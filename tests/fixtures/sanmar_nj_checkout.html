@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
 <meta charset="utf-8">
-<title>Local NJ pickup and CRM Add box fixture</title>
+<title>Local SanMar routing and CRM Add box fixture</title>
 <style>
   body { font: 16px Arial; padding: 24px; }
   label, select, input, button { margin: 8px; }
@@ -11,6 +11,8 @@
 <body></body>
 <script>
 const page = new URLSearchParams(location.search).get('page') || 'checkout';
+const warehouseNames = {nj: 'Robbinsville, NJ', va: 'Richmond, VA', az: 'Phoenix, AZ', nv: 'Reno, NV'};
+const sources = (new URLSearchParams(location.search).get('warehouses') || 'nj').split(',').map((key) => warehouseNames[key]);
 const body = document.body;
 const escapeText = (text) => String(text).replace(/[&<>"']/g, (ch) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
 if (page === 'checkout') {
@@ -20,13 +22,26 @@ if (page === 'checkout') {
     <div><label><input id="pickup" type="radio" name="fulfillment">Pick Up at warehouse</label>
       <select id="warehouse"><option>Select warehouse</option><option value="nj">Robbinsville, NJ</option><option>Richmond, VA</option></select>
     </div>
+    <div><label><input type="radio" name="address" value="123 EZ TEES INC" checked>123 EZ TEES INC</label>
+      <label><input type="radio" name="address" value="Mach 6 Manufacturing">Mach 6 Manufacturing (CA)</label></div>
+    <button id="confirm-address">Confirm Address</button>
+    <section id="shipping-methods"></section>
     <button id="payment">Proceed To Payment</button>`;
+  document.querySelector('#confirm-address').onclick = () => {
+    document.querySelector('#shipping-methods').innerHTML = '<h2>Shipping Method</h2>' + sources.map((name, index) => `
+      <h3>Warehouse: ${escapeText(name)}</h3><table><tbody>
+        <tr><td><label><input type="radio" name="method-${index}" value="fedex" checked>FedEx Oct 6, 2026</label></td></tr>
+        <tr><td><label><input type="radio" name="method-${index}" value="ups">UPS Ground Oct 6, 2026</label></td></tr>
+      </tbody></table>`).join('');
+  };
   document.querySelector('#payment').onclick = () => {
     const pickup = document.querySelector('#pickup').checked;
     const warehouse = document.querySelector('#warehouse').selectedOptions[0].textContent;
-    window.fixtureFulfillment = { pickup, warehouse };
+    const address = document.querySelector('input[name="address"]:checked').value;
+    const methods = sources.map((name, index) => ({warehouse: name, method: document.querySelector(`input[name="method-${index}"]:checked`)?.value || ''}));
+    window.fixtureFulfillment = { pickup, warehouse, address, methods };
     body.innerHTML = `<h1>Review &amp; Submit</h1><p>Payment method: Net</p>
-      <p>${pickup ? 'Pickup' : 'UPS shipping'}: ${escapeText(warehouse)}</p>
+      ${pickup ? `<p>Pickup: ${escapeText(warehouse)}</p>` : `<p>Ship To: ${escapeText(address)}</p>` + methods.map(({warehouse, method}) => `<p>Warehouse: ${escapeText(warehouse)} Shipping Method: ${method === 'ups' ? 'UPS Ground' : 'FedEx'}</p>`).join('')}
       <label for="po">Customer PO</label><input id="po" name="customerPo" style="width:320px">
       <button id="submit">Submit Order</button>`;
     document.querySelector('#submit').onclick = () => {

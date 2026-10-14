@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Local split-order stock-record fixture</title>
+<style>
+  body { font: 16px Arial; padding: 24px; }
+  #tabs { display: flex; gap: 8px; }
+  #tabs button { width: 140px; }
+  .design { display: none; }
+  .design.active { display: block; }
+  th, td { padding: 8px; }
+  .stock-row { background: rgb(240, 240, 145); }
+  .row { display: flex; gap: 24px; padding: 8px; }
+</style>
+<body>
+  <h1>Order 5000001</h1>
+  <p>Due Date: 10/20/2026 Production Date: 10/19/2026</p>
+  <nav id="tabs"></nav>
+  <main id="designs"></main>
+  <section><h2>Production Notes</h2><p>Sanmar: H-NoteOnly123-I501 10/13/2026</p></section>
+  <div class="modal" style="display:none"><table>
+    <tr><th>PO</th><th>Vendor Order #</th><th>Order Date</th></tr>
+    <tr><td>Sanmar</td><td>H-DraftOnly123</td><td>10/13/2026</td></tr>
+  </table></div>
+</body>
+<script>
+const grid = new URLSearchParams(location.search).get('layout') === 'grid';
+for (let number = 1; number <= 9; number++) {
+  const button = document.createElement('button');
+  button.textContent = `H-Split${700 + number} ${number} - QTY: 1 Design Previews`;
+  button.onclick = () => {
+    document.querySelectorAll('.design').forEach((node) => node.classList.remove('active'));
+    document.querySelector(`#design-${number}`).classList.add('active');
+  };
+  document.querySelector('#tabs').append(button);
+  const design = document.createElement('section');
+  design.id = `design-${number}`;
+  design.className = `design${number === 1 ? ' active' : ''}`;
+  const row = [4, 6].includes(number) ? '' : grid
+    ? `<div class="row stock-row"><span>Sanmar:</span><span>H-Source${500 + number}-I501</span><span></span><span>10/13/2026</span></div>`
+    : `<tr class="stock-row"><td>Sanmar</td><td>H-Source${500 + number}-I501</td><td></td><td>10/13/2026</td><td></td><td></td></tr>`;
+  const records = grid
+    ? `<div class="stock-records"><div class="row"><span>PO</span><span>Vendor Order #</span><span>Order Date</span><span>Est. Delivery</span><span>Shipped To</span></div>${row}</div>`
+    : `<table class="stock-records"><thead><tr><th></th><th>PO</th><th>Vendor Order #</th><th>Order Date</th><th>Est. Delivery</th><th>Shipped To</th></tr></thead><tbody>${row}</tbody></table>`;
+  design.innerHTML = `<div class="product"><h2>Items on this design</h2>
+    <p>PC54 Cotton T-Shirt - Alpha Stock</p><p>Stock Ordered: False</p></div>
+    <section><h2>Order Goods from Vendor</h2>${records}</section>`;
+  document.querySelector('#designs').append(design);
+}
+</script>
+</html>

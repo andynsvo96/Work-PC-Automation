@@ -50,16 +50,53 @@ class NjLocalBrowserTests(unittest.TestCase):
         self.driver.execute_script("localStorage.clear();")
         self.driver.refresh()
 
-    def test_real_pickup_selection_and_customer_po_for_both_destinations(self):
-        for destination in ("inhouse", "mach6"):
-            with self.subTest(destination=destination), mock.patch.object(worker.time, "sleep"):
-                self.driver.get(self.fixture + "?page=checkout")
-                shipping = worker._select_shipping_destination(self.driver, destination, worker.NJ_WAREHOUSE)
-                self.assertEqual(shipping["ship_mode"], "pickup")
-                self.assertEqual(self.driver.execute_script("return window.fixtureFulfillment;"), {"pickup": True, "warehouse": "Robbinsville, NJ"})
-                self.assertEqual(worker._fill_review_and_submit(self.driver, "H-CJVillafra302", dry_run=True), "dry_run_review_ready")
-                self.assertEqual(self.driver.execute_script("return document.getElementById('po').value;"), "H-CJVillafra302")
-                self.assertNotIn("UPS", self.driver.execute_script("return document.body.innerText;"))
+    def test_real_pickup_selection_and_customer_po_for_inhouse_nj_group(self):
+        with mock.patch.object(worker.time, "sleep"):
+            self.driver.get(self.fixture + "?page=checkout")
+            shipping = worker._select_shipping_destination(self.driver, "inhouse", worker.NJ_WAREHOUSE)
+            self.assertEqual(shipping["ship_mode"], "pickup")
+            fulfillment = self.driver.execute_script("return window.fixtureFulfillment;")
+            self.assertTrue(fulfillment["pickup"])
+            self.assertEqual(fulfillment["warehouse"], "Robbinsville, NJ")
+            self.assertEqual(worker._fill_review_and_submit(self.driver, "H-CJVillafra302", dry_run=True, shipping_requirements={"order_type": "inhouse", "shipping": shipping}), "dry_run_review_ready")
+            self.assertEqual(self.driver.execute_script("return document.getElementById('po').value;"), "H-CJVillafra302")
+            self.assertNotIn("UPS", self.driver.execute_script("return document.body.innerText;"))
+
+    def test_real_mach6_nj_single_and_multi_boxes_select_ups_with_same_po(self):
+        for keys, names in (("nj", [worker.NJ_WAREHOUSE]), ("va,nj", ["Richmond, VA", worker.NJ_WAREHOUSE])):
+            with self.subTest(warehouses=names), mock.patch.object(worker.time, "sleep"):
+                self.driver.get(self.fixture + "?page=checkout&warehouses=" + keys)
+                multi = len(names) > 1
+                shipping = worker._select_shipping_destination(self.driver, "mach6", None if multi else names[0], multi_warehouse=multi)
+                eta = worker._select_ups_eta_for_shipping_plan(self.driver, "mach6", warehouse=None if multi else names[0], selected_warehouses=names, multi_warehouse=multi)
+                self.assertEqual(eta["eta"], worker.datetime(2026, 10, 6).date())
+                worker._click_sanmar_button(self.driver, r"Proceed\s+To\s+Payment")
+                fulfillment = self.driver.execute_script("return window.fixtureFulfillment;")
+                self.assertFalse(fulfillment["pickup"])
+                self.assertEqual(fulfillment["address"], "Mach 6 Manufacturing")
+                self.assertEqual(fulfillment["methods"], [{"warehouse": name, "method": "ups"} for name in names])
+                self.assertEqual(worker._fill_review_and_submit(self.driver, "H-Mach6Test", dry_run=True, shipping_requirements={"order_type": "mach6", "shipping": shipping}), "dry_run_review_ready")
+                self.assertEqual(self.driver.execute_script("return document.getElementById('po').value;"), "H-Mach6Test")
+                self.assertEqual(worker._fill_review_and_submit(self.driver, "H-Mach6Test", shipping_requirements={"order_type": "mach6", "shipping": shipping}), "submitted")
+
+    def test_real_mach6_review_blocks_changed_delivery_method(self):
+        with mock.patch.object(worker.time, "sleep"):
+            self.driver.get(self.fixture + "?page=checkout")
+            shipping = worker._select_shipping_destination(self.driver, "mach6", worker.NJ_WAREHOUSE)
+            self.driver.execute_script("document.getElementById('pickup').click(); document.getElementById('warehouse').value = 'nj';")
+            worker._click_sanmar_button(self.driver, r"Proceed\s+To\s+Payment")
+            with self.assertRaisesRegex(RuntimeError, "UPS shipping was not confirmed"):
+                worker._fill_review_and_submit(self.driver, "H-Mach6Test", shipping_requirements={"order_type": "mach6", "shipping": shipping})
+            self.assertNotIn("Thank You", self.driver.execute_script("return document.body.innerText;"))
+
+    def test_real_subcontractor_banner_classification(self):
+        for name, expected in (("Mach 6 Manufacturing (CA)", "mach6"), ("Mach6 Manufacturing (CA)", "mach6"), ("Other Manufacturing", "unsupported_subcontractor")):
+            with self.subTest(name=name):
+                self.driver.get(self.fixture + "?page=crm")
+                self.driver.execute_script("const banner = document.createElement('div'); banner.style.background = '#ff00a0'; banner.textContent = 'Subcontractor: ' + arguments[0] + ' Preferred File Types: Raster PNG'; document.body.prepend(banner);", name)
+                order = worker._extract_order_data(self.driver, "5000001")
+                self.assertEqual(order["order_type"], expected)
+                self.assertTrue(order["subcontractor_banner_present"])
 
     def test_add_only_rows_do_not_match_original_po_guards(self):
         self.driver.execute_script("localStorage.setItem('fixture_rows', JSON.stringify(['ADD-H-CJVillafra302']));")
@@ -78,6 +115,46 @@ class NjLocalBrowserTests(unittest.TestCase):
             worker._verify_crm_production_note(self.driver, "5000001", note)
             self.assertEqual(worker._append_crm_production_note(self.driver, "5000001", note), "already_present")
         self.assertEqual(self.driver.execute_script("return localStorage.getItem('fixture_notes');"), note)
+
+    def test_split_order_only_orders_tabs_without_source_stock_records(self):
+        fixture = (ROOT / "tests" / "fixtures" / "crm_split_stock_tabs.html").as_uri()
+        for layout in ("table", "grid"):
+            with (
+                self.subTest(layout=layout),
+                mock.patch.object(worker, "_open_target_order", side_effect=lambda *args, **kwargs: self.driver.get(fixture + "?layout=" + layout)),
+                mock.patch.object(worker, "_require_crm_order_ready_once_with_refresh"),
+                mock.patch.object(worker, "refresh_if_crm_challenge_attempts_exceeded", return_value=False),
+                mock.patch.object(worker, "_nj_stock_order_known", return_value=False),
+                mock.patch.object(worker, "_saved_shipping_bypass_confirmation", return_value=None),
+                mock.patch.object(worker, "_historical_shipping_bypass_po_exists", return_value=False),
+                mock.patch.object(worker, "_publish_status"),
+                mock.patch.object(worker.time, "sleep"),
+                mock.patch.object(worker, "_process_open_order", side_effect=lambda *args, **kwargs: worker._result("5000001", True, "shipping_bypass_ordered", "Fixture purchase")) as process,
+            ):
+                results = worker._run_order_with_drivers(self.driver, object(), "5000001")
+                self.assertEqual([call.kwargs["stock_tab_index"] for call in process.call_args_list], [4, 6])
+                self.assertEqual([item["stock_tab_index"] for item in results if item["outcome"] == "already_stock_ordered"], [1, 2, 3, 5, 7, 8, 9])
+                for item in results:
+                    if item["outcome"] == "already_stock_ordered":
+                        self.assertNotEqual(item["order"]["active_panel_stock_orders"][0]["po"], item["order"]["po"])
+
+    def test_active_stock_records_ignore_hidden_tabs_notes_and_modal_drafts(self):
+        fixture = (ROOT / "tests" / "fixtures" / "crm_split_stock_tabs.html").as_uri()
+        self.driver.get(fixture)
+        with mock.patch.object(worker.time, "sleep"), mock.patch.object(worker, "refresh_if_crm_challenge_attempts_exceeded", return_value=False):
+            worker._activate_stock_tab(self.driver, 3)
+            order = worker._extract_order_data(self.driver, "5000001")
+        self.assertEqual(order["active_panel_stock_orders"], [])
+        self.assertFalse(order["active_panel_stock_ordered"])
+
+    def test_active_stock_record_does_not_depend_on_yellow_background(self):
+        fixture = (ROOT / "tests" / "fixtures" / "crm_split_stock_tabs.html").as_uri()
+        self.driver.get(fixture)
+        self.driver.execute_script("document.querySelectorAll('.stock-row').forEach(row => row.style.background = 'rgb(30,30,30)');")
+        with mock.patch.object(worker, "refresh_if_crm_challenge_attempts_exceeded", return_value=False):
+            order = worker._extract_order_data(self.driver, "5000001")
+        self.assertEqual(order["active_panel_stock_orders"], [{"vendor": "Sanmar", "po": "H-Source501-I501"}])
+        self.assertTrue(order["active_panel_stock_ordered"])
 
 
 if __name__ == "__main__":

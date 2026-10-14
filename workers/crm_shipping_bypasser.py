@@ -76,6 +76,7 @@ CRM_STATE_PATH = state_file("crm_state.json")
 SHIPPING_BYPASS_PENDING_SUBMISSIONS_PATH = state_file("shipping_bypasser_pending_submissions.json")
 NJ_STOCK_ORDER_STATE_DIR = state_file("shipping_bypass_nj_orders")
 NJ_WAREHOUSE = "Robbinsville, NJ"
+MACH6_SUBCONTRACTOR_PATTERN = re.compile(r"^mach\s*6\s+manufacturing\b", flags=re.I)
 WAREHOUSE_DISTANCE = {
     "inhouse": [
         "Robbinsville, NJ",
@@ -1045,6 +1046,30 @@ function activePanelTextFor(headingItem) {
   }
   return best;
 }
+function activePanelStockOrders() {
+  // Split orders retain the source design's vendor PO, even when CRM assigns
+  // a new PO to its tab. Read actual visible stock records independently of
+  // that new PO; notes, modal drafts and hidden designs are not stock records.
+  const records = [];
+  const vendorPo = /^(sanmar(?:\s*\(bulk\))?|s\s*&\s*s(?:\s+activewear)?|ssactivewear|s\s+and\s+s(?:\s+activewear)?|local\s+inventory)\s*:?\s+([a-z0-9][a-z0-9._/-]{1,89})(?:\s|$)/i;
+  function stockRecordContainer(row) {
+    for (let node = row.parentElement; node && node !== document.body; node = node.parentElement) {
+      const text = normalize(node.innerText || '');
+      if (/items on this design|production notes|sales notes/i.test(text)) return false;
+      if (/\bPO\b/i.test(text) && /vendor\s+order\s*#/i.test(text) && /order\s+date/i.test(text)) return true;
+    }
+    return false;
+  }
+  for (const item of all) {
+    const row = item.node;
+    if (!row.matches('tr,[role="row"],.row') || row.closest('.modal')) continue;
+    const match = item.text.match(vendorPo);
+    if (!match || !/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/.test(item.text) || !stockRecordContainer(row)) continue;
+    const record = { vendor: match[1], po: match[2] };
+    if (!records.some((existing) => existing.vendor === record.vendor && existing.po === record.po)) records.push(record);
+  }
+  return records;
+}
 function findLabel(label) {
   const rx = new RegExp('^' + label + ':?$', 'i');
   return after.filter((item) => rx.test(item.text)).sort((a, b) => a.y - b.y || a.x - b.x)[0] || null;
@@ -1155,6 +1180,7 @@ return {
   items,
   activeTabText: activeTab ? activeTab.text : '',
   activePanelText: activePanelTextFor(heading),
+  activePanelStockOrders: activePanelStockOrders(),
 };
 """
 
@@ -1174,6 +1200,7 @@ def _extract_order_data(driver, order_id, tab_context=None):
     tab_text = _normalize_text(data.get("activeTabText"))
     context_text = _normalize_text(" ".join(str(tab_context.get(key) or "") for key in ("label", "tab_label", "stock_tab_label")))
     active_panel_text = _normalize_text(data.get("activePanelText"))
+    active_panel_stock_orders = data.get("activePanelStockOrders") if isinstance(data.get("activePanelStockOrders"), list) else []
     po_match = (
         re.search(r"\b(H-[A-Za-z0-9]+)\b", context_text, flags=re.I)
         or re.search(r"\b(H-[A-Za-z0-9]+)\b", tab_text, flags=re.I)
@@ -1231,9 +1258,14 @@ def _extract_order_data(driver, order_id, tab_context=None):
         }
         product["is_gildan"] = _is_gildan_product(product)
         products.append(product)
-    subcontractor_match = re.search(r"Subcontractor:\s*([^|]+?)(?:\s*Preferred|\s*$)", body_text, flags=re.I)
+    subcontractor_match = re.search(r"\bSubcontractor\s*:\s*([^|]+?)(?:\s*Preferred|\s*$)", body_text, flags=re.I)
     subcontractor = _normalize_text(subcontractor_match.group(1) if subcontractor_match else "")
-    order_type = "mach6" if "mach 6" in subcontractor.lower() else "inhouse"
+    subcontractor_banner_present = bool(re.search(r"\bSubcontractor\s*:", body_text, flags=re.I))
+    order_type = (
+        "mach6" if MACH6_SUBCONTRACTOR_PATTERN.match(subcontractor)
+        else "unsupported_subcontractor" if subcontractor_banner_present
+        else "inhouse"
+    )
     shipping_class = _order_shipping_class_from_text(body_text) or "rush"
     first_product = products[0] if products else {}
     return {
@@ -1249,12 +1281,14 @@ def _extract_order_data(driver, order_id, tab_context=None):
         "quantities": first_product.get("quantities", {}),
         "products": products,
         "subcontractor": subcontractor,
+        "subcontractor_banner_present": subcontractor_banner_present,
         "order_type": order_type,
         "shipping_class": shipping_class,
         "stock_tab_index": tab_context.get("stock_tab_index"),
         "stock_tab_count": tab_context.get("stock_tab_count"),
         "stock_tab_label": _stock_tab_summary_label(context_text or tab_text),
-        "active_panel_stock_ordered": _text_indicates_stock_already_ordered(active_panel_text),
+        "active_panel_stock_orders": active_panel_stock_orders,
+        "active_panel_stock_ordered": bool(active_panel_stock_orders) or _text_indicates_stock_already_ordered(active_panel_text),
     }
 
 
@@ -2960,10 +2994,14 @@ def _warehouse_usable_qty(line, warehouse, size, stock_buffer=SANMAR_WAREHOUSE_S
     return max(0, _warehouse_available_qty(line, warehouse, size) - max(0, _stock_qty(stock_buffer)))
 
 
-def _choose_multi_warehouse_plan(product_lines, order_type, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
+def _choose_multi_warehouse_plan(product_lines, order_type, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER, include_nj=None):
     lines = product_lines if isinstance(product_lines, list) else []
-    # This allocation is one vendor purchase; NJ belongs in its own pickup order.
-    priority = [warehouse for warehouse in _warehouse_priority(order_type) if warehouse != "Robbinsville, NJ"]
+    if order_type not in WAREHOUSE_DISTANCE:
+        return None
+    # Mach6 ships every box, including NJ. In-house shipped ADD carts exclude NJ.
+    if include_nj is None:
+        include_nj = order_type == "mach6"
+    priority = [warehouse for warehouse in _warehouse_priority(order_type) if include_nj or warehouse != NJ_WAREHOUSE]
     expanded_lines = []
     pieces_by_warehouse = {}
     warehouses = []
@@ -2977,6 +3015,9 @@ def _choose_multi_warehouse_plan(product_lines, order_type, stock_buffer=SANMAR_
             remaining = needed
             full_warehouse = None
             for warehouse in priority:
+                # Prefer nearer partial stock to an unnecessary full NJ box for Mach6.
+                if order_type == "mach6" and warehouse == NJ_WAREHOUSE:
+                    continue
                 if _stock_qty_can_cover_order(_warehouse_available_qty(line, warehouse, size), needed, stock_buffer=stock_buffer):
                     full_warehouse = warehouse
                     break
@@ -3032,49 +3073,57 @@ def _single_warehouse_plan(product_lines, warehouse):
 
 
 def _choose_warehouse_plan(product_lines, order_type, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
-    nj_lines = []
-    remaining_lines = []
-    for line in product_lines if isinstance(product_lines, list) else []:
-        nj_quantities = {}
-        remaining_quantities = {}
-        for size, raw_qty in (line.get("quantities") or {}).items():
-            needed = _stock_qty(raw_qty)
-            if needed <= 0:
-                continue
-            nj_qty = min(needed, _warehouse_usable_qty(line, NJ_WAREHOUSE, size, stock_buffer=stock_buffer))
-            if nj_qty:
-                nj_quantities[size] = nj_qty
-            if needed > nj_qty:
-                remaining_quantities[size] = needed - nj_qty
-        if nj_quantities:
-            nj_lines.append(dict(line, quantities=nj_quantities))
-        if remaining_quantities:
-            remaining_lines.append(dict(
-                line,
-                quantities=remaining_quantities,
-                inventory=[row for name, row in _inventory_by_warehouse(line.get("inventory")).items() if name != NJ_WAREHOUSE],
-            ))
-    if nj_lines:
-        nj_plan = _single_warehouse_plan(nj_lines, NJ_WAREHOUSE)
-        if not remaining_lines:
-            return NJ_WAREHOUSE, nj_plan
-        add_warehouse = _choose_common_warehouse(remaining_lines, order_type, stock_buffer=stock_buffer)
-        add_plan = (
-            _single_warehouse_plan(remaining_lines, add_warehouse)
-            if add_warehouse else _choose_multi_warehouse_plan(remaining_lines, order_type, stock_buffer=stock_buffer)
-        )
-        if not add_plan:
-            return None, None
-        return None, {
-            "mode": "nj_pickup_and_add",
-            "warehouses": [NJ_WAREHOUSE, *add_plan["warehouses"]],
-            "nj_plan": nj_plan,
-            "add_plan": add_plan,
-        }
+    if order_type not in WAREHOUSE_DISTANCE:
+        return None, None
+    if order_type == "mach6":
+        non_nj_lines = [dict(
+            line,
+            inventory=[row for name, row in _inventory_by_warehouse(line.get("inventory")).items() if name != NJ_WAREHOUSE],
+        ) for line in product_lines]
+        warehouse = _choose_common_warehouse(non_nj_lines, order_type, stock_buffer=stock_buffer)
+        if warehouse:
+            return warehouse, _single_warehouse_plan(product_lines, warehouse)
+        plan = _choose_multi_warehouse_plan(non_nj_lines, order_type, stock_buffer=stock_buffer)
+        if plan:
+            return None, plan
     warehouse = _choose_common_warehouse(product_lines, order_type, stock_buffer=stock_buffer)
     if warehouse:
         return warehouse, _single_warehouse_plan(product_lines, warehouse)
-    return None, _choose_multi_warehouse_plan(product_lines, order_type, stock_buffer=stock_buffer)
+    plan = _choose_multi_warehouse_plan(product_lines, order_type, stock_buffer=stock_buffer, include_nj=True)
+    return None, _inhouse_nj_split_plan(plan) if order_type == "inhouse" else plan
+
+
+def _inhouse_nj_split_plan(plan):
+    if not plan or NJ_WAREHOUSE not in plan["warehouses"] or len(plan["warehouses"]) < 2:
+        return plan
+    nj_lines = [line for line in plan["expanded_lines"] if line["warehouse"] == NJ_WAREHOUSE]
+    add_warehouses = [name for name in plan["warehouses"] if name != NJ_WAREHOUSE]
+    add_plan = dict(
+        plan,
+        mode="multi_warehouse" if len(add_warehouses) > 1 else "single_warehouse",
+        warehouses=add_warehouses,
+        expanded_lines=[line for line in plan["expanded_lines"] if line["warehouse"] != NJ_WAREHOUSE],
+        pieces_by_warehouse={name: plan["pieces_by_warehouse"][name] for name in add_warehouses},
+        box_count=len(add_warehouses),
+    )
+    return {
+        "mode": "nj_pickup_and_add",
+        "warehouses": [NJ_WAREHOUSE, *add_warehouses],
+        "nj_plan": _single_warehouse_plan(nj_lines, NJ_WAREHOUSE),
+        "add_plan": add_plan,
+    }
+
+
+def _production_destination_error(order):
+    order_type = order.get("order_type")
+    subcontractor = _normalize_text(order.get("subcontractor"))
+    has_banner = bool(order.get("subcontractor_banner_present") or subcontractor)
+    is_mach6 = bool(MACH6_SUBCONTRACTOR_PATTERN.match(subcontractor))
+    if order_type == "inhouse" and not has_banner:
+        return None
+    if order_type == "mach6" and is_mach6:
+        return None
+    return f"Unsupported or unclear production destination: {subcontractor or order_type or 'unknown'}. Review the subcontractor banner before ordering stock."
 
 
 def _late_eta_stock_context(product_lines, order_type, selected_warehouses, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
@@ -4267,17 +4316,11 @@ def _validate_sanmar_cart_contents(driver, product_lines, warehouse=None, cart_l
 
 
 def _select_shipping_destination(driver, order_type, warehouse=None, multi_warehouse=False):
-    if multi_warehouse and warehouse == NJ_WAREHOUSE:
+    if order_type not in WAREHOUSE_DISTANCE:
+        raise RuntimeError("Unsupported production destination; no SanMar shipping was selected.")
+    if order_type == "inhouse" and multi_warehouse and warehouse == NJ_WAREHOUSE:
         raise RuntimeError("NJ stock must be ordered separately for pickup.")
-    if multi_warehouse:
-        _click_radio_near_text(driver, "Ship to an address")
-        target = "Mach 6 Manufacturing" if order_type == "mach6" else "123 EZ TEES INC"
-        _click_radio_near_text(driver, target)
-        _wait_for_text(driver, re.escape(target), timeout=5)
-        _click_sanmar_button(driver, r"Confirm\s+Address")
-        time.sleep(2.0)
-        return {"ship_mode": "ship", "address": target}
-    if warehouse == NJ_WAREHOUSE:
+    if order_type == "inhouse" and warehouse == NJ_WAREHOUSE:
         _click_radio_near_text(driver, "Pick Up at warehouse")
         _select_dropdown_option_containing(driver, "Robbinsville")
         if not _sanmar_nj_pickup_selected(driver):
@@ -4419,13 +4462,15 @@ for (const radio of radios) {
   radio.click();
   radio.dispatchEvent(new Event('change', { bubbles: true }));
   const dateMatch = dateFrom(text);
-  return { success: true, etaText: dateMatch ? dateMatch[0] : '', selected, text: text.slice(0, 300) };
+  return { success: true, etaText: dateMatch ? dateMatch[0] : '', selected, confirmed: Boolean(radio.checked), text: text.slice(0, 300) };
 }
 return { success: false };
 """
     result = driver.execute_script(script)
     if not isinstance(result, dict) or not result.get("success"):
         raise RuntimeError("UPS shipping option was not available.")
+    if result.get("confirmed") is False:
+        raise RuntimeError("UPS shipping option did not remain selected.")
     time.sleep(0.5)
     eta = _parse_sanmar_eta(result.get("etaText"))
     if eta is None:
@@ -4507,9 +4552,9 @@ for (const radio of Array.from(document.querySelectorAll('input[type="radio"]'))
   radio.click();
   radio.dispatchEvent(new Event('change', { bubbles: true }));
   const dateMatch = dateFrom(text);
-  results.push({ warehouse, etaText: dateMatch ? dateMatch[0] : '', selected, text: text.slice(0, 300) });
+  results.push({ radio, warehouse, etaText: dateMatch ? dateMatch[0] : '', selected, text: text.slice(0, 300) });
 }
-return results;
+return results.map(({radio, ...row}) => ({...row, confirmed: Boolean(radio.isConnected && radio.checked)}));
 """
     rows = driver.execute_script(script, expected)
     rows = rows if isinstance(rows, list) else []
@@ -4521,12 +4566,12 @@ return results;
         if not isinstance(row, dict):
             continue
         warehouse = _normalize_text(row.get("warehouse"))
-        if warehouse:
+        if warehouse and row.get("confirmed") is not False:
             selected_ups_warehouses.add(warehouse.casefold())
         eta = _parse_sanmar_eta(row.get("etaText"))
         if eta is None:
             eta = _parse_sanmar_eta(row.get("text"))
-        if not warehouse or eta is None:
+        if not warehouse or eta is None or row.get("confirmed") is False:
             continue
         if warehouse in by_warehouse and not row.get("selected") and selected_by_warehouse.get(warehouse):
             continue
@@ -5184,7 +5229,25 @@ return { success: true, alreadyPresent: false };
     return "already_present" if result.get("alreadyPresent") else "recorded"
 
 
-def _fill_review_and_submit(driver, po, dry_run=False):
+def _verify_sanmar_review_fulfillment(driver, requirements):
+    order_type = requirements.get("order_type")
+    shipping = requirements.get("shipping") or {}
+    if order_type not in WAREHOUSE_DISTANCE:
+        raise RuntimeError("Unsupported production destination; refusing to submit SanMar order.")
+    text = _normalize_text(driver.execute_script("return String(document.body && document.body.innerText || '');"))
+    pickup = bool(re.search(r"\bpick\s*up\b", text, flags=re.I))
+    if shipping.get("ship_mode") == "pickup":
+        if order_type != "inhouse" or not pickup or not re.search(r"\brobbinsville\b", text, flags=re.I):
+            raise RuntimeError("In-house Robbinsville pickup was not confirmed on SanMar review; refusing to submit.")
+        return
+    other_method = bool(re.search(r"\b(?:FedEx|USPS|will\s*call)\b", text, flags=re.I))
+    if shipping.get("ship_mode") != "ship" or pickup or other_method or not re.search(r"\bUPS\b", text, flags=re.I):
+        raise RuntimeError("UPS shipping was not confirmed on SanMar review; refusing to submit. Subcontractors cannot use pickup.")
+    if order_type == "mach6" and not re.search(r"\bmach\s*6\s+manufacturing\b", text, flags=re.I):
+        raise RuntimeError("Mach6 shipping destination was not confirmed on SanMar review; refusing to submit.")
+
+
+def _fill_review_and_submit(driver, po, dry_run=False, shipping_requirements=None):
     normalized_po = _normalize_text(po)
     if not normalized_po:
         raise RuntimeError("Customer PO is empty; refusing to submit SanMar order.")
@@ -5261,6 +5324,8 @@ return inputs.some((node) => String(node.value || '').trim() === po);
 """
     if driver.execute_script(verify_script, normalized_po) is not True:
         raise RuntimeError("Customer PO disappeared before submit; refusing to submit SanMar order.")
+    if shipping_requirements is not None:
+        _verify_sanmar_review_fulfillment(driver, shipping_requirements)
     if dry_run:
         return "dry_run_review_ready"
     _click_sanmar_button(driver, r"Submit\s+Order")
@@ -5775,14 +5840,23 @@ def _shipping_bypasser_actionable_stock_tabs(driver, order_id, tabs):
     return actionable, skipped
 
 
-def _prepare_sanmar_shipping_plan(sanmar_driver, order_id, order, product_lines, warehouse_plan, check_closed_warehouses=False):
+def _prepare_sanmar_shipping_plan(sanmar_driver, order_id, order, product_lines, warehouse_plan, check_closed_warehouses=False, nj_pickup_order=False):
     """Build and validate one allocation, then read its checkout delivery dates."""
     multi_warehouse = str(warehouse_plan.get("mode") or "") == "multi_warehouse"
     selected_warehouses = warehouse_plan.get("warehouses") or []
     warehouse = _single_warehouse_from_plan(None, warehouse_plan)
     cart_product_lines = warehouse_plan.get("expanded_lines") or []
-    if NJ_WAREHOUSE in selected_warehouses and selected_warehouses != [NJ_WAREHOUSE]:
+    destination_error = _production_destination_error(order)
+    if destination_error:
+        return _result(order_id, False, "subcontractor_mismatch", destination_error, order=order, retryable=False)
+    if order["order_type"] == "inhouse" and NJ_WAREHOUSE in selected_warehouses and selected_warehouses != [NJ_WAREHOUSE]:
         return _result(order_id, False, "nj_pickup_required", "NJ stock must be in a separate pickup-only order.", retryable=False)
+    if order["order_type"] == "inhouse" and warehouse == NJ_WAREHOUSE and not nj_pickup_order:
+        return _result(
+            order_id, False, "nj_only_crm_ordering_required",
+            "In-house NJ-only stock belongs to normal CRM ordering. Shipping Bypasser pickup is reserved for NJ plus other warehouses. Review CRM stock ordering; no SanMar stock was ordered.",
+            order=order, warehouses=selected_warehouses, retryable=False,
+        )
 
     for line_index, line in enumerate(cart_product_lines, start=1):
         product = line["product"]
@@ -5837,7 +5911,9 @@ def _prepare_sanmar_shipping_plan(sanmar_driver, order_id, order, product_lines,
     _wait_for_text(sanmar_driver, r"Shipping\s+Details|Shipping\s+Address", timeout=20)
     _publish_status(f"Selecting SanMar shipping for order {order_id}.", stage="selecting_sanmar_shipping", order_id=order_id)
     shipping = _select_shipping_destination(sanmar_driver, order["order_type"], warehouse, multi_warehouse=multi_warehouse)
-    if warehouse == NJ_WAREHOUSE and shipping.get("ship_mode") != "pickup":
+    if order["order_type"] == "mach6" and shipping.get("ship_mode") != "ship":
+        return _result(order_id, False, "subcontractor_shipping_required", "Mach6 must use UPS shipping to California. No stock was ordered.", order=order, retryable=False)
+    if order["order_type"] == "inhouse" and warehouse == NJ_WAREHOUSE and shipping.get("ship_mode") != "pickup":
         return _result(order_id, False, "nj_pickup_required", "NJ pickup was not confirmed. No NJ stock was ordered.", retryable=False)
     eta_state = {}
     if shipping.get("ship_mode") == "ship":
@@ -5891,7 +5967,7 @@ def _nj_shipping_failure(order, group, shipping_state, stock_buffer):
         return shipping_state
     shipping = shipping_state.get("shipping") or {}
     if group["kind"] == "nj":
-        if shipping.get("ship_mode") != "pickup":
+        if order["order_type"] != "inhouse" or _production_destination_error(order) or shipping.get("ship_mode") != "pickup":
             return _result(order["order_id"], False, "nj_pickup_required", "NJ must use Robbinsville pickup only.")
         return None
     eta = shipping_state.get("eta")
@@ -5920,6 +5996,7 @@ def _prepare_nj_group_review(sanmar_driver, order, group, stock_buffer):
     for attempt in range(2):
         shipping_state = _prepare_sanmar_shipping_plan(
             sanmar_driver, order["order_id"], order, group["plan"]["expanded_lines"], group["plan"], check_closed_warehouses=True,
+            nj_pickup_order=group["kind"] == "nj",
         )
         failure = _nj_shipping_failure(order, group, shipping_state, stock_buffer)
         if not failure:
@@ -5949,7 +6026,10 @@ def _prepare_nj_group_review(sanmar_driver, order, group, stock_buffer):
         _click_sanmar_button(sanmar_driver, r"Proceed\s+To\s+Payment")
     _wait_for_text(sanmar_driver, r"Review\s+&\s+Submit|Review\s+and\s+Submit|Customer\s+PO", timeout=20)
     # Validate the payment method and exact PO before setting a durable submit intent.
-    _fill_review_and_submit(sanmar_driver, group["po"], dry_run=True)
+    _fill_review_and_submit(
+        sanmar_driver, group["po"], dry_run=True,
+        shipping_requirements={"order_type": order["order_type"], "shipping": shipping_state["shipping"]},
+    )
     return shipping_state, None
 
 
@@ -5983,6 +6063,18 @@ return normalize(document.body && (document.body.innerText || document.body.text
 
 
 def _process_nj_stock_order(crm_driver, sanmar_driver, order, warehouse_plan=None, receipt=None, dry_run=False, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
+    if order.get("order_type") != "inhouse" or _production_destination_error(order):
+        return _result(
+            order["order_id"], False, "nj_stock_destination_mismatch",
+            "NJ pickup and ADD purchases are exclusive to in-house orders. This subcontractor allocation requires review; no purchase was submitted or repeated and existing receipts were preserved.",
+            order=order, retryable=False, stock_order_complete=False,
+            stock_orders=[{
+                "po": group.get("po"), "kind": group.get("kind"), "state": group.get("state"),
+                "warehouses": (group.get("plan") or {}).get("warehouses"),
+                "shipping": (group.get("shipping_state") or {}).get("shipping"),
+                "sanmar_confirmation": group.get("confirmation"), "crm_record_state": group.get("crm_record_state"),
+            } for group in (receipt or {}).get("groups", [])],
+        )
     if receipt is None:
         add_po = f"ADD-{order['po']}"
         if (
@@ -6100,7 +6192,10 @@ def _process_nj_stock_order(crm_driver, sanmar_driver, order, warehouse_plan=Non
                 group["state"] = "submitting"
                 _save_nj_stock_order(receipt)
                 _publish_status(f"Ordering {group['kind'].upper()} stock with PO {group['po']}.", stage="submitting_nj_add_stock", order_id=order["order_id"])
-                submit_state = _fill_review_and_submit(sanmar_driver, group["po"], dry_run=False)
+                submit_state = _fill_review_and_submit(
+                    sanmar_driver, group["po"], dry_run=False,
+                    shipping_requirements={"order_type": order["order_type"], "shipping": shipping_state["shipping"]},
+                )
                 if submit_state != "submitted":
                     raise RuntimeError("SanMar did not confirm stock submission.")
                 confirmation = _capture_sanmar_confirmation(sanmar_driver, order["order_id"], group["po"])
@@ -6209,6 +6304,9 @@ def _process_open_order(
     nj_receipt = _load_nj_stock_order(order_id, order.get("po"))
     if nj_receipt:
         return done(_process_nj_stock_order(crm_driver, sanmar_driver, order, receipt=nj_receipt, dry_run=dry_run))
+    destination_error = _production_destination_error(order)
+    if destination_error:
+        return done(_result(order_id, False, "subcontractor_mismatch", destination_error, order=order, retryable=False))
     saved_submission = _saved_shipping_bypass_submission(order_id, order.get("po"))
     if saved_submission and saved_submission.get("nj_order_po"):
         return done(_result(
@@ -6329,9 +6427,6 @@ def _process_open_order(
         return done(_result(order_id, False, "crm_data_missing", f"Missing CRM order data: {', '.join(missing)}.", order=order))
     if not order.get("quantities"):
         return done(_result(order_id, False, "crm_quantities_missing", "Could not map CRM size quantities from the order.", order=order))
-    if order["order_type"] == "mach6" and "mach 6" not in order.get("subcontractor", "").lower():
-        return done(_result(order_id, False, "subcontractor_mismatch", f"Unsupported subcontractor: {order.get('subcontractor')}.", order=order))
-
     _publish_status(f"Loading SanMar for order {order_id}.", stage="loading_sanmar", order_id=order_id)
     safe_get_with_partial_load(sanmar_driver, SANMAR_URL, label="SanMar home")
     _ensure_sanmar_logged_in(sanmar_driver)
@@ -6453,7 +6548,7 @@ def _process_open_order(
             break
 
         # A complete warehouse is preferred only while its shipment can meet the deadline.
-        split_plan = _choose_multi_warehouse_plan(product_lines, order["order_type"], stock_buffer=stock_buffer)
+        split_plan = _choose_multi_warehouse_plan(product_lines, order["order_type"], stock_buffer=stock_buffer, include_nj=True)
         if not split_plan or split_plan.get("mode") != "multi_warehouse":
             break
         _publish_status(
@@ -6479,7 +6574,11 @@ def _process_open_order(
                 retryable=False,
                 stop_run=True,
             ))
-        warehouse_plan = split_plan
+        warehouse_plan = _inhouse_nj_split_plan(split_plan) if order["order_type"] == "inhouse" else split_plan
+        if warehouse_plan.get("mode") == "nj_pickup_and_add":
+            return done(_process_nj_stock_order(
+                crm_driver, sanmar_driver, order, warehouse_plan=warehouse_plan, dry_run=dry_run, stock_buffer=stock_buffer,
+            ))
 
     if shipping.get("ship_mode") == "ship":
         if eta is None:
@@ -6578,7 +6677,10 @@ def _process_open_order(
         _click_sanmar_button(sanmar_driver, r"Proceed\s+To\s+Payment")
     _wait_for_text(sanmar_driver, r"Review\s+&\s+Submit|Review\s+and\s+Submit|Customer\s+PO", timeout=20)
     _publish_status(f"Reviewing SanMar order {order_id} before submit.", stage="reviewing_sanmar_order", order_id=order_id)
-    submit_state = _fill_review_and_submit(sanmar_driver, order["po"], dry_run=dry_run)
+    submit_state = _fill_review_and_submit(
+        sanmar_driver, order["po"], dry_run=dry_run,
+        shipping_requirements={"order_type": order["order_type"], "shipping": shipping},
+    )
     sanmar_confirmation = None
     if submit_state == "submitted":
         sanmar_confirmation = _capture_sanmar_confirmation(sanmar_driver, order_id, order["po"])

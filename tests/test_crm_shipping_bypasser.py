@@ -18,6 +18,82 @@ import crm_shipping_bypasser  # noqa: E402
 import shipping_bypasser_mappings  # noqa: E402
 
 
+class ShippingBypassExistingStockTests(unittest.TestCase):
+    def _crm_data(self):
+        return {
+            "bodyText": "Due Date: 10/20/2026 Production Date: 10/19/2026",
+            "activeTabText": "H-Split708 8 - QTY: 1 Design Previews",
+            "activePanelText": "Items on this design PC54 Cotton T-Shirt - Alpha Stock Stock Ordered: False",
+            "activePanelStockOrders": [{"vendor": "Sanmar", "po": "H-Source508-I501"}],
+            "items": [{"stockLine": "PC54 Cotton T-Shirt - Alpha Stock", "color": "Navy", "quantities": {"M": 1}}],
+        }
+
+    def test_transferred_stock_record_skips_purchase_despite_new_tab_po_and_false_status(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = self._crm_data()
+        with (
+            mock.patch.object(crm_shipping_bypasser, "_require_crm_order_ready_once_with_refresh"),
+            mock.patch.object(crm_shipping_bypasser, "refresh_if_crm_challenge_attempts_exceeded", return_value=False),
+            mock.patch.object(crm_shipping_bypasser, "_load_nj_stock_order", return_value=None),
+            mock.patch.object(crm_shipping_bypasser, "_saved_shipping_bypass_submission", return_value=None),
+            mock.patch.object(crm_shipping_bypasser, "_pending_shipping_bypass_submission", return_value=None),
+            mock.patch.object(crm_shipping_bypasser, "_saved_shipping_bypass_confirmation", return_value=None),
+            mock.patch.object(crm_shipping_bypasser, "_crm_stock_order_yellow_visual_exists", return_value=False),
+            mock.patch.object(crm_shipping_bypasser, "_crm_manual_order_row_exists", return_value=False),
+            mock.patch.object(crm_shipping_bypasser, "_historical_shipping_bypass_po_exists", return_value=False),
+            mock.patch.object(crm_shipping_bypasser, "_publish_status"),
+            mock.patch.object(crm_shipping_bypasser, "safe_get_with_partial_load") as vendor_navigation,
+            mock.patch.object(crm_shipping_bypasser, "_fill_review_and_submit") as submit,
+        ):
+            result = crm_shipping_bypasser._process_open_order(driver, object(), "5000001", stock_tab_index=8, stock_tab_count=9)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["outcome"], "already_stock_ordered")
+        self.assertEqual(result["order"]["po"], "H-Split708")
+        self.assertEqual(result["order"]["active_panel_stock_orders"][0]["po"], "H-Source508-I501")
+        vendor_navigation.assert_not_called()
+        submit.assert_not_called()
+
+    def test_saved_nj_allocation_resumes_before_active_stock_record_skip(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = self._crm_data()
+        receipt = {"order_id": "5000001", "po": "H-Split708"}
+        with (
+            mock.patch.object(crm_shipping_bypasser, "_require_crm_order_ready_once_with_refresh"),
+            mock.patch.object(crm_shipping_bypasser, "refresh_if_crm_challenge_attempts_exceeded", return_value=False),
+            mock.patch.object(crm_shipping_bypasser, "_load_nj_stock_order", return_value=receipt),
+            mock.patch.object(crm_shipping_bypasser, "_process_nj_stock_order", return_value={"success": True, "outcome": "shipping_bypass_ordered"}) as resume,
+            mock.patch.object(crm_shipping_bypasser, "_publish_status"),
+        ):
+            result = crm_shipping_bypasser._process_open_order(driver, object(), "5000001", stock_tab_index=8, stock_tab_count=9)
+        self.assertEqual(result["outcome"], "shipping_bypass_ordered")
+        resume.assert_called_once()
+        self.assertIs(resume.call_args.kwargs["receipt"], receipt)
+        self.assertTrue(resume.call_args.args[2]["active_panel_stock_ordered"])
+
+
+class ShippingBypassDestinationTests(unittest.TestCase):
+    def test_subcontractor_banner_never_defaults_to_inhouse(self):
+        for name, expected in (("Mach 6 Manufacturing (CA)", "mach6"), ("Mach6 Manufacturing (CA)", "mach6"), ("Other Manufacturing", "unsupported_subcontractor"), ("Other Manufacturing / Mach6", "unsupported_subcontractor"), ("", "unsupported_subcontractor")):
+            with self.subTest(name=name), mock.patch.object(crm_shipping_bypasser, "refresh_if_crm_challenge_attempts_exceeded", return_value=False):
+                driver = mock.Mock()
+                data = ShippingBypassExistingStockTests()._crm_data()
+                data["bodyText"] += f" Subcontractor: {name} Preferred File Types: Raster PNG"
+                driver.execute_script.return_value = data
+                order = crm_shipping_bypasser._extract_order_data(driver, "5000001")
+                self.assertEqual(order["order_type"], expected)
+                self.assertTrue(order["subcontractor_banner_present"])
+                self.assertEqual(crm_shipping_bypasser._production_destination_error(order) is None, expected == "mach6")
+
+    def test_no_subcontractor_banner_is_inhouse(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = ShippingBypassExistingStockTests()._crm_data()
+        with mock.patch.object(crm_shipping_bypasser, "refresh_if_crm_challenge_attempts_exceeded", return_value=False):
+            order = crm_shipping_bypasser._extract_order_data(driver, "5000001")
+        self.assertEqual(order["order_type"], "inhouse")
+        self.assertFalse(order["subcontractor_banner_present"])
+        self.assertIsNone(crm_shipping_bypasser._production_destination_error(order))
+
+
 class ShippingBypassProductColorMappingTests(unittest.TestCase):
     def test_repository_mapping_file_supplies_product_and_color_overrides(self):
         self.assertEqual(
@@ -275,7 +351,7 @@ class ShippingBypassStockBufferTests(unittest.TestCase):
         self.assertIsNone(warehouse)
         self.assertIsNone(plan)
 
-    def test_split_across_products_orders_nj_first_for_both_destinations(self):
+    def test_split_across_products_uses_destination_specific_nj_rules(self):
         product_lines = [
             {
                 "product": {"index": 1, "product_id": "PC54"},
@@ -299,12 +375,16 @@ class ShippingBypassStockBufferTests(unittest.TestCase):
                     )
 
                     self.assertIsNone(warehouse)
-                    self.assertEqual(plan["mode"], "nj_pickup_and_add")
-                    self.assertEqual(plan["warehouses"], ["Robbinsville, NJ", "Cincinnati, OH"])
-                    self.assertEqual(plan["nj_plan"]["pieces_by_warehouse"], {"Robbinsville, NJ": 2})
-                    self.assertEqual(plan["add_plan"]["pieces_by_warehouse"], {"Cincinnati, OH": 3})
+                    if order_type == "inhouse":
+                        self.assertEqual(plan["mode"], "nj_pickup_and_add")
+                        self.assertEqual(plan["warehouses"], ["Robbinsville, NJ", "Cincinnati, OH"])
+                        self.assertEqual(plan["nj_plan"]["pieces_by_warehouse"], {"Robbinsville, NJ": 2})
+                        self.assertEqual(plan["add_plan"]["pieces_by_warehouse"], {"Cincinnati, OH": 3})
+                    else:
+                        self.assertEqual(plan["mode"], "multi_warehouse")
+                        self.assertEqual(plan["warehouses"], ["Richmond, VA", "Cincinnati, OH"])
 
-    def test_same_size_split_uses_nj_pickup_and_add_to_complete_quantity(self):
+    def test_same_size_split_uses_add_only_for_inhouse(self):
         for order_type in ("inhouse", "mach6"):
             for stock_buffer in (10, 0):
                 with self.subTest(order_type=order_type, stock_buffer=stock_buffer):
@@ -317,8 +397,13 @@ class ShippingBypassStockBufferTests(unittest.TestCase):
                     )
 
                     self.assertIsNone(warehouse)
-                    self.assertEqual(plan["nj_plan"]["expanded_lines"][0]["quantities"], {"M": 4})
-                    self.assertEqual(plan["add_plan"]["expanded_lines"][0]["quantities"], {"M": 1})
+                    if order_type == "inhouse":
+                        self.assertEqual(plan["nj_plan"]["expanded_lines"][0]["quantities"], {"M": 4})
+                        self.assertEqual(plan["add_plan"]["expanded_lines"][0]["quantities"], {"M": 1})
+                    else:
+                        self.assertEqual(plan["mode"], "multi_warehouse")
+                        self.assertEqual(plan["warehouses"], ["Richmond, VA", "Robbinsville, NJ"])
+                        self.assertEqual(plan["pieces_by_warehouse"], {"Richmond, VA": 1, "Robbinsville, NJ": 4})
 
 
 class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
@@ -332,6 +417,7 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
         split_cart_mismatch=False,
         shipping_class="rush",
         dry_run=False,
+        order_type="inhouse",
     ):
         day = lambda value: crm_shipping_bypasser.datetime(2026, 10, value).date()
         product = {"index": 1, "product_id": "LST350", "color": "Lime Shock", "quantities": {"3XL": 1, "4XL": 1}}
@@ -344,7 +430,8 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
             "products": [product],
             "production_date": day(6),
             "due_date": day(7),
-            "order_type": "inhouse",
+            "order_type": order_type,
+            "subcontractor": "Mach 6 Manufacturing (CA)" if order_type == "mach6" else "",
             "shipping_class": shipping_class,
             "stock_tab_index": 1,
         }
@@ -420,7 +507,7 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
             "_wait_for_sanmar_cart_lines": {"side_effect": read_cart},
             "_click_sanmar_button": {},
             "_wait_for_text": {},
-            "_select_shipping_destination": {"side_effect": lambda _driver, _order_type, warehouse, **kwargs: {"ship_mode": "pickup" if warehouse == "Robbinsville, NJ" else "ship", "address": warehouse or "123 EZ TEES INC"}},
+            "_select_shipping_destination": {"side_effect": lambda _driver, _order_type, warehouse, **kwargs: {"ship_mode": "pickup" if _order_type == "inhouse" and warehouse == "Robbinsville, NJ" else "ship", "address": "Mach 6 Manufacturing" if _order_type == "mach6" else warehouse or "123 EZ TEES INC"}},
             "_select_ups_eta_for_shipping_plan": {"side_effect": read_eta},
             "_clear_sanmar_cart": {"side_effect": clear_cart},
             "_change_crm_production_date": {"side_effect": lambda _driver, _order_id, target: target},
@@ -455,17 +542,18 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
         mocks["_change_crm_due_date"].assert_not_called()
         mocks["_change_crm_production_date"].assert_not_called()
 
-    def test_nj_only_complete_order_remains_eligible(self):
+    def test_inhouse_nj_only_order_requires_normal_crm_ordering(self):
         result, mocks, cart = self._run_order(
             inventory=[{"warehouse": "Robbinsville, NJ", "stock": {"3XL": 17, "4XL": 11}}],
             eta_states=[{"Robbinsville, NJ": crm_shipping_bypasser.datetime(2026, 10, 5).date()}],
         )
 
-        self.assertTrue(result["success"], result["message"])
+        self.assertFalse(result["success"])
+        self.assertEqual(result["outcome"], "nj_only_crm_ordering_required")
         self.assertEqual(result["warehouses"], ["Robbinsville, NJ"])
-        self.assertEqual({row["warehouse"] for row in cart}, {"Robbinsville, NJ"})
-        mocks["_fill_review_and_submit"].assert_called_once()
-        mocks["_append_crm_production_note"].assert_not_called()
+        self.assertEqual(cart, [])
+        mocks["_fill_sanmar_quantities"].assert_not_called()
+        self._assert_no_purchase(mocks)
 
     def test_nj_stock_shortage_is_skipped_before_adding_partial_stock(self):
         for override in (False, True):

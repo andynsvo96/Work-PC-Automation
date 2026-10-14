@@ -85,9 +85,9 @@ class NjStockOrderTests(unittest.TestCase):
             return {"success": self.cleanup_ok, "message": "Cart cleared"}
 
         def shipping(_driver, order_type, warehouse, **kwargs):
-            self.shipping_mode = "pickup" if warehouse == NJ else "ship"
+            self.shipping_mode = "pickup" if order_type == "inhouse" and warehouse == NJ else "ship"
             self.events.append(("shipping", warehouse, self.shipping_mode))
-            return {"ship_mode": self.shipping_mode, "address": NJ if warehouse == NJ else "123 EZ TEES INC"}
+            return {"ship_mode": self.shipping_mode, "address": "Mach 6 Manufacturing" if order_type == "mach6" else NJ if warehouse == NJ else "123 EZ TEES INC"}
 
         def eta(_driver, order_type, **kwargs):
             names = tuple(kwargs["selected_warehouses"])
@@ -98,7 +98,9 @@ class NjStockOrderTests(unittest.TestCase):
             dates = {name: self.eta_by_warehouse.get(name, self.eta) for name in names}
             return {"eta": max(dates.values()), "eta_by_warehouse": {name: str(value) for name, value in dates.items()}}
 
-        def submit(_driver, po, dry_run=False):
+        def submit(_driver, po, dry_run=False, shipping_requirements=None):
+            self.assertEqual(shipping_requirements["order_type"], self.order["order_type"])
+            self.assertEqual(shipping_requirements["shipping"]["ship_mode"], self.shipping_mode)
             if dry_run:
                 self.events.append(("review", po))
                 return "dry_run_review_ready"
@@ -184,18 +186,19 @@ class NjStockOrderTests(unittest.TestCase):
         self.assertTrue(receipt["complete"])
         self.assertEqual([group["state"] for group in receipt["groups"]], ["recorded", "recorded"])
 
-    def test_nj_takes_priority_even_when_va_can_fulfill_the_entire_order(self):
+    def test_complete_va_shipment_is_preferred_over_unnecessary_nj_add_split(self):
         self.inventory[1]["stock"]["2XL"] = 50
         result = self.run_order()
         self.assertTrue(result["success"], result["message"])
-        self.assertEqual([event[1] for event in self.purchases()], [self.order["po"], f"ADD-{self.order['po']}"])
-        self.assertEqual(result["stock_orders"][1]["warehouses"], [VA])
-        self.assertIn("sizes XL (5 pc), 2XL (4 pc) from VA", result["production_note"])
-        self.assertNotIn("boxes from sanmar", result["production_note"])
+        self.assertEqual([event[1] for event in self.purchases()], [self.order["po"]])
+        self.assertEqual(result["warehouses"], [VA])
+        self.assertEqual(self.purchases()[0][2], "ship")
+        self.assertIsNone(worker._load_nj_stock_order(self.order["order_id"], self.order["po"]))
+        self.assertIsNone(result["production_note"])
 
     def test_same_size_quantity_is_split_between_nj_and_add(self):
         self.product["quantities"] = self.order["quantities"] = {"XL": 5}
-        self.inventory = [{"warehouse": NJ, "stock": {"XL": 14}}, {"warehouse": VA, "stock": {"XL": 20}}]
+        self.inventory = [{"warehouse": NJ, "stock": {"XL": 14}}, {"warehouse": VA, "stock": {"XL": 11}}]
         result = self.run_order()
         self.assertTrue(result["success"], result["message"])
         self.assertEqual([event[3][0]["quantity"] for event in self.purchases()], [4, 1])
@@ -248,11 +251,13 @@ class NjStockOrderTests(unittest.TestCase):
         self.assertEqual([event[1] for event in self.purchases()], [self.order["po"]])
         self.assertNotIn(NJ, result["warehouses"])
 
-    def test_complete_nj_order_uses_pickup_and_never_selects_ups(self):
+    def test_inhouse_complete_nj_order_stops_for_normal_crm_ordering(self):
         self.inventory = [{"warehouse": NJ, "stock": {size: 50 for size in self.product["quantities"]}}]
         result = self.run_order()
-        self.assertTrue(result["success"], result["message"])
-        self.assertEqual([event[2] for event in self.purchases()], ["pickup"])
+        self.assertFalse(result["success"])
+        self.assertEqual(result["outcome"], "nj_only_crm_ordering_required")
+        self.assertEqual(self.purchases(), [])
+        self.mocks["_fill_sanmar_quantities"].assert_not_called()
         self.mocks["_select_ups_eta_for_shipping_plan"].assert_not_called()
 
     def test_shortage_in_add_stock_prevents_nj_purchase(self):
@@ -487,18 +492,141 @@ class NjStockOrderTests(unittest.TestCase):
             self.assertEqual(worker._historical_shipping_bypass_confirmation(po, str(history))["po"], po)
 
 
+    def _use_mach6(self):
+        self.order.update(order_type="mach6", subcontractor="Mach 6 Manufacturing (CA)", subcontractor_banner_present=True)
+
+    def test_mach6_prefers_phoenix_even_when_nj_can_supply_every_size(self):
+        self._use_mach6()
+        self.inventory = [{"warehouse": name, "stock": {size: 50 for size in self.product["quantities"]}} for name in (NJ, "Phoenix, AZ")]
+        result = self.run_order()
+        self.assertTrue(result["success"], result["message"])
+        self.assertEqual(result["warehouses"], ["Phoenix, AZ"])
+        self.assertEqual([(event[1], event[2]) for event in self.purchases()], [(self.order["po"], "ship")])
+        self.assertIsNone(worker._load_nj_stock_order(self.order["order_id"], self.order["po"]))
+
+    def test_mach6_nj_only_stock_ships_ups_with_original_po(self):
+        self._use_mach6()
+        self.inventory = [{"warehouse": NJ, "stock": {size: 50 for size in self.product["quantities"]}}]
+        result = self.run_order()
+        self.assertTrue(result["success"], result["message"])
+        self.assertEqual(result["shipping"], {"ship_mode": "ship", "address": "Mach 6 Manufacturing"})
+        self.assertEqual([(event[1], event[2]) for event in self.purchases()], [(self.order["po"], "ship")])
+        self.assertEqual(self.mocks["_select_ups_eta_for_shipping_plan"].call_args.kwargs["selected_warehouses"], [NJ])
+        self.assertEqual([event for event in self.events if event[0] == "record"], [("record", self.order["po"], False)])
+
+    def test_mach6_mixed_nj_boxes_use_ups_and_same_po_without_add(self):
+        self._use_mach6()
+        self.inventory[0]["stock"]["2XL"] = 14
+        self.inventory[2]["stock"]["2XL"] = 0
+        result = self.run_order()
+        self.assertTrue(result["success"], result["message"])
+        self.assertEqual(result["warehouse_plan"]["mode"], "multi_warehouse")
+        self.assertEqual(result["warehouses"], [VA, NJ])
+        self.assertEqual([(event[1], event[2]) for event in self.purchases()], [(self.order["po"], "ship")])
+        self.assertTrue(self.mocks["_select_ups_eta_for_shipping_plan"].call_args.kwargs["multi_warehouse"])
+        self.assertEqual(self.mocks["_select_ups_eta_for_shipping_plan"].call_args.kwargs["selected_warehouses"], [VA, NJ])
+        self.assertIn("2 boxes from sanmar with the same PO", result["production_note"])
+        self.assertNotIn("ADD-", result["production_note"])
+        self.assertIsNone(worker._load_nj_stock_order(self.order["order_id"], self.order["po"]))
+
+    def test_mach6_western_split_is_preferred_over_complete_nj_stock(self):
+        self._use_mach6()
+        self.inventory = [
+            {"warehouse": NJ, "stock": {size: 50 for size in self.product["quantities"]}},
+            {"warehouse": "Phoenix, AZ", "stock": {"S": 12, "M": 13}},
+            {"warehouse": "Reno, NV", "stock": {"XL": 15, "2XL": 14}},
+        ]
+        result = self.run_order()
+        self.assertTrue(result["success"], result["message"])
+        self.assertEqual(result["warehouses"], ["Phoenix, AZ", "Reno, NV"])
+        self.assertEqual(len(self.purchases()), 1)
+        self.assertEqual(self.purchases()[0][2], "ship")
+
+    def test_mach6_cannot_proceed_when_ups_is_unavailable(self):
+        self._use_mach6()
+        self.inventory = [{"warehouse": NJ, "stock": {size: 50 for size in self.product["quantities"]}}]
+        self.mocks["_select_ups_eta_for_shipping_plan"].side_effect = RuntimeError("UPS unavailable for NJ")
+        result = self.run_order()
+        self.assertEqual(result["outcome"], "sanmar_ups_unavailable")
+        self.assertEqual(self.purchases(), [])
+        self.mocks["_record_crm_manual_order"].assert_not_called()
+
+    def test_mach6_mixed_nj_ups_uses_latest_arrival_for_due_date_check(self):
+        self._use_mach6()
+        self.inventory[0]["stock"]["2XL"] = 14
+        self.inventory[2]["stock"]["2XL"] = 0
+        self.eta_by_warehouse[NJ] = self.order["due_date"]
+        result = self.run_order()
+        self.assertEqual(result["outcome"], "eta_after_due_date")
+        self.assertEqual(result["eta_by_warehouse"][NJ], self.order["due_date"].isoformat())
+        self.assertEqual(self.purchases(), [])
+        self.mocks["_record_crm_manual_order"].assert_not_called()
+
+    def test_mach6_nj_fallback_preserves_buffer_override_and_closed_checks(self):
+        self._use_mach6()
+        self.inventory = [{"warehouse": NJ, "stock": dict(self.product["quantities"])}]
+        self.assertEqual(self.run_order()["outcome"], "no_single_warehouse")
+        self.mocks["_sanmar_closed_warehouses"].return_value = {NJ}
+        self.assertEqual(self.run_order(allow_low_stock_buffer=True)["outcome"], "no_single_warehouse")
+        self.mocks["_sanmar_closed_warehouses"].return_value = set()
+        result = self.run_order(allow_low_stock_buffer=True)
+        self.assertTrue(result["success"], result["message"])
+        self.assertEqual([(event[1], event[2]) for event in self.purchases()], [(self.order["po"], "ship")])
+
+    def test_mach6_pickup_returned_by_checkout_is_blocked_before_payment(self):
+        self._use_mach6()
+        self.mocks["_select_shipping_destination"].side_effect = None
+        self.mocks["_select_shipping_destination"].return_value = {"ship_mode": "pickup", "address": NJ}
+        result = self.run_order()
+        self.assertEqual(result["outcome"], "subcontractor_shipping_required")
+        self.assertEqual(self.purchases(), [])
+        self.mocks["_select_ups_eta_for_shipping_plan"].assert_not_called()
+
+    def test_saved_nj_plan_cannot_resume_after_destination_changes_to_mach6(self):
+        self.fail_add_checkout = 2
+        self.assertFalse(self.run_order()["success"])
+        path = Path(worker._nj_stock_order_path(self.order["order_id"], self.order["po"]))
+        saved = path.read_bytes()
+        purchases = copy.deepcopy(self.purchases())
+        self.cart.clear()
+        self._use_mach6()
+        self.mocks["_ensure_sanmar_logged_in"].reset_mock()
+        result = self.run_order()
+        self.assertEqual(result["outcome"], "nj_stock_destination_mismatch")
+        self.assertFalse(result["retryable"])
+        self.assertEqual(self.purchases(), purchases)
+        self.assertEqual(path.read_bytes(), saved)
+        self.assertEqual(result["stock_orders"][0]["state"], "recorded")
+        self.mocks["_ensure_sanmar_logged_in"].assert_not_called()
+
+    def test_completed_nj_receipt_cannot_hide_subcontractor_pickup_on_retry(self):
+        self.assertTrue(self.run_order()["success"])
+        self._use_mach6()
+        result = self.run_order()
+        self.assertEqual(result["outcome"], "nj_stock_destination_mismatch")
+        self.assertEqual(len(self.purchases()), 2)
+        self.assertTrue(worker._load_nj_stock_order(self.order["order_id"], self.order["po"])["complete"])
+
+    def test_unsupported_subcontractor_cannot_use_inhouse_routing(self):
+        self.order.update(subcontractor="Other Manufacturing", subcontractor_banner_present=True)
+        result = self.run_order()
+        self.assertEqual(result["outcome"], "subcontractor_mismatch")
+        self.assertEqual(self.purchases(), [])
+        self.mocks["_ensure_sanmar_logged_in"].assert_not_called()
+        self.assertEqual(list(Path(self.temp.name).iterdir()), [])
+
+
 class NjPickupAndPoGuardTests(unittest.TestCase):
-    def test_nj_pickup_is_required_for_every_destination(self):
-        for destination in ("inhouse", "mach6"):
-            with self.subTest(destination=destination), mock.patch.object(worker, "_click_radio_near_text") as radio, \
-                 mock.patch.object(worker, "_select_dropdown_option_containing") as dropdown, \
-                 mock.patch.object(worker, "_sanmar_nj_pickup_selected", return_value=True), \
-                 mock.patch.object(worker, "_click_sanmar_button") as button:
-                result = worker._select_shipping_destination(object(), destination, NJ)
-                self.assertEqual(result["ship_mode"], "pickup")
-                self.assertEqual([call.args[1] for call in radio.call_args_list], ["Pick Up at warehouse"])
-                self.assertEqual(dropdown.call_args.args[1], "Robbinsville")
-                self.assertEqual(button.call_args.args[1], r"Proceed\s+To\s+Payment")
+    def test_nj_pickup_is_exclusive_to_inhouse(self):
+        with mock.patch.object(worker, "_click_radio_near_text") as radio, \
+             mock.patch.object(worker, "_select_dropdown_option_containing") as dropdown, \
+             mock.patch.object(worker, "_sanmar_nj_pickup_selected", return_value=True), \
+             mock.patch.object(worker, "_click_sanmar_button") as button:
+            result = worker._select_shipping_destination(object(), "inhouse", NJ)
+            self.assertEqual(result["ship_mode"], "pickup")
+            self.assertEqual([call.args[1] for call in radio.call_args_list], ["Pick Up at warehouse"])
+            self.assertEqual(dropdown.call_args.args[1], "Robbinsville")
+            self.assertEqual(button.call_args.args[1], r"Proceed\s+To\s+Payment")
 
     def test_unconfirmed_nj_pickup_stops_before_payment(self):
         with mock.patch.object(worker, "_click_radio_near_text"), \
@@ -508,6 +636,45 @@ class NjPickupAndPoGuardTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "pickup was not confirmed"):
                 worker._select_shipping_destination(object(), "inhouse", NJ)
             button.assert_not_called()
+
+    def test_mach6_nj_single_and_multi_select_ship_to_mach6(self):
+        for multi in (False, True):
+            with self.subTest(multi=multi), mock.patch.object(worker, "_click_radio_near_text") as radio, \
+                 mock.patch.object(worker, "_select_dropdown_option_containing") as dropdown, \
+                 mock.patch.object(worker, "_wait_for_text"), mock.patch.object(worker.time, "sleep"), \
+                 mock.patch.object(worker, "_click_sanmar_button") as button:
+                result = worker._select_shipping_destination(object(), "mach6", NJ, multi_warehouse=multi)
+                self.assertEqual(result, {"ship_mode": "ship", "address": "Mach 6 Manufacturing"})
+                self.assertEqual([call.args[1] for call in radio.call_args_list], ["Ship to an address", "Mach 6 Manufacturing"])
+                dropdown.assert_not_called()
+                self.assertEqual(button.call_args.args[1], r"Confirm\s+Address")
+
+    def test_mach6_review_requires_ups_and_correct_destination(self):
+        requirements = {"order_type": "mach6", "shipping": {"ship_mode": "ship", "address": "Mach 6 Manufacturing"}}
+        driver = mock.Mock()
+        driver.execute_script.return_value = "Ship To: Mach 6 Manufacturing (CA) Shipping Method UPS Ground Warehouse Robbinsville, NJ"
+        worker._verify_sanmar_review_fulfillment(driver, requirements)
+        for text in ("Mach 6 Manufacturing PICKUP Robbinsville, NJ", "Mach 6 Manufacturing UPS Ground PICKUP", "123 EZ TEES INC UPS Ground", "Mach 6 Manufacturing FedEx", "Mach 6 Manufacturing UPS Richmond, VA FedEx Robbinsville, NJ"):
+            with self.subTest(text=text), self.assertRaisesRegex(RuntimeError, "refusing to submit"):
+                driver.execute_script.return_value = text
+                worker._verify_sanmar_review_fulfillment(driver, requirements)
+
+    def test_mach6_bad_review_never_clicks_submit_even_with_verified_po(self):
+        driver = mock.Mock()
+        driver.execute_script.side_effect = ["Review & Submit Net", {"success": True}, True, "Mach 6 Manufacturing PICKUP Robbinsville, NJ"]
+        with mock.patch.object(worker.time, "sleep"), mock.patch.object(worker, "_click_sanmar_button") as button:
+            with self.assertRaisesRegex(RuntimeError, "UPS shipping was not confirmed"):
+                worker._fill_review_and_submit(driver, "H-Test", shipping_requirements={"order_type": "mach6", "shipping": {"ship_mode": "ship"}})
+            button.assert_not_called()
+
+    def test_ups_must_remain_selected_for_each_warehouse(self):
+        driver = mock.Mock()
+        driver.execute_script.side_effect = [[
+            {"warehouse": VA, "etaText": "Oct 6, 2026", "confirmed": True},
+            {"warehouse": NJ, "etaText": "Oct 6, 2026", "confirmed": False},
+        ], "UPS Ground"]
+        with self.assertRaisesRegex(RuntimeError, "Robbinsville"):
+            worker._select_ups_and_latest_eta_by_warehouse(driver, [VA, NJ])
 
     def test_base_po_is_not_confirmed_by_an_add_po_or_longer_po(self):
         for text in ("Customer PO ADD-H-CJVillafra302", "Customer PO H-CJVillafra3029"):
