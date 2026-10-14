@@ -5183,37 +5183,40 @@ function isVisible(node) {
   }
   return true;
 }
-const labels = Array.from(document.querySelectorAll('body *')).filter((node) => /Production Notes/i.test(node.innerText || node.textContent || ''));
-let textarea = null;
+const labels = Array.from(document.querySelectorAll('body *')).filter((node) =>
+  isVisible(node) && /^Production\s+Notes\s*:?$/i.test(normalize(node.innerText || node.textContent))
+);
+const candidates = new Set();
 for (const label of labels) {
+  const linked = label.htmlFor && document.getElementById(label.htmlFor);
+  if (linked && linked.tagName === 'TEXTAREA' && isVisible(linked)) {
+    candidates.add(linked);
+    continue;
+  }
   for (let scope = label; scope && scope !== document.body; scope = scope.parentElement) {
     const areas = Array.from(scope.querySelectorAll('textarea')).filter(isVisible);
     if (areas.length) {
-      textarea = areas.sort((a, b) => {
-        const ar = a.getBoundingClientRect();
-        const br = b.getBoundingClientRect();
-        return (ar.top - br.top) || (ar.left - br.left);
-      })[0];
+      if (areas.length === 1) candidates.add(areas[0]);
       break;
     }
   }
-  if (textarea) break;
 }
-if (!textarea) {
-  textarea = Array.from(document.querySelectorAll('textarea')).filter(isVisible).sort((a, b) => {
-    const ar = a.getBoundingClientRect();
-    const br = b.getBoundingClientRect();
-    return ((br.width * br.height) - (ar.width * ar.height));
-  })[0] || null;
+if (candidates.size > 1) return { success: false, message: 'Production Notes textarea is ambiguous; review before saving.' };
+let textarea = candidates.size === 1 ? Array.from(candidates)[0] : null;
+if (!textarea && !labels.length) {
+  const areas = Array.from(document.querySelectorAll('textarea')).filter(isVisible);
+  if (areas.length === 1) textarea = areas[0];
 }
 if (!textarea) return { success: false, message: 'Production Notes textarea was not found.' };
 const current = String(textarea.value || textarea.textContent || '').trim();
 if (normalize(current).includes(normalize(note))) return { success: true, alreadyPresent: true };
 const next = current ? `${current}\n${note}` : note;
 textarea.focus();
-textarea.value = next;
+const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+setter.call(textarea, next);
 textarea.dispatchEvent(new Event('input', { bubbles: true }));
 textarea.dispatchEvent(new Event('change', { bubbles: true }));
+textarea.dispatchEvent(new Event('blur', { bubbles: true }));
 return { success: true, alreadyPresent: false };
 """
     result = driver.execute_script(script, note)
@@ -6047,6 +6050,10 @@ def _apply_nj_shipping_dates(crm_driver, order, shipping_state):
         order["production_date"] = _change_crm_production_date(crm_driver, order["order_id"], production_target)
 
 
+class _CrmProductionNotePersistenceError(RuntimeError):
+    pass
+
+
 def _verify_crm_production_note(driver, order_id, note, timeout=12):
     deadline = time.monotonic() + timeout
     while True:
@@ -6058,8 +6065,25 @@ return normalize(document.body && (document.body.innerText || document.body.text
 """, note) is True:
             return
         if time.monotonic() >= deadline:
-            raise RuntimeError(f"CRM production note did not persist after save and refresh for order {order_id}.")
+            raise _CrmProductionNotePersistenceError(f"CRM production note did not persist after save and refresh for order {order_id}.")
         time.sleep(0.5)
+
+
+def _save_and_verify_crm_production_note(driver, order_id, note):
+    for attempt in range(2):
+        state = _append_crm_production_note(driver, order_id, note)
+        try:
+            _verify_crm_production_note(driver, order_id, note)
+            return state
+        except _CrmProductionNotePersistenceError as exc:
+            if attempt:
+                raise _CrmProductionNotePersistenceError(f"{exc} Both production-note save attempts failed verification.") from exc
+            _publish_status(
+                f"Refreshing CRM order {order_id} and retrying the production-note save (2/2). Confirmed stock purchases will not be repeated.",
+                stage="retrying_production_note", order_id=order_id,
+            )
+            driver.refresh()
+            _wait_for_order_goods_page_ready(driver, order_id)
 
 
 def _process_nj_stock_order(crm_driver, sanmar_driver, order, warehouse_plan=None, receipt=None, dry_run=False, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
@@ -6224,13 +6248,13 @@ def _process_nj_stock_order(crm_driver, sanmar_driver, order, warehouse_plan=Non
                 return result(False, "sanmar_cart_not_empty", "SanMar cart is not empty after the confirmed purchase. Review before continuing.", stop_run=True)
 
         if not receipt.get("note_recorded"):
-            _append_crm_production_note(crm_driver, order["order_id"], receipt["note"])
-            _verify_crm_production_note(crm_driver, order["order_id"], receipt["note"])
+            _save_and_verify_crm_production_note(crm_driver, order["order_id"], receipt["note"])
             receipt["note_recorded"] = True
         receipt["complete"] = True
         _save_nj_stock_order(receipt)
         return result(True, "shipping_bypass_ordered", "NJ pickup stock and separate ADD stock were ordered, recorded in CRM, and their production note verified.")
     except Exception as exc:
+        safe_take_screenshot(crm_driver, f"crm_shipping_bypass_nj_error_{order['order_id']}")
         uncertain = any(group["state"] == "submitting" for group in groups)
         return result(
             False, "nj_stock_submission_uncertain" if uncertain else "nj_stock_order_incomplete",

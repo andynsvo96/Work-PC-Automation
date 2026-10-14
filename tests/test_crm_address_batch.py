@@ -4856,7 +4856,7 @@ class ShippingBypasserTests(unittest.TestCase):
         self.assertTrue(server._crm_shipping_bypasser_order_results_success(rows))
         self.assertTrue(all(row["success"] for row in rows))
         self.assertEqual(rows[1]["status"], "Partially successful")
-        self.assertEqual(rows[1]["sanmar_confirmation"]["po"], "FirstTab")
+        self.assertIsNone(rows[1]["sanmar_confirmation"])
         self.assertIn("tab 1 of 2", rows[1]["message"])
         self.assertIn("https://sanmar.example/1", rows[1]["message"])
 

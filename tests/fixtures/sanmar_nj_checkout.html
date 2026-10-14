@@ -61,6 +61,7 @@ if (page === 'checkout') {
       <input id="manual-po"><select id="vendor"><option>Select vendor</option><option>Sanmar</option></select>
       <button id="manual-save">Save</button>
     </div></div>
+    <section><h2>Sales Notes</h2><textarea id="sales-note-input" style="display:none">Existing sales note</textarea></section>
     <section><h2>Production Notes</h2><pre id="notes"></pre>
       <button id="edit">Edit Order</button><textarea id="note-input" style="display:none"></textarea>
       <button id="save-order" style="display:none">Save Order</button>
@@ -89,14 +90,21 @@ if (page === 'checkout') {
     document.querySelector('#edit').style.display = 'none';
     document.querySelector('#note-input').style.display = 'block';
     document.querySelector('#note-input').value = localStorage.getItem('fixture_notes') || '';
+    document.querySelector('#sales-note-input').style.display = 'block';
     document.querySelector('#save-order').style.display = 'inline-block';
   };
   document.querySelector('#save-order').onclick = () => {
     const note = document.querySelector('#note-input').value;
-    localStorage.setItem('fixture_notes', note);
-    document.querySelector('#notes').textContent = note;
+    const failures = Number(localStorage.getItem('fixture_note_save_failures') || '0');
+    if (failures > 0) localStorage.setItem('fixture_note_save_failures', String(failures - 1));
+    else {
+      localStorage.setItem('fixture_notes', note);
+      document.querySelector('#notes').textContent = note;
+    }
+    localStorage.setItem('fixture_sales_notes', document.querySelector('#sales-note-input').value);
     document.querySelector('#edit').style.display = 'inline-block';
     document.querySelector('#note-input').style.display = 'none';
+    document.querySelector('#sales-note-input').style.display = 'none';
     document.querySelector('#save-order').style.display = 'none';
   };
 }

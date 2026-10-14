@@ -52,6 +52,17 @@ test("existing orders without NJ retain their single confirmation link", () => {
   assert.ok(html.includes(add.url));
 });
 
+test("failed tab does not inherit another tab's NJ or ADD confirmation links", () => {
+  const html = context.buildCrmOrderDetailsHtml([
+    { order_id: row.order_id, success: false, status: "Partially successful", stock_tab_index: 1, stock_tab_count: 2 },
+    { ...row, stock_tab_index: 2, stock_tab_count: 2 },
+  ]);
+  const [failedTab, purchasedTab] = html.split("<br>");
+  assert.ok(!failedTab.includes("href="));
+  assert.ok(purchasedTab.includes(nj.url));
+  assert.ok(purchasedTab.includes(add.url));
+});
+
 test("duplicate receipts are shown once and PO labels are escaped", () => {
   const confirmation = { ...nj, po: '<NJ "example">' };
   const html = context.buildCrmOrderDetailsHtml([{

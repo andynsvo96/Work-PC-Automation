@@ -115,6 +115,51 @@ class NjLocalBrowserTests(unittest.TestCase):
             worker._verify_crm_production_note(self.driver, "5000001", note)
             self.assertEqual(worker._append_crm_production_note(self.driver, "5000001", note), "already_present")
         self.assertEqual(self.driver.execute_script("return localStorage.getItem('fixture_notes');"), note)
+        self.assertEqual(self.driver.execute_script("return localStorage.getItem('fixture_sales_notes');"), "Existing sales note")
+
+    def test_note_retry_recovers_failed_save_and_preserves_existing_production_and_sales_notes(self):
+        note = "Add box PO ADD-H-CJVillafra302 from TX."
+        existing = "Existing production note"
+        self.driver.execute_script("localStorage.setItem('fixture_notes', arguments[0]); localStorage.setItem('fixture_note_save_failures', '1');", existing)
+        self.driver.refresh()
+        verify = worker._verify_crm_production_note
+        with (
+            mock.patch.object(worker, "_wait_for_order_goods_page_ready"),
+            mock.patch.object(worker, "_publish_status"),
+            mock.patch.object(worker.time, "sleep"),
+            mock.patch.object(worker, "_verify_crm_production_note", side_effect=lambda *args: verify(*args, timeout=0)),
+        ):
+            self.assertEqual(worker._save_and_verify_crm_production_note(self.driver, "5000001", note), "recorded")
+        self.assertEqual(self.driver.execute_script("return localStorage.getItem('fixture_notes');"), existing + "\n" + note)
+        self.assertEqual(self.driver.execute_script("return localStorage.getItem('fixture_sales_notes');"), "Existing sales note")
+
+    def test_note_retry_does_not_duplicate_a_note_that_persisted_after_stale_verification(self):
+        note = "Add box PO ADD-H-CJVillafra302 from TX."
+        verify = worker._verify_crm_production_note
+        checks = []
+
+        def stale_first_check(*args):
+            checks.append(True)
+            if len(checks) == 1:
+                raise worker._CrmProductionNotePersistenceError("Stale CRM view")
+            return verify(*args, timeout=0)
+
+        with (
+            mock.patch.object(worker, "_wait_for_order_goods_page_ready"),
+            mock.patch.object(worker, "_publish_status"),
+            mock.patch.object(worker.time, "sleep"),
+            mock.patch.object(worker, "_verify_crm_production_note", side_effect=stale_first_check),
+        ):
+            self.assertEqual(worker._save_and_verify_crm_production_note(self.driver, "5000001", note), "already_present")
+        self.assertEqual(self.driver.execute_script("return localStorage.getItem('fixture_notes');"), note)
+
+    def test_ambiguous_production_field_does_not_save_to_sales_notes(self):
+        self.driver.execute_script("document.querySelector('#notes').parentElement.insertAdjacentHTML('beforeend', '<textarea>Second possible production field</textarea>');")
+        with mock.patch.object(worker.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "Production Notes textarea was not found"):
+                worker._append_crm_production_note(self.driver, "5000001", "New note")
+        self.assertIsNone(self.driver.execute_script("return localStorage.getItem('fixture_notes');"))
+        self.assertEqual(self.driver.execute_script("return document.getElementById('sales-note-input').value;"), "Existing sales note")
 
     def test_split_order_only_orders_tabs_without_source_stock_records(self):
         fixture = (ROOT / "tests" / "fixtures" / "crm_split_stock_tabs.html").as_uri()

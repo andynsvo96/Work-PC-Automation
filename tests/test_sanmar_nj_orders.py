@@ -133,7 +133,7 @@ class NjStockOrderTests(unittest.TestCase):
             return "recorded"
 
         patches = {
-            "_require_crm_order_ready_once_with_refresh": {}, "_publish_status": {},
+            "_require_crm_order_ready_once_with_refresh": {}, "_wait_for_order_goods_page_ready": {}, "_publish_status": {},
             "_extract_order_data": {"side_effect": lambda *args, **kwargs: self.order},
             "_pending_shipping_bypass_submission": {"return_value": None},
             "_saved_shipping_bypass_confirmation": {"return_value": None},
@@ -422,11 +422,58 @@ class NjStockOrderTests(unittest.TestCase):
             self.assertFalse(first["success"])
             self.assertFalse(first["stock_order_complete"])
             self.assertEqual(len(self.purchases()), 2)
+            self.assertEqual(self.mocks["_append_crm_production_note"].call_count, 2)
+            self.crm.refresh.assert_called_once()
+            self.mocks["safe_take_screenshot"].assert_called_once_with(self.crm, "crm_shipping_bypass_nj_error_5000001")
+            self.assertIn("Both production-note save attempts failed", first["message"])
+            receipt = worker._load_nj_stock_order(self.order["order_id"], self.order["po"])
+            self.assertEqual([group["state"] for group in receipt["groups"]], ["recorded", "recorded"])
+            self.assertFalse(receipt["note_recorded"])
             self.note_visible = True
             self.mocks["_ensure_sanmar_logged_in"].side_effect = RuntimeError("SanMar login unavailable")
             second = self.run_order()
         self.assertTrue(second["success"], second["message"])
         self.assertEqual(len(self.purchases()), 2)
+
+    def test_note_is_resaved_once_after_failed_refresh_verification_without_rebuying_stock(self):
+        def save_note(_driver, order_id, note):
+            self.note = note
+            self.note_visible = self.mocks["_append_crm_production_note"].call_count == 2
+            return "recorded"
+
+        self.mocks["_append_crm_production_note"].side_effect = save_note
+        verify = worker._verify_crm_production_note
+        with mock.patch.object(worker, "_verify_crm_production_note", side_effect=lambda *args: verify(*args, timeout=0)):
+            result = self.run_order()
+        self.assertTrue(result["success"], result["message"])
+        self.assertEqual(self.mocks["_append_crm_production_note"].call_count, 2)
+        self.assertEqual(len(self.purchases()), 2)
+        self.crm.refresh.assert_called_once()
+        self.mocks["safe_take_screenshot"].assert_not_called()
+        receipt = worker._load_nj_stock_order(self.order["order_id"], self.order["po"])
+        self.assertTrue(receipt["note_recorded"])
+        self.assertTrue(receipt["complete"])
+
+    def test_ambiguous_note_save_failure_stops_without_retry_and_keeps_purchase_receipts(self):
+        self.mocks["_append_crm_production_note"].side_effect = RuntimeError("Production Notes textarea is ambiguous")
+        result = self.run_order()
+        self.assertFalse(result["success"])
+        self.assertFalse(result["stock_order_complete"])
+        self.assertEqual(self.mocks["_append_crm_production_note"].call_count, 1)
+        self.assertEqual(len(self.purchases()), 2)
+        self.crm.refresh.assert_not_called()
+        self.mocks["safe_take_screenshot"].assert_called_once_with(self.crm, "crm_shipping_bypass_nj_error_5000001")
+
+    def test_multi_tab_report_keeps_nj_add_confirmations_on_the_tab_that_purchased_them(self):
+        result = self.run_order()
+        result.update(stock_tab_index=2, stock_tab_count=2, stock_tab_label="Stock tab 2")
+        failed = worker._result(self.order["order_id"], False, "sanmar_color_not_found", "Color was not found.", stock_tab_index=1, stock_tab_count=2)
+        rows = server._build_crm_shipping_bypasser_order_results({"report": [failed, result]})
+        self.assertIsNone(rows[0]["sanmar_confirmation"])
+        self.assertNotIn("stock_orders", rows[0])
+        self.assertEqual(rows[1]["sanmar_confirmation"]["po"], f"ADD-{self.order['po']}")
+        self.assertEqual([group["sanmar_confirmation"]["po"] for group in rows[1]["stock_orders"]], [self.order["po"], f"ADD-{self.order['po']}"])
+        self.assertIn("tab 2 of 2", rows[0]["message"])
 
     def test_completed_receipt_skips_all_new_purchases_and_note_edits(self):
         self.assertTrue(self.run_order()["success"])

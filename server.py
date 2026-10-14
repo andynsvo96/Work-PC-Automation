@@ -5475,12 +5475,8 @@ def _build_crm_shipping_bypasser_order_results(payload):
             if submitted_text:
                 message = f"{message} SanMar submitted stock: {submitted_text}.".strip()
         sanmar_confirmation = item.get("sanmar_confirmation") if isinstance(item.get("sanmar_confirmation"), dict) else None
-        if partial_success and sanmar_confirmation is None:
-            for detail in partial_details:
-                candidate = detail.get("sanmar_confirmation") if isinstance(detail, dict) else None
-                if isinstance(candidate, dict):
-                    sanmar_confirmation = candidate
-                    break
+        # Other tabs' purchases belong in the explicitly labeled order summary,
+        # never in this tab's own PO link.
         if sanmar_confirmation is None and submitted_detail:
             candidate = submitted_detail.get("sanmar_confirmation") if isinstance(submitted_detail, dict) else None
             if isinstance(candidate, dict):
