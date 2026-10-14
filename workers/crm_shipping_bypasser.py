@@ -115,7 +115,7 @@ WAREHOUSE_ALIASES = {
 SANMAR_WAREHOUSE_STOCK_BUFFER = 10
 SANMAR_UPS_OPTION_WAIT_SECONDS = 30
 SIZE_TOKENS = {
-    "XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL", "6XL",
+    "XXS", "XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL", "6XL",
     "S/M", "L/XL", "2/3X", "4/5X",
     "YXS", "YS", "YM", "YL", "YXL", "ONE SIZE", "ONESIZE", "OSFA",
     "LT", "XLT", "2XT", "3XT", "4XT",
@@ -2685,7 +2685,7 @@ const warehouseAliases = [
   ['Reno, NV', ['Reno, NV', 'Reno', 'NV']],
   ['Seattle, WA', ['Seattle, WA', 'Seattle', 'WA']],
 ];
-const sizePattern = /^(XS|S|M|L|XL|[2-6]XL|S\/M|L\/XL|2\/3X|4\/5X|YXS|YS|YM|YL|YXL|LT|XLT|[2-4]XT|ONE SIZE|OSFA|NB|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}MOS|0003|0306|0612|1218|1824|[2-7]T|5\/6)$/;
+const sizePattern = /^(XXS|XS|S|M|L|XL|[2-6]XL|S\/M|L\/XL|2\/3X|4\/5X|YXS|YS|YM|YL|YXL|LT|XLT|[2-4]XT|ONE SIZE|OSFA|NB|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}MOS|0003|0306|0612|1218|1824|[2-7]T|5\/6)$/;
 function escapeRegExp(value) { return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function warehouseFromText(text) {
   const haystack = normalize(text).toUpperCase();
@@ -3611,7 +3611,7 @@ function isVisible(node) {
 function dispatch(node, name) {
   node.dispatchEvent(new Event(name, { bubbles: true }));
 }
-const sizePattern = /^(XS|S|M|L|XL|[2-6]XL|S\/M|L\/XL|2\/3X|4\/5X|YXS|YS|YM|YL|YXL|LT|XLT|[2-4]XT|ONE SIZE|OSFA|NB|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}MOS|0003|0306|0612|1218|1824|[2-7]T|5\/6)$/;
+const sizePattern = /^(XXS|XS|S|M|L|XL|[2-6]XL|S\/M|L\/XL|2\/3X|4\/5X|YXS|YS|YM|YL|YXL|LT|XLT|[2-4]XT|ONE SIZE|OSFA|NB|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}MOS|0003|0306|0612|1218|1824|[2-7]T|5\/6)$/;
 function cleanSize(value) {
   const text = normalize(value).toUpperCase().replace(/\s+/g, ' ');
   if (/^ONE SIZE$/.test(text)) return 'ONE SIZE';
@@ -3954,7 +3954,7 @@ def _read_sanmar_cart_lines(driver):
     script = r"""
 const normalize = (value) => String(value || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
 const STYLE_PATTERN = /\b(?:[A-Z]{1,6}\d{2,6}[A-Z]?|\d{3,6}[A-Z]?)\b/i;
-const SIZE_PATTERN = /^(?:Y?XS|Y?S|Y?M|Y?L|Y?XL|XS|S|M|L|XL|[2-6]XL|S\/M|L\/XL|2\/3X|4\/5X|LT|XLT|[2-4]XT|ONE SIZE|OSFA|OS|NB|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}MOS|[2-7]T|5\/6)$/i;
+const SIZE_PATTERN = /^(?:XXS|Y?XS|Y?S|Y?M|Y?L|Y?XL|XS|S|M|L|XL|[2-6]XL|S\/M|L\/XL|2\/3X|4\/5X|LT|XLT|[2-4]XT|ONE SIZE|OSFA|OS|NB|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}MOS|[2-7]T|5\/6)$/i;
 function isVisible(node) {
   if (!node) return false;
   const rect = node.getBoundingClientRect();
@@ -4027,12 +4027,12 @@ function styleFromText(text) {
   return match || '';
 }
 function sizeFromText(text) {
-  const labeled = normalize(text).match(/size\s*:?\s*(ONE\s+SIZE|OSFA|S\s*\/\s*M|L\s*\/\s*XL|2(?:X|XL)?\s*\/\s*3(?:X|XL)?|4(?:X|XL)?\s*\/\s*5(?:X|XL)?|Y?XS|Y?S|Y?M|Y?L|Y?XL|XS|S|M|L|XL|X{2,6}L|[2-6]XL|LT|XLT|[2-4]XLT|[2-4]XT|OS|NB|NEWBORN|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}\s*(?:MO|MOS|MONTHS?)|[2-7]T|5\/6)\b/i);
+  const labeled = normalize(text).match(/size\s*:?\s*(ONE\s+SIZE|OSFA|S\s*\/\s*M|L\s*\/\s*XL|2(?:X|XL)?\s*\/\s*3(?:X|XL)?|4(?:X|XL)?\s*\/\s*5(?:X|XL)?|XXS|Y?XS|Y?S|Y?M|Y?L|Y?XL|XS|S|M|L|XL|X{2,6}L|[2-6]XL|LT|XLT|[2-4]XLT|[2-4]XT|OS|NB|NEWBORN|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}\s*(?:MO|MOS|MONTHS?)|[2-7]T|5\/6)\b/i);
   if (labeled) return labeled[1];
   return '';
 }
 function colorFromText(text) {
-  const match = normalize(text).match(/color\s*:?\s*(.+?)(?=\s*(?:size\s*:?\s*(?:ONE\s+SIZE|OSFA|S\s*\/\s*M|L\s*\/\s*XL|2(?:X|XL)?\s*\/\s*3(?:X|XL)?|4(?:X|XL)?\s*\/\s*5(?:X|XL)?|Y?XS|Y?S|Y?M|Y?L|Y?XL|XS|S|M|L|XL|X{2,6}L|[2-6]XL|LT|XLT|[2-4]XLT|[2-4]XT|OS|NB|NEWBORN|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}\s*(?:MO|MOS|MONTHS?)|[2-7]T|5\/6)\b|total\s*(?:piece|pieces)|pieces?|qty|quantity|warehouse|price|merchandise|weight|remove)\b|$)/i);
+  const match = normalize(text).match(/color\s*:?\s*(.+?)(?=\s*(?:size\s*:?\s*(?:ONE\s+SIZE|OSFA|S\s*\/\s*M|L\s*\/\s*XL|2(?:X|XL)?\s*\/\s*3(?:X|XL)?|4(?:X|XL)?\s*\/\s*5(?:X|XL)?|XXS|Y?XS|Y?S|Y?M|Y?L|Y?XL|XS|S|M|L|XL|X{2,6}L|[2-6]XL|LT|XLT|[2-4]XLT|[2-4]XT|OS|NB|NEWBORN|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}\s*(?:MO|MOS|MONTHS?)|[2-7]T|5\/6)\b|total\s*(?:piece|pieces)|pieces?|qty|quantity|warehouse|price|merchandise|weight|remove)\b|$)/i);
   return match ? match[1] : '';
 }
 function warehouseFromText(text) {
@@ -4064,7 +4064,7 @@ function selectedText(select) {
 function sizeQuantityPairsFromText(text) {
   const normalized = normalize(text);
   const pairs = [];
-  const pattern = /\b(ONE\s+SIZE|OSFA|S\s*\/\s*M|L\s*\/\s*XL|2(?:X|XL)?\s*\/\s*3(?:X|XL)?|4(?:X|XL)?\s*\/\s*5(?:X|XL)?|Y?XS|Y?S|Y?M|Y?L|Y?XL|XS|S|M|L|XL|X{2,6}L|[2-6]XL|LT|XLT|[2-4]XLT|[2-4]XT|OS|NB|NEWBORN|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}\s*(?:MO|MOS|MONTHS?)|[2-7]T|5\/6)\s*:\s*(\d+)\b/ig;
+  const pattern = /\b(ONE\s+SIZE|OSFA|S\s*\/\s*M|L\s*\/\s*XL|2(?:X|XL)?\s*\/\s*3(?:X|XL)?|4(?:X|XL)?\s*\/\s*5(?:X|XL)?|XXS|Y?XS|Y?S|Y?M|Y?L|Y?XL|XS|S|M|L|XL|X{2,6}L|[2-6]XL|LT|XLT|[2-4]XLT|[2-4]XT|OS|NB|NEWBORN|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}\s*(?:MO|MOS|MONTHS?)|[2-7]T|5\/6)\s*:\s*(\d+)\b/ig;
   let match = null;
   while ((match = pattern.exec(normalized)) !== null) {
     pairs.push({ size: cleanSize(match[1]), quantity: Number(match[2]) });
@@ -4081,7 +4081,7 @@ for (const table of Array.from(document.querySelectorAll('table')).filter(isVisi
     const qtyCell = row.querySelector('.column-merch-qty');
     if (!styleCell || !sizeCell || !qtyCell) continue;
     const mobileSizeQty = textFromSelector(row, '.column-size-qty');
-    const mobileMatch = mobileSizeQty.match(/\b(ONE\s+SIZE|OSFA|S\s*\/\s*M|L\s*\/\s*XL|2(?:X|XL)?\s*\/\s*3(?:X|XL)?|4(?:X|XL)?\s*\/\s*5(?:X|XL)?|Y?XS|Y?S|Y?M|Y?L|Y?XL|XS|S|M|L|XL|X{2,6}L|[2-6]XL|LT|XLT|[2-4]XLT|[2-4]XT|OS|NB|NEWBORN|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}\s*(?:MO|MOS|MONTHS?)|[2-7]T|5\/6)\s*:\s*(\d+)\b/i);
+    const mobileMatch = mobileSizeQty.match(/\b(ONE\s+SIZE|OSFA|S\s*\/\s*M|L\s*\/\s*XL|2(?:X|XL)?\s*\/\s*3(?:X|XL)?|4(?:X|XL)?\s*\/\s*5(?:X|XL)?|XXS|Y?XS|Y?S|Y?M|Y?L|Y?XL|XS|S|M|L|XL|X{2,6}L|[2-6]XL|LT|XLT|[2-4]XLT|[2-4]XT|OS|NB|NEWBORN|[0-9]{1,2}M|[0-9]{1,2}-[0-9]{1,2}\s*(?:MO|MOS|MONTHS?)|[2-7]T|5\/6)\s*:\s*(\d+)\b/i);
     const warehouseCell = row.querySelector('.column-warehouse');
     const warehouseSelect = warehouseCell ? warehouseCell.querySelector('select') : null;
     const style = textFromSelector(styleCell, '.style-number') || styleFromText(styleCell.innerText || styleCell.textContent || '');
@@ -4166,7 +4166,7 @@ function looksLikeCartLineText(text) {
   const normalized = normalize(text);
   return STYLE_PATTERN.test(normalized)
     && /(?:total\s*(?:piece|pieces)|pieces?|qty|quantity)\D{0,40}\d/i.test(normalized)
-    && /(?:\bsize\b\s*:?\s*)?(?:ONE\s+SIZE|OSFA|S\s*\/\s*M|L\s*\/\s*XL|2(?:X|XL)?\s*\/\s*3(?:X|XL)?|4(?:X|XL)?\s*\/\s*5(?:X|XL)?|Y?XS|Y?S|Y?M|Y?L|Y?XL|XS|S|M|L|XL|X{2,6}L|[2-6]XL|LT|XLT|[2-4]XLT|[2-4]XT|OS)\b/i.test(normalized);
+    && /(?:\bsize\b\s*:?\s*)?(?:ONE\s+SIZE|OSFA|S\s*\/\s*M|L\s*\/\s*XL|2(?:X|XL)?\s*\/\s*3(?:X|XL)?|4(?:X|XL)?\s*\/\s*5(?:X|XL)?|XXS|Y?XS|Y?S|Y?M|Y?L|Y?XL|XS|S|M|L|XL|X{2,6}L|[2-6]XL|LT|XLT|[2-4]XLT|[2-4]XT|OS)\b/i.test(normalized);
 }
 const blockNodes = Array.from(document.querySelectorAll('tr,li,[class*="cart"],[class*="shopping"],[class*="line"],[class*="item"],[class*="product"],div'))
   .filter(isVisible)

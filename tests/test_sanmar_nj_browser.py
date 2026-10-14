@@ -50,6 +50,51 @@ class NjLocalBrowserTests(unittest.TestCase):
         self.driver.execute_script("localStorage.clear();")
         self.driver.refresh()
 
+    def _xxs_product_line(self):
+        product = {"index": 1, "product_id": "SXU003", "color": "Navy", "quantities": {"XXS": 1, "XS": 2, "M": 1, "2XL": 3}}
+        return {"product": product, "search_id": "SXU003", "quantities": worker._sanmar_quantities_for_product(product)}
+
+    def test_xxs_inventory_and_quantity_entry_keep_adjacent_sizes_separate(self):
+        fixture = (ROOT / "tests" / "fixtures" / "sanmar_xxs_sizes.html").as_uri()
+        for layout in ("drawer", "legacy"):
+            with self.subTest(layout=layout), mock.patch.object(worker.time, "sleep"):
+                self.driver.get(fixture + "?page=inventory&layout=" + layout)
+                inventory = worker._sanmar_inventory(self.driver)
+                self.assertEqual(inventory, [
+                    {"warehouse": "Robbinsville, NJ", "stock": {"XXS": 0, "XS": 80, "M": 90, "2XL": 100}},
+                    {"warehouse": "Dallas, TX", "stock": {"XXS": 30, "XS": 40, "M": 50, "2XL": 60}},
+                ])
+                line = dict(self._xxs_product_line(), inventory=inventory)
+                warehouse, plan = worker._choose_warehouse_plan([line], "inhouse")
+                self.assertEqual(warehouse, "Dallas, TX")
+                self.assertEqual(plan["mode"], "single_warehouse")
+                worker._fill_sanmar_quantities(self.driver, warehouse, line["quantities"])
+                values = self.driver.execute_script("return Object.fromEntries(Array.from(document.querySelectorAll('input')).map(input => [input.id, input.value]));")
+                self.assertEqual(values, {
+                    "qty-0-XXS": "0", "qty-0-XS": "0", "qty-0-M": "0", "qty-0-2XL": "0",
+                    "qty-1-XXS": "1", "qty-1-XS": "2", "qty-1-M": "1", "qty-1-2XL": "3",
+                })
+                self.assertEqual(self.driver.execute_script("return window.quantityChanges;"), {
+                    "qty-1-XXS": "1", "qty-1-XS": "2", "qty-1-M": "1", "qty-1-2XL": "3",
+                })
+
+    def test_xxs_cart_reading_and_validation_across_supported_layouts(self):
+        fixture = (ROOT / "tests" / "fixtures" / "sanmar_xxs_sizes.html").as_uri()
+        for layout in ("table", "desktop", "mobile", "multiple", "labels", "cards"):
+            with self.subTest(layout=layout), mock.patch.object(worker.time, "sleep"):
+                self.driver.get(fixture + "?page=cart&layout=" + layout)
+                lines = worker._read_sanmar_cart_lines(self.driver)
+                self.assertEqual(lines, [
+                    {"style": "SXU003", "color": "Navy", "size": size, "quantity": quantity, "warehouse": "Dallas, TX"}
+                    for size, quantity in self._xxs_product_line()["quantities"].items()
+                ])
+                validation = worker._validate_sanmar_cart_contents(self.driver, [self._xxs_product_line()], warehouse="Dallas, TX", cart_lines=lines)
+                self.assertTrue(validation["success"], validation.get("issues"))
+                lines[0]["size"] = "XS"
+                validation = worker._validate_sanmar_cart_contents(self.driver, [self._xxs_product_line()], warehouse="Dallas, TX", cart_lines=lines)
+                self.assertFalse(validation["success"])
+                self.assertIn("Expected SXU003 size XXS qty 1, but cart has 0.", validation["issues"])
+
     def test_real_pickup_selection_and_customer_po_for_inhouse_nj_group(self):
         with mock.patch.object(worker.time, "sleep"):
             self.driver.get(self.fixture + "?page=checkout")

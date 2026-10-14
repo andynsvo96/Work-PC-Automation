@@ -136,6 +136,8 @@ reload is needed.
 
 ## Shipping Bypasser Product/Color Mappings
 
+Shipping Bypasser supports XXS in SanMar inventory tables, quantity entry, and cart verification, including mobile and multiple-size cart rows. XXS remains separate from XS; warehouse allocation and the existing stock buffer still apply. This fix loads with the next worker run; no app restart, extension reload, or page refresh is needed.
+
 Shipping Bypasser checks each active design's visible vendor stock records before ordering. A recorded SanMar, S&S, or Local Inventory PO skips that tab even when splitting the order assigned it a different tab PO, the stock status still says unordered, or dark mode changes the row color. Tabs with no recorded stock remain eligible; saved NJ/ADD allocations still resume unfinished purchases through their existing receipts. This worker change loads with the next queued run; no app restart, extension reload, or page refresh is needed.
 
 Use **Settings → Shipping mappings** to add an exact CRM product/color to SanMar product/color mapping. Each CRM product appears once and contains its own color list. Advanced fields support the SanMar inventory/pricing button, expected style IDs, and report labels. The same values remain directly editable in `shipping_bypasser_product_color_mappings.json`; malformed JSON and duplicate product/color entries fail with a specific error instead of being silently ignored.
