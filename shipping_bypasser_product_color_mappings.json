@@ -515,6 +515,16 @@
           "sanmar_color_id": "True Royal Heather"
         }
       ]
+    },
+    {
+      "crm_product_id": "VL45",
+      "sanmar_product_id": "VL45",
+      "colors": [
+        {
+          "crm_color_id": "Navy Heather",
+          "sanmar_color_id": "Heather Navy"
+        }
+      ]
     }
   ]
 }
