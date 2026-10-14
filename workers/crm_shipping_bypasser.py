@@ -1201,12 +1201,12 @@ def _extract_order_data(driver, order_id, tab_context=None):
     context_text = _normalize_text(" ".join(str(tab_context.get(key) or "") for key in ("label", "tab_label", "stock_tab_label")))
     active_panel_text = _normalize_text(data.get("activePanelText"))
     active_panel_stock_orders = data.get("activePanelStockOrders") if isinstance(data.get("activePanelStockOrders"), list) else []
-    po_match = (
-        re.search(r"\b(H-[A-Za-z0-9]+)\b", context_text, flags=re.I)
-        or re.search(r"\b(H-[A-Za-z0-9]+)\b", tab_text, flags=re.I)
-        or re.search(r"\b(H-[A-Za-z0-9]+)\b", body_text, flags=re.I)
-    )
-    po = po_match.group(1) if po_match else (_po_from_tab_label(context_text) or _po_from_tab_label(tab_text))
+    # Resolve the selected tab before searching the whole order. A tab without
+    # an H- prefix must not inherit another design's PO and purchase receipts.
+    po = _po_from_tab_label(context_text) or _po_from_tab_label(tab_text)
+    if not po:
+        po_match = re.search(r"\b(H-[A-Za-z0-9]+)\b", body_text, flags=re.I)
+        po = po_match.group(1) if po_match else ""
     raw_items = data.get("items") if isinstance(data.get("items"), list) else []
     if not raw_items:
         raw_items = [

@@ -136,6 +136,8 @@ reload is needed.
 
 ## Shipping Bypasser Product/Color Mappings
 
+Shipping Bypasser resolves each design's PO from the selected tab before searching the rest of the order page. A tab without an `H-` prefix keeps its own PO when another tab has an `H-` PO, so receipt checks compare the correct design's products and quantities. This fix loads with the next worker run; no app restart, extension reload, or page refresh is needed. Existing purchase receipts remain intact.
+
 Shipping Bypasser supports XXS in SanMar inventory tables, quantity entry, and cart verification, including mobile and multiple-size cart rows. XXS remains separate from XS; warehouse allocation and the existing stock buffer still apply. This fix loads with the next worker run; no app restart, extension reload, or page refresh is needed.
 
 Shipping Bypasser checks each active design's visible vendor stock records before ordering. A recorded SanMar, S&S, or Local Inventory PO skips that tab even when splitting the order assigned it a different tab PO, the stock status still says unordered, or dark mode changes the row color. Tabs with no recorded stock remain eligible; saved NJ/ADD allocations still resume unfinished purchases through their existing receipts. This worker change loads with the next queued run; no app restart, extension reload, or page refresh is needed.

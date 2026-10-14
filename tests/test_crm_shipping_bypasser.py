@@ -71,6 +71,47 @@ class ShippingBypassExistingStockTests(unittest.TestCase):
         self.assertTrue(resume.call_args.args[2]["active_panel_stock_ordered"])
 
 
+class ShippingBypassTabPoTests(unittest.TestCase):
+    def _crm_data(self):
+        data = ShippingBypassExistingStockTests()._crm_data()
+        data["bodyText"] += " H-OtherTab708 2 - QTY: 15 Design Previews"
+        data["activeTabText"] = "PlainTab707 1 - QTY: 1 Design Previews"
+        return data
+
+    def test_selected_tab_po_takes_priority_over_other_h_prefixed_po(self):
+        for context in (
+            {"label": "PlainTab707 1 - QTY: 1 Design Previews"},
+            {"stock_tab_label": "PlainTab707 1 - QTY: 1"},
+            None,
+        ):
+            with self.subTest(context=context):
+                driver = mock.Mock()
+                driver.execute_script.return_value = self._crm_data()
+                with mock.patch.object(crm_shipping_bypasser, "refresh_if_crm_challenge_attempts_exceeded", return_value=False):
+                    order = crm_shipping_bypasser._extract_order_data(driver, "5000001", tab_context=context)
+                self.assertEqual(order["po"], "PlainTab707")
+
+    def test_explicit_tab_context_takes_priority_over_first_visible_tab(self):
+        driver = mock.Mock()
+        data = self._crm_data()
+        data["activeTabText"] = "H-OtherTab708 2 - QTY: 15 Design Previews"
+        driver.execute_script.return_value = data
+        with mock.patch.object(crm_shipping_bypasser, "refresh_if_crm_challenge_attempts_exceeded", return_value=False):
+            order = crm_shipping_bypasser._extract_order_data(
+                driver, "5000001", tab_context={"label": "PlainTab707 1 - QTY: 1"},
+            )
+        self.assertEqual(order["po"], "PlainTab707")
+
+    def test_unlabelled_order_retains_body_po_fallback(self):
+        driver = mock.Mock()
+        data = self._crm_data()
+        data["activeTabText"] = ""
+        driver.execute_script.return_value = data
+        with mock.patch.object(crm_shipping_bypasser, "refresh_if_crm_challenge_attempts_exceeded", return_value=False):
+            order = crm_shipping_bypasser._extract_order_data(driver, "5000001")
+        self.assertEqual(order["po"], "H-OtherTab708")
+
+
 class ShippingBypassDestinationTests(unittest.TestCase):
     def test_subcontractor_banner_never_defaults_to_inhouse(self):
         for name, expected in (("Mach 6 Manufacturing (CA)", "mach6"), ("Mach6 Manufacturing (CA)", "mach6"), ("Other Manufacturing", "unsupported_subcontractor"), ("Other Manufacturing / Mach6", "unsupported_subcontractor"), ("", "unsupported_subcontractor")):
