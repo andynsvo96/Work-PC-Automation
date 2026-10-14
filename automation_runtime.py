@@ -937,6 +937,30 @@ def safe_get_with_partial_load(driver, url, label):
     return False
 
 
+class ChromeDriverPolicyError(RuntimeError):
+    """Windows denied execution of ChromeDriver before a session started."""
+
+
+def _start_chrome_driver(options):
+    os.environ["WDM_LOCAL"] = "1"
+    driver_path = ChromeDriverManager().install()
+    service = Service(driver_path)
+    try:
+        return webdriver.Chrome(service=service, options=options)
+    except OSError as err:
+        if getattr(err, "winerror", None) != 4551:
+            raise
+        # Selenium may select an explicit environment override in Service.
+        # Report the executable it actually attempted to launch.
+        blocked_path = service.path or driver_path
+        raise ChromeDriverPolicyError(
+            "Windows Application Control blocked ChromeDriver (WinError 4551). "
+            f'Driver: "{blocked_path}". No automation session started. '
+            "Review the block in Windows Security > App & browser control, "
+            "or ask your Windows administrator to review this driver."
+        ) from err
+
+
 def build_chrome_driver(
     profile_path,
     headless_mode=False,
@@ -997,9 +1021,7 @@ def build_chrome_driver(
         },
     )
 
-    os.environ["WDM_LOCAL"] = "1"
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
+    driver = _start_chrome_driver(options)
     install_mailto_click_guard(driver)
 
     if page_load_timeout:
@@ -1013,8 +1035,6 @@ def build_attached_chrome_driver(debugger_address="127.0.0.1:9222"):
     options = Options()
     options.add_experimental_option("debuggerAddress", debugger_address)
 
-    os.environ["WDM_LOCAL"] = "1"
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
+    driver = _start_chrome_driver(options)
     install_mailto_click_guard(driver)
     return driver

@@ -117,6 +117,23 @@ This repo intentionally does not commit real credentials, browser sessions, logs
 For hidden startup on Windows, use `start_server_hidden.vbs`; it now performs Safe Sync & Start. For macOS and Android/Tailscale onboarding, follow [`docs/MAC_AND_TABLET_SETUP.md`](docs/MAC_AND_TABLET_SETUP.md).
 A direct `python server.py` launch also performs the same safe startup check. Uncommitted, ahead, or diverged work is never overwritten; the app starts locked and explains what must be resolved.
 
+If a worker reports **Windows Application Control blocked ChromeDriver (WinError 4551)**,
+Windows prevented the browser driver from running before an automation session
+started. The error includes the selected driver path. Check **Windows Security >
+App & browser control** and **Event Viewer > Applications and Services Logs >
+Microsoft > Windows > CodeIntegrity > Operational**, event **3077**, for the
+blocked file and policy. The `VerifiedAndReputableDesktop` policy belongs to
+[Smart App Control](https://learn.microsoft.com/en-us/windows/security/application-security/application-control/app-control-for-business/operations/inbox-appcontrol-policies).
+[Microsoft's FAQ](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions)
+explains that it has no individual-app exception; have the device owner or Windows
+administrator review the driver and available security options. Retrying the
+same blocked driver or switching browser visibility does not resolve the policy.
+The app does not change Windows security settings. For a clock action blocked at
+this stage, that attempt submitted no Paycom punch; check Paycom before manually
+recording or retrying a punch. Restart the local app to load this diagnostic for
+in-process browser setup; queued workers load it on their next run. No extension
+reload is needed.
+
 ## Shipping Bypasser Product/Color Mappings
 
 Shipping Bypasser checks each active design's visible vendor stock records before ordering. A recorded SanMar, S&S, or Local Inventory PO skips that tab even when splitting the order assigned it a different tab PO, the stock status still says unordered, or dark mode changes the row color. Tabs with no recorded stock remain eligible; saved NJ/ADD allocations still resume unfinished purchases through their existing receipts. This worker change loads with the next queued run; no app restart, extension reload, or page refresh is needed.
