@@ -117,6 +117,13 @@ This repo intentionally does not commit real credentials, browser sessions, logs
 For hidden startup on Windows, use `start_server_hidden.vbs`; it now performs Safe Sync & Start. For macOS and Android/Tailscale onboarding, follow [`docs/MAC_AND_TABLET_SETUP.md`](docs/MAC_AND_TABLET_SETUP.md).
 A direct `python server.py` launch also performs the same safe startup check. Uncommitted, ahead, or diverged work is never overwritten; the app starts locked and explains what must be resolved.
 
+ChromeDriver launches do not inherit the dashboard's open handles. This prevents
+a detached setup driver from keeping port 5123 occupied after a Windows server
+restart. Restart the local app to load this change for setup and connection tests;
+queued workers load it on their next run. No extension reload is needed. If an
+older driver already holds the port, exit that orphaned driver before starting
+the app again.
+
 If a worker reports **Windows Application Control blocked ChromeDriver (WinError 4551)**,
 Windows prevented the browser driver from running before an automation session
 started. The error includes the selected driver path. Check **Windows Security >

@@ -944,7 +944,9 @@ class ChromeDriverPolicyError(RuntimeError):
 def _start_chrome_driver(options):
     os.environ["WDM_LOCAL"] = "1"
     driver_path = ChromeDriverManager().install()
-    service = Service(driver_path)
+    # Selenium otherwise inherits handles on Windows. A detached setup driver
+    # can then keep the dashboard's listening socket open after it exits.
+    service = Service(driver_path, popen_kw={"close_fds": True})
     try:
         return webdriver.Chrome(service=service, options=options)
     except OSError as err:
