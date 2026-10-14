@@ -94,9 +94,10 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
             with self.subTest(key=key, label=label):
                 self.show_popup(designs, key=key)
                 queue = self.driver.find_element(By.XPATH, f'//button[text()="{label}"]')
-                self.assertFalse(queue.is_enabled())
-                self.driver.find_element(By.CSS_SELECTOR, 'input[data-emb-tab="1"][data-emb-area="1"]').click()
-                self.driver.find_element(By.CSS_SELECTOR, 'input[data-emb-tab="3"]').click()
+                self.assertEqual(queue.is_enabled(), key == "oversize_emb_to_hdd")
+                if key != "oversize_emb_to_hdd":
+                    self.driver.find_element(By.CSS_SELECTOR, 'input[data-emb-tab="1"][data-emb-area="1"]').click()
+                    self.driver.find_element(By.CSS_SELECTOR, 'input[data-emb-tab="3"]').click()
                 self.assertTrue(queue.is_enabled())
                 queue.click()
                 self.assertEqual(self.driver.execute_script('return window.queued'), [{
@@ -105,11 +106,42 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
                     ]},
                 }])
 
-    def test_oversize_preselects_only_one_unambiguous_area(self):
-        for areas in (["Back"], ["Front-left Chest", "Back"]):
+    def test_oversize_preselects_front_and_back_and_leaves_other_areas_unchecked(self):
+        for areas, expected in ((["Back"], [True]), (["Front"], [True]),
+                                (["Front-left Chest", "Back", "Front", "Front-right Chest"], [False, True, True, False]),
+                                (["Front-left Chest"], [False]), (["Front-right Chest"], [False]),
+                                (["Left Chest", "Right Chest", "Left Sleeve", "Right Side"], [False] * 4),
+                                ([" front ", "BACK"], [True, True])):
             with self.subTest(areas=areas):
                 self.show_popup([{"tab_number": 1, "design_name": "Logo", "print_areas": areas}], key="oversize_emb_to_hdd")
-                self.assertEqual(self.driver.find_element(By.XPATH, '//button[text()="Queue task"]').is_enabled(), len(areas) == 1)
+                self.assertEqual([checkbox.is_selected() for checkbox in self.driver.find_elements(By.CSS_SELECTOR, 'input[data-emb-tab]')], expected)
+                self.assertEqual(self.driver.find_element(By.XPATH, '//button[text()="Queue task"]').is_enabled(), any(expected))
+                self.assertEqual(self.driver.execute_script('return window.queued'), [])
+
+    def test_oversize_defaults_across_designs_can_be_adjusted_before_queueing(self):
+        designs = [
+            {"tab_number": 1, "design_name": "Logo", "print_areas": ["Front-left Chest", "Front", "Back"]},
+            {"tab_number": 3, "design_name": "Crest", "print_areas": ["Front-right Chest", "Back"]},
+            {"tab_number": 4, "design_name": "Sleeve", "print_areas": ["Left Sleeve"]},
+        ]
+        self.show_popup(designs, key="oversize_emb_to_hdd")
+        checkboxes = self.driver.find_elements(By.CSS_SELECTOR, 'input[data-emb-tab]')
+        self.assertEqual([checkbox.is_selected() for checkbox in checkboxes], [False, True, True, False, True, False])
+        queue = self.driver.find_element(By.XPATH, '//button[text()="Queue task"]')
+        self.assertTrue(queue.is_enabled())
+        for index in (1, 2, 4):
+            checkboxes[index].click()
+        self.assertFalse(queue.is_enabled())
+        checkboxes[0].click()
+        checkboxes[4].click()
+        self.assertTrue(queue.is_enabled())
+        queue.click()
+        self.assertEqual(self.driver.execute_script('return window.queued'), [{
+            "key": "oversize_emb_to_hdd", "data": {"designs": [
+                {**designs[0], "print_areas": ["Front-left Chest"]},
+                {**designs[1], "print_areas": ["Back"]},
+            ]},
+        }])
 
     def test_oversize_replacement_preserves_rich_text_and_correct_pairing(self):
         designs = [{"tab_number": 1, "design_name": 'A & <Hat> $&', "print_areas": ["Back"]},

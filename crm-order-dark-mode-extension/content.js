@@ -1370,7 +1370,8 @@ async function scanComplicatedEmbPrintDesigns(onProgress) {
 function showOrderAutomationConfirmation(automation, triggerButton, autoProcessButton) {
   document.getElementById("crm-order-automation-confirmation")?.remove();
   const asksFeedback = automation.key === "complicated_emb_to_hdd";
-  const selectsPrintAreas = asksFeedback || automation.key === "oversize_emb_to_hdd";
+  const isOversizeEmb = automation.key === "oversize_emb_to_hdd";
+  const selectsPrintAreas = asksFeedback || isOversizeEmb;
   const selectsDesigns = asksFeedback || selectsPrintAreas;
   const requiresReason = automation.requiresReason === true;
   const overlay = document.createElement("div");
@@ -1509,7 +1510,9 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
           input.type = 'checkbox';
           input.dataset.embTab = String(design.tab_number);
           if (selectsPrintAreas) input.dataset.embArea = String(areaIndex);
-          input.checked = designs.length === 1 && (!selectsPrintAreas || design.print_areas.length === 1);
+          input.checked = isOversizeEmb
+            ? /^(front|back)$/i.test(area.trim())
+            : designs.length === 1 && (!selectsPrintAreas || design.print_areas.length === 1);
           input.addEventListener('change', refreshContinueButtonState);
           label.append(input, document.createTextNode(selectsPrintAreas ? ` ${area}` : ` Tab ${design.tab_number}: ${design.design_name}`));
           designPicker.append(label);

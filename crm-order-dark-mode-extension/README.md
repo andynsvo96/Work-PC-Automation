@@ -145,9 +145,11 @@ Assistant at `chrome://extensions`, and refresh open CRM order pages.
 
 Reachout > Oversize EMB to HDD scans all available design tabs and lists their
 current print areas, such as `Front-left Chest` and `Back`. Readable ink and
-mixed-method designs remain available after switching from embroidery. Choose
-the affected area(s) under each Design Name, then select **Queue task**. A single
-design with one area is preselected; multiple designs or areas require selection.
+mixed-method designs remain available after switching from embroidery. **Front**
+and **Back** areas start checked across every scanned design. Chest areas,
+including **Front-left Chest** and **Front-right Chest**, and other locations
+start unchecked, even when they are the only area. Adjust the affected area(s)
+under each Design Name as needed, then select **Queue task**.
 The scan returns you to the design tab that was open before scanning.
 
 The `[AUTO] Oversize Embroidery` template must contain `[PRINT] for [DESIGN]` or
@@ -166,5 +168,6 @@ Sheets Scanner runs without extension selections can resolve a single available
 design with one print area. Multiple designs or areas stop for selection through
 the extension instead of guessing which area is oversized.
 
-After updating to 1.5.10, restart the local Automation app, reload CRM Order
-Assistant at `chrome://extensions`, and refresh open CRM order pages.
+After updating to 1.5.12, reload CRM Order Assistant at `chrome://extensions`
+and refresh open CRM order pages to load the automatic Front/Back selection.
+No local Automation app restart is needed for this selection change.
