@@ -183,6 +183,114 @@ class ShippingBypassProductColorMappingTests(unittest.TestCase):
         self.assertEqual(colors[("TEST100", "BLUEWHITE")], ["Blue/ White"])
 
 
+class ShippingBypass3200ColorMappingTests(unittest.TestCase):
+    # CRM labels and SanMar labels from the supplied color screenshots.
+    COLORS = {
+        "BLACK MRBLE/BLCK": "Black Marble/ Black",
+        "BLACK/RED": "Black/ Red",
+        "BLACK/WHITE": "Black/ White",
+        "Black Heather/ Black": "Black Heather/ Black",
+        "Black/ Deep Heather": "Black/ Deep Heather",
+        "Black/ True Royal": "Black/ True Royal",
+        "DEEP HEATHER/BLACK": "Deep Heather/ Black",
+        "DEEP HTHR/BLACK": "Deep Heather/ Black",
+        "GREY/LT RED TRIBLEND": "Grey/ Red Triblend",
+        "GREY/NAVY TRIBLEND": "Grey/ Navy Triblend",
+        "GREY/TR RYL TRI": "Grey/ True Royal Triblend",
+        "GRY/CHAR-BLK TRI": "Grey/ Charcoal-Black Triblend",
+        "GRY/MAROON TRBLN": "Grey Maroon Triblend",
+        "Grey/ Emerald Triblend": "Grey/ Emerald Triblend",
+        "WHITE/ DEEP HTHR": "White/ Deep Heather",
+        "WHITE/ DENIM": "White/ Denim",
+        "WHITE/ASPHALT": "White/ Asphalt",
+        "WHITE/BLACK": "White/ Black",
+        "WHITE/KELLY": "White/ Kelly",
+        "WHITE/NAVY": "White/ Navy",
+        "WHITE/RED": "White/ Red",
+        "WHITE/TRUE ROYAL": "White/ True Royal",
+        "WHT FLCK/CHAR TRIBLND": "White Fleck/ Charcoal-Black Triblend",
+        "White/ Heather Olive": "White/ Heather Olive",
+        "White/ Heather Peach": "White/ Heather Peach",
+        "White/ Maroon": "White/ Maroon",
+    }
+
+    def test_both_style_names_search_and_verify_bc3200_inventory(self):
+        for product_id in ("3200", "bc3200"):
+            with self.subTest(product_id=product_id):
+                options = crm_shipping_bypasser._sanmar_search_options_for_product(
+                    {"product_id": product_id}
+                )
+                self.assertEqual(options["search_id"], "BC3200")
+                self.assertEqual(options["expected_style_keys"], ["BC3200"])
+                self.assertTrue(options["click_inventory_button"])
+                self.assertEqual(options["handler"], "Bella+Canvas")
+
+    def test_screenshot_colors_resolve_for_selection_and_cart_confirmation(self):
+        for product_id in ("3200", "bc3200"):
+            product = {"product_id": product_id}
+            for crm_color, sanmar_color in self.COLORS.items():
+                with self.subTest(product_id=product_id, crm_color=crm_color):
+                    self.assertIn(
+                        sanmar_color,
+                        crm_shipping_bypasser._sanmar_color_label_options(
+                            crm_color.lower(), product=product
+                        ),
+                    )
+                    self.assertTrue(
+                        crm_shipping_bypasser._cart_color_matches(
+                            sanmar_color, crm_color, product=product
+                        )
+                    )
+
+    def test_crm_only_colors_do_not_substitute_a_shown_sanmar_color(self):
+        unsupported = (
+            "WHITE/NEON BLUE",
+            "WHITE/NEON PINK",
+            "WHT FLK/NVY TRBL",
+            "WHT/NEON ORANGE",
+            "WHT/NEON YELLOW",
+        )
+        for product_id in ("3200", "BC3200"):
+            product = {"product_id": product_id}
+            for crm_color in unsupported:
+                with self.subTest(product_id=product_id, crm_color=crm_color):
+                    self.assertEqual(
+                        crm_shipping_bypasser._sanmar_product_color_alias_labels(
+                            product, crm_color
+                        ),
+                        [],
+                    )
+                    for sanmar_color in set(self.COLORS.values()):
+                        self.assertFalse(
+                            crm_shipping_bypasser._cart_color_matches(
+                                sanmar_color, crm_color, product=product
+                            ),
+                            sanmar_color,
+                        )
+
+    def test_custom_aliases_stay_scoped_and_distinguish_similar_combinations(self):
+        for product_id in ("3200", "BC3200"):
+            product = {"product_id": product_id}
+            for sanmar_color, crm_color in (
+                ("Black/ Deep Heather", "DEEP HTHR/BLACK"),
+                ("Deep Heather/ Black", "Black/ Deep Heather"),
+                ("Grey/ Navy Triblend", "GREY/LT RED TRIBLEND"),
+                ("White/ Black", "WHT FLCK/CHAR TRIBLND"),
+            ):
+                with self.subTest(product_id=product_id, crm_color=crm_color):
+                    self.assertFalse(
+                        crm_shipping_bypasser._cart_color_matches(
+                            sanmar_color, crm_color, product=product
+                        )
+                    )
+        self.assertEqual(
+            crm_shipping_bypasser._sanmar_product_color_alias_labels(
+                {"product_id": "3413C"}, "GREY/LT RED TRIBLEND"
+            ),
+            [],
+        )
+
+
 class ShippingBypassColorConfirmationTests(unittest.TestCase):
     def test_already_selected_drawer_color_does_not_retrigger_navigation(self):
         driver = mock.Mock()

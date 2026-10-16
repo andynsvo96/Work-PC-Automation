@@ -40,6 +40,236 @@
       "colors": []
     },
     {
+      "crm_product_id": "3200",
+      "sanmar_product_id": "BC3200",
+      "sanmar_expected_product_ids": [
+        "BC3200"
+      ],
+      "click_inventory_button": true,
+      "handler": "Bella+Canvas",
+      "colors": [
+        {
+          "crm_color_id": "BLACK MRBLE/BLCK",
+          "sanmar_color_id": "Black Marble/ Black"
+        },
+        {
+          "crm_color_id": "BLACK/RED",
+          "sanmar_color_id": "Black/ Red"
+        },
+        {
+          "crm_color_id": "BLACK/WHITE",
+          "sanmar_color_id": "Black/ White"
+        },
+        {
+          "crm_color_id": "Black Heather/ Black",
+          "sanmar_color_id": "Black Heather/ Black"
+        },
+        {
+          "crm_color_id": "Black/ Deep Heather",
+          "sanmar_color_id": "Black/ Deep Heather"
+        },
+        {
+          "crm_color_id": "Black/ True Royal",
+          "sanmar_color_id": "Black/ True Royal"
+        },
+        {
+          "crm_color_id": "DEEP HEATHER/BLACK",
+          "sanmar_color_id": "Deep Heather/ Black"
+        },
+        {
+          "crm_color_id": "DEEP HTHR/BLACK",
+          "sanmar_color_id": "Deep Heather/ Black"
+        },
+        {
+          "crm_color_id": "GREY/LT RED TRIBLEND",
+          "sanmar_color_id": "Grey/ Red Triblend"
+        },
+        {
+          "crm_color_id": "GREY/NAVY TRIBLEND",
+          "sanmar_color_id": "Grey/ Navy Triblend"
+        },
+        {
+          "crm_color_id": "GREY/TR RYL TRI",
+          "sanmar_color_id": "Grey/ True Royal Triblend"
+        },
+        {
+          "crm_color_id": "GRY/CHAR-BLK TRI",
+          "sanmar_color_id": "Grey/ Charcoal-Black Triblend"
+        },
+        {
+          "crm_color_id": "GRY/MAROON TRBLN",
+          "sanmar_color_id": "Grey Maroon Triblend"
+        },
+        {
+          "crm_color_id": "Grey/ Emerald Triblend",
+          "sanmar_color_id": "Grey/ Emerald Triblend"
+        },
+        {
+          "crm_color_id": "WHITE/ DEEP HTHR",
+          "sanmar_color_id": "White/ Deep Heather"
+        },
+        {
+          "crm_color_id": "WHITE/ DENIM",
+          "sanmar_color_id": "White/ Denim"
+        },
+        {
+          "crm_color_id": "WHITE/ASPHALT",
+          "sanmar_color_id": "White/ Asphalt"
+        },
+        {
+          "crm_color_id": "WHITE/BLACK",
+          "sanmar_color_id": "White/ Black"
+        },
+        {
+          "crm_color_id": "WHITE/KELLY",
+          "sanmar_color_id": "White/ Kelly"
+        },
+        {
+          "crm_color_id": "WHITE/NAVY",
+          "sanmar_color_id": "White/ Navy"
+        },
+        {
+          "crm_color_id": "WHITE/RED",
+          "sanmar_color_id": "White/ Red"
+        },
+        {
+          "crm_color_id": "WHITE/TRUE ROYAL",
+          "sanmar_color_id": "White/ True Royal"
+        },
+        {
+          "crm_color_id": "WHT FLCK/CHAR TRIBLND",
+          "sanmar_color_id": "White Fleck/ Charcoal-Black Triblend"
+        },
+        {
+          "crm_color_id": "White/ Heather Olive",
+          "sanmar_color_id": "White/ Heather Olive"
+        },
+        {
+          "crm_color_id": "White/ Heather Peach",
+          "sanmar_color_id": "White/ Heather Peach"
+        },
+        {
+          "crm_color_id": "White/ Maroon",
+          "sanmar_color_id": "White/ Maroon"
+        }
+      ]
+    },
+    {
+      "crm_product_id": "BC3200",
+      "sanmar_product_id": "BC3200",
+      "sanmar_expected_product_ids": [
+        "BC3200"
+      ],
+      "click_inventory_button": true,
+      "handler": "Bella+Canvas",
+      "colors": [
+        {
+          "crm_color_id": "BLACK MRBLE/BLCK",
+          "sanmar_color_id": "Black Marble/ Black"
+        },
+        {
+          "crm_color_id": "BLACK/RED",
+          "sanmar_color_id": "Black/ Red"
+        },
+        {
+          "crm_color_id": "BLACK/WHITE",
+          "sanmar_color_id": "Black/ White"
+        },
+        {
+          "crm_color_id": "Black Heather/ Black",
+          "sanmar_color_id": "Black Heather/ Black"
+        },
+        {
+          "crm_color_id": "Black/ Deep Heather",
+          "sanmar_color_id": "Black/ Deep Heather"
+        },
+        {
+          "crm_color_id": "Black/ True Royal",
+          "sanmar_color_id": "Black/ True Royal"
+        },
+        {
+          "crm_color_id": "DEEP HEATHER/BLACK",
+          "sanmar_color_id": "Deep Heather/ Black"
+        },
+        {
+          "crm_color_id": "DEEP HTHR/BLACK",
+          "sanmar_color_id": "Deep Heather/ Black"
+        },
+        {
+          "crm_color_id": "GREY/LT RED TRIBLEND",
+          "sanmar_color_id": "Grey/ Red Triblend"
+        },
+        {
+          "crm_color_id": "GREY/NAVY TRIBLEND",
+          "sanmar_color_id": "Grey/ Navy Triblend"
+        },
+        {
+          "crm_color_id": "GREY/TR RYL TRI",
+          "sanmar_color_id": "Grey/ True Royal Triblend"
+        },
+        {
+          "crm_color_id": "GRY/CHAR-BLK TRI",
+          "sanmar_color_id": "Grey/ Charcoal-Black Triblend"
+        },
+        {
+          "crm_color_id": "GRY/MAROON TRBLN",
+          "sanmar_color_id": "Grey Maroon Triblend"
+        },
+        {
+          "crm_color_id": "Grey/ Emerald Triblend",
+          "sanmar_color_id": "Grey/ Emerald Triblend"
+        },
+        {
+          "crm_color_id": "WHITE/ DEEP HTHR",
+          "sanmar_color_id": "White/ Deep Heather"
+        },
+        {
+          "crm_color_id": "WHITE/ DENIM",
+          "sanmar_color_id": "White/ Denim"
+        },
+        {
+          "crm_color_id": "WHITE/ASPHALT",
+          "sanmar_color_id": "White/ Asphalt"
+        },
+        {
+          "crm_color_id": "WHITE/BLACK",
+          "sanmar_color_id": "White/ Black"
+        },
+        {
+          "crm_color_id": "WHITE/KELLY",
+          "sanmar_color_id": "White/ Kelly"
+        },
+        {
+          "crm_color_id": "WHITE/NAVY",
+          "sanmar_color_id": "White/ Navy"
+        },
+        {
+          "crm_color_id": "WHITE/RED",
+          "sanmar_color_id": "White/ Red"
+        },
+        {
+          "crm_color_id": "WHITE/TRUE ROYAL",
+          "sanmar_color_id": "White/ True Royal"
+        },
+        {
+          "crm_color_id": "WHT FLCK/CHAR TRIBLND",
+          "sanmar_color_id": "White Fleck/ Charcoal-Black Triblend"
+        },
+        {
+          "crm_color_id": "White/ Heather Olive",
+          "sanmar_color_id": "White/ Heather Olive"
+        },
+        {
+          "crm_color_id": "White/ Heather Peach",
+          "sanmar_color_id": "White/ Heather Peach"
+        },
+        {
+          "crm_color_id": "White/ Maroon",
+          "sanmar_color_id": "White/ Maroon"
+        }
+      ]
+    },
+    {
       "crm_product_id": "1012BE",
       "sanmar_product_id": "BC1012",
       "sanmar_expected_product_ids": [
