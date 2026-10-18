@@ -46,7 +46,8 @@ its **Design Name**, tab number, and quantity. The scan returns to the previousl
 open tab. Select the affected designs and enter the required copyright reason.
 Multiple designs start unchecked; a single design starts checked. **Select all**
 and **Clear** change the selection, and the dialog explains its scope before
-**Queue task** is enabled.
+**Queue task** is enabled. The dialog wraps long design names without horizontal
+scrolling and marks **Full cancellation** in red when every tab is selected.
 
 - Selecting every tab uses the existing whole-order cancellation/refund flow and
   Salesforce **[AUTO] Copyright Cancel**.
@@ -86,6 +87,9 @@ Assistant at `chrome://extensions`, and refresh open CRM order pages.
 Selected copyright requests use a dedicated bridge endpoint. An older app that
 has not been restarted rejects them; the extension never falls back to the
 old whole-order copyright endpoint.
+
+For dialog appearance updates only, reload CRM Order Assistant and refresh the
+CRM order page; the local Automation app does not need a restart.
 
 ## Stock Issue: Extension Required
 

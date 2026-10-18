@@ -1367,6 +1367,8 @@ function showCopyrightCancelConfirmation(automation, triggerButton, autoProcessB
   document.getElementById('crm-copyright-cancel-dialog')?.remove();
   const { overlay, dialog } = createStockIssueDialogShell('Copyright - Cancel');
   overlay.id = 'crm-copyright-cancel-dialog';
+  overlay.style.boxSizing = 'border-box';
+  Object.assign(dialog.style, { boxSizing: 'border-box', minWidth: '0', overflowX: 'hidden', overflowWrap: 'anywhere' });
   const title = document.createElement('h3');
   title.textContent = 'Copyright - Cancel';
   title.style.marginTop = '0';
@@ -1375,6 +1377,9 @@ function showCopyrightCancelConfirmation(automation, triggerButton, autoProcessB
   const summary = document.createElement('p');
   summary.setAttribute('role', 'status');
   summary.dataset.copyrightSummary = 'true';
+  const fullCancellation = document.createElement('span');
+  fullCancellation.textContent = 'Full cancellation';
+  fullCancellation.style.setProperty('color', 'var(--crm-stock-error-color, #b91c1c)', 'important');
   const label = document.createElement('label');
   label.textContent = 'Reason (required)';
   label.htmlFor = 'crm-copyright-cancel-reason';
@@ -1382,7 +1387,7 @@ function showCopyrightCancelConfirmation(automation, triggerButton, autoProcessB
   reason.id = label.htmlFor;
   reason.rows = 3;
   reason.required = true;
-  Object.assign(reason.style, { display: 'block', width: '100%', boxSizing: 'border-box', marginTop: '6px' });
+  Object.assign(reason.style, { display: 'block', width: '100%', minWidth: '0', maxWidth: '100%', boxSizing: 'border-box', marginTop: '6px', resize: 'vertical' });
   const actions = document.createElement('div');
   Object.assign(actions.style, { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' });
   const back = document.createElement('button');
@@ -1400,10 +1405,9 @@ function showCopyrightCancelConfirmation(automation, triggerButton, autoProcessB
     const count = selectedIds().length;
     queue.disabled = !scan || !count || !reason.value.trim();
     if (!scan) return;
-    summary.textContent = !count ? 'Select the affected design tabs.'
-      : count === scan.all_designs.length
-        ? `${count} of ${scan.all_designs.length} tabs selected. Full cancellation: the entire order will be cancelled and refunded.`
-        : `${count} of ${scan.all_designs.length} tabs selected. Partial cancellation: only these designs will be removed and refunded. The remaining order will continue.`;
+    summary.textContent = `${count} of ${scan.all_designs.length} tabs selected.`;
+    if (count === scan.all_designs.length) summary.append(' ', fullCancellation);
+    else if (count) summary.append(' Partial cancellation: only these designs will be removed and refunded. The remaining order will continue.');
   };
   reason.addEventListener('input', refresh);
   queue.addEventListener('click', () => {
@@ -1419,7 +1423,7 @@ function showCopyrightCancelConfirmation(automation, triggerButton, autoProcessB
   scanCopyrightDesigns(message => { picker.textContent = message; }).then(result => {
     if (!overlay.isConnected) return;
     scan = result;
-    picker.textContent = 'Select the affected design tabs:';
+    picker.replaceChildren();
     const toggles = document.createElement('div');
     for (const [text, checked] of [['Select all', true], ['Clear', false]]) {
       const button = document.createElement('button');
