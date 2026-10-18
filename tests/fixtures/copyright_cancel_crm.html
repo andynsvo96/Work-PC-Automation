@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Copyright cancellation offline fixture</title>
+<style>
+  body {font: 14px Arial; padding: 16px;}
+  button {padding: 8px; margin: 4px;}
+  #main-header-design-tabs {display: flex; gap: 8px;}
+  .tab {min-width: 150px; background: #eee; color: #111;}
+  .tab.btn-inverse {background: #222; color: white;}
+  .modal {position: fixed; top: 20%; left: 30%; padding: 24px; background: white; border: 2px solid #222;}
+  input {padding: 8px;}
+  td {padding: 6px;}
+</style>
+<body>
+<div id="fixture"></div>
+<script>
+const initial = {
+  id: '5451301', shippingCharges: '0.00', salesNotes: '', addSalesNotes: '', orderFees: [],
+  orderStatuses: [{statusName: 'Approved'}],
+  designs: [
+    {designId: 101, name: 'Unaffected', quantity: 1, subtotal: '120.00'},
+    {designId: 202, name: 'Pokemon Crypt', quantity: 1, subtotal: '80.00'}
+  ],
+  transactions: [{amount: '200.00', tag: 'Stripe.com', type: 'Stripe.com'}]
+};
+let resource = JSON.parse(localStorage.getItem('copyright-fixture') || JSON.stringify(initial));
+let active = resource.designs[0].designId;
+let ordered = localStorage.getItem('copyright-fixture-ordered') === 'true';
+window.fixtureCounters = {removals: [], refunds: [], saves: 0};
+const scope = {
+  copyOrder() {}, editMode: false, saving: false,
+  order: {
+    getResource: () => resource,
+    getSubTotal: () => resource.designs.reduce((sum, design) => sum + Number(design.subtotal), 0),
+    getGrandTotal() {return this.getSubTotal();},
+    getAmountPaid: () => resource.transactions.reduce((sum, transaction) => sum + Number(transaction.amount), 0),
+    getAmountDue() {return this.getGrandTotal() - this.getAmountPaid();},
+    setAddSalesNotes(note) {resource.addSalesNotes = note;}
+  },
+  editModeOn() {this.editMode = true; render();},
+  saveOrder() {
+    fixtureCounters.saves++;
+    if (resource.addSalesNotes) resource.salesNotes += '\n' + resource.addSalesNotes;
+    resource.addSalesNotes = '';
+    this.editMode = false;
+    persist();
+    render();
+  },
+  removeDesign(design) {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = '<p>Are you sure you want to delete this design?</p><button>Yes</button><button>No</button>';
+    modal.querySelector('button').onclick = () => {
+      fixtureCounters.removals.push(design.designId);
+      if (ordered) {design.quantity = 0; design.subtotal = '0.00';}
+      else resource.designs = resource.designs.filter(item => item.designId !== design.designId);
+      active = resource.designs[0].designId;
+      modal.remove();
+      render();
+    };
+    modal.lastElementChild.onclick = () => modal.remove();
+    document.body.append(modal);
+  },
+  $apply(fn) {return fn();}
+};
+window.angular = {element: () => ({scope: () => scope})};
+function persist() {localStorage.setItem('copyright-fixture', JSON.stringify(resource));}
+function resetFixture(stockOrdered = false) {
+  resource = JSON.parse(JSON.stringify(initial)); active = 101; ordered = stockOrdered;
+  scope.editMode = false;
+  localStorage.setItem('copyright-fixture-ordered', String(ordered));
+  persist(); render();
+}
+function refundDialog() {
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.id = 'refund-fixture';
+  modal.innerHTML = '<p>Max Refund Available: $200.00</p><input name="refund-amount" ng-model="refund.amount" value="200.00"><button>Save</button><button>Cancel</button>';
+  modal.querySelector('button').onclick = () => {
+    const amount = modal.querySelector('input').value;
+    fixtureCounters.refunds.push(amount);
+    resource.transactions.push({amount: '-' + amount, tag: 'Refund', type: 'Refund'});
+    persist(); modal.remove(); render();
+  };
+  modal.lastElementChild.onclick = () => modal.remove();
+  document.body.append(modal);
+}
+function render() {
+  const container = document.getElementById('fixture');
+  container.innerHTML = '<div id="order-info-panel"><h3>Approved</h3></div><h2>Order 5451301</h2>';
+  const edit = document.createElement('button');
+  edit.textContent = scope.editMode ? 'Save Order' : 'Edit Order';
+  edit.setAttribute('ng-click', scope.editMode ? 'saveOrder();' : 'editModeOn();');
+  edit.onclick = () => scope.editMode ? scope.saveOrder() : scope.editModeOn();
+  container.append(edit);
+  const tabs = document.createElement('div');
+  tabs.id = 'main-header-design-tabs';
+  resource.designs.forEach((design, index) => {
+    const tab = document.createElement('button');
+    tab.className = 'tab' + (active === design.designId ? ' btn-inverse' : '');
+    tab.dataset.designId = design.designId;
+    tab.innerText = `${index + 1} - QTY: ${design.quantity}\nDesign Previews`;
+    tab.onclick = () => {active = design.designId; render();};
+    tabs.append(tab);
+  });
+  container.append(tabs);
+  const design = resource.designs.find(item => item.designId === active) || resource.designs[0];
+  const detail = document.createElement('p');
+  detail.innerText = `Design Name: ${design.name}\nDesign ID: ${design.designId}\nQuantity: ${design.quantity}`;
+  container.append(detail);
+  const totals = document.createElement('table');
+  resource.designs.forEach((item, index) => {
+    const row = totals.insertRow();
+    for (const value of [`Design ${index + 1} Total:`, `${item.quantity} pieces`, `$${item.subtotal}`]) row.insertCell().innerText = value;
+  });
+  container.append(totals);
+  const payments = document.createElement('section');
+  payments.id = 'order-payments-credits';
+  payments.innerText = 'Payments and Credits\n$200.00 Stripe.com 10/18/26';
+  const refund = document.createElement('button');
+  refund.textContent = 'Refund'; refund.onclick = refundDialog; payments.append(refund);
+  container.append(payments);
+  const notes = document.createElement('pre');
+  notes.innerText = resource.salesNotes;
+  container.append(notes);
+}
+render();
+</script>
+</body>
+</html>

@@ -227,6 +227,23 @@ COPYRIGHT_CANCEL_PROCESS = CancelProcess(
     display_name="Copyright cancel",
     replace_body_placeholder_with_reason=True,
 )
+# Internal only: this process is chosen from a verified partial selection, never
+# exposed as a standalone cancel action or a sheet-wide process.
+COPYRIGHT_CANCEL_PARTIAL_PROCESS = CancelProcess(
+    key="copyright_cancel_partial",
+    issue_type=COPYRIGHT_CANCEL_ISSUE_TYPE,
+    salesforce_template=getattr(_config, "SALESFORCE_COPYRIGHT_CANCEL_PARTIAL_TEMPLATE", "[AUTO] Copyright Cancel - Partial"),
+    template_search=getattr(_config, "SALESFORCE_COPYRIGHT_CANCEL_PARTIAL_TEMPLATE", "[AUTO] Copyright Cancel - Partial"),
+    sales_note_reason_label="copyright",
+    sales_note_email_line="emailed copyright partial cancellation",
+    subject_markers=("refund has been issued",),
+    body_markers=("while reviewing your order", "refund for the affected portion of your order",
+                  "remaining portion of your order will proceed as scheduled"),
+    display_name="Partial copyright cancel",
+    cancel_and_refund=False,
+    replace_body_placeholder_with_reason=True,
+    refund_case_subject="Copyright - Partial",
+)
 CONTENT_VIOLATION_CANCEL_PROCESS = CancelProcess(
     key="content_violation_cancel",
     issue_type=CONTENT_VIOLATION_CANCEL_ISSUE_TYPE,
@@ -5666,6 +5683,12 @@ def _fill_salesforce_email_from_salesforce_template(
             order_number=str(order_id),
             reason=str(reason or ""),
         )
+        if designs is not None:
+            from workers.copyright_cancel_designs import design_text
+            replacement = design_text(designs)
+            if not re.search(r"\[\s*DESIGN\s*\]", rendered["body"], re.I):
+                raise CopyrightCancelError("Local Copyright Cancel fallback cannot verify the selected Design Names.")
+            rendered["body"] = re.sub(r"\[\s*DESIGN\s*\]", lambda _: replacement, rendered["body"], flags=re.I)
         _fill_salesforce_email_from_local_template(
             driver,
             rendered["subject"],
@@ -5730,6 +5753,17 @@ def _fill_salesforce_email_from_salesforce_template(
     if missing:
         raise CopyrightCancelError(f"Salesforce template body is missing expected text: {', '.join(missing)}")
     body_replacement = None
+    if process.key in (COPYRIGHT_CANCEL_PROCESS.key, COPYRIGHT_CANCEL_PARTIAL_PROCESS.key) and designs is not None:
+        from workers.copyright_cancel_designs import design_text
+        from workers.complicated_emb import replace_design_placeholder
+        replacement = design_text(designs)
+        if not re.search(r"\[\s*DESIGN\s*\]", body_text, re.I) or not replace_design_placeholder(driver, replacement):
+            raise CopyrightCancelError(f"Could not replace [DESIGN] in {process.salesforce_template}.")
+        state = _read_salesforce_email_state(driver)
+        updated_body = _clean_text(state.get("body", ""))
+        if replacement not in updated_body or re.search(r"\[\s*DESIGN\s*\]", updated_body, re.I):
+            raise CopyrightCancelError("The copyright email's selected Design Names could not be verified.")
+        body_replacement = {"placeholder": "[DESIGN]", "replacement": replacement, "state": state}
     complicated_emb_process = process.key in (COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key)
     if process.key == OVERSIZE_EMB_TO_HDD_PROCESS.key or (complicated_emb_process and re.search(r"\[\s*PRINT\s*\]", body_text, re.IGNORECASE)):
         from oversize_emb import PRINT_DESIGN_PATTERN, print_design_text, replace_print_design_placeholder
@@ -6093,7 +6127,7 @@ def _wait_for_salesforce_sent_email_activity(driver, order_id, subject, timeout=
 
 
 def _send_salesforce_email(driver, dry_run, order_id, subject, body, skip_ready_verify=False,
-                           process=COPYRIGHT_CANCEL_PROCESS, *, customer_email="", prepare_retry=None):
+                           process=COPYRIGHT_CANCEL_PROCESS, *, customer_email="", prepare_retry=None, receipt_scope=None):
     ready_state = _read_salesforce_email_state(driver) if skip_ready_verify else _verify_salesforce_email_ready_to_send(driver, order_id, subject, body, process=process)
     if dry_run:
         return {"sent": False, "dry_run": True, "email_state": ready_state, "message": "Skipped Salesforce Send in dry-run mode."}
@@ -6102,7 +6136,7 @@ def _send_salesforce_email(driver, dry_run, order_id, subject, body, skip_ready_
     from workers.salesforce_activity_confirmation import send_and_confirm
     confirmation = send_and_confirm(
         driver, order_id, subject, customer_email, _click_salesforce_send_button,
-        prepare_retry=prepare_retry, body=body, receipt_scope=process.key,
+        prepare_retry=prepare_retry, body=body, receipt_scope=receipt_scope or process.key,
     )
     return {
         **confirmation,
@@ -6221,6 +6255,7 @@ def _prepare_and_maybe_send_salesforce_email(
     skip_ready_verify=False,
     contact=None,
     designs=None,
+    receipt_scope=None,
 ):
     if " ".join(str((contact or {}).get("salesforce_label") or "").split()).casefold() == "salesforce contact":
         return {
@@ -6283,10 +6318,11 @@ def _prepare_and_maybe_send_salesforce_email(
         skip_ready_verify=skip_ready_verify,
         process=process,
         customer_email=customer_email,
+        **({"receipt_scope": receipt_scope} if receipt_scope is not None else {}),
         prepare_retry=lambda: _prepare_and_maybe_send_salesforce_email(
             driver, crm_handle, order_id, customer_email, True, process=process,
             reason=reason, login_wait_seconds=login_wait_seconds,
-            contact=contact, designs=designs,
+            contact=contact, designs=designs, receipt_scope=receipt_scope,
         ),
     )
     return {
@@ -8323,21 +8359,27 @@ def _validate_live_refund_amounts(driver, payment_amount):
     )
 
 
-def _save_refund_modal(driver, dry_run, payment_amount=None):
+def _save_refund_modal(driver, dry_run, payment_amount=None, *, partial_context=None, before_submit=None):
     state = _read_refund_modal_state(driver)
-    if state["max_refund"] != state["input_amount"]:
+    if partial_context is None and state["max_refund"] != state["input_amount"]:
         raise CopyrightCancelError(
             f"Refund amount mismatch. Max refund {state['max_refund']} but input has {state['input_amount']}."
         )
     if dry_run:
         _close_refund_modal(driver)
         return {"refunded": False, "dry_run": True, **state}
-    amount_check = _validate_live_refund_amounts(driver, payment_amount)
+    if partial_context is None:
+        amount_check = _validate_live_refund_amounts(driver, payment_amount)
+    else:
+        from workers.copyright_cancel_designs import read_financials, validate_partial_refund
+        amount_check = validate_partial_refund(read_financials(sys.modules[__name__], driver), partial_context, state)
     if _parse_money(state["input_amount"]) != _parse_money(payment_amount).copy_abs():
         raise CopyrightCancelError(
             "Refund blocked: modal amount does not match Payment Amount. "
             f"Modal has ${state['input_amount']} but Payment Amount is ${_money_text(_parse_money(payment_amount).copy_abs())}."
         )
+    if before_submit is not None:
+        before_submit()
     clicked = bool(
         driver.execute_script(
             """
@@ -8383,7 +8425,8 @@ def _save_refund_modal(driver, dry_run, payment_amount=None):
     return {"refunded": True, "dry_run": False, "amount_check": amount_check, **state}
 
 
-def _refund_via_stripe_payment_modal(driver, dry_run, click_refund_button=True, payment_amount=None):
+def _refund_via_stripe_payment_modal(driver, dry_run, click_refund_button=True, payment_amount=None,
+                                   *, partial_context=None, before_submit=None):
     try:
         _open_stripe_refund_modal(driver)
     except CopyrightCancelError as exc:
@@ -8398,13 +8441,18 @@ def _refund_via_stripe_payment_modal(driver, dry_run, click_refund_button=True, 
         _activate_crm_context(driver)
         _wait_for_order_scope(driver, timeout=30)
         _open_stripe_refund_modal(driver)
+    if partial_context is not None:
+        from workers.copyright_cancel_designs import set_partial_refund_amount
+        set_partial_refund_amount(driver, partial_context["refund_amount"])
     state = _read_refund_modal_state(driver)
     if dry_run:
         _close_refund_modal(driver)
         return {"refunded": False, "dry_run": True, "prepared": True, "refund_button_clicked": False, **state}
     if not click_refund_button:
         return {"refunded": False, "dry_run": False, "prepared": True, "refund_button_clicked": False, **state}
-    return _save_refund_modal(driver, dry_run=False, payment_amount=payment_amount)
+    return _save_refund_modal(driver, dry_run=False, payment_amount=payment_amount,
+                              **({"partial_context": partial_context, "before_submit": before_submit}
+                                 if partial_context is not None else {}))
 
 
 def _close_crm_modal(driver):
@@ -8605,11 +8653,22 @@ def _verify_persisted_cancellation(driver, order_id):
     return {"verified": True, "status": status, "reloaded": True}
 
 
-def _cancel_and_refund_crm_order(driver, crm_handle, order_id, dry_run, click_refund_button=True, payment=None, reason="", process=COPYRIGHT_CANCEL_PROCESS):
+def _cancel_and_refund_crm_order(driver, crm_handle, order_id, dry_run, click_refund_button=True, payment=None, reason="", process=COPYRIGHT_CANCEL_PROCESS,
+                               full_selection=None):
+    if full_selection is not None:
+        from workers import copyright_cancel_designs as copyright_designs
+        full_selection = copyright_designs.normalize_selection(full_selection)
+        if full_selection["order_id"] != str(order_id) or copyright_designs.is_partial(full_selection):
+            raise CopyrightCancelError("Whole-order cancellation requires every design tab from this order to be selected.")
     driver.switch_to.window(crm_handle)
     _activate_crm_context(driver)
     _wait_for_order_scope(driver, order_id=order_id)
     sales_note_result = _append_copyright_cancel_sales_note(driver, reason, dry_run=dry_run, process=process)
+    if full_selection is not None:
+        driver.refresh()
+        _activate_crm_context(driver)
+        _wait_for_order_scope(driver, order_id=order_id)
+        copyright_designs.verify_original(full_selection, copyright_designs.scan_designs(driver, order_id))
     payment = payment or _read_payment_summary(driver)
     completed_refund = _completed_stripe_refund_state(driver)
     if not dry_run and completed_refund.get("refunded"):
@@ -8791,6 +8850,11 @@ def send_salesforce_email_single_order(
         _wait_for_order_scope(driver, order_id=order_id)
         crm_handle = driver.current_window_handle
         contact = _wait_for_crm_contact_info(driver, order_id=order_id)
+        if process.key == COPYRIGHT_CANCEL_PROCESS.key:
+            from workers import copyright_cancel_designs as copyright_designs
+            if designs is not None:
+                raise CopyrightCancelError("Resume selected copyright cancellations through their original queue task, including email recovery.")
+            designs = copyright_designs.scan_designs(driver, order_id)
         if (process.key in (OVERSIZE_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key)
                 and _clean_text(contact.get("salesforce_label", "")).casefold() != "salesforce contact"):
             if process.key == OVERSIZE_EMB_TO_HDD_PROCESS.key:
@@ -9103,6 +9167,41 @@ def process_single_order(
         _wait_for_order_scope(driver, order_id=order_id)
         crm_handle = driver.current_window_handle
         contact = _wait_for_crm_contact_info(driver, order_id=order_id)
+        copyright_selection = None
+        if process.key == COPYRIGHT_CANCEL_PROCESS.key:
+            from workers import copyright_cancel_designs as copyright_designs
+            if designs is None:
+                # Existing sheet rows still target the complete order. Extension
+                # requests must include their explicit complete scan and selection.
+                scanned = copyright_designs.scan_designs(driver, order_id)
+                copyright_selection = copyright_designs.normalize_selection({
+                    "order_id": order_id, "all_designs": scanned,
+                    "selected_design_ids": [row["design_id"] for row in scanned],
+                })
+            else:
+                copyright_selection = copyright_designs.normalize_selection(designs)
+                if copyright_selection["order_id"] != order_id:
+                    raise CopyrightCancelError("The copyright selection belongs to another order.")
+            if copyright_designs.is_partial(copyright_selection):
+                partial = copyright_designs.process_partial(
+                    sys.modules[__name__], driver, crm_handle, copyright_selection, reason, contact,
+                    dry_run=dry_run, process=COPYRIGHT_CANCEL_PARTIAL_PROCESS,
+                    login_wait_seconds=login_wait_seconds, click_refund_button=click_refund_button,
+                )
+                return {
+                    "order_id": order_id, "order_url": order_url, "dry_run": bool(dry_run),
+                    "process": process.key, "issue_type": process.issue_type, "contact": contact,
+                    "cancellation_scope": "partial", "copyright_selection": copyright_selection,
+                    "crm_action": {key: value for key, value in partial.items()
+                                   if key not in ("salesforce", "salesforce_refund_case")},
+                    "salesforce": partial.get("salesforce") or {"sent": False, "dry_run": bool(dry_run)},
+                    "salesforce_refund_case": partial.get("salesforce_refund_case"),
+                    "post_cancel_stock": {"action": "skipped", "message": "The remaining order continues; whole-order cancelled-stock routing does not apply."},
+                }
+            copyright_designs.assert_no_other_pending(copyright_selection, reason)
+            if designs is not None:
+                copyright_designs.verify_original(copyright_selection, copyright_designs.scan_designs(driver, order_id))
+            designs = copyright_designs.selected_designs(copyright_selection)
         if process.key == OVERSIZE_EMB_TO_HDD_PROCESS.key:
             from oversize_emb import resolve_designs
             designs = resolve_designs(driver, designs)
@@ -9187,6 +9286,7 @@ def process_single_order(
             payment=payment,
             reason=reason,
             process=process,
+            **({"full_selection": copyright_selection} if copyright_selection is not None else {}),
         )
         salesforce = _prepare_and_maybe_send_salesforce_email(
             driver,
@@ -9198,6 +9298,7 @@ def process_single_order(
             process=process,
             reason=reason,
             login_wait_seconds=login_wait_seconds,
+            **({"designs": designs} if process.key == COPYRIGHT_CANCEL_PROCESS.key else {}),
         )
         refund_case = None
         refund_state = crm_action.get("refund") or {}
@@ -9237,6 +9338,8 @@ def process_single_order(
             "crm_action": crm_action,
             "salesforce_refund_case": refund_case,
             "post_cancel_stock": post_cancel_stock,
+            **({"cancellation_scope": "full", "copyright_selection": copyright_selection}
+               if copyright_selection is not None else {}),
         }
     except Exception:
         had_error = True
@@ -9611,7 +9714,8 @@ def run_process_order(args):
             click_refund_button=not args.skip_refund_click,
             keep_browser_open=args.keep_browser_open,
             keep_browser_open_on_error=args.keep_browser_open_on_error,
-            **({"designs": json.loads(args.emb_designs_json)} if getattr(args, "emb_designs_json", "") else {}),
+            **({"designs": json.loads(args.copyright_designs_json)} if args.process == COPYRIGHT_CANCEL_PROCESS.key and getattr(args, "copyright_designs_json", "")
+               else {"designs": json.loads(args.emb_designs_json)} if getattr(args, "emb_designs_json", "") else {}),
         )
         email_error = _sheet_scanner_email_error(details)
         cleared_sheet_row = None
@@ -10141,6 +10245,7 @@ def main(argv=None):
     parser.add_argument("--order-url", default="")
     parser.add_argument("--reason", default="", help="Required for full cancellation processing; written to CRM Sales Notes.")
     parser.add_argument("--emb-designs-json", default="", help="Selected embroidery tabs, Design Names, and Oversize EMB print areas from the extension.")
+    parser.add_argument("--copyright-designs-json", default="", help="Complete copyright design scan and selected stable design IDs from the extension.")
     parser.add_argument("--process", choices=sorted(CANCEL_PROCESSES_BY_KEY), default=COPYRIGHT_CANCEL_PROCESS.key)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument(

@@ -10701,7 +10701,8 @@ def _execute_crm_mass_emailer_worker(
             }
         args.extend(["--order-id", normalized_order_id])
         if designs is not None:
-            args.extend(["--emb-designs-json", json.dumps(designs)])
+            selection_flag = "--copyright-designs-json" if process == "copyright_cancel" else "--emb-designs-json"
+            args.extend([selection_flag, json.dumps(designs)])
         if process:
             args.extend(["--process", str(process).strip()])
         if str(reason or "").strip():
@@ -12813,6 +12814,27 @@ def _normalize_oversize_emb_request(data):
     return {"designs": normalize_designs((data or {}).get("designs"))}
 
 
+def _normalize_copyright_cancel_request(data):
+    from workers.copyright_cancel_designs import normalize_selection
+    selection = normalize_selection((data or {}).get("designs"))
+    if selection["order_id"] != _normalize_crm_single_order_id((data or {}).get("order_id")):
+        raise ValueError("The copyright scan belongs to another order. Refresh this order and scan again.")
+    return {"designs": selection}
+
+
+CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["copyright_cancel"].update({
+    "structured_request": True,
+    "request_validator": _normalize_copyright_cancel_request,
+    "task_arguments": lambda order_id, reason="", request_data=None: {
+        "order_id": order_id, "process": "copyright_cancel", "reason": str(reason or "").strip(),
+        "designs": (request_data or {}).get("designs"),
+    },
+    "runner": lambda order_id, reason="", request_data=None, progress_callback=None: run_crm_sheet_scanner_order_queued(
+        order_id, "copyright_cancel", reason, designs=(request_data or {}).get("designs"),
+    ),
+})
+
+
 for _emb_key in ("complicated_emb_to_hdd", "complicated_emb_feedback", "oversize_emb_to_hdd"):
     CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS[_emb_key].update({
         "structured_request": True,
@@ -13968,6 +13990,7 @@ def enforce_app_access_security():
         "/api/extension/bridge/process-order",
         "/api/extension/bridge/process-order/status",
         "/api/extension/bridge/process-order/manual",
+        "/api/extension/bridge/process-order/manual/copyright-designs",
     }
     if request.path in public_paths:
         return None
@@ -14187,12 +14210,15 @@ def api_chrome_extension_bridge_process_order_status():
 
 
 @app.route("/api/extension/bridge/process-order/manual", methods=["POST", "OPTIONS"])
+@app.route("/api/extension/bridge/process-order/manual/copyright-designs", methods=["POST", "OPTIONS"])
 def api_chrome_extension_bridge_manual_process_order():
     if request.method == "OPTIONS":
         return _extension_bridge_response({"success": True})
     if not _extension_bridge_request_is_local_extension():
         return _extension_bridge_response({"success": False, "message": "Chrome extension requests must use loopback."}, 403)
     data = request.get_json(silent=True) or {}
+    if request.path.endswith("/copyright-designs") and data.get("automation") != "copyright_cancel":
+        return _extension_bridge_response({"success": False, "message": "This endpoint requires a copyright design selection."}, 409)
     ok, message, task = queue_crm_extension_manual_order_run(
         data.get("order_id"),
         data.get("automation"),

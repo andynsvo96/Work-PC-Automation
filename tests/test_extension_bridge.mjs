@@ -5,6 +5,37 @@ import test from "node:test";
 const source = await readFile(new URL("../crm-order-dark-mode-extension/bridge.js", import.meta.url), "utf8");
 const bridge = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 
+test("copyright queue requests retain the complete scan and selected stable IDs", async (t) => {
+  const designs = {
+    order_id: "5451301",
+    all_designs: [
+      { tab_number: 1, design_id: "101", design_name: "Halloween Crypt", quantity: 1, subtotal: "43.64" },
+      { tab_number: 2, design_id: "202", design_name: "Pokemon Crypt", quantity: 1, subtotal: "43.64" }
+    ],
+    selected_design_ids: ["202"]
+  };
+  const request = t.mock.method(globalThis, "fetch", async (_url, options) => {
+    assert.equal(_url, bridge.LOCAL_COPYRIGHT_DESIGNS_ENDPOINT);
+    assert.deepEqual(JSON.parse(options.body), {
+      order_id: "5451301", automation: "copyright_cancel", reason: "Protected character", designs
+    });
+    return { ok: true, json: async () => ({ success: true }) };
+  });
+  await bridge.startLocalManualOrderProcessing("5451301", "copyright_cancel", "Protected character", { designs });
+  assert.equal(request.mock.callCount(), 1);
+});
+
+test("an older app cannot turn a partial selection into legacy full cancellation", async (t) => {
+  const request = t.mock.method(globalThis, "fetch", async (url) => {
+    assert.equal(url, bridge.LOCAL_COPYRIGHT_DESIGNS_ENDPOINT);
+    return { ok: false, status: 404, json: async () => null };
+  });
+  await assert.rejects(bridge.startLocalManualOrderProcessing("5451301", "copyright_cancel", "Reason", {
+    designs: { selected_design_ids: ["202"] }
+  }), /Restart the local Automation app.*No copyright task was queued/);
+  assert.equal(request.mock.callCount(), 1);
+});
+
 test("queue requests can receive confirmation after the old timeout", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   for (const submit of [

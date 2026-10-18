@@ -53,6 +53,7 @@ class SalesforceEmailWorkflowTests(unittest.TestCase):
         shared = sleeves.shared
         processes = [process for process in shared.CANCEL_PROCESSES
                      if process.key not in ('auto_splitter', 'manual_stock_order')]
+        processes.append(shared.COPYRIGHT_CANCEL_PARTIAL_PROCESS)
         for process in processes:
             with self.subTest(process=process.key), ExitStack() as stack:
                 subject = f'Order #1234567 - {process.key}'

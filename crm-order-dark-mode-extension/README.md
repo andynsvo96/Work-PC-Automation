@@ -39,6 +39,54 @@ Front is converted to Front-left chest, and Front-right chest is added. If eithe
 
 The sales note is `Additional embroidery area`, `$15.00 each` (or the custom price), and `emailed txted` on separate lines. The existing Additional Requests email uses `additional embroidery area`, the charge, and the invoice link. No text message is sent. Local receipts verify saved changes and prevent duplicate pricing/email on matching retries; an interrupted save with unverified prices stops for review.
 
+## Copyright cancellation by design
+
+Choose **Cancel → Copyright - Cancel** to scan every order design tab and list
+its **Design Name**, tab number, and quantity. The scan returns to the previously
+open tab. Select the affected designs and enter the required copyright reason.
+Multiple designs start unchecked; a single design starts checked. **Select all**
+and **Clear** change the selection, and the dialog explains its scope before
+**Queue task** is enabled.
+
+- Selecting every tab uses the existing whole-order cancellation/refund flow and
+  Salesforce **[AUTO] Copyright Cancel**.
+- Selecting some tabs uses Salesforce **[AUTO] Copyright Cancel - Partial**. Only
+  the affected tabs are removed using CRM's red-X action. Purchased-stock tabs
+  may remain at **QTY 0** with a **$0.00 design total**. The remaining order stays
+  active; its other designs and quantities are verified after saving and reload.
+
+Both templates receive the order number, entered reason, and selected Design
+Names. A partial cancellation refunds only the verified credit balance after
+CRM recalculates the remaining order. It does not add the whole-order Refund
+fee. Stripe refunds are checked against the saved total, paid amount, credit
+balance, input, and available refund; the saved payment and refund transaction
+are verified afterward. Non-Stripe payments use the existing Salesforce
+**Refund Pending** Case route with the partial amount in the Case subject.
+Whole-order cancelled-stock Slack routing is skipped for partial cancellations.
+
+An unreadable or changed design, inconsistent price/payment, unsupported Contact
+email, or missing/wrong template stops for review. Refund emails are not sent
+when the removal produces no refundable credit. Partial work is recorded under
+`runtime/state/copyright_partial_cancellations/`. Use **Retry on the original
+Automation queue task** after an interruption so its original design IDs and
+scope are retained. An unconfirmed refund or Case submission stops for review;
+automatic retries do not submit it again. Existing Salesforce Activity
+confirmation and email receipts also apply, with separate receipts for each
+partial selection. Keep these receipts until recovery is complete.
+
+The extension always requires a complete scan and explicit design selection.
+Existing Sheets Scanner copyright rows continue to target the whole order.
+The worker's `--copyright-designs-json` argument carries the complete scan and
+selected IDs for a selected single-order request; `--dry-run` validates the
+selection and email draft without removing/saving designs, refunding, creating
+a Case, or sending email.
+
+After updating to **1.6.0**, restart the local Automation app, reload CRM Order
+Assistant at `chrome://extensions`, and refresh open CRM order pages.
+Selected copyright requests use a dedicated bridge endpoint. An older app that
+has not been restarted rejects them; the extension never falls back to the
+old whole-order copyright endpoint.
+
 ## Stock Issue: Extension Required
 
 Choose **Stock Issue → Extension Required** on an order page, select the affected

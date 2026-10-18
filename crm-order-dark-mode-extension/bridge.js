@@ -7,6 +7,9 @@ export const LOCAL_BRIDGE_PROTOCOL = "automation.chrome-extension.bridge/v2";
 export const LOCAL_ORDER_PROCESS_ENDPOINT = `${LOCAL_AUTOMATION_ENDPOINT}/api/extension/bridge/process-order`;
 export const LOCAL_ORDER_PROCESS_STATUS_ENDPOINT = `${LOCAL_ORDER_PROCESS_ENDPOINT}/status`;
 export const LOCAL_MANUAL_ORDER_PROCESS_ENDPOINT = `${LOCAL_ORDER_PROCESS_ENDPOINT}/manual`;
+// An older app must reject selected copyright requests, never interpret them
+// as the legacy whole-order cancellation action.
+export const LOCAL_COPYRIGHT_DESIGNS_ENDPOINT = `${LOCAL_MANUAL_ORDER_PROCESS_ENDPOINT}/copyright-designs`;
 const REQUEST_TIMEOUT_MS = 2500;
 const QUEUE_REQUEST_TIMEOUT_MS = 20000;
 
@@ -26,7 +29,9 @@ async function bridgeFetch(endpoint, options = {}) {
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload) {
-      throw new Error((payload && payload.message) || "Local Automation app rejected the request.");
+      const error = new Error((payload && payload.message) || "Local Automation app rejected the request.");
+      error.status = response.status;
+      throw error;
     }
     return payload;
   } catch (error) {
@@ -81,24 +86,32 @@ export async function startLocalOrderProcessing(orderId, shippingTooExpensive) {
 }
 
 export async function startLocalManualOrderProcessing(orderId, automation, reason = "", structuredData = {}) {
-  return bridgeFetch(LOCAL_MANUAL_ORDER_PROCESS_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      order_id: String(orderId || ""),
-      automation: String(automation || ""),
-      reason: String(reason || ""),
-      days: structuredData.days,
-      colors: structuredData.colors,
-      sizes: structuredData.sizes,
-      products: structuredData.products,
-      designs: structuredData.designs,
-      sleeves: structuredData.sleeves,
-      ink_price: structuredData.ink_price,
-      embroidery_price: structuredData.embroidery_price,
-      reverse_price: structuredData.reverse_price
-    })
-  });
+  const copyright = automation === "copyright_cancel";
+  try {
+    return await bridgeFetch(copyright ? LOCAL_COPYRIGHT_DESIGNS_ENDPOINT : LOCAL_MANUAL_ORDER_PROCESS_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        order_id: String(orderId || ""),
+        automation: String(automation || ""),
+        reason: String(reason || ""),
+        days: structuredData.days,
+        colors: structuredData.colors,
+        sizes: structuredData.sizes,
+        products: structuredData.products,
+        designs: structuredData.designs,
+        sleeves: structuredData.sleeves,
+        ink_price: structuredData.ink_price,
+        embroidery_price: structuredData.embroidery_price,
+        reverse_price: structuredData.reverse_price
+      })
+    });
+  } catch (error) {
+    if (copyright && [401, 404, 405, 503].includes(error.status)) {
+      throw new Error("Restart the local Automation app to load copyright design selection, then try again. No copyright task was queued.");
+    }
+    throw error;
+  }
 }
 
 export async function getLocalOrderProcessingStatus() {

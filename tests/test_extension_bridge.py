@@ -378,6 +378,12 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         })
 
     def test_sheet_scanner_manual_action_queues_one_order_with_its_reason(self):
+        designs = {
+            "order_id": "4917538",
+            "all_designs": [{"tab_number": 1, "design_id": "101", "design_name": "Team Logo",
+                             "quantity": 1, "subtotal": "20.00"}],
+            "selected_design_ids": ["101"],
+        }
         with mock.patch(
             "server.enqueue_automation",
             return_value=(True, "Copyright - Cancel queued.", {"id": "task-2", "status": "queued"}),
@@ -388,6 +394,7 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
                     "order_id": "4917538",
                     "automation": "copyright_cancel",
                     "reason": "Trademarked logo",
+                    "designs": designs,
                 },
                 headers={"Origin": self.ORIGIN},
                 environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
@@ -400,7 +407,44 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
             "order_id": "4917538",
             "process": "copyright_cancel",
             "reason": "Trademarked logo",
+            "designs": designs,
         })
+
+    def test_copyright_cancel_rejects_missing_scan_and_scan_for_another_order(self):
+        for designs in (None, {"order_id": "5451301", "all_designs": [
+                {"tab_number": 1, "design_id": "101", "design_name": "Logo", "quantity": 1, "subtotal": "20.00"}],
+                "selected_design_ids": ["101"]}):
+            with self.subTest(designs=designs), mock.patch("server.enqueue_automation") as enqueue:
+                response = self.client.post(
+                    "/api/extension/bridge/process-order/manual",
+                    json={"order_id": "4917538", "automation": "copyright_cancel", "reason": "Trademark", "designs": designs},
+                    headers={"Origin": self.ORIGIN}, environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+                )
+                self.assertEqual(response.status_code, 409)
+                enqueue.assert_not_called()
+
+    def test_copyright_design_endpoint_uses_same_local_extension_and_selection_checks(self):
+        endpoint = "/api/extension/bridge/process-order/manual/copyright-designs"
+        designs = {"order_id": "4917538", "all_designs": [
+            {"tab_number": 1, "design_id": "101", "design_name": "Logo", "quantity": 1, "subtotal": "20.00"}],
+            "selected_design_ids": ["101"]}
+        with mock.patch("server.enqueue_automation", return_value=(True, "Queued", {})) as enqueue:
+            response = self.client.post(endpoint, json={"order_id": "4917538", "automation": "copyright_cancel",
+                "reason": "Trademark", "designs": designs}, headers={"Origin": self.ORIGIN},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"})
+            self.assertEqual(response.status_code, 202, response.get_json())
+            self.assertEqual(enqueue.call_args.kwargs["task_arguments"]["designs"], designs)
+        for address, origin, automation, scan in (
+                ("203.0.113.1", self.ORIGIN, "copyright_cancel", designs),
+                ("127.0.0.1", "https://example.test", "copyright_cancel", designs),
+                ("127.0.0.1", self.ORIGIN, "copyright_cancel", None),
+                ("127.0.0.1", self.ORIGIN, "content_violation_cancel", designs)):
+            with self.subTest(address=address, origin=origin, automation=automation), mock.patch("server.enqueue_automation") as enqueue:
+                response = self.client.post(endpoint, json={"order_id": "4917538", "automation": automation,
+                    "reason": "Trademark", "designs": scan}, headers={"Origin": origin},
+                    environ_overrides={"REMOTE_ADDR": address})
+                self.assertIn(response.status_code, (403, 409))
+                enqueue.assert_not_called()
 
     def test_auto_splitter_is_available_as_a_single_order_manual_action(self):
         with mock.patch(

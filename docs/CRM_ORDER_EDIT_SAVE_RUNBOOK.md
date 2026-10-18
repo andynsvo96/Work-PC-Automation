@@ -357,6 +357,44 @@ An original with empty tabs and no matching retained-original recovery report st
 
 The current save wait loop uses a bounded timeout and stable checks. Do the same.
 
+## Partial copyright cancellation
+
+The extension's Copyright - Cancel action carries a complete order design scan
+and selected stable design IDs. `workers/copyright_cancel_designs.py` validates
+this snapshot. All selected tabs use the existing full cancellation worker;
+a proper subset uses the isolated partial workflow, which has no order-cancel
+action. Resolve scope from the original selection, never from the number of
+tabs left after removal. Full cancellation rechecks the complete design set
+after the Sales Note save before proceeding.
+
+For partial work, validate the exact Salesforce **[AUTO] Copyright Cancel -
+Partial** draft before CRM mutations. Use `removeDesign(design, index, resource)`,
+the action behind the red X, for each affected stable ID. Save Order, reload,
+and verify each selected design is absent or has zero quantity and $0.00 total.
+Verify the retained design identities, names, quantities, and subtotals. Do not
+add the full-order Refund fee; the design removal already reduces the price.
+The refund must equal the resulting negative Balance Due, with consistent
+Grand Total and Paid values, and cannot exceed the payment's available refund.
+Verify the new refund transaction, reduced Paid, zero Balance Due, and active
+order status after reload. Non-Stripe payments use a Refund Pending Case naming
+the partial refund amount. Whole-order cancelled-stock routing is skipped.
+
+Receipts under `runtime/state/copyright_partial_cancellations/` retain the
+original snapshot, reason, saved financial state, and stages. Record uncertainty
+before refund/Case submission. A pending refund can reconcile to a matching
+persisted refund; it must never submit a second refund automatically. An
+uncertain Case submission stops for Salesforce review. Use the original queued
+task for recovery, and do not remove its receipt to bypass a review stop.
+Email confirmation receipts distinguish separate partial selections even when
+their subjects match. Dry runs skip every CRM mutation and final submission.
+
+Offline verification is available with
+`python -m unittest discover -s tests -p "test_copyright_cancel*.py"`.
+The browser fixture `tests/fixtures/copyright_cancel_crm.html` covers red-X
+removal, retained purchased-stock tabs, Save Order/reload, and partial refund
+input/submission without accessing CRM or Salesforce. Browser tests use a
+local ChromeDriver (`CHROMEDRIVER` can select its path).
+
 ## Core Helper: Click A Button By ng-click
 
 This is the helper pattern used by product separator and auto splitter:

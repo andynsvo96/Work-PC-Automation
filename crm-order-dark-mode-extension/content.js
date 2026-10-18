@@ -1292,6 +1292,164 @@ async function startStockIssueExtensionSelection(automation, triggerButton, auto
   }
 }
 
+function readCopyrightDesignMetadata() {
+  return new Promise((resolve, reject) => {
+    const id = `${Date.now()}-${Math.random()}`;
+    const receive = event => {
+      let response;
+      try { response = JSON.parse(event.detail); } catch (_) { return; }
+      if (response.id !== id) return;
+      clearTimeout(timer);
+      document.removeEventListener('crm-copyright-designs-response', receive);
+      if (response.error) reject(new Error(response.error)); else resolve(response.scan);
+    };
+    const timer = setTimeout(() => {
+      document.removeEventListener('crm-copyright-designs-response', receive);
+      reject(new Error('Reload CRM Order Assistant and refresh this order to scan copyright designs.'));
+    }, 5000);
+    document.addEventListener('crm-copyright-designs-response', receive);
+    document.dispatchEvent(new CustomEvent('crm-copyright-designs-request', { detail: id }));
+  });
+}
+
+async function scanCopyrightDesigns(onProgress = () => {}) {
+  const metadata = await readCopyrightDesignMetadata();
+  const tabs = visibleStockIssueDesignTabs();
+  const original = activeStockIssueDesignTabNumber(tabs);
+  if (!metadata?.designs?.length || !/^\d{7}$/.test(metadata.order_id) || original === null ||
+      tabs.length !== metadata.designs.length ||
+      new Set(metadata.designs.map(design => design.design_id)).size !== tabs.length ||
+      metadata.designs.some(design => !/^[1-9]\d*$/.test(design.design_id) ||
+        !tabs.some(tab => tab.tabNumber === design.tab_number))) {
+    throw new Error('Could not identify every design tab. Refresh the order and try again.');
+  }
+  const allDesigns = [];
+  try {
+    for (const design of metadata.designs) {
+      onProgress(`Reading Design Name for tab ${design.tab_number} of ${tabs.length}…`);
+      clickStockIssueDesignTab(design.tab_number);
+      await stockIssueDelay(750);
+      let previous = '';
+      let name = '';
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const text = document.body.innerText || '';
+        const candidate = stockIssueCleanText(text.match(/Design Name:\s*([^|\n\r]+)/i)?.[1]);
+        const id = stockIssueCleanText(text.match(/Design ID:\s*([^|\n\r]+)/i)?.[1]);
+        if (candidate && candidate === previous && id === design.design_id &&
+            activeStockIssueDesignTabNumber(visibleStockIssueDesignTabs()) === design.tab_number) {
+          name = candidate;
+          break;
+        }
+        previous = candidate;
+        await stockIssueDelay(200);
+      }
+      const total = (document.body.innerText || '').match(new RegExp(
+        `\\bDesign\\s+${design.tab_number}\\s+Total\\s*:\\s*(\\d+)\\s+pieces?\\s*\\$?(-?[0-9,]+\\.\\d{2})`, 'i'
+      ));
+      if (!name || !total) throw new Error(`Could not verify the name, quantity, and total for tab ${design.tab_number}.`);
+      allDesigns.push({
+        tab_number: design.tab_number, design_id: design.design_id, design_name: name,
+        quantity: Number(total[1]), subtotal: Number(total[2].replaceAll(',', '')).toFixed(2)
+      });
+    }
+    const after = await readCopyrightDesignMetadata();
+    if (JSON.stringify(after) !== JSON.stringify(metadata)) {
+      throw new Error('The order designs changed during the scan. Refresh and select them again.');
+    }
+  } finally {
+    clickStockIssueDesignTab(original);
+    await stockIssueDelay(500);
+  }
+  return { order_id: metadata.order_id, all_designs: allDesigns };
+}
+
+function showCopyrightCancelConfirmation(automation, triggerButton, autoProcessButton) {
+  document.getElementById('crm-copyright-cancel-dialog')?.remove();
+  const { overlay, dialog } = createStockIssueDialogShell('Copyright - Cancel');
+  overlay.id = 'crm-copyright-cancel-dialog';
+  const title = document.createElement('h3');
+  title.textContent = 'Copyright - Cancel';
+  title.style.marginTop = '0';
+  const picker = document.createElement('div');
+  picker.textContent = 'Scanning order designs…';
+  const summary = document.createElement('p');
+  summary.setAttribute('role', 'status');
+  summary.dataset.copyrightSummary = 'true';
+  const label = document.createElement('label');
+  label.textContent = 'Reason (required)';
+  label.htmlFor = 'crm-copyright-cancel-reason';
+  const reason = document.createElement('textarea');
+  reason.id = label.htmlFor;
+  reason.rows = 3;
+  reason.required = true;
+  Object.assign(reason.style, { display: 'block', width: '100%', boxSizing: 'border-box', marginTop: '6px' });
+  const actions = document.createElement('div');
+  Object.assign(actions.style, { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' });
+  const back = document.createElement('button');
+  back.type = 'button';
+  back.textContent = 'Back';
+  back.addEventListener('click', () => overlay.remove());
+  const queue = document.createElement('button');
+  queue.type = 'button';
+  queue.textContent = 'Queue task';
+  queue.disabled = true;
+  let scan = null;
+  const selectedIds = () => Array.from(picker.querySelectorAll('input[data-copyright-design]:checked'))
+    .map(input => input.dataset.copyrightDesign);
+  const refresh = () => {
+    const count = selectedIds().length;
+    queue.disabled = !scan || !count || !reason.value.trim();
+    if (!scan) return;
+    summary.textContent = !count ? 'Select the affected design tabs.'
+      : count === scan.all_designs.length
+        ? `${count} of ${scan.all_designs.length} tabs selected. Full cancellation: the entire order will be cancelled and refunded.`
+        : `${count} of ${scan.all_designs.length} tabs selected. Partial cancellation: only these designs will be removed and refunded. The remaining order will continue.`;
+  };
+  reason.addEventListener('input', refresh);
+  queue.addEventListener('click', () => {
+    if (queue.disabled || !scan) return;
+    const designs = { ...scan, selected_design_ids: selectedIds() };
+    queue.disabled = true;
+    overlay.remove();
+    queueManualOrderAutomation(automation, triggerButton, autoProcessButton, reason.value.trim(), { designs });
+  });
+  actions.append(back, queue);
+  dialog.append(title, picker, summary, label, reason, actions);
+  setOrderProcessorControlsDisabled(true);
+  scanCopyrightDesigns(message => { picker.textContent = message; }).then(result => {
+    if (!overlay.isConnected) return;
+    scan = result;
+    picker.textContent = 'Select the affected design tabs:';
+    const toggles = document.createElement('div');
+    for (const [text, checked] of [['Select all', true], ['Clear', false]]) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = text;
+      button.addEventListener('click', () => {
+        for (const input of picker.querySelectorAll('input[data-copyright-design]')) input.checked = checked;
+        refresh();
+      });
+      toggles.append(button);
+    }
+    picker.append(toggles);
+    for (const design of scan.all_designs) {
+      const row = document.createElement('label');
+      Object.assign(row.style, { display: 'block', marginTop: '10px' });
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.dataset.copyrightDesign = design.design_id;
+      input.checked = scan.all_designs.length === 1;
+      input.addEventListener('change', refresh);
+      row.append(input, document.createTextNode(` Tab ${design.tab_number}: ${design.design_name} (QTY ${design.quantity})`));
+      picker.append(row);
+    }
+    refresh();
+  }).catch(error => {
+    if (overlay.isConnected) picker.textContent = error.message;
+  }).finally(() => setOrderProcessorControlsDisabled(false));
+  reason.focus();
+}
+
 function readComplicatedEmbMethods() {
   return new Promise((resolve, reject) => {
     const id = `${Date.now()}-${Math.random()}`;
@@ -1368,6 +1526,10 @@ async function scanComplicatedEmbPrintDesigns(onProgress) {
 }
 
 function showOrderAutomationConfirmation(automation, triggerButton, autoProcessButton) {
+  if (automation.key === 'copyright_cancel') {
+    showCopyrightCancelConfirmation(automation, triggerButton, autoProcessButton);
+    return;
+  }
   document.getElementById("crm-order-automation-confirmation")?.remove();
   const asksFeedback = automation.key === "complicated_emb_to_hdd";
   const isOversizeEmb = automation.key === "oversize_emb_to_hdd";
