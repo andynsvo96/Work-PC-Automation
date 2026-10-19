@@ -1499,7 +1499,7 @@ def _po_from_tab_label(label):
     qty_match = re.search(r"^(.+?)\s+\d+\s*-\s*QTY\s*:?\s*\d+\b", text, flags=re.I)
     if qty_match:
         candidate = _normalize_text(qty_match.group(1))
-        if re.search(r"[A-Za-z]", candidate) and len(candidate) <= 80:
+        if re.search(r"[A-Za-z0-9]", candidate) and len(candidate) <= 80:
             return candidate
     return ""
 

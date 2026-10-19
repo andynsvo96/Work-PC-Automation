@@ -102,6 +102,24 @@ class ShippingBypassTabPoTests(unittest.TestCase):
             )
         self.assertEqual(order["po"], "PlainTab707")
 
+    def test_numeric_tab_po_takes_priority_over_other_tabs(self):
+        for po in ("5450885", "5450885-3", "0000885"):
+            label = f"{po} 3 - QTY: 10 Design Previews"
+            for context in ({"label": label}, {"stock_tab_label": label}, None):
+                with self.subTest(po=po, context=context):
+                    driver = mock.Mock()
+                    data = self._crm_data()
+                    data["activeTabText"] = label if context is None else "H-OtherTab708 2 - QTY: 15 Design Previews"
+                    driver.execute_script.return_value = data
+                    with mock.patch.object(crm_shipping_bypasser, "refresh_if_crm_challenge_attempts_exceeded", return_value=False):
+                        order = crm_shipping_bypasser._extract_order_data(driver, "5450885", tab_context=context)
+                    self.assertEqual(order["po"], po)
+
+    def test_tab_number_and_quantity_are_not_treated_as_a_po(self):
+        for label in ("", "3 - QTY: 10 Design Previews", "-- 3 - QTY: 10 View Proofs"):
+            with self.subTest(label=label):
+                self.assertEqual(crm_shipping_bypasser._po_from_tab_label(label), "")
+
     def test_unlabelled_order_retains_body_po_fallback(self):
         driver = mock.Mock()
         data = self._crm_data()
