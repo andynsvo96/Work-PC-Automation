@@ -2493,6 +2493,15 @@ _RETRYABLE_SINGLE_ORDER_TASK_TYPES = frozenset(
 _QUEUE_ORDER_LABEL_RE = re.compile(r"\border\s+\d{7}\b", re.IGNORECASE)
 
 
+def _automation_queue_result_requires_review(task, message):
+    text = str(message or "").lower()
+    return "slack delivery unconfirmed" in text or (
+        str(task.get("task_type") or "").lower() == "communications.work" and any(marker in text for marker in (
+            "paycom punch was recorded", "work clock-in completed", "work clock-out completed",
+        ))
+    )
+
+
 def _automation_queue_task_is_retryable_order(task):
     """Allow safe retries for unfinished communications and targeted CRM work."""
     if not isinstance(task, dict):
@@ -2504,6 +2513,8 @@ def _automation_queue_task_is_retryable_order(task):
     # failed or canceled one uses the original in-memory callable and puts it
     # back into the same queue, just like the Processing retry control.
     if task_type.startswith("communications."):
+        if _automation_queue_result_requires_review(task, task.get("message")):
+            return False
         return callable(task.get("fn"))
     if str(task.get("queue_mode") or "normal").strip().lower() != "normal":
         return False
@@ -2758,7 +2769,9 @@ def _automation_queue_worker_loop():
                     task["status"] = "canceled"
                     task["success"] = False
                     task["cancel_requested"] = False
-                elif str(task.get("queue_mode") or "").strip().lower() == "repeat":
+                elif str(task.get("queue_mode") or "").strip().lower() == "repeat" and not (
+                    not ok and _automation_queue_result_requires_review(task, message)
+                ):
                     interval_minutes = _normalize_automation_repeat_interval_minutes(
                         task.get("repeat_interval_minutes")
                     )
@@ -3375,11 +3388,11 @@ def _read_result_file_with_retry(retries=8, delay=0.25):
     return None
 
 
-def _run_automation_script(path, action, label, extra_args=None, timeout=120):
+def _run_automation_script(path, action, label, extra_args=None, timeout=120, require_result=False):
     args = [action]
     if extra_args:
         args.extend([str(x) for x in extra_args if str(x).strip()])
-    ok, msg, _ = _run_script(path, args, f"{label}-{action}", timeout=timeout)
+    ok, msg, _ = _run_script(path, args, f"{label}-{action}", timeout=timeout, require_result=require_result)
     return ok, msg
 
 
@@ -4622,6 +4635,32 @@ def run_slack(action, custom_message=None, force_test_url=False):
         clock_lock.release()
 
 
+def _is_retryable_slack_failure(message):
+    """Retry only known failures before a Slack submission could occur."""
+    text = str(message or "").lower()
+    if "slack delivery unconfirmed" in text or "force-stopped" in text or "force stopped" in text:
+        return False
+    return any(marker in text for marker in (
+        "unable to place message text in slack composer",
+        "could not find slack message composer after navigation retries",
+        "slack team message failed before submit:",
+    ))
+
+
+def _slack_failure_message(message):
+    text = str(message or "")
+    if _is_retryable_slack_failure(text) or any(marker in text.lower() for marker in (
+        "slack delivery unconfirmed", "slack login is required", "invalid action argument",
+        "message is empty", "custom slack message cannot be empty",
+    )):
+        return text
+    return (
+        "Slack delivery unconfirmed. Automatic resend stopped to avoid duplicates. "
+        "Check the Slack conversation before using a Slack-only action to try again. "
+        + text
+    )
+
+
 def _run_slack_action_with_retry(action, retries=1, delay_seconds=3, extra_args=None, label="Slack"):
     ok, msg = _run_automation_script(
         SLACK_SCRIPT,
@@ -4629,11 +4668,12 @@ def _run_slack_action_with_retry(action, retries=1, delay_seconds=3, extra_args=
         label,
         extra_args=extra_args,
         timeout=SLACK_SCRIPT_TIMEOUT_SECONDS,
+        require_result=True,
     )
     if ok:
         return ok, msg
-    if "force-stopped" in str(msg).lower() or "force stopped" in str(msg).lower():
-        return ok, msg
+    if not _is_retryable_slack_failure(msg):
+        return False, _slack_failure_message(msg)
     for attempt in range(1, retries + 1):
         if _automation_stop_is_blocking():
             return False, _force_stop_message(f"{label}-{action}")
@@ -4644,11 +4684,14 @@ def _run_slack_action_with_retry(action, retries=1, delay_seconds=3, extra_args=
             label,
             extra_args=extra_args,
             timeout=SLACK_SCRIPT_TIMEOUT_SECONDS,
+            require_result=True,
         )
         if ok:
             return True, f"{msg2} (retry {attempt} succeeded)"
         msg = msg2
-    return False, msg
+        if not _is_retryable_slack_failure(msg):
+            break
+    return False, _slack_failure_message(msg)
 
 
 def _run_slack_custom_action_with_retry(custom_message, retries=1, delay_seconds=3, force_test_url=False):
@@ -12997,6 +13040,7 @@ def run_work(action, automatic=False, expected_clock_in_at=None):
     if not clock_lock.acquire(blocking=False):
         return _finish(False, "Another operation is already running.")
 
+    paycom_punch_recorded = False
     try:
         now = datetime.now()
         sync_note = None
@@ -13096,7 +13140,7 @@ def run_work(action, automatic=False, expected_clock_in_at=None):
                     return _finish(*_continue_work_after_paycom_ip_block("in", c_msg))
                 return _finish(False, c_msg)
 
-            s_ok, s_msg = _run_slack_action_with_retry("in", retries=1, delay_seconds=3)
+            paycom_punch_recorded = True
             now = datetime.now()
             auto_out_dt = None
             auto_out_note = ""
@@ -13137,7 +13181,12 @@ def run_work(action, automatic=False, expected_clock_in_at=None):
             if auto_out_dt:
                 at = _format_auto_clock_out_label(auto_out_dt)
                 notify_user("Work Clock In", f"Auto clock-out {at}.")
-            return _finish(True, "Work clock-in completed.")
+            s_ok, s_msg = _run_slack_action_with_retry("in", retries=1, delay_seconds=3)
+            parts = ["Work clock-in completed.", s_msg if s_ok else f"Slack in failed: {s_msg}"]
+            if not s_ok:
+                parts.append("Paycom punch was recorded. Do not repeat Work In; check Slack, then use Slack In only if needed.")
+                notify_user("Work In: Slack failed", "Paycom clock-in completed, but Slack failed. Check the queue result and Slack conversation.")
+            return _finish(bool(s_ok), " ".join(parts))
 
         if automatic and not active_shift:
             cancel_auto_clock_out_timer()
@@ -13164,7 +13213,7 @@ def run_work(action, automatic=False, expected_clock_in_at=None):
                 return _finish(*_continue_work_after_paycom_ip_block("out", c_msg))
             return _finish(False, c_msg)
 
-        s_ok, s_msg = _run_slack_action_with_retry("out", retries=1, delay_seconds=3)
+        paycom_punch_recorded = True
         now = datetime.now()
         paid = 0.0
         gross = 0.0
@@ -13208,6 +13257,8 @@ def run_work(action, automatic=False, expected_clock_in_at=None):
             save_work_state(state)
             refresh_tray_status_from_state(state)
 
+        s_ok, s_msg = _run_slack_action_with_retry("out", retries=1, delay_seconds=3)
+
         if WORK_CLOCK_SYNC_FROM_PAYCOM and WORK_CLOCK_SYNC_AFTER_CLOCK_OUT:
             ps_ok, ps_msg, ps_hours, merged_days, pto_days = _sync_paycom_hours_into_work_state(
                 "clock-out",
@@ -13223,6 +13274,9 @@ def run_work(action, automatic=False, expected_clock_in_at=None):
                 sync_note = f"Paycom sync after clock-out failed: {ps_msg}"
 
         parts = ["Work clock-out completed.", c_msg, s_msg if s_ok else f"Slack out failed: {s_msg}"]
+        if not s_ok:
+            parts.append("Paycom punch was recorded. Do not repeat Work Out; check Slack, then use Slack Out only if needed.")
+            notify_user("Work Out: Slack failed", "Paycom clock-out completed, but Slack failed. Check the queue result and Slack conversation.")
         if _break_hours_for_gross_shift(gross) > 0:
             break_note = f"includes {WORK_CLOCK_BREAK_MINUTES}m unpaid break deduction"
         else:
@@ -13236,9 +13290,16 @@ def run_work(action, automatic=False, expected_clock_in_at=None):
             auto_note = f"Automatically clocked out at {_format_time(now)}."
             parts.append(auto_note)
             notify_user("Work Auto Clock-Out", auto_note)
-        return _finish(True, " ".join(parts))
+        return _finish(bool(s_ok), " ".join(parts))
     except Exception as e:
         logger.error("Work-%s error: %s", action, e)
+        if paycom_punch_recorded:
+            message = (
+                f"Paycom punch was recorded. Work {action.title()} stopped afterward: {e}. "
+                f"Do not repeat Work {action.title()}; review the tracker and Slack conversation before recovery."
+            )
+            notify_user(f"Work {action.title()}: review needed", message)
+            return _finish(False, message)
         return _finish(False, str(e))
     finally:
         clock_lock.release()

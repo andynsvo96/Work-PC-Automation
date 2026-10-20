@@ -8,6 +8,7 @@ Usage:
 
 import argparse
 import os
+import re
 import sys
 import time
 from urllib.parse import urlparse
@@ -49,6 +50,11 @@ MIN_VIEWPORT_HEIGHT = 420
 HARD_MIN_VIEWPORT_WIDTH = 500
 HARD_MIN_VIEWPORT_HEIGHT = 260
 SLACK_CLIENT_URL_MARKER = "app.slack.com/client/"
+SEND_CONFIRMATION_TIMEOUT_SECONDS = 15
+SEND_UNCONFIRMED_MESSAGE = (
+    "Slack delivery unconfirmed after submission. Automatic resend stopped to avoid duplicates. "
+    "Check the Slack conversation before using a Slack-only action to try again."
+)
 RETRYABLE_EXCEPTION_SIGNALS = (
     "session not created",
     "devtoolsactiveport",
@@ -63,7 +69,6 @@ RETRYABLE_ISSUES = {
     "navigation_failed",
     "navigation_exception",
     "composer_not_found",
-    "send_not_confirmed",
     "tiny_viewport",
 }
 
@@ -76,6 +81,12 @@ COMPOSER_SELECTORS = [
     'div[aria-label*="message"][contenteditable="true"]',
     'div[role="textbox"][contenteditable="true"]',
 ]
+
+
+class SlackBeforeSubmitError(RuntimeError):
+    """The send control was never activated, so retrying cannot duplicate a post."""
+
+
 def write_result(success, message):
     write_result_payload(
         AUDIT_AUTOMATION_NAME,
@@ -175,7 +186,7 @@ def is_expected_slack_channel(current_url, channel_url):
     if not current_path.startswith("/client/"):
         return False
     if target_path.startswith("/client/"):
-        return current_path.startswith(target_path)
+        return current_path == target_path or current_path.startswith(target_path + "/")
     return True
 
 
@@ -251,7 +262,7 @@ def _composer_text(driver, composer):
         )
         return str(text or "").strip()
     except Exception:
-        return ""
+        return None
 
 
 def _focus_composer(driver, composer):
@@ -291,6 +302,11 @@ def _collect_composer_candidates(driver):
                 seen.add(element_id)
 
                 if not element.is_displayed() or not element.is_enabled():
+                    continue
+                if driver.execute_script(
+                    "return !!arguments[0].closest('[data-qa=thread_view], [data-qa=thread_flexpane], .p-thread_view, .p-threads_view');",
+                    element,
+                ):
                     continue
 
                 rect = element.rect or {}
@@ -354,27 +370,76 @@ def resolve_channel_name(driver):
     return ""
 
 
-def _did_recent_message_match(driver, message):
-    target = (message or "").strip()
-    if not target:
-        return False
-    selectors = [
-        '[data-qa="message-text"]',
-        "div.c-message__body",
-    ]
-    for selector in selectors:
-        try:
-            rows = driver.find_elements(By.CSS_SELECTOR, selector)
-        except Exception:
-            rows = []
-        for row in rows[-8:]:
-            try:
-                text = (row.text or "").strip()
-                if text == target:
-                    return True
-            except Exception:
+def _normalize_message_text(value):
+    return " ".join(str(value or "").split())
+
+
+def _read_message_snapshot(driver):
+    """Read stable Slack timestamps from the conversation, excluding threads/drafts."""
+    rows = driver.execute_script(r"""
+        const selector = '[data-qa="message-text"], div.c-message__body';
+        const seen = new Set();
+        const rows = [];
+        for (const body of document.querySelectorAll(selector)) {
+            if (!body.getClientRects().length || body.closest(
+                '[data-qa="thread_view"], [data-qa="thread_flexpane"], .p-thread_view, .p-threads_view'
+            )) continue;
+            const row = body.closest('[data-qa="message_container"]') ||
+                body.closest('[data-ts], [data-item-key]');
+            if (!row || seen.has(row)) continue;
+            seen.add(row);
+            const item = row.closest('[data-item-key]');
+            const id = row.getAttribute('data-ts') || row.getAttribute('data-item-key') ||
+                (item && item.getAttribute('data-item-key')) || row.id || '';
+            const bodies = [...row.querySelectorAll(selector)].filter(el =>
+                !el.parentElement.closest(selector));
+            const text = bodies.map(el => el.innerText || '').join('\n');
+            // Slack can display a bare URL without its scheme. Retain a second
+            // representation with the original href for plain link messages.
+            const linkedText = bodies.map(el => {
+                const clone = el.cloneNode(true);
+                for (const link of clone.querySelectorAll('a[href]')) {
+                    const href = link.getAttribute('href') || '';
+                    if (/^https?:\/\//i.test(href) &&
+                        (link.textContent || '').trim() === href.replace(/^https?:\/\//i, '')) {
+                        link.textContent = href;
+                    }
+                }
+                return clone.textContent || '';
+            }).join('\n');
+            const unsettled = !!row.querySelector(
+                '[data-qa="message_pending"], [data-qa="message_send_failed"], ' +
+                '[data-qa="message_retry"], .c-message_kit__error'
+            ) || row.matches('.c-message_kit__message--pending, .c-message_kit__message--failed');
+            rows.push({id, text, linked_text: linkedText, unsettled});
+        }
+        return rows;
+    """)
+    if not isinstance(rows, list):
+        raise RuntimeError("Slack conversation history could not be read.")
+    return [row for row in rows if re.fullmatch(r"\d{10}\.\d{1,6}", str(row.get("id") or ""))]
+
+
+def _wait_for_new_message(driver, message, channel_url, before_ids, submitted_after, expected_id=None):
+    target = _normalize_message_text(message)
+
+    def matching_message(current_driver):
+        if not is_expected_slack_channel(current_driver.current_url, channel_url):
+            return False
+        for row in _read_message_snapshot(current_driver):
+            message_id = row["id"]
+            if message_id in before_ids or float(message_id) < submitted_after or row.get("unsettled"):
                 continue
-    return False
+            if expected_id and message_id != expected_id:
+                continue
+            if target in {_normalize_message_text(row.get("text")), _normalize_message_text(row.get("linked_text"))}:
+                return message_id
+        return False
+
+    try:
+        return WebDriverWait(driver, SEND_CONFIRMATION_TIMEOUT_SECONDS, poll_frequency=0.5).until(matching_message)
+    except TimeoutException:
+        return None
 
 
 def set_composer_message(driver, composer, message):
@@ -385,62 +450,53 @@ def set_composer_message(driver, composer, message):
     try:
         composer.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
         composer.send_keys(Keys.BACKSPACE)
-    except Exception:
-        pass
-
-    try:
-        composer.send_keys(message)
+        for index, line in enumerate(message.replace("\r\n", "\n").replace("\r", "\n").split("\n")):
+            if index:
+                composer.send_keys(Keys.SHIFT, Keys.ENTER)
+            composer.send_keys(line)
         time.sleep(0.2)
         typed = _composer_text(driver, composer)
-        if typed and message.strip() in typed:
-            return True
-    except Exception:
-        pass
-
-    try:
-        driver.execute_script(
-            "const el = arguments[0];"
-            "const text = arguments[1];"
-            "el.focus();"
-            "if ('value' in el) { el.value = text; }"
-            "el.textContent = text;"
-            "el.dispatchEvent(new Event('input', { bubbles: true }));"
-            "el.dispatchEvent(new Event('change', { bubbles: true }));",
-            composer,
-            message,
-        )
-        time.sleep(0.25)
-        typed = _composer_text(driver, composer)
-        return bool(typed and message.strip() in typed)
+        return bool(typed and _normalize_message_text(typed) == _normalize_message_text(message))
     except Exception:
         return False
 
 
-def submit_message(driver, composer, message):
-    target = (message or "").strip()
+def _find_send_button(driver, composer):
+    return driver.execute_script("""
+        const selector = 'button[data-qa="texty_send_button"], button[data-qa="send_button"], ' +
+            'button[aria-label^="Send now"], button[aria-label^="Send message"]';
+        for (let node = arguments[0].parentElement; node && node !== document.body; node = node.parentElement) {
+            const button = [...node.querySelectorAll(selector)].find(el =>
+                el.getClientRects().length && !el.disabled && el.getAttribute('aria-disabled') !== 'true' &&
+                !el.closest('[data-qa="thread_view"], [data-qa="thread_flexpane"], .p-thread_view, .p-threads_view'));
+            if (button) return button;
+        }
+        return null;
+    """, composer)
+
+
+def submit_message(driver, composer, message, channel_url=None):
+    """Submit once and require a new matching message to survive a page refresh."""
     try:
-        composer.send_keys(Keys.ENTER)
-    except Exception:
-        return False
-    time.sleep(0.9)
-
-    after_first = _composer_text(driver, composer)
-    if target and target not in after_first:
-        return True
-
-    try:
-        composer.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, Keys.ENTER)
-        time.sleep(0.8)
-        after_second = _composer_text(driver, composer)
-        if target and target not in after_second:
-            return True
-    except Exception:
-        after_second = ""
-
-    # Only fall back to history check if composer text cannot be read after submit.
-    if not after_second and not after_first:
-        return _did_recent_message_match(driver, target)
-    return False
+        target = _normalize_message_text(message)
+        channel_url = channel_url or driver.current_url
+        if not target or _normalize_message_text(_composer_text(driver, composer)) != target:
+            raise SlackBeforeSubmitError("Slack composer does not contain exactly the intended message.")
+        if not is_expected_slack_channel(driver.current_url, channel_url):
+            raise SlackBeforeSubmitError("Slack is not showing the intended conversation.")
+        send_button = WebDriverWait(driver, 5).until(lambda current: _find_send_button(current, composer))
+        before_ids = {row["id"] for row in _read_message_snapshot(driver)}
+    except Exception as err:
+        raise SlackBeforeSubmitError(f"Slack send preflight failed: {err}") from err
+    submitted_after = time.time() - 5
+    # Click once, independently of Slack's Enter-key preference. Do not issue a
+    # second send if the editor clears, detaches, or confirmation times out.
+    send_button.click()
+    message_id = _wait_for_new_message(driver, message, channel_url, before_ids, submitted_after)
+    driver.refresh()
+    return bool(_wait_for_new_message(
+        driver, message, channel_url, before_ids, submitted_after, expected_id=message_id,
+    ))
 
 
 def open_channel_and_find_composer(driver, channel_url, action, attempts=2):
@@ -540,6 +596,7 @@ def _run_once(action, message, channel_url, profile_path, headless_mode):
     start_time = time.time()
     mode_name = "headless" if headless_mode else "visible"
     driver = None
+    send_attempted = False
     try:
         print(f"Launching Slack browser session ({mode_name})...")
         kill_stale_chrome(profile_path, profile_label="Slack automation")
@@ -576,9 +633,10 @@ def _run_once(action, message, channel_url, profile_path, headless_mode):
             safe_take_screenshot(driver, f"slack_{action}_compose_failed")
             return False, "Unable to place message text in Slack composer.", True
 
-        if not submit_message(driver, composer, message):
+        send_attempted = True
+        if not submit_message(driver, composer, message, channel_url=channel_url):
             safe_take_screenshot(driver, f"slack_{action}_send_not_confirmed")
-            return False, "Slack message send could not be confirmed.", True
+            return False, SEND_UNCONFIRMED_MESSAGE, False
 
         channel_name = resolve_channel_name(driver)
         try:
@@ -592,11 +650,16 @@ def _run_once(action, message, channel_url, profile_path, headless_mode):
             print(f"Warning: could not record Slack post history: {history_error}")
         safe_take_screenshot(driver, f"slack_{action}_sent")
         elapsed = time.time() - start_time
-        return True, f"Slack '{message}' sent successfully! ({elapsed:.1f}s)", False
+        return True, f"Slack '{message}' verified in the conversation after refresh. ({elapsed:.1f}s)", False
+    except SlackBeforeSubmitError as err:
+        safe_take_screenshot(driver, f"slack_{action}_pre_submit_failed")
+        return False, f"Slack team message failed before submit: {err}", True
     except Exception as err:
         if driver:
             safe_take_screenshot(driver, f"slack_{action}_error_{mode_name}")
-        error_msg = f"Slack team message failed: {type(err).__name__}: {err}"
+        if send_attempted:
+            return False, f"{SEND_UNCONFIRMED_MESSAGE} {type(err).__name__}: {err}", False
+        error_msg = f"Slack team message failed before submit: {type(err).__name__}: {err}"
         return False, error_msg, _is_retryable_exception(err)
     finally:
         if driver:
@@ -664,6 +727,8 @@ def run(action, force_test_url=False, custom_message=None, channel_url=None):
                         print(f"Warning: could not record Slack alternating message usage: {e}")
                 return True, msg
             last_msg = msg
+            if not retryable:
+                return False, last_msg
             if retryable and attempt < attempts:
                 print(f"Retryable failure detected: {msg}")
                 time.sleep(1.5)

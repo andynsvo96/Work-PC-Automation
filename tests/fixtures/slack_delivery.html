@@ -1,0 +1,83 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Offline Slack delivery fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 20px; }
+  main { width: 700px; }
+  [data-qa="message_container"] { padding: 8px; }
+  [contenteditable] { min-height: 60px; border: 1px solid; white-space: pre-wrap; }
+</style>
+<main>
+  <div id="messages"></div>
+  <div data-qa="message_input">
+    <div id="composer" role="textbox" contenteditable="true" aria-label="Message fixture"></div>
+    <button data-qa="texty_send_button" aria-label="Send now">Send</button>
+  </div>
+</main>
+<aside data-qa="thread_view"><div id="thread-messages"></div></aside>
+<script>
+  const mode = new URLSearchParams(location.search).get('mode') || 'deliver';
+  const key = 'slack-delivery-fixture';
+  const state = JSON.parse(localStorage.getItem(key) || '{"messages": [], "attempts": 0}');
+  let draft = '';
+  const persist = () => localStorage.setItem(key, JSON.stringify(state));
+  function appendMessage(message) {
+    const row = document.createElement('div');
+    row.dataset.qa = 'message_container';
+    if (!message.missingId) row.dataset.ts = message.id;
+    const body = document.createElement('div');
+    body.dataset.qa = 'message-text';
+    body.textContent = message.text;
+    if (message.link) {
+      body.replaceChildren();
+      const link = document.createElement('a');
+      link.href = message.text;
+      link.textContent = message.text.replace(/^https?:\/\//, '');
+      body.append(link);
+    }
+    row.append(body);
+    if (message.pending || message.failed) {
+      const status = document.createElement('span');
+      status.dataset.qa = message.pending ? 'message_pending' : 'message_send_failed';
+      status.textContent = message.pending ? 'Sending...' : 'Send failed';
+      row.append(status);
+    }
+    document.getElementById(message.thread ? 'thread-messages' : 'messages').append(row);
+  }
+  state.messages.forEach(appendMessage);
+  composer.addEventListener('input', event => {
+    if (event.isTrusted) draft = composer.innerText.trim();
+  });
+  composer.addEventListener('keydown', event => {
+    // Emulate either Enter preference: typing a multiline draft must not send.
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      document.querySelector('button').click();
+    }
+  });
+  document.querySelector('button').addEventListener('click', () => {
+    state.attempts++;
+    const message = { id: (Date.now() / 1000).toFixed(6), text: draft };
+    composer.replaceChildren();
+    draft = '';
+    if (mode === 'detach') composer.replaceWith(composer.cloneNode());
+    if (mode === 'clear' || mode === 'detach' || !message.text) {
+      persist();
+      return;
+    }
+    if (mode === 'thread') message.thread = true;
+    if (mode === 'pending') message.pending = true;
+    if (mode === 'failed') message.failed = true;
+    if (mode === 'missing-id') message.missingId = true;
+    if (mode === 'link') message.link = true;
+    if (mode !== 'optimistic') state.messages.push(message);
+    persist();
+    if (mode !== 'after-refresh') appendMessage(message);
+  });
+  window.addOldMessage = (text, age = 60) => {
+    const message = { id: (Date.now() / 1000 - age).toFixed(6), text };
+    state.messages.push(message);
+    persist();
+    appendMessage(message);
+  };
+</script>
