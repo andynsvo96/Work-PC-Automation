@@ -236,6 +236,8 @@ def _format_cost_text(sleeves, ink_price, embroidery_price, reverse_price=None):
     flags = _request_flags(sleeves)
     if flags["ink"] and flags["embroidery"]:
         return f"{_money_text(ink_price)} for {_area_family(sleeves, INK)} prints and {_money_text(embroidery_price)} for embroidery"
+    if flags["ink"] and _area_family(sleeves, INK) == "sleeve":
+        return f"{_money_text(ink_price)} per sleeve print"
     return _money_text(ink_price if flags["ink"] else embroidery_price)
 
 

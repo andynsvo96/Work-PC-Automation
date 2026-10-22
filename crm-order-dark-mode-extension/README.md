@@ -44,6 +44,8 @@ the existing checks for saved areas, pricing, clones, notes, and email receipts.
 
 Ink pricing uses the combined garment quantity of selected tabs with an ink or reverse request, counting each original tab once: $8 for 1–9, $7 for 10–19, $6 for 20–99, and $5 for 100+. Embroidery defaults to $15. Custom sleeve/side ink prices are shared across those ink areas; the separate reverse-price override is shared across every selected reverse tab. Unselected tabs do not affect the tier.
 
+For sleeve ink-print requests, the Salesforce email names the price **per sleeve print**, including when both sleeves are selected. For example: `There will be an additional charge of $2.66 per sleeve print to include this request.` Restart the local Automation app to load this wording change; no extension reload or CRM page refresh is needed.
+
 For **Sleeve Prints** only, setting every selected sleeve method's price to **$0.00** uses the Salesforce **[AUTO] Comp Sleeves** template. Left, right, or both sleeve areas are still added with the selected print method, and existing product and size prices are retained and verified after saving and reloading the order. This also supports sleeve embroidery priced at $0.00. Requests that include side, reversible, or extra embroidery areas, or any paid sleeves, keep the **[AUTO] Additional Requests** template.
 
 New zero-price sleeve Sales Notes read `Comped Sleeve prints` and `Emailed` on separate lines. Matching notes from the earlier `$0.00 per sleeve` wording are retained on retries to avoid duplicate notes.
