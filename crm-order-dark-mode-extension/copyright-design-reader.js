@@ -1,10 +1,5 @@
-// Artwork IDs can repeat across tabs. The persisted order-design ID identifies
-// the individual tab even after another tab is removed and CRM renumbers it.
-function copyrightDesignSelectionId(design) {
-  return design.order_design_id ? `order-design:${design.order_design_id}` : design.design_id;
-}
-
-// Read-only identities. Names and quantities are checked against the rendered tabs.
+// Read-only identities. Artwork IDs can repeat; the persisted order-design ID
+// identifies a tab after removals and renumbering. Rendered details are checked too.
 function readCopyrightDesignIds() {
   let orderScope = null;
   for (const element of document.querySelectorAll('*')) {

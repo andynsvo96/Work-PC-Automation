@@ -25,7 +25,8 @@ const initial = {
   transactions: [{amount: '200.00', tag: 'Stripe.com', type: 'Stripe.com'}]
 };
 let resource = JSON.parse(localStorage.getItem('copyright-fixture') || JSON.stringify(initial));
-let active = resource.designs[0].designId;
+const tabIdentity = design => design.id ?? design.designId;
+let active = tabIdentity(resource.designs[0]);
 let ordered = localStorage.getItem('copyright-fixture-ordered') === 'true';
 window.fixtureCounters = {removals: [], refunds: [], saves: 0};
 const scope = {
@@ -52,10 +53,10 @@ const scope = {
     modal.className = 'modal';
     modal.innerHTML = '<p>Are you sure you want to delete this design?</p><button>Yes</button><button>No</button>';
     modal.querySelector('button').onclick = () => {
-      fixtureCounters.removals.push(design.designId);
+      fixtureCounters.removals.push(tabIdentity(design));
       if (ordered) {design.quantity = 0; design.subtotal = '0.00';}
-      else resource.designs = resource.designs.filter(item => item.designId !== design.designId);
-      active = resource.designs[0].designId;
+      else resource.designs = resource.designs.filter(item => item !== design);
+      active = tabIdentity(resource.designs[0]);
       modal.remove();
       render();
     };
@@ -98,14 +99,14 @@ function render() {
   tabs.id = 'main-header-design-tabs';
   resource.designs.forEach((design, index) => {
     const tab = document.createElement('button');
-    tab.className = 'tab' + (active === design.designId ? ' btn-inverse' : '');
+    tab.className = 'tab' + (active === tabIdentity(design) ? ' btn-inverse' : '');
     tab.dataset.designId = design.designId;
     tab.innerText = `${index + 1} - QTY: ${design.quantity}\nDesign Previews`;
-    tab.onclick = () => {active = design.designId; render();};
+    tab.onclick = () => {active = tabIdentity(design); render();};
     tabs.append(tab);
   });
   container.append(tabs);
-  const design = resource.designs.find(item => item.designId === active) || resource.designs[0];
+  const design = resource.designs.find(item => tabIdentity(item) === active) || resource.designs[0];
   const detail = document.createElement('p');
   detail.innerText = `Design Name: ${design.name}\nDesign ID: ${design.designId}\nQuantity: ${design.quantity}`;
   container.append(detail);

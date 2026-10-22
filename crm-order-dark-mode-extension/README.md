@@ -44,6 +44,9 @@ The sales note is `Additional embroidery area`, `$15.00 each` (or the custom pri
 Choose **Cancel → Copyright - Cancel** to scan every order design tab and list
 its **Design Name**, tab number, and quantity. The scan returns to the previously
 open tab. Select the affected designs and enter the required copyright reason.
+Tabs can share the same artwork **Design ID** and Design Name. Each remains
+individually selectable using its persisted order-tab ID, including after another
+tab is removed and the remaining tabs are renumbered.
 Multiple designs start unchecked; a single design starts checked. **Select all**
 and **Clear** change the selection, and the dialog explains its scope before
 **Queue task** is enabled. The dialog wraps long design names without horizontal
@@ -82,11 +85,16 @@ selected IDs for a selected single-order request; `--dry-run` validates the
 selection and email draft without removing/saving designs, refunding, creating
 a Case, or sending email.
 
-After updating to **1.6.0**, restart the local Automation app, reload CRM Order
+After updating to **1.6.1**, restart the local Automation app, reload CRM Order
 Assistant at `chrome://extensions`, and refresh open CRM order pages.
 Selected copyright requests use a dedicated bridge endpoint. An older app that
 has not been restarted rejects them; the extension never falls back to the
 old whole-order copyright endpoint.
+
+Version 1.6.1 fixes the repeated "Could not identify every design tab" error for
+orders that reuse artwork across tabs. Both the app and extension need the update.
+Existing queued requests and recovery receipts remain compatible when their
+artwork IDs identify tabs uniquely. Ambiguous older requests stop for review.
 
 For dialog appearance updates only, reload CRM Order Assistant and refresh the
 CRM order page; the local Automation app does not need a restart.

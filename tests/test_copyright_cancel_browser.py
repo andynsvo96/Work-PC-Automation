@@ -94,6 +94,65 @@ class CopyrightCancelBrowserTests(unittest.TestCase):
         self.driver.find_element(By.XPATH, '//button[text()="Back"]').click()
         self.assertEqual(self.driver.execute_script("return queued"), [])
 
+    def use_shared_artwork(self):
+        self.driver.execute_script("""
+          resource.designs.forEach((design, index) => {
+            design.id = 900 + index; design.designId = 101; design.name = 'Shared artwork';
+          });
+          active = 901; persist(); render();
+        """)
+
+    def test_shared_artwork_tabs_scan_restore_and_queue_individually(self):
+        self.use_shared_artwork()
+        self.show_picker()
+        self.assertEqual(self.driver.execute_script('return active'), 901)
+        self.driver.find_element(By.ID, 'crm-copyright-cancel-reason').send_keys('Protected character')
+        self.driver.find_element(By.CSS_SELECTOR, 'input[data-copyright-design="order-design:900"]').click()
+        summary = self.driver.find_element(By.CSS_SELECTOR, '[data-copyright-summary]').text
+        self.assertIn('1 of 2 tabs selected', summary)
+        self.assertIn('Partial cancellation', summary)
+        self.driver.find_element(By.XPATH, '//button[text()="Queue task"]').click()
+        selection = self.driver.execute_script('return queued[0].data.designs')
+        self.assertEqual(selection['selected_design_ids'], ['order-design:900'])
+        self.assertEqual([row['design_id'] for row in selection['all_designs']], ['101', '101'])
+        self.assertEqual([row['order_design_id'] for row in selection['all_designs']], ['900', '901'])
+        self.assertEqual(selection['all_designs'], copyright.scan_designs(self.driver, '5451301'))
+
+    def test_shared_artwork_removes_or_zeroes_only_the_selected_tab_and_retry_does_not_refund_twice(self):
+        for ordered, selected_index in ((False, 0), (False, 1), (True, 0)):
+            with self.subTest(ordered=ordered, selected_index=selected_index), tempfile.TemporaryDirectory() as folder, ExitStack() as stack:
+                self.driver.execute_script('resetFixture(arguments[0]);', ordered)
+                self.use_shared_artwork()
+                key = f'order-design:{900 + selected_index}'
+                selection = {'order_id': '5451301', 'all_designs': copyright.scan_designs(self.driver, '5451301'),
+                             'selected_design_ids': [key]}
+                stack.enter_context(mock.patch.object(copyright, 'STATE_DIR', folder))
+                email = stack.enter_context(mock.patch.object(shared, '_prepare_and_maybe_send_salesforce_email',
+                    side_effect=lambda *_args, **_kwargs: {'sent': not _args[4], 'dry_run': _args[4]}))
+                result = copyright.process_partial(shared, self.driver, self.driver.current_window_handle, selection,
+                    'Protected character', {'email': 'customer@example.test'}, dry_run=False,
+                    process=shared.COPYRIGHT_CANCEL_PARTIAL_PROCESS)
+                self.assertTrue(result['refund']['verified'])
+                self.assertEqual(result['refund']['amount'], '120.00' if selected_index == 0 else '80.00')
+                self.assertEqual(result['removal']['zeroed_design_ids' if ordered else 'removed_design_ids'], [key])
+                retained = next(row for row in copyright.scan_designs(self.driver, '5451301')
+                                if row['order_design_id'] != str(900 + selected_index))
+                self.assertEqual(retained['quantity'], 1)
+                self.assertEqual(retained['subtotal'], '80.00' if selected_index == 0 else '120.00')
+                repeated = copyright.process_partial(shared, self.driver, self.driver.current_window_handle, selection,
+                    'Protected character', {'email': 'customer@example.test'}, dry_run=False,
+                    process=shared.COPYRIGHT_CANCEL_PARTIAL_PROCESS)
+                self.assertTrue(repeated['already_completed'])
+                self.assertEqual(self.driver.execute_script("return resource.transactions.filter(row => row.tag === 'Refund').length"), 1)
+                self.assertEqual([call.args[4] for call in email.call_args_list], [True, False])
+
+    def test_ambiguous_legacy_artwork_identity_stops_before_removing_any_tab(self):
+        self.use_shared_artwork()
+        with self.assertRaisesRegex(Exception, 'ambiguous'):
+            copyright.remove_design(shared, self.driver, '101')
+        self.assertEqual(self.driver.execute_script('return fixtureCounters.removals'), [])
+        self.assertFalse(self.driver.execute_script('return scope.editMode'))
+
     def test_worker_red_x_save_reload_and_partial_refund_for_removed_and_stock_ordered_tabs(self):
         for ordered, multiple in ((False, False), (True, False), (False, True)):
             with self.subTest(ordered=ordered, multiple=multiple), tempfile.TemporaryDirectory() as folder, ExitStack() as stack:

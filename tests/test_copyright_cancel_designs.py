@@ -51,6 +51,48 @@ class CopyrightSelectionTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertEqual(copyright.verify_removed(SELECTION, rows)[key], ["202"])
 
+    def test_reused_artwork_is_selected_by_the_persisted_order_tab_id(self):
+        rows = [{**row, "design_id": "101", "order_design_id": str(900 + index)}
+                for index, row in enumerate(DESIGNS)]
+        selection = copyright.normalize_selection({**SELECTION, "all_designs": rows,
+                                                    "selected_design_ids": ["order-design:900"]})
+        self.assertTrue(copyright.is_partial(selection))
+        self.assertEqual(copyright.selected_designs(selection), [rows[0]])
+        self.assertEqual(copyright.verify_removed(selection, [{**rows[1], "tab_number": 1}])[
+            "removed_design_ids"], ["order-design:900"])
+        zeroed = [{**rows[0], "quantity": 0, "subtotal": "0.00"}, rows[1]]
+        self.assertEqual(copyright.verify_removed(selection, zeroed)["zeroed_design_ids"], ["order-design:900"])
+        full = copyright.normalize_selection({**selection, "selected_design_ids": ["order-design:900", "order-design:901"]})
+        self.assertFalse(copyright.is_partial(full))
+
+    def test_order_tab_selection_rejects_ambiguous_or_mixed_identities(self):
+        rows = [{**row, "order_design_id": str(900 + index)} for index, row in enumerate(DESIGNS)]
+        for invalid_rows, selected in (
+                ([DESIGNS[0], {**DESIGNS[1], "design_id": "101"}], ["101"]),
+                ([rows[0], {**rows[1], "order_design_id": "900"}], ["order-design:900"]),
+                ([rows[0], DESIGNS[1]], ["order-design:900"]),
+                ([{**rows[0], "order_design_id": None}, rows[1]], ["order-design:900"]),
+                (rows, ["101"])):
+            with self.subTest(rows=invalid_rows, selected=selected), self.assertRaises(ValueError):
+                copyright.normalize_selection({**SELECTION, "all_designs": invalid_rows, "selected_design_ids": selected})
+
+    def test_legacy_requests_and_receipts_stay_compatible_with_new_scans(self):
+        live = [{**row, "order_design_id": str(900 + index)} for index, row in enumerate(DESIGNS)]
+        self.assertEqual(copyright.normalize_selection(SELECTION), SELECTION)
+        copyright.verify_original(SELECTION, live)
+        self.assertEqual(copyright.verify_removed(SELECTION, live[:1])["removed_design_ids"], ["202"])
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            copyright.verify_original(SELECTION, [*live, {**live[0], "tab_number": 3, "order_design_id": "999"}])
+
+    def test_saved_tab_identity_cannot_mask_changed_artwork_or_replaced_tabs(self):
+        rows = [{**row, "order_design_id": str(900 + index)} for index, row in enumerate(DESIGNS)]
+        selection = copyright.normalize_selection({**SELECTION, "all_designs": rows,
+                                                    "selected_design_ids": ["order-design:901"]})
+        for live in ([{**rows[0], "design_id": "303"}], [{**rows[0], "order_design_id": "999"}],
+                     [DESIGNS[0]], [rows[0], rows[0]]):
+            with self.subTest(live=live), self.assertRaises(ValueError):
+                copyright.verify_removed(selection, live)
+
     def test_tab_renumbering_does_not_change_the_selected_identity_or_mode(self):
         selection = {**SELECTION, "selected_design_ids": ["101"]}
         remaining = [{**DESIGNS[1], "tab_number": 1}]
@@ -412,6 +454,27 @@ class CopyrightRoutingTests(unittest.TestCase):
         self.assertEqual(email.call_args.kwargs["process"], shared.COPYRIGHT_CANCEL_PROCESS)
         self.assertEqual(email.call_args.kwargs["designs"], DESIGNS)
 
+    def test_sheet_cancellation_selects_all_order_tabs_when_artwork_is_reused(self):
+        rows = [{**row, "design_id": "101", "order_design_id": str(900 + index)}
+                for index, row in enumerate(DESIGNS)]
+        with ExitStack() as stack:
+            driver = mock.Mock()
+            stack.enter_context(mock.patch.object(shared, '_open_driver', return_value=driver))
+            for name in ('safe_get_with_partial_load', '_login_to_crm_if_needed', '_switch_to_crm_app_frame',
+                         '_wait_for_order_scope', 'safe_driver_quit', '_handle_post_cancel_stock_return'):
+                stack.enter_context(mock.patch.object(shared, name))
+            stack.enter_context(mock.patch.object(shared, '_wait_for_crm_contact_info', return_value=CONTACT))
+            stack.enter_context(mock.patch.object(shared, '_read_payment_summary', return_value={}))
+            stack.enter_context(mock.patch.object(copyright, 'assert_no_other_pending'))
+            stack.enter_context(mock.patch.object(copyright, 'scan_designs', return_value=rows))
+            partial = stack.enter_context(mock.patch.object(copyright, 'process_partial', side_effect=AssertionError('partial path')))
+            cancel = stack.enter_context(mock.patch.object(shared, '_cancel_and_refund_crm_order', return_value={}))
+            stack.enter_context(mock.patch.object(shared, '_prepare_and_maybe_send_salesforce_email', return_value={'sent': True}))
+            result = shared.process_single_order('5451301', 'Reason', designs=None, dry_run=False)
+        self.assertEqual(result['cancellation_scope'], 'full')
+        self.assertEqual(cancel.call_args.kwargs['full_selection']['selected_design_ids'], ['order-design:900', 'order-design:901'])
+        partial.assert_not_called()
+
     def test_queue_retains_complete_scan_and_worker_receives_copyright_argument(self):
         with mock.patch.object(server, "enqueue_automation", return_value=(True, "Queued", {})) as enqueue:
             ok, _, _ = server.queue_crm_extension_manual_order_run("5451301", "copyright_cancel", "Reason",
@@ -423,6 +486,16 @@ class CopyrightRoutingTests(unittest.TestCase):
         args = runner.call_args.args[1]
         self.assertEqual(json.loads(args[args.index("--copyright-designs-json") + 1]), SELECTION)
         self.assertNotIn("--emb-designs-json", args)
+
+    def test_queue_preserves_a_single_tab_selection_when_the_artwork_is_reused(self):
+        selection = {**SELECTION, 'all_designs': [
+            {**row, 'design_id': '101', 'order_design_id': str(900 + index)} for index, row in enumerate(DESIGNS)],
+            'selected_design_ids': ['order-design:901']}
+        with mock.patch.object(server, 'enqueue_automation', return_value=(True, 'Queued', {})) as enqueue:
+            ok, _, _ = server.queue_crm_extension_manual_order_run('5451301', 'copyright_cancel', 'Reason',
+                request_payload={'order_id': '5451301', 'designs': selection})
+        self.assertTrue(ok)
+        self.assertEqual(enqueue.call_args.kwargs['task_arguments']['designs'], selection)
 
 
 if __name__ == "__main__":

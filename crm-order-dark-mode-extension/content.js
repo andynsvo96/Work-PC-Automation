@@ -1312,14 +1312,17 @@ function readCopyrightDesignMetadata() {
   });
 }
 
+function copyrightDesignSelectionId(design) {
+  return design.order_design_id ? `order-design:${design.order_design_id}` : design.design_id;
+}
+
 async function scanCopyrightDesigns(onProgress = () => {}) {
-  const selectionId = design => design.order_design_id ? `order-design:${design.order_design_id}` : design.design_id;
   const metadata = await readCopyrightDesignMetadata();
   const tabs = visibleStockIssueDesignTabs();
   const original = activeStockIssueDesignTabNumber(tabs);
   if (!metadata?.designs?.length || !/^\d{7}$/.test(metadata.order_id) || original === null ||
       tabs.length !== metadata.designs.length ||
-      new Set(metadata.designs.map(selectionId)).size !== tabs.length ||
+      new Set(metadata.designs.map(copyrightDesignSelectionId)).size !== tabs.length ||
       new Set(metadata.designs.map(design => Boolean(design.order_design_id))).size !== 1 ||
       metadata.designs.some(design => !/^[1-9]\d*$/.test(design.design_id) ||
         (design.order_design_id !== undefined && !/^[1-9]\d*$/.test(design.order_design_id)) ||
@@ -1445,7 +1448,7 @@ function showCopyrightCancelConfirmation(automation, triggerButton, autoProcessB
       Object.assign(row.style, { display: 'block', marginTop: '10px' });
       const input = document.createElement('input');
       input.type = 'checkbox';
-      input.dataset.copyrightDesign = design.order_design_id ? `order-design:${design.order_design_id}` : design.design_id;
+      input.dataset.copyrightDesign = copyrightDesignSelectionId(design);
       input.checked = scan.all_designs.length === 1;
       input.addEventListener('change', refresh);
       row.append(input, document.createTextNode(` Tab ${design.tab_number}: ${design.design_name} (QTY ${design.quantity})`));

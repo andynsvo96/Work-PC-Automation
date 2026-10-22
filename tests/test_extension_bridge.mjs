@@ -25,6 +25,24 @@ test("copyright queue requests retain the complete scan and selected stable IDs"
   assert.equal(request.mock.callCount(), 1);
 });
 
+test("copyright requests preserve separate order tabs that reuse artwork", async (t) => {
+  const designs = {
+    order_id: "5451301",
+    all_designs: [
+      { tab_number: 1, order_design_id: "900", design_id: "101", design_name: "Shared artwork", quantity: 1, subtotal: "120.00" },
+      { tab_number: 2, order_design_id: "901", design_id: "101", design_name: "Shared artwork", quantity: 1, subtotal: "80.00" }
+    ],
+    selected_design_ids: ["order-design:901"]
+  };
+  const request = t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(url, bridge.LOCAL_COPYRIGHT_DESIGNS_ENDPOINT);
+    assert.deepEqual(JSON.parse(options.body).designs, designs);
+    return { ok: true, json: async () => ({ success: true }) };
+  });
+  await bridge.startLocalManualOrderProcessing("5451301", "copyright_cancel", "Protected character", { designs });
+  assert.equal(request.mock.callCount(), 1);
+});
+
 test("an older app cannot turn a partial selection into legacy full cancellation", async (t) => {
   const request = t.mock.method(globalThis, "fetch", async (url) => {
     assert.equal(url, bridge.LOCAL_COPYRIGHT_DESIGNS_ENDPOINT);
