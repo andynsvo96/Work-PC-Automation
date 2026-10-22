@@ -9176,7 +9176,7 @@ def process_single_order(
                 scanned = copyright_designs.scan_designs(driver, order_id)
                 copyright_selection = copyright_designs.normalize_selection({
                     "order_id": order_id, "all_designs": scanned,
-                    "selected_design_ids": [row["design_id"] for row in scanned],
+                    "selected_design_ids": [copyright_designs.selection_id(row) for row in scanned],
                 })
             else:
                 copyright_selection = copyright_designs.normalize_selection(designs)

@@ -40,6 +40,13 @@ def money(value, label):
         raise CopyrightSelectionError(f"Invalid {label}; stopped before refund.") from exc
 
 
+def selection_id(design):
+    """Identify a persisted order tab, retaining artwork IDs for legacy requests."""
+    if "order_design_id" in design:
+        return f"order-design:{design['order_design_id']}"
+    return design["design_id"]
+
+
 def normalize_selection(selection):
     if not isinstance(selection, dict) or not re.fullmatch(r"\d{7}", str(selection.get("order_id", ""))):
         raise CopyrightSelectionError("Scan and select the copyright design tabs in the extension first.")
@@ -53,22 +60,28 @@ def normalize_selection(selection):
         if not isinstance(row, dict):
             raise CopyrightSelectionError("Invalid copyright design scan.")
         identifier = row.get("design_id")
+        order_identifier = row.get("order_design_id")
         number, quantity = row.get("tab_number"), row.get("quantity")
         name = " ".join(str(row.get("design_name") or "").split())
         if (not isinstance(identifier, str) or not re.fullmatch(r"[1-9]\d{0,19}", identifier)
+                or ("order_design_id" in row and (not isinstance(order_identifier, str)
+                    or not re.fullmatch(r"[1-9]\d{0,19}", order_identifier)))
                 or type(number) is not int or not 1 <= number <= 1000
                 or type(quantity) is not int or not 0 <= quantity <= 1_000_000
                 or not name or len(name) > 500
                 or re.search(r"\[\s*(?:DESIGN|REASON|ORDER[ _-]*NUMBER)\s*\]|XXXXXX", name, re.I)
-                or identifier in ids or number in numbers):
+                or selection_id(row) in ids or number in numbers):
             raise CopyrightSelectionError("Each copyright tab needs a distinct ID, tab number, Design Name, and readable quantity.")
         subtotal = money(row.get("subtotal"), "design subtotal")
         if subtotal < 0 or (quantity == 0 and subtotal != 0):
             raise CopyrightSelectionError("A copyright design has inconsistent quantity and price; review the order.")
-        ids.add(identifier)
+        ids.add(selection_id(row))
         numbers.add(number)
         result.append({"tab_number": number, "design_id": identifier, "design_name": name,
+                       **({"order_design_id": order_identifier} if "order_design_id" in row else {}),
                        "quantity": quantity, "subtotal": f"{subtotal:.2f}"})
+    if len({"order_design_id" in row for row in result}) != 1:
+        raise CopyrightSelectionError("Every copyright tab must use the same kind of saved tab identity. Scan again.")
     if (any(not isinstance(value, str) for value in selected) or len(set(selected)) != len(selected)
             or not set(selected).issubset(ids)):
         raise CopyrightSelectionError("The affected copyright designs must come from the complete scan, without duplicates.")
@@ -77,7 +90,7 @@ def normalize_selection(selection):
 
 
 def selected_designs(selection):
-    return [row for row in selection["all_designs"] if row["design_id"] in selection["selected_design_ids"]]
+    return [row for row in selection["all_designs"] if selection_id(row) in selection["selected_design_ids"]]
 
 
 def design_text(designs):
@@ -138,25 +151,39 @@ def scan_designs(driver, order_id):
         if number not in totals:
             raise CopyrightSelectionError(f"Could not read the quantity and total for copyright tab {number}.")
         designs.append({"tab_number": number, "design_id": identity["design_id"],
+                        **({"order_design_id": identity["order_design_id"]} if "order_design_id" in identity else {}),
                         "design_name": detail["design_name"], **totals[number]})
     after = driver.execute_script(READER + "\nreturn readCopyrightDesignIds();")
     if after != metadata:
         raise CopyrightSelectionError("The order design IDs changed while scanning. Select the copyright designs again.")
     return normalize_selection({"order_id": str(order_id), "all_designs": designs,
-                                "selected_design_ids": [row["design_id"] for row in designs]})["all_designs"]
+                                "selected_design_ids": [selection_id(row) for row in designs]})["all_designs"]
+
+
+def _live_selection_rows(selection, live):
+    if "order_design_id" in selection["all_designs"][0]:
+        if any("order_design_id" not in row for row in live):
+            raise CopyrightSelectionError("Could not verify every saved copyright tab identity; manual review required.")
+        return live
+    # Old queue tasks and receipts used artwork IDs. Keep their exact payloads
+    # and receipt keys, but never reinterpret them when artwork IDs repeat.
+    if len({row["design_id"] for row in live}) != len(live):
+        raise CopyrightSelectionError("This legacy copyright selection has ambiguous design IDs. Review the order before continuing.")
+    return [{key: value for key, value in row.items() if key != "order_design_id"} for row in live]
 
 
 def verify_original(selection, live):
-    if selection["all_designs"] != live:
+    if selection["all_designs"] != _live_selection_rows(selection, live):
         raise CopyrightSelectionError("The order designs, names, quantities, or prices changed. Reopen Copyright - Cancel and scan again.")
 
 
 def verify_removed(selection, live, *, allow_remaining=False):
     """Compare by stable ID; surviving tabs may have new numbers."""
-    expected = {row["design_id"]: row for row in selection["all_designs"]}
-    actual = {row["design_id"]: row for row in live}
+    live = _live_selection_rows(selection, live)
+    expected = {selection_id(row): row for row in selection["all_designs"]}
+    actual = {selection_id(row): row for row in live}
     selected = set(selection["selected_design_ids"])
-    if set(actual) - set(expected) or set(expected) - selected - set(actual):
+    if len(actual) != len(live) or set(actual) - set(expected) or set(expected) - selected - set(actual):
         raise CopyrightSelectionError("The remaining copyright order designs changed; manual review required.")
     removed, zeroed, remaining = [], [], []
     for identifier, original in expected.items():
@@ -164,7 +191,7 @@ def verify_removed(selection, live, *, allow_remaining=False):
         if identifier in selected and current is None:
             removed.append(identifier)
             continue
-        if current is None or current["design_name"] != original["design_name"]:
+        if current is None or any(current[key] != original[key] for key in ("design_id", "design_name")):
             raise CopyrightSelectionError("A copyright Design Name or identity changed; manual review required.")
         if identifier in selected and current["quantity"] == 0 and money(current["subtotal"], "removed design total") == 0:
             zeroed.append(identifier)
@@ -294,10 +321,20 @@ def _reload(shared, driver, crm_handle, order_id):
     return _active_status(shared, driver)
 
 
+_FIND_DESIGN_JS = r"""
+  const byOrderId = arguments[0].startsWith('order-design:');
+  const wanted = byOrderId ? arguments[0].slice('order-design:'.length) : arguments[0];
+  const matches = (r.designs || []).map((design, index) => ({design, index}))
+    .filter(({design}) => String(design.crudAction || '').toLowerCase() !== 'd' &&
+      String(byOrderId ? design.id : design.designId) === wanted);
+  if (matches.length > 1) throw new Error('The copyright tab identity is ambiguous; manual review required.');
+  const index = matches.length ? matches[0].index : -1;
+"""
+
+
 def remove_design(shared, driver, identifier):
     from workers import crm_auto_splitter as splitter
-    started = shared._order_scope(driver, """
-      const index = (r.designs || []).findIndex(design => String(design.designId) === arguments[0]);
+    started = shared._order_scope(driver, _FIND_DESIGN_JS + """
       if (index < 0) return false;
       if (typeof s.removeDesign !== 'function') throw new Error('CRM design removal is unavailable.');
       runInAngular(s, () => { s.editModeOn(); s.removeDesign(r.designs[index], index, r); });
@@ -316,9 +353,7 @@ def remove_design(shared, driver, identifier):
             if not splitter._click_modal_choice(driver, "yes"):
                 raise CopyrightSelectionError("Could not confirm the selected copyright design's red-X removal.")
             confirmed = True
-        state = shared._order_scope(driver, """
-          const index = (r.designs || []).findIndex(design => String(design.designId) === arguments[0] &&
-            String(design.crudAction || '').toLowerCase() !== 'd');
+        state = shared._order_scope(driver, _FIND_DESIGN_JS + """
           return {number: index + 1, text: document.body.innerText};
         """, identifier)
         if not state["number"]:
