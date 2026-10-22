@@ -13,9 +13,34 @@ The preference is stored locally in that Chrome profile. Removing or reloading t
 
 After updating, restart the local Automation app, reload the extension at `chrome://extensions`, and refresh open CRM order pages.
 
+## Retry an unfinished automation
+
+In the local Automation dashboard's queue, every failed or canceled extension
+automation offers **Retry** beside **Delete**: Auto-Process, Manual Process,
+Cancel, Reachout, and Stock Issue. Retry keeps the original queue entry and its
+order number, selected designs/products/sizes, prices, and reason. It waits in
+the same local queue and uses the workflow's existing saved-state checks and
+receipts. Completed tasks do not offer Retry. An uncertain purchase, refund,
+email, or Slack submission still stops for review when its recovery checks
+cannot confirm the result.
+
+Restart the local Automation app and refresh the dashboard to enable retries
+for Extra Print Areas and all three Stock Issue actions. No extension reload or
+CRM page refresh is needed for this update.
+Queue entries are kept in memory and cleared on app restart. A failed request
+from before the update must be queued again with the same selections and prices;
+its durable workflow receipts remain available to the recovery checks.
+
 ## Extra Print Areas
 
 Under **Manual Process → Extra Print Areas**, select design tabs and choose one category per tab: **Sleeve Prints**, **Reversible Prints**, or **Side Prints**. Sleeves and sides offer **Ink print / Embroidery**, followed by **Left / Right / Both**. Reversible prints are ink only and have no left/right selector.
+
+The worker waits up to **45 seconds** for the invoice popup's non-PDF **View
+Invoice** link, checking the CRM app frame and the parent page as it loads. It
+copies the link and clicks **Cancel**; it never sends the CRM invoice. If the
+link does not appear, the task fails with the timeout in its message. Use
+**Retry** on that original queue entry to retain the request and resume through
+the existing checks for saved areas, pricing, clones, notes, and email receipts.
 
 Ink pricing uses the combined garment quantity of selected tabs with an ink or reverse request, counting each original tab once: $8 for 1–9, $7 for 10–19, $6 for 20–99, and $5 for 100+. Embroidery defaults to $15. Custom sleeve/side ink prices are shared across those ink areas; the separate reverse-price override is shared across every selected reverse tab. Unselected tabs do not affect the tier.
 

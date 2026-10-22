@@ -673,7 +673,7 @@ def _verify_crm_sleeve_changes(driver, sales_note, mutation):
     return verification
 
 
-def _capture_view_invoice_link(driver):
+def _capture_view_invoice_link(driver, timeout=45):
     shared._activate_crm_context(driver)
     opened = driver.execute_script(
         r"""
@@ -709,7 +709,9 @@ def _capture_view_invoice_link(driver):
     # deployments place it in the parent document, so check the active CRM
     # context first and then fall back to the parent without clicking Send a
     # second time.
-    deadline = time.monotonic() + 20
+    # CRM can show only its loading overlay while the invoice dialog is fetched.
+    # Poll for the actual link instead of treating the opening click as readiness.
+    deadline = time.monotonic() + timeout
     href = ""
     link_context = ""
     while time.monotonic() < deadline:
@@ -753,7 +755,10 @@ def _capture_view_invoice_link(driver):
             break
         time.sleep(0.4)
     if not href or ".pdf" in href.lower():
-        raise SleevePrintsError("CRM invoice popup did not expose a non-PDF View Invoice link.")
+        raise SleevePrintsError(
+            f"CRM invoice popup did not expose a non-PDF View Invoice link within {timeout:g} seconds. "
+            "No CRM invoice was sent."
+        )
     if link_context == "crm":
         shared._activate_crm_context(driver)
     else:

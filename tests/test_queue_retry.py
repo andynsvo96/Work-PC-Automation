@@ -63,6 +63,62 @@ class LocalQueueRetryTests(unittest.TestCase):
         self.assertEqual(task["status"], "canceled")
         self.assertTrue(payload["retryable"])
 
+    def test_every_extension_automation_offers_retry_after_failure_or_cancel(self):
+        automations = {"auto_process": {"task_type": "crm.extension_order"},
+                       **server.CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS}
+        for key, automation in automations.items():
+            for status in ("failed", "canceled"):
+                with self.subTest(automation=key, status=status):
+                    task = self._order_task(status)
+                    task["task_type"] = automation["task_type"]
+                    payload = server._automation_queue_task_payload(task)
+                    self.assertTrue(payload["retryable"])
+                    # Dashboard snapshots enrich the serialized task a second time.
+                    snapshot = server._enrich_automation_queue_reports({"tasks": [payload]})
+                    self.assertTrue(snapshot["tasks"][0]["retryable"])
+
+    def test_extension_retries_preserve_request_and_original_callable(self):
+        requests = {
+            "crm.sleeve_prints": {
+                "sleeves": [{"tab_number": 2, "quantity": 25, "left": "ink", "reverse": True}],
+                "ink_price": "2.66", "embroidery_price": None, "reverse_price": "5.00",
+            },
+            "crm.stock_issue_extension": {"days": 5, "products": [{"design_item_ids": ["123"], "sizes": ["XL"]}]},
+            "crm.stock_issue_color": {"colors": ["Red", "Navy"], "products": [{"design_item_ids": ["123"]}]},
+            "crm.stock_issue_size": {"sizes": ["L", "XL"], "products": [{"design_item_ids": ["123"], "sizes": ["M"]}]},
+            "crm.sheet_scanner_order": {"process": "copyright_cancel", "reason": "Selected artwork", "designs": {
+                "selected_design_ids": ["order-design:901"], "all_designs": [{"order_design_id": "901"}],
+            }},
+        }
+        for task_type, request in requests.items():
+            with self.subTest(task_type=task_type):
+                arguments = {"order_id": "5010529", **request}
+                run = mock.Mock(return_value=(True, "Finished."))
+                task = self._order_task("failed")
+                task.update(task_type=task_type, task_arguments=arguments, fn=run)
+                receipt_context = {"report": {"message": "Stopped before completion."}}
+                task["result_context"] = receipt_context
+                with mock.patch.object(server, "automation_queue_tasks", [task]):
+                    ok, _message = server.retry_automation_queue_task(task["id"])
+                self.assertTrue(ok)
+                self.assertEqual(task["status"], "queued")
+                self.assertIs(task["task_arguments"], arguments)
+                self.assertIs(task["fn"], run)
+                self.assertEqual(task["result_context"]["previous_result_context"], receipt_context)
+                run.assert_not_called()
+
+    def test_extension_retry_requires_unfinished_single_order_scope(self):
+        for task_type in {row["task_type"] for row in server.CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS.values()}:
+            for status in ("completed", "running", "queued"):
+                with self.subTest(task_type=task_type, status=status):
+                    task = self._order_task(status)
+                    task["task_type"] = task_type
+                    self.assertFalse(server._automation_queue_task_is_retryable_order(task))
+            with self.subTest(task_type=task_type, scope="report"):
+                task = self._order_task("failed")
+                task.update(task_type=task_type, label="CRM report", details="Batch", task_arguments={"list_url": "https://crm.test/list"})
+                self.assertFalse(server._automation_queue_task_is_retryable_order(task))
+
     def test_failed_communications_task_can_retry_in_same_queue_entry(self):
         task = {
             "id": "work-in-task-1",

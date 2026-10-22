@@ -2488,6 +2488,10 @@ _RETRYABLE_SINGLE_ORDER_TASK_TYPES = frozenset(
         "crm.push_back",
         "crm.sheet_scanner_order",
         "crm.shipping_bypasser",
+        "crm.sleeve_prints",
+        "crm.stock_issue_color",
+        "crm.stock_issue_extension",
+        "crm.stock_issue_size",
     }
 )
 _QUEUE_ORDER_LABEL_RE = re.compile(r"\border\s+\d{7}\b", re.IGNORECASE)

@@ -1,7 +1,7 @@
 import unittest
 import json
 import subprocess
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from decimal import Decimal
 from pathlib import Path
 
@@ -173,6 +173,64 @@ process.stdout.write(JSON.stringify({result, order:r}));
         note = "Sleeve prints\nPriced at $5.00 per sleeve\nEmailed Txted"
         self.assertTrue(crm_sleeve_prints._crm_note_exists({"sales_notes": f"Earlier note\n{note}"}, note))
         self.assertFalse(crm_sleeve_prints._crm_note_exists({"sales_notes": "Earlier note"}, note))
+
+
+class SleevePrintsInvoiceWaitTests(unittest.TestCase):
+    def capture(self, *, ready_after=1.2, link_context="crm", opened=True, cancelled=True):
+        clock = [0.0]
+        context = ["crm"]
+        events = []
+        driver = Mock()
+
+        def activate(_driver):
+            context[0] = "crm"
+
+        def default_content():
+            context[0] = "parent"
+
+        def execute(script, *args):
+            if "automationAllowClick" in script:
+                events.append("open")
+                return opened
+            if "const invoiceHref" in script:
+                events.append(("cancel", context[0], args[0]))
+                return cancelled
+            if context[0] == link_context and clock[0] >= ready_after:
+                return "https://crm.test/order-invoice/123"
+            return ""
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        driver.switch_to.default_content.side_effect = default_content
+        driver.execute_script.side_effect = execute
+        with (
+            patch.object(crm_sleeve_prints.shared, "_activate_crm_context", side_effect=activate),
+            patch.object(crm_sleeve_prints.time, "monotonic", side_effect=lambda: clock[0]),
+            patch.object(crm_sleeve_prints.time, "sleep", side_effect=sleep),
+        ):
+            href = crm_sleeve_prints._capture_view_invoice_link(driver)
+        return href, clock[0], events
+
+    def test_waits_for_delayed_link_in_crm_frame_or_parent_then_cancels_once(self):
+        for context in ("crm", "parent"):
+            for delay in (1.2, 25):
+                with self.subTest(context=context, delay=delay):
+                    href, elapsed, events = self.capture(ready_after=delay, link_context=context)
+                    self.assertEqual(href, "https://crm.test/order-invoice/123")
+                    self.assertGreaterEqual(elapsed, delay)
+                    self.assertLess(elapsed, delay + 0.5)
+                    self.assertEqual(events, ["open", ("cancel", context, href)])
+
+    def test_missing_link_reports_bounded_wait_without_cancelling_unrelated_dialog(self):
+        with self.assertRaisesRegex(crm_sleeve_prints.SleevePrintsError, "within 45 seconds.*No CRM invoice was sent"):
+            self.capture(ready_after=float("inf"))
+
+    def test_missing_open_or_cancel_control_stops_the_workflow(self):
+        with self.assertRaisesRegex(crm_sleeve_prints.SleevePrintsError, "Send Invoice button was not found"):
+            self.capture(opened=False)
+        with self.assertRaisesRegex(crm_sleeve_prints.SleevePrintsError, "Cancel button was not found"):
+            self.capture(cancelled=False)
 
 
 class SleevePrintsExtensionUiTests(unittest.TestCase):
