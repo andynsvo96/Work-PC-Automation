@@ -69,8 +69,11 @@ Clipboard contents are not written to logs, state files, or Git.
 ## Operating rule
 
 - Queue work from only one OS at a time.
-- The queue, retry history, schedules, and work-clock state belong to that
-  computer and reset or persist according to their existing local behavior.
+- Queue entries, their retry details, and queued schedules persist locally on
+  that computer across app updates and restarts, until manually deleted or
+  cleared. Waiting work resumes in order; interrupted running tasks stay visible
+  for review and never restart automatically. Work-clock state and its auto-out
+  timer keep their existing local persistence behavior.
 - Opening the other computer's dashboard shows that computer's independent
   queue and state.
 - Windows-only metrics and power controls are available only from the Windows

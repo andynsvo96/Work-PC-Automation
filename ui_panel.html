@@ -3309,6 +3309,7 @@ function renderQueue(payload) {
     summary.textContent = running
       ? `Running: ${running.label || 'Automation'}${runningDetail ? ` | ${runningDetail}` : ''} | ${queuedCount} waiting | ${idleCount} idle`
       : (queuedCount || idleCount ? `${queuedCount} waiting | ${idleCount} idle` : 'No waiting tasks');
+    if (queuePayload.persistence_error) summary.textContent += ` | ${queuePayload.persistence_error}`;
   }
 
   const root = document.getElementById('queueList');

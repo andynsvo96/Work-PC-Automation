@@ -6,6 +6,7 @@ import ast
 import base64
 import gzip
 import importlib
+import inspect
 import json
 import logging
 import math
@@ -26,6 +27,7 @@ import uuid
 import webbrowser
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+from functools import partial
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
@@ -91,6 +93,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.py")
 RESULT_FILE = result_file("last_result.json")
 AUTOMATION_STATUS_FILE = state_file("automation_status.json")
+AUTOMATION_QUEUE_STATE_FILE = state_file("automation_queue.json")
 UI_TEMPLATE_FILE = os.path.join(SCRIPT_DIR, "ui_panel.html")
 WORKERS_DIR = os.path.join(SCRIPT_DIR, "workers")
 
@@ -477,6 +480,10 @@ automation_queue_condition = threading.Condition(automation_queue_lock)
 automation_queue_tasks = []
 automation_queue_worker_started = False
 automation_queue_current_task_id = None
+# Enabled only by real startup (or an explicit restore), keeping imports and
+# isolated route/worker tests from reading or replacing the machine's queue.
+automation_queue_persistence_enabled = False
+automation_queue_persistence_error = None
 VERSION_CHECK_INTERVAL_SECONDS = max(
     15.0,
     # A 30-second Git check is responsive without continuously spawning Git
@@ -2326,7 +2333,9 @@ def _enrich_automation_queue_reports(payload):
     for task in payload.get("tasks") or []:
         if not isinstance(task, dict):
             continue
-        task["retryable"] = _automation_queue_task_is_retryable_order(task)
+        # Serialized Communications entries no longer contain their callable;
+        # retain the retry decision made from the actual queue task.
+        task["retryable"] = task.get("retryable", _automation_queue_task_is_retryable_order(task))
         if str(task.get("task_type") or "") != "crm.mass_emailer":
             continue
         context = dict(task.get("result_context") or {})
@@ -2497,8 +2506,148 @@ _RETRYABLE_SINGLE_ORDER_TASK_TYPES = frozenset(
 _QUEUE_ORDER_LABEL_RE = re.compile(r"\border\s+\d{7}\b", re.IGNORECASE)
 
 
+_AUTOMATION_QUEUE_STATE_FIELDS = frozenset("""
+    id label category details status queue_mode idle_reason next_run_at
+    repeat_interval_minutes scheduled_for automation_signature advanced_summary
+    run_count run_history activated_at started_at completed_at duration_seconds
+    message success cancel_requested requested_client_os task_type task_arguments
+    result_context execution_descriptor restart_interrupted restore_error
+""".split())
+
+
+def _persist_automation_queue_locked():
+    """Checkpoint under the queue lock, excluding callables and live status."""
+    global automation_queue_persistence_error
+    if not automation_queue_persistence_enabled:
+        return True
+    document = {
+        "version": 1,
+        "tasks": [
+            {key: value for key, value in task.items() if key in _AUTOMATION_QUEUE_STATE_FIELDS}
+            for task in automation_queue_tasks
+        ],
+    }
+    try:
+        _write_json_file_atomic(AUTOMATION_QUEUE_STATE_FILE, document)
+    except (OSError, TypeError, ValueError):
+        automation_queue_persistence_error = "Could not save the queue locally. Check disk space and file access before restarting."
+        logger.exception("Could not checkpoint the local automation queue")
+        return False
+    automation_queue_persistence_error = None
+    return True
+
+
+def _restore_automation_queue_callables(task):
+    """Rebuild only known local runners; never deserialize executable code."""
+    arguments = dict(task["task_arguments"])
+    runners = {
+        "communications.paycom_clock": (run_clock, None),
+        "communications.slack": (run_slack, None),
+        "communications.slack_lunch": (start_slack_lunch_break, None),
+        "communications.work": (run_work, None),
+        "communications.work_sync": (run_work_sync, None),
+        "communications.automatic_work_out": (_run_automatic_work_clock_out_queued, None),
+        "communications.slack_lunch_return": (_run_slack_lunch_return_queued, None),
+        "communications.work_hours_target": (
+            lambda scope, target_hours, expected_clock_in_at: run_work(
+                "out", automatic=False, expected_clock_in_at=expected_clock_in_at
+            ), None,
+        ),
+        "development.test_suite": (lambda selected_tests: run_automation_test_suite(selected_tests)[:2], None),
+        "system.power": (_run_system_power_task, None),
+        "crm.stock_unlocker": (run_crm_run_queued, get_crm_status_payload),
+        "crm.address_validator": (run_crm_address_run_queued, get_crm_address_status_payload),
+        "crm.product_separator": (run_crm_product_separator_run_queued, get_crm_product_separator_status_payload),
+        "crm.order_goods": (run_crm_order_goods_run_queued, get_crm_order_goods_status_payload),
+        "crm.shipping_bypasser": (run_crm_shipping_bypasser_run_queued, get_crm_shipping_bypasser_status_payload),
+        "crm.push_back": (run_crm_push_back_run_queued, get_crm_push_back_status_payload),
+        "crm.auto_splitter": (run_crm_auto_splitter_run_queued, get_crm_auto_splitter_status_payload),
+        "crm.mass_emailer": (run_crm_mass_emailer_run_queued, get_crm_mass_emailer_status_payload),
+        "crm.processing": (run_crm_processing_run_queued, get_crm_processing_status_payload),
+        "crm.extension_order": (run_crm_extension_order_run_queued, get_crm_extension_order_status_payload),
+        "crm.sheet_scanner_order": (run_crm_sheet_scanner_order_queued, get_crm_mass_emailer_status_payload),
+    }
+    descriptor = task.get("execution_descriptor")
+    if descriptor:
+        if not isinstance(descriptor, dict) or descriptor.get("kind") != "crm.extension_manual":
+            raise ValueError("Unknown queue execution descriptor")
+        arguments = dict(descriptor.get("arguments") or {})
+        automation = CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS.get(arguments.get("automation_key"))
+        if not automation or automation["task_type"] != task.get("task_type"):
+            raise ValueError("Unknown extension automation")
+        saved_order_id = task["task_arguments"].get("order_id") or task["task_arguments"].get("order_target")
+        if not _normalize_crm_single_order_id(arguments.get("order_id")) or arguments.get("order_id") != saved_order_id:
+            raise ValueError("Extension order scope is unavailable")
+        runner, status_fn = run_crm_extension_manual_order_run_queued, get_crm_extension_order_status_payload
+    else:
+        runner, status_fn = runners[task.get("task_type")]
+    inspect.signature(runner).bind(**arguments)
+    return partial(runner, **arguments), status_fn
+
+
+def restore_automation_queue():
+    """Restore once after singleton acquisition and Safe Sync, before workers."""
+    global automation_queue_persistence_enabled, automation_queue_current_task_id
+    with automation_queue_condition:
+        if automation_queue_persistence_enabled:
+            return len(automation_queue_tasks)
+        try:
+            with open(AUTOMATION_QUEUE_STATE_FILE, "r", encoding="utf-8") as handle:
+                document = json.load(handle)
+        except FileNotFoundError:
+            document = {"version": 1, "tasks": []}
+        except (OSError, ValueError) as exc:
+            raise RuntimeError("Could not load the saved automation queue; the state file has been preserved for recovery.") from exc
+        if not isinstance(document, dict) or document.get("version") != 1 or not isinstance(document.get("tasks"), list):
+            raise RuntimeError("Unsupported saved automation queue; the state file has been preserved for recovery.")
+        restored = []
+        seen_ids = set()
+        for saved in document["tasks"]:
+            if (
+                not isinstance(saved, dict)
+                or not isinstance(saved.get("id"), str) or not saved["id"] or saved["id"] in seen_ids
+                or saved.get("status") not in {"queued", "idle", "running", "completed", "failed", "canceled"}
+                or not isinstance(saved.get("task_arguments"), dict)
+                or not isinstance(saved.get("result_context", {}), dict)
+                or not isinstance(saved.get("run_history", []), list)
+            ):
+                raise RuntimeError("Invalid saved automation queue; the state file has been preserved for recovery.")
+            task = {key: value for key, value in saved.items() if key in _AUTOMATION_QUEUE_STATE_FIELDS}
+            seen_ids.add(task["id"])
+            task["fn"], task["status_fn"] = None, None
+            try:
+                task["fn"], task["status_fn"] = _restore_automation_queue_callables(task)
+            except (KeyError, TypeError, ValueError):
+                task["restore_error"] = "The saved task cannot be restored safely. Review its original request before queuing it again."
+            if task["status"] == "running":
+                task["restart_interrupted"] = True
+                previous_message = str(task.get("message") or "")
+                task["message"] = f"Interrupted by server restart. Review the previous run before retrying. {previous_message}".strip()
+                task["status"] = "canceled" if task.get("cancel_requested") else "failed"
+                task["success"] = False
+                task["completed_at"] = _automation_queue_now_iso()
+                task["duration_seconds"] = _automation_queue_duration_seconds(task)
+                task["idle_reason"] = None
+                task["next_run_at"] = None
+                task["cancel_requested"] = False
+            elif task["status"] in {"queued", "idle"} and task.get("restore_error"):
+                task["status"] = "failed"
+                task["success"] = False
+                task["message"] = task["restore_error"]
+                task["completed_at"] = _automation_queue_now_iso()
+            restored.append(task)
+        automation_queue_tasks[:] = restored
+        automation_queue_current_task_id = None
+        automation_queue_persistence_enabled = True
+        if not _persist_automation_queue_locked():
+            raise RuntimeError(automation_queue_persistence_error)
+        return len(restored)
+
+
 def _automation_queue_result_requires_review(task, message):
     text = str(message or "").lower()
+    if task.get("restart_interrupted") and str(task.get("task_type") or "").startswith("communications."):
+        return True
     return "slack delivery unconfirmed" in text or (
         str(task.get("task_type") or "").lower() == "communications.work" and any(marker in text for marker in (
             "paycom punch was recorded", "work clock-in completed", "work clock-out completed",
@@ -2510,11 +2659,13 @@ def _automation_queue_task_is_retryable_order(task):
     """Allow safe retries for unfinished communications and targeted CRM work."""
     if not isinstance(task, dict):
         return False
+    if task.get("restore_error"):
+        return False
     if str(task.get("status") or "").strip().lower() not in {"failed", "canceled"}:
         return False
     task_type = str(task.get("task_type") or "").strip().lower()
     # Communications tasks are single, user-initiated actions.  Retrying a
-    # failed or canceled one uses the original in-memory callable and puts it
+    # failed or canceled one uses the original or restored callable and puts it
     # back into the same queue, just like the Processing retry control.
     if task_type.startswith("communications."):
         if _automation_queue_result_requires_review(task, task.get("message")):
@@ -2571,6 +2722,8 @@ def _automation_queue_task_payload(task):
         "position": task.get("position"),
         "task_type": task.get("task_type"),
         "result_context": dict(task.get("result_context") or {}),
+        "restart_interrupted": bool(task.get("restart_interrupted")),
+        "restore_error": task.get("restore_error"),
         "retryable": _automation_queue_task_is_retryable_order(task),
     }
     if live_status:
@@ -2618,8 +2771,8 @@ def _automation_queue_snapshot_locked():
         "running": running,
         "queued": queued,
         "idle": idle,
-        "history": history[:30],
-        "tasks": ([running] if running else []) + queued + idle + history[:30],
+        "history": history,
+        "tasks": ([running] if running else []) + queued + idle + history,
         "queued_count": len(queued),
         "idle_count": len(idle),
         "running_count": 1 if running else 0,
@@ -2630,20 +2783,8 @@ def get_automation_queue_payload():
     with automation_queue_lock:
         payload = _enrich_automation_queue_reports(_automation_queue_snapshot_locked())
         payload["mode"] = "local"
+        payload["persistence_error"] = automation_queue_persistence_error
         return payload
-
-
-def _automation_queue_trim_history_locked(max_history=40):
-    history_seen = 0
-    kept = []
-    for task in automation_queue_tasks:
-        if task.get("status") in {"queued", "running", "idle"}:
-            kept.append(task)
-            continue
-        history_seen += 1
-        if history_seen <= max_history:
-            kept.append(task)
-    automation_queue_tasks[:] = kept
 
 
 def _automation_queue_coerce_result(result):
@@ -2728,17 +2869,30 @@ def _automation_queue_worker_loop():
     while True:
         with automation_queue_condition:
             while True:
+                if _automation_version_block_reason() or (
+                    automation_queue_persistence_error and not _persist_automation_queue_locked()
+                ):
+                    automation_queue_condition.wait(timeout=5.0)
+                    continue
                 _automation_queue_promote_due_idle_locked()
                 next_task = next((task for task in automation_queue_tasks if task.get("status") == "queued"), None)
                 if next_task:
                     break
                 wait_seconds = _automation_queue_next_idle_wait_seconds_locked()
                 automation_queue_condition.wait(timeout=wait_seconds)
+            before_start = dict(next_task)
             next_task["status"] = "running"
             next_task["started_at"] = _automation_queue_now_iso()
             next_task["completed_at"] = None
             next_task["run_count"] = max(0, int(_safe_float(next_task.get("run_count"), 0))) + 1
             next_task["message"] = f"Starting {next_task.get('label') or 'queued task'}."
+            # A crash after this checkpoint is an interrupted run, never an
+            # apparently unstarted task that could repeat a purchase or send.
+            if not _persist_automation_queue_locked():
+                next_task.clear()
+                next_task.update(before_start)
+                automation_queue_condition.wait(timeout=5.0)
+                continue
             automation_queue_current_task_id = next_task.get("id")
             fn = next_task.get("fn")
 
@@ -2789,7 +2943,7 @@ def _automation_queue_worker_loop():
                 else:
                     task["status"] = "completed" if ok else "failed"
             automation_queue_current_task_id = None
-            _automation_queue_trim_history_locked()
+            _persist_automation_queue_locked()
             automation_queue_condition.notify_all()
         log_automation_event(
             "automation.queue",
@@ -2821,6 +2975,7 @@ def enqueue_automation(
     advanced_summary=None,
     task_type=None,
     task_arguments=None,
+    execution_descriptor=None,
 ):
     startup_block = _automation_version_block_reason()
     if startup_block:
@@ -2872,6 +3027,7 @@ def enqueue_automation(
         "requested_client_os": _automation_request_client_os(),
         "task_type": str(task_type or "").strip() or None,
         "task_arguments": dict(task_arguments or {}) if isinstance(task_arguments, dict) else {},
+        "execution_descriptor": execution_descriptor,
         "result_context": {},
         "fn": fn,
         "status_fn": status_fn if callable(status_fn) else None,
@@ -2880,7 +3036,9 @@ def enqueue_automation(
         task["message"] = _automation_queue_idle_message(task)
     with automation_queue_condition:
         automation_queue_tasks.append(task)
-        _automation_queue_trim_history_locked()
+        if not _persist_automation_queue_locked():
+            automation_queue_tasks.remove(task)
+            return False, automation_queue_persistence_error, None
         automation_queue_condition.notify_all()
         position = sum(1 for item in automation_queue_tasks if item.get("status") == "queued")
         payload = _automation_queue_task_payload(task)
@@ -2909,13 +3067,15 @@ def cancel_automation_queue_task(task_id):
             task["cancel_requested"] = False
             task["completed_at"] = _automation_queue_now_iso()
             task["message"] = "Canceled before start."
-            _automation_queue_trim_history_locked()
+            if not _persist_automation_queue_locked():
+                return False, automation_queue_persistence_error
             automation_queue_condition.notify_all()
             log_automation_event("automation.queue", "CANCELED", f"{task.get('label')} canceled before start.", source="server.py")
             return True, f"Canceled {task.get('label')}."
         if status == "running":
             task["cancel_requested"] = True
             task["message"] = "Cancel requested by user."
+            _persist_automation_queue_locked()
             running_cancel = True
         else:
             return False, "Only queued, idle, or running tasks can be canceled."
@@ -2939,6 +3099,8 @@ def retry_automation_queue_task(task_id):
         task = next((row for row in automation_queue_tasks if str(row.get("id") or "") == task_id), None)
         if not task:
             return False, "Queue task was not found."
+        if task.get("restore_error"):
+            return False, task["restore_error"]
         existing_context = dict(task.get("result_context") or {})
         retry_count = max(0, int(_safe_float(existing_context.get("retry_count"), 0))) + 1
         if task.get("status") == "failed" and task.get("task_type") == "crm.mass_emailer" and task.get("label") == "Sheets Scanner":
@@ -3016,6 +3178,8 @@ def retry_automation_queue_task(task_id):
         task["message"] = "Retry waiting in queue."
         task["activated_at"] = _automation_queue_now_iso()
         task["result_context"] = retry_context
+        if not _persist_automation_queue_locked():
+            return False, automation_queue_persistence_error
         automation_queue_condition.notify_all()
     return True, success_message
 
@@ -3041,7 +3205,7 @@ def cancel_all_automation_queue_tasks():
                 task["cancel_requested"] = True
                 task["message"] = "Cancel requested by user."
                 running_cancel = True
-        _automation_queue_trim_history_locked()
+        saved = _persist_automation_queue_locked()
         automation_queue_condition.notify_all()
     extra = ""
     if running_cancel:
@@ -3051,6 +3215,8 @@ def cancel_all_automation_queue_tasks():
     if running_cancel:
         msg += extra
     log_automation_event("automation.queue", "CANCELED", msg, source="server.py")
+    if not saved:
+        return False, automation_queue_persistence_error
     return True, msg
 
 
@@ -3065,6 +3231,8 @@ def delete_automation_queue_task(task_id):
         if task.get("status") in {"queued", "running", "idle"}:
             return False, "Only finished or failed tasks can be deleted. Cancel active tasks instead."
         automation_queue_tasks.remove(task)
+        if not _persist_automation_queue_locked():
+            return False, automation_queue_persistence_error
         automation_queue_condition.notify_all()
     return True, f"Deleted {task.get('label')} from queue activity."
 
@@ -3077,6 +3245,8 @@ def clear_finished_automation_queue_tasks():
             if task.get("status") in {"queued", "running", "idle"}
         ]
         removed = before - len(automation_queue_tasks)
+        if not _persist_automation_queue_locked():
+            return False, automation_queue_persistence_error
         automation_queue_condition.notify_all()
     return True, f"Cleared {removed} finished queue entr{'y' if removed == 1 else 'ies'}."
 
@@ -3098,6 +3268,8 @@ def reorder_automation_queue(task_ids):
             else:
                 rebuilt.append(task)
         automation_queue_tasks[:] = rebuilt
+        if not _persist_automation_queue_locked():
+            return False, automation_queue_persistence_error, _automation_queue_snapshot_locked()
         automation_queue_condition.notify_all()
         payload = _automation_queue_snapshot_locked()
     log_automation_event("automation.queue", "REORDERED", "Queued task order updated.", source="server.py")
@@ -13012,6 +13184,15 @@ def queue_crm_extension_manual_order_run(order_id, automation_key, reason="", re
         status_fn=get_crm_extension_order_status_payload,
         task_type=automation["task_type"],
         task_arguments=task_arguments,
+        execution_descriptor={
+            "kind": "crm.extension_manual",
+            "arguments": {
+                "order_id": normalized_order_id,
+                "automation_key": automation_key,
+                "reason": clean_reason,
+                "request_data": request_data,
+            },
+        },
     )
     if not ok:
         with crm_extension_order_runtime_lock:
@@ -13586,6 +13767,8 @@ def cancel_scheduled_power_tasks():
                 continue
             automation_queue_tasks.remove(task)
             canceled += 1
+        if not _persist_automation_queue_locked():
+            return False, automation_queue_persistence_error
         automation_queue_condition.notify_all()
     return True, f"Canceled {canceled} scheduled power task{'s' if canceled != 1 else ''}."
 
@@ -15559,12 +15742,14 @@ if __name__ == "__main__":
             maintenance["removed_files"],
             maintenance["removed_bytes"] / (1024 * 1024),
         )
-    start_version_monitor()
     initialize_app_security()
     clipboard_runtime.start()
     ensure_crm_state_file()
     ensure_crm_processing_state_file()
+    restore_automation_queue()
     restore_auto_clock_out_timer_from_state()
+    _ensure_automation_queue_worker()
+    start_version_monitor()
 
     logger.info("Paycom Automation Server starting on http://%s:%s", SERVER_BIND_HOST, SERVER_PORT)
     logger.info("Endpoints:")

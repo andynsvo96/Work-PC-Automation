@@ -27,9 +27,15 @@ cannot confirm the result.
 Restart the local Automation app and refresh the dashboard to enable retries
 for Extra Print Areas and all three Stock Issue actions. No extension reload or
 CRM page refresh is needed for this update.
-Queue entries are kept in memory and cleared on app restart. A failed request
-from before the update must be queued again with the same selections and prices;
-its durable workflow receipts remain available to the recovery checks.
+Queue entries and their original requests now persist locally across app updates
+and restarts, until you use **Delete** or **Clear finished**. Waiting requests
+resume in queue order. A request interrupted while running remains visible as
+failed or canceled for review; it never reruns automatically. Retry retains its
+original selections and uses the same recovery receipts. Restart the app and
+refresh the dashboard to enable persistence; no extension reload is needed.
+Saving begins with this app version. A request already lost under an older
+version must be queued again with the same selections and prices; its durable
+workflow receipts remain available to the recovery checks.
 
 ## Extra Print Areas
 
