@@ -175,6 +175,22 @@ class CopyrightRefundTests(unittest.TestCase):
                 copyright._active_status(shared, mock.Mock(execute_script=mock.Mock(return_value=status)))
         self.assertEqual(copyright._active_status(shared, mock.Mock(execute_script=mock.Mock(return_value='Approved'))), 'Approved')
 
+    def test_refund_reconciliation_requires_unchanged_history_and_only_new_refunds(self):
+        payment = {"amount": "220.00", "tag": "Stripe.com", "note": "original payment"}
+        old_refund = {"amount": "-20.00", "tag": "Refund", "note": "earlier refund"}
+        new_refund = {"amount": "-80.00", "tag": "Refund", "note": "partial refund"}
+        before = {**self.totals, "transactions": [payment, old_refund], "order_fees": []}
+        after = {**before, "paid": "120.00", "balance_due": "0.00", "transactions": [payment, old_refund, new_refund]}
+        self.assertTrue(copyright.verify_refunded(before, after, "80.00"))
+        for transactions in (
+                [payment, {**new_refund, "amount": "-100.00"}],
+                [payment, {**old_refund, "note": "changed"}, new_refund],
+                [payment, old_refund, new_refund, {"amount": "-1.00", "tag": "Adjustment"}],
+                [{**payment, "note": "different payment"}, old_refund, new_refund],
+                [payment, old_refund]):
+            with self.subTest(transactions=transactions):
+                self.assertFalse(copyright.verify_refunded(before, {**after, "transactions": transactions}, "80.00"))
+
 
 class CopyrightTemplateTests(unittest.TestCase):
     def test_both_templates_replace_only_selected_designs_before_the_reason(self):
@@ -344,6 +360,103 @@ class PartialWorkflowTests(unittest.TestCase):
         self.assertTrue(self.run_partial()["refund"]["refunded"])
         self.refund.assert_called_once()
         self.removal.assert_called_once()
+
+    def test_missing_sales_note_is_saved_once_more_after_reload_before_refunding(self):
+        def note_on_second_attempt(*args, **kwargs):
+            if self.note.call_count == 2:
+                self.add_note(*args, **kwargs)
+        self.note.side_effect = note_on_second_attempt
+        result = self.run_partial()
+        self.assertTrue(result["refund"]["verified"])
+        self.assertEqual(self.note.call_count, 2)
+        self.assertEqual(self.note.call_args_list[0], self.note.call_args_list[1])
+        self.refund.assert_called_once()
+        self.removal.assert_called_once()
+
+    def test_note_that_never_persists_stops_after_one_retry_before_refund_or_email(self):
+        self.note.side_effect = None
+        with self.assertRaisesRegex(ValueError, "Sales Note did not persist after reload and one save retry"):
+            self.run_partial()
+        self.assertEqual(self.note.call_count, 2)
+        self.refund.assert_not_called()
+        self.assertEqual([call.args[4] for call in self.email.call_args_list], [True])
+        self.assertEqual(copyright.load_receipt(copyright.receipt_path(SELECTION, "Protected character"))["stage"], "removed")
+
+    def test_removed_receipt_reconciles_existing_refund_and_repairs_note_before_email(self):
+        self.note.side_effect = None
+        with self.assertRaisesRegex(ValueError, "Sales Note did not persist"):
+            self.run_partial()
+        self.totals.update(paid="120.00", balance_due="0.00")
+        self.state["transactions"].append({"amount": "-80.00", "tag": "Refund", "type": "Refund"})
+        # Checkpoint the verified refund even when the note still fails, so the
+        # following retry continues from refunded without another submission.
+        with self.assertRaisesRegex(ValueError, "Sales Note did not persist"):
+            self.run_partial()
+        path = copyright.receipt_path(SELECTION, "Protected character")
+        self.assertEqual(copyright.load_receipt(path)["stage"], "refunded")
+        self.refund.assert_not_called()
+        self.assertEqual([call.args[4] for call in self.email.call_args_list], [True])
+        self.note.side_effect = self.add_note
+        result = self.run_partial()
+        self.assertTrue(result["refund"]["reconciled"])
+        self.assertTrue(result["refund"]["verified"])
+        self.assertTrue(result["salesforce"]["sent"])
+        self.assertIn("Refund $80.00", self.state["sales_notes"])
+        self.refund.assert_not_called()
+        self.removal.assert_called_once()
+        self.assertEqual([call.args[4] for call in self.email.call_args_list], [True, False])
+        self.assertTrue(self.run_partial()["already_completed"])
+
+    def test_removed_receipt_rejects_unrelated_or_mismatched_payment_changes(self):
+        self.run_partial(click_refund_button=False)
+        original_state = deepcopy(self.state)
+        for paid, refund, fees, changed_payment in (
+                ("120.00", None, [], False),
+                ("120.00", "-79.99", [], False),
+                ("121.00", "-79.00", [], False),
+                ("120.00", "-80.00", [{"name": "Other fee", "amount": "1.00"}], False),
+                ("120.00", "-80.00", [], True)):
+            with self.subTest(paid=paid, refund=refund, fees=fees, changed_payment=changed_payment):
+                self.state = deepcopy(original_state)
+                self.totals.update(paid=paid, balance_due=f"{Decimal('120.00') - Decimal(paid):.2f}")
+                self.state["order_fees"] = fees
+                if refund is not None:
+                    self.state["transactions"].append({"amount": refund, "tag": "Refund", "type": "Refund"})
+                if changed_payment:
+                    self.state["transactions"][0]["note"] = "changed payment"
+                with self.assertRaisesRegex(ValueError, "no matching completed refund"):
+                    self.run_partial()
+        self.refund.assert_not_called()
+        self.note.assert_called_once()
+        self.assertEqual([call.args[4] for call in self.email.call_args_list], [True])
+
+    def test_payment_changes_during_note_repair_stop_before_retry_or_refund(self):
+        def change_payment(*_args, **_kwargs):
+            self.totals.update(paid="199.00", balance_due="-79.00")
+        self.note.side_effect = change_payment
+        with self.assertRaisesRegex(ValueError, "payments changed while saving"):
+            self.run_partial()
+        self.note.assert_called_once()
+        self.refund.assert_not_called()
+        self.assertEqual([call.args[4] for call in self.email.call_args_list], [True])
+
+    def test_resuming_a_saved_note_does_not_duplicate_it(self):
+        self.run_partial(click_refund_button=False)
+        self.assertTrue(self.run_partial()["refund"]["verified"])
+        self.note.assert_called_once()
+        self.refund.assert_called_once()
+
+    def test_dry_run_with_removed_receipt_and_existing_refund_does_not_change_receipt(self):
+        self.run_partial(click_refund_button=False)
+        self.totals.update(paid="120.00", balance_due="0.00")
+        self.state["transactions"].append({"amount": "-80.00", "tag": "Refund", "type": "Refund"})
+        path = copyright.receipt_path(SELECTION, "Protected character")
+        before = path.read_bytes()
+        self.assertTrue(self.run_partial(dry_run=True)["salesforce"]["dry_run"])
+        self.assertEqual(path.read_bytes(), before)
+        self.refund.assert_not_called()
+        self.note.assert_called_once()
+        self.assertEqual([call.args[4] for call in self.email.call_args_list], [True, True])
 
     def test_non_stripe_uses_partial_amount_case_and_never_stripe_refund(self):
         self.payment_type = "PayPal"

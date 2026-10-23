@@ -2415,7 +2415,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             crm_copyright_cancel,
             "_save_order_and_wait",
             return_value={"saving": False},
-        ):
+        ), mock.patch.object(crm_copyright_cancel._product_separator, "_enter_edit_mode"):
             crm_copyright_cancel._append_copyright_cancel_sales_note(
                 driver,
                 "",

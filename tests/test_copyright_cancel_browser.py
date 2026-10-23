@@ -182,6 +182,71 @@ class CopyrightCancelBrowserTests(unittest.TestCase):
                 self.assertEqual(result['removal']['zeroed_design_ids' if ordered else 'removed_design_ids'], selected)
                 self.assertEqual([call.args[4] for call in email.call_args_list], [True, False])
 
+    def test_sales_note_waits_for_editor_initialization_and_survives_reload(self):
+        self.driver.execute_script("localStorage.setItem('copyright-reset-note-on-edit', 'true');")
+        shared._append_copyright_cancel_sales_note(self.driver, 'Protected character')
+        self.driver.refresh()
+        state = shared._get_order_live_state(self.driver)
+        self.assertIn('Protected character copyright', state['sales_notes'])
+        self.assertEqual(self.driver.execute_script("return localStorage.getItem('copyright-note-save-attempts');"), '1')
+
+    def test_unsaved_note_draft_is_saved_and_other_draft_text_is_preserved(self):
+        note = shared._copyright_cancel_sales_note('Protected character')
+        for draft in (note, 'Another pending note'):
+            with self.subTest(draft=draft):
+                self.driver.execute_script("resetFixture(false); resource.addSalesNotes = arguments[0];", draft)
+                shared._append_copyright_cancel_sales_note(self.driver, 'Protected character')
+                self.driver.refresh()
+                saved = shared._get_order_live_state(self.driver)['sales_notes']
+                self.assertEqual(saved.count(note), 1)
+                self.assertIn(draft, saved)
+
+    def test_worker_retries_a_note_lost_on_save_after_reload_without_repeating_refund(self):
+        with tempfile.TemporaryDirectory() as folder, ExitStack() as stack:
+            self.driver.execute_script("localStorage.setItem('copyright-note-save-failures', '1');")
+            selection = {'order_id': '5451301', 'all_designs': copyright.scan_designs(self.driver, '5451301'),
+                         'selected_design_ids': ['202']}
+            stack.enter_context(mock.patch.object(copyright, 'STATE_DIR', folder))
+            email = stack.enter_context(mock.patch.object(shared, '_prepare_and_maybe_send_salesforce_email',
+                side_effect=lambda *_args, **_kwargs: {'sent': not _args[4], 'dry_run': _args[4]}))
+            result = copyright.process_partial(shared, self.driver, self.driver.current_window_handle, selection,
+                'Protected character', {'email': 'customer@example.test'}, dry_run=False,
+                process=shared.COPYRIGHT_CANCEL_PARTIAL_PROCESS)
+            self.assertTrue(result['refund']['verified'])
+            self.assertEqual(self.driver.execute_script("return localStorage.getItem('copyright-note-save-attempts');"), '2')
+            self.assertEqual(self.driver.execute_script("return resource.transactions.filter(row => row.tag === 'Refund').length;"), 1)
+            self.assertEqual(shared._get_order_live_state(self.driver)['sales_notes'].count('Partial copyright cancellation -'), 1)
+            self.assertEqual([call.args[4] for call in email.call_args_list], [True, False])
+
+    def test_worker_recovers_removed_receipt_after_existing_refund_and_missing_note(self):
+        with tempfile.TemporaryDirectory() as folder, ExitStack() as stack:
+            self.driver.execute_script("localStorage.setItem('copyright-note-save-failures', '2');")
+            selection = {'order_id': '5451301', 'all_designs': copyright.scan_designs(self.driver, '5451301'),
+                         'selected_design_ids': ['202']}
+            stack.enter_context(mock.patch.object(copyright, 'STATE_DIR', folder))
+            email = stack.enter_context(mock.patch.object(shared, '_prepare_and_maybe_send_salesforce_email',
+                side_effect=lambda *_args, **_kwargs: {'sent': not _args[4], 'dry_run': _args[4]}))
+            with self.assertRaisesRegex(ValueError, 'Sales Note did not persist after reload and one save retry'):
+                copyright.process_partial(shared, self.driver, self.driver.current_window_handle, selection,
+                    'Protected character', {'email': 'customer@example.test'}, dry_run=False,
+                    process=shared.COPYRIGHT_CANCEL_PARTIAL_PROCESS)
+            path = copyright.receipt_path(selection, 'Protected character')
+            self.assertEqual(copyright.load_receipt(path)['stage'], 'removed')
+            self.assertEqual(self.driver.execute_script("return resource.transactions.filter(row => row.tag === 'Refund').length;"), 0)
+            # A refund completed separately while the task was stopped.
+            self.driver.execute_script("""
+              resource.transactions.push({amount: '-80.00', tag: 'Refund', type: 'Refund'});
+              persist(); render();
+            """)
+            result = copyright.process_partial(shared, self.driver, self.driver.current_window_handle, selection,
+                'Protected character', {'email': 'customer@example.test'}, dry_run=False,
+                process=shared.COPYRIGHT_CANCEL_PARTIAL_PROCESS)
+            self.assertTrue(result['refund']['reconciled'])
+            self.assertTrue(result['salesforce']['sent'])
+            self.assertEqual(self.driver.execute_script("return resource.transactions.filter(row => row.tag === 'Refund').length;"), 1)
+            self.assertEqual(shared._get_order_live_state(self.driver)['sales_notes'].count('Partial copyright cancellation -'), 1)
+            self.assertEqual([call.args[4] for call in email.call_args_list], [True, False])
+
     def test_design_replacement_preserves_template_formatting_links_and_literal_names(self):
         self.driver.get('about:blank')
         self.driver.execute_script("""

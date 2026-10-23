@@ -39,10 +39,27 @@ const scope = {
     getAmountDue() {return this.getGrandTotal() - this.getAmountPaid();},
     setAddSalesNotes(note) {resource.addSalesNotes = note;}
   },
-  editModeOn() {this.editMode = true; render();},
+  editModeOn() {
+    this.editMode = true;
+    if (localStorage.getItem('copyright-reset-note-on-edit') === 'true') {
+      // Model the editor initializing its resource after the click's digest.
+      setTimeout(() => {
+        resource = JSON.parse(JSON.stringify(resource));
+        resource.addSalesNotes = '';
+        render();
+      }, 0);
+    }
+    render();
+  },
   saveOrder() {
     fixtureCounters.saves++;
-    if (resource.addSalesNotes) resource.salesNotes += '\n' + resource.addSalesNotes;
+    if (resource.addSalesNotes) {
+      const attempts = Number(localStorage.getItem('copyright-note-save-attempts') || 0);
+      localStorage.setItem('copyright-note-save-attempts', String(attempts + 1));
+      const failures = Number(localStorage.getItem('copyright-note-save-failures') || 0);
+      if (failures) localStorage.setItem('copyright-note-save-failures', String(failures - 1));
+      else resource.salesNotes += '\n' + resource.addSalesNotes;
+    }
     resource.addSalesNotes = '';
     this.editMode = false;
     persist();
@@ -70,6 +87,9 @@ function persist() {localStorage.setItem('copyright-fixture', JSON.stringify(res
 function resetFixture(stockOrdered = false) {
   resource = JSON.parse(JSON.stringify(initial)); active = 101; ordered = stockOrdered;
   scope.editMode = false;
+  for (const key of ['copyright-reset-note-on-edit', 'copyright-note-save-attempts', 'copyright-note-save-failures']) {
+    localStorage.removeItem(key);
+  }
   localStorage.setItem('copyright-fixture-ordered', String(ordered));
   persist(); render();
 }

@@ -7576,7 +7576,7 @@ def _append_copyright_cancel_sales_note(driver, reason, dry_run=False, process=C
     existing = _order_scope(
         driver,
         """
-        return String(r.addSalesNotes || r.salesNotes || r.filteredSalesNotes || '');
+        return String(r.salesNotes || r.filteredSalesNotes || '');
         """,
     )
     matching_notes = [note]
@@ -7598,15 +7598,17 @@ def _append_copyright_cancel_sales_note(driver, reason, dry_run=False, process=C
             "note": note,
             "message": "Skipped updating CRM Sales Notes in dry-run mode.",
         }
+    # Let edit mode initialize before looking up the resource again. Opening the
+    # editor can replace/reset its note draft; a draft is not a persisted note.
+    _product_separator._enter_edit_mode(driver)
     update_result = _order_scope(
         driver,
-        """
+        r"""
         const note = arguments[0];
         const existingDraft = String(r.addSalesNotes || '').trim();
         const alreadyPresent = existingDraft.toLowerCase().includes(note.toLowerCase());
-        const after = alreadyPresent ? existingDraft : note;
+        const after = alreadyPresent ? existingDraft : [existingDraft, note].filter(Boolean).join('\n');
         runInAngular(s, () => {
-          s.editModeOn();
           r.addSalesNotes = after;
           if (s.order.setAddSalesNotes) s.order.setAddSalesNotes(r.addSalesNotes);
         });

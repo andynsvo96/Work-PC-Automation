@@ -105,6 +105,17 @@ automatic retries do not submit it again. Existing Salesforce Activity
 confirmation and email receipts also apply, with separate receipts for each
 partial selection. Keep these receipts until recovery is complete.
 
+If a refund was completed while a task was stopped after design removal, Retry
+can recognize it even when the partial receipt still says `removed`. It checks
+the exact refund, reduced Paid, zero Balance Due, unchanged total/fees, and all
+original transaction rows before continuing with the Sales Note and email.
+It never repeats that verified refund. A missing Sales Note gets one more save
+attempt after reload and must persist before the workflow continues. Other
+payment changes and uncertain email submissions still stop for review.
+These recovery fixes load with the next queued worker: keep the original task
+and use **Retry**. No app restart, extension reload, or CRM refresh is needed
+for these fixes.
+
 The extension always requires a complete scan and explicit design selection.
 Existing Sheets Scanner copyright rows continue to target the whole order.
 The worker's `--copyright-designs-json` argument carries the complete scan and

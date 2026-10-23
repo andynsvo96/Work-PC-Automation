@@ -374,12 +374,32 @@ def _refund_total(financials):
 
 def verify_refunded(before, after, amount):
     amount = money(amount, "partial refund amount")
-    positive = lambda state: Counter(json.dumps(row, sort_keys=True) for row in state["transactions"]
-                                     if money(row.get("amount"), "payment transaction") > 0)
+    previous = Counter(json.dumps(row, sort_keys=True) for row in before["transactions"])
+    current = Counter(json.dumps(row, sort_keys=True) for row in after["transactions"])
+    added = [json.loads(row) for row in (current - previous).elements()]
     return (after["grand_total"] == before["grand_total"] and after["order_fees"] == before["order_fees"]
             and money(after["paid"], "paid") == money(before["paid"], "paid") - amount
             and money(after["balance_due"], "balance due") == 0
-            and _refund_total(after) - _refund_total(before) == amount and positive(after) == positive(before))
+            and _refund_total(after) - _refund_total(before) == amount and not (previous - current)
+            and bool(added) and all("refund" in f"{row.get('tag', '')} {row.get('type', '')}".lower()
+                                   and money(row.get("amount"), "refund transaction") < 0 for row in added))
+
+
+def _ensure_partial_sales_note(shared, driver, crm_handle, selection, reason, process, receipt, financials):
+    names = "; ".join(f"Tab {row['tab_number']}: {row['design_name']}" for row in selected_designs(selection))
+    note = f"Partial copyright cancellation - {names}\n{reason} copyright\nRefund ${receipt['refund_amount']}\nemailed copyright partial cancellation"
+    normalized = lambda value: " ".join(str(value or "").split()).casefold()
+    for attempt in range(3):
+        state = shared._get_order_live_state(driver)
+        if normalized(note) in normalized(state.get("sales_notes")):
+            return
+        if attempt == 2:
+            raise CopyrightSelectionError("The partial copyright Sales Note did not persist after reload and one save retry. Stopped before sending the refund email.")
+        shared._append_copyright_cancel_sales_note(driver, reason, process=replace(process, fixed_sales_note=note))
+        _reload(shared, driver, crm_handle, selection["order_id"])
+        verify_removed(selection, scan_designs(driver, selection["order_id"]))
+        if read_financials(shared, driver) != financials:
+            raise CopyrightSelectionError("CRM prices or payments changed while saving the partial cancellation note.")
 
 
 def _confirm_refund(shared, driver, crm_handle, selection, receipt, *, wait=False):
@@ -469,20 +489,22 @@ def process_partial(shared, driver, crm_handle, selection, reason, contact, *, d
     if receipt["stage"] == "removed":
         _reload(shared, driver, crm_handle, selection["order_id"])
         verify_removed(selection, scan_designs(driver, selection["order_id"]))
-        if read_financials(shared, driver) != receipt["after_removal"]:
-            raise CopyrightSelectionError("The saved partial cancellation's prices or payments changed before refunding.")
+        current = read_financials(shared, driver)
+        if current != receipt["after_removal"]:
+            # A refund can be completed outside this worker after a note failure.
+            # Reconcile the full saved ledger before repairing the note/email;
+            # never repeat the refund or accept unrelated payment changes.
+            if money(receipt["refund_amount"], "partial refund amount") > 0 and verify_refunded(
+                    receipt["after_removal"], current, receipt["refund_amount"]):
+                receipt.update(stage="refunded", refund={"refunded": True, "amount": receipt["refund_amount"],
+                                                         "verified": True, "reconciled": True, "totals": current})
+                save_receipt(path, receipt)
+            else:
+                raise CopyrightSelectionError("The saved partial cancellation's prices or payments changed before refunding; no matching completed refund was verified. Review CRM payments.")
+    if receipt["stage"] == "removed":
         if money(receipt["refund_amount"], "partial refund amount") <= 0:
             raise CopyrightSelectionError("Removing these designs did not create a refundable credit balance. Review CRM before sending a refund email.")
-        names = "; ".join(f"Tab {row['tab_number']}: {row['design_name']}" for row in selected_designs(selection))
-        note = f"Partial copyright cancellation - {names}\n{reason} copyright\nRefund ${receipt['refund_amount']}\nemailed copyright partial cancellation"
-        shared._append_copyright_cancel_sales_note(driver, reason, process=replace(process, fixed_sales_note=note))
-        _reload(shared, driver, crm_handle, selection["order_id"])
-        state = shared._get_order_live_state(driver)
-        if " ".join(note.split()).casefold() not in " ".join(str(state.get("sales_notes", "")).split()).casefold():
-            raise CopyrightSelectionError("The partial copyright Sales Note did not persist after reload.")
-        verify_removed(selection, scan_designs(driver, selection["order_id"]))
-        if read_financials(shared, driver) != receipt["after_removal"]:
-            raise CopyrightSelectionError("CRM prices or payments changed while saving the partial cancellation note.")
+        _ensure_partial_sales_note(shared, driver, crm_handle, selection, reason, process, receipt, receipt["after_removal"])
         if not click_refund_button:
             return {"cancel": {"cancelled": False}, "removal": receipt["removal"],
                     "refund_fee": {"added": False, "skipped": True},
@@ -510,11 +532,13 @@ def process_partial(shared, driver, crm_handle, selection, reason, contact, *, d
     if receipt["stage"] == "refunded":
         _reload(shared, driver, crm_handle, selection["order_id"])
         verify_removed(selection, scan_designs(driver, selection["order_id"]))
+        current = read_financials(shared, driver)
         if receipt["refund"].get("refunded"):
-            if not verify_refunded(receipt["after_removal"], read_financials(shared, driver), receipt["refund_amount"]):
+            if not verify_refunded(receipt["after_removal"], current, receipt["refund_amount"]):
                 raise CopyrightSelectionError("The completed partial refund no longer matches CRM. Review payments before emailing.")
-        elif read_financials(shared, driver) != receipt["after_removal"]:
+        elif current != receipt["after_removal"]:
             raise CopyrightSelectionError("The partial refund case amount no longer matches CRM. Review payments before emailing.")
+        _ensure_partial_sales_note(shared, driver, crm_handle, selection, reason, process, receipt, current)
         receipt["salesforce"] = shared._prepare_and_maybe_send_salesforce_email(
             driver, crm_handle, selection["order_id"], contact["email"], False, process=process,
             reason=reason, contact=contact, designs=selected_designs(selection),

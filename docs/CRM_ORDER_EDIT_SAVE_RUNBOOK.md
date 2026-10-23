@@ -388,6 +388,25 @@ task for recovery, and do not remove its receipt to bypass a review stop.
 Email confirmation receipts distinguish separate partial selections even when
 their subjects match. Dry runs skip every CRM mutation and final submission.
 
+A receipt still at `removed` can recover a refund completed separately while
+the task was stopped. Before advancing it to `refunded`, verify the exact saved
+refund amount, unchanged Grand Total and fees, reduced Paid, zero Balance Due,
+all original transaction rows unchanged, and only matching new negative Refund
+transactions. Save this checkpoint before repairing the note or sending email.
+Changed payments without a matching refund keep the task stopped; recovery
+never triggers an additional refund. Do not manually advance or delete the receipt.
+
+The shared cancellation Sales Note helper waits for Edit Order to initialize
+before reacquiring the order resource and setting its note draft. Only saved
+notes count as already persisted; an existing draft still needs Save Order.
+The partial workflow checks the note after reload, retries its save once if
+missing, and reloads again. It verifies the retained designs and financials
+after each save. A note still missing after the second save stops before
+refund/email actions; recovery of an existing refund also repairs and verifies
+the note before email. These worker changes load on the next run without an app
+restart or extension reload. Retry the original queue entry with its original
+selections and reason.
+
 Offline verification is available with
 `python -m unittest discover -s tests -p "test_copyright_cancel*.py"`.
 The browser fixture `tests/fixtures/copyright_cancel_crm.html` covers red-X
