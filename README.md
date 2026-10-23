@@ -24,6 +24,7 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - Runs every queued task on the computer serving the current dashboard; use only one OS at a time when adding work.
 - Runs Home Assistant/Alexa HTTP triggers on the computer whose private URL receives the request.
 - Can clear finished local queue history without touching running or waiting tasks.
+- Sorts the Queue list by **Latest first** (default), **Oldest first**, or **Errors first**. Latest/oldest use the time a task was queued; Errors first puts failed tasks first, newest first within each group. The selection stays active during queue refreshes. Position numbers show execution order, and drag-and-drop still reorders waiting tasks. Refresh the dashboard to load the control; no app restart or extension reload is needed.
 
 ## CRM Order Assistant and Newer Workflows
 
@@ -195,6 +196,12 @@ Run the extension's Node tests with:
 
 ```powershell
 node --test tests/test_extension_bridge.mjs tests/test_salesforce_tabs.mjs
+```
+
+Verify Queue sorting and its interaction with task controls and execution order with:
+
+```powershell
+node --test tests/test_queue_sort.mjs
 ```
 
 Verify the NJ/ADD history display with:

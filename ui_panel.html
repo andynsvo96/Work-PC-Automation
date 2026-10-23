@@ -337,6 +337,8 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .queue-panel.active{display:block}
 .queue-header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}
 .queue-header h2{margin:0;font-size:16px}
+.queue-sort-control{display:inline-flex;align-items:center;gap:6px}
+select.queue-sort-select{width:auto;padding:4px 8px;font-size:12px}
 .queue-list{display:flex;flex-direction:column;gap:6px}
 .queue-item{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:8px;align-items:center;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;padding:8px}
 .queue-item[draggable=true]{cursor:grab}
@@ -828,6 +830,14 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
     <h2>Automation Queue</h2>
     <div class='row' style='margin-bottom:0'>
       <span class='muted' id='queueSummaryText'>Queue loading...</span>
+      <div class='queue-sort-control'>
+        <label class='muted' for='queueSortSelect'>Sort</label>
+        <select class='select queue-sort-select' id='queueSortSelect' onchange='setQueueSortOrder(this.value)' title='Sort the display; numbered positions show execution order'>
+          <option value='latest' selected>Latest first</option>
+          <option value='oldest'>Oldest first</option>
+          <option value='errors'>Errors first</option>
+        </select>
+      </div>
       <button class='secondary tiny' onclick='loadQueue(true)'>Refresh Queue</button>
       <button class='secondary tiny' id='queueClearFinishedBtn' onclick='clearFinishedQueueTasks()'>Clear All</button>
       <button class='danger tiny' onclick='cancelAllQueueTasks()'>Cancel All Tasks</button>
@@ -1897,6 +1907,7 @@ let activeProcessingSection = 'run';
 let activeSystemSection = 'overview';
 let queueVisible = false;
 let queuePayload = null;
+let queueSortOrder = 'latest';
 let queueExpandedTaskId = null;
 let nodeRuntimePayload = null;
 let clipboardStatusPayload = null;
@@ -3245,8 +3256,33 @@ function platformIconHtml(osName, label = '') {
   return `<span class='os-icon ${kind}' title='${accessible}' aria-label='${accessible}'><svg viewBox='0 0 24 24' role='img'>${drawings[kind]}</svg></span>`;
 }
 
+function setQueueSortOrder(value) {
+  queueSortOrder = ['oldest', 'errors'].includes(value) ? value : 'latest';
+  renderQueue(queuePayload || {});
+}
+
+function sortedQueueTasks(tasks, sortOrder = queueSortOrder) {
+  // Sort a copy so display preferences never change execution or drag order.
+  return (Array.isArray(tasks) ? tasks.slice() : []).sort((a, b) => {
+    if (sortOrder === 'errors') {
+      const errorOrder = Number(String(b.status || '').toLowerCase() === 'failed')
+        - Number(String(a.status || '').toLowerCase() === 'failed');
+      if (errorOrder) return errorOrder;
+    }
+    const aTime = Date.parse(a.activated_at || '');
+    const bTime = Date.parse(b.activated_at || '');
+    const aValid = Number.isFinite(aTime);
+    const bValid = Number.isFinite(bTime);
+    if (aValid !== bValid) return aValid ? -1 : 1;
+    if (!aValid) return 0;
+    return sortOrder === 'oldest' ? aTime - bTime : bTime - aTime;
+  });
+}
+
 function renderQueue(payload) {
   queuePayload = payload || {};
+  const sortSelect = document.getElementById('queueSortSelect');
+  if (sortSelect) sortSelect.value = queueSortOrder;
   const panel = document.getElementById('queuePanel');
   const btn = document.getElementById('tabBtnQueue');
   if (panel) panel.classList.toggle('active', queueVisible);
@@ -3277,7 +3313,7 @@ function renderQueue(payload) {
 
   const root = document.getElementById('queueList');
   if (!root) return;
-  const tasks = Array.isArray(queuePayload.tasks) ? queuePayload.tasks : [];
+  const tasks = sortedQueueTasks(queuePayload.tasks);
   if (!tasks.length) {
     root.innerHTML = "<div class='queue-empty'>No queued automations yet.</div>";
     return;
