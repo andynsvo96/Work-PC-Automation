@@ -1,22 +1,24 @@
 # CRM Order Assistant
 
-Private Manifest V3 extension for the Automation project's CRM order pages. It provides local dark mode, a queued single-order processing control, and reliable Salesforce tab reuse. It never processes CRM report lists from the extension.
+Private Manifest V3 extension for the Automation project's CRM order pages. It provides local dark mode, queued single-order tools, and reliable Salesforce tab reuse. It never processes CRM report lists from the extension.
 
 ## Install locally
 
 1. Open the dedicated CRM Chrome profile. From the Automation app, use the CRM Chrome-profile setup action if needed.
 2. Visit `chrome://extensions` in that profile and enable **Developer mode**.
 3. Choose **Load unpacked** and select this `crm-order-dark-mode-extension` folder.
-4. Pin **CRM Order Assistant**, open a CRM order, and use **Enable dark mode** in its toolbar popup. The order page also provides single-order Auto-Process, Manual Process, Cancel, and Reachout controls.
+4. Pin **CRM Order Assistant**, open a CRM order, and use **Enable dark mode** in its toolbar popup. The order page also provides single-order Manual Process, Cancel, Reachout, and Stock Issue controls.
 
 The preference is stored locally in that Chrome profile. Removing or reloading the extension keeps the preference unless Chrome extension data is cleared.
 
-After updating, restart the local Automation app, reload the extension at `chrome://extensions`, and refresh open CRM order pages.
+After extension updates, reload the extension at `chrome://extensions` and refresh open CRM order pages. Updates that also change the local Automation app require an app restart as noted below.
+
+Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
 ## Retry an unfinished automation
 
 In the local Automation dashboard's queue, every failed or canceled extension
-automation offers **Retry** beside **Delete**: Auto-Process, Manual Process,
+automation offers **Retry** beside **Delete**: Manual Process,
 Cancel, Reachout, and Stock Issue. Retry keeps the original queue entry and its
 order number, selected designs/products/sizes, prices, and reason. It waits in
 the same local queue and uses the workflow's existing saved-state checks and
@@ -196,13 +198,13 @@ The extension also catches Salesforce links that create a new tab or window thro
 
 The manifest injects across the CRM host only to reach the embedded order frame; `content.js` refuses to activate anywhere except these order routes. Styling exists only in screen media, so CRM printing stays light.
 
-## Local app bridge and processing button
+## Local app bridge and order tools
 
 The extension checks `http://127.0.0.1:5123/api/extension/bridge/status` when its popup opens, so it can confirm the local Automation app is running. It never asks for, reads, or stores the Automation app PIN. The control bridge accepts only loopback Chrome-extension requests.
 
-The **Process order** button on an open CRM order sends only that order number to the local app. It is placed in the Automation queue, so it waits for any active task instead of overlapping another automation. It validates the address, separates mixed listed/non-listed products, splits orders with more than 10 tabs, unlocks stock as part of Order Goods, and orders every applicable stock tab. If the visible CRM page or the Order Goods result reports that shipping is too expensive (including a purchase plan exceeding the maximum shipment-cost percentage), it then runs the shipping bypasser. The chain stops for manual review on an address, separation, or split failure; it does not fall back to batch reports.
+The **Manual Process** menu beside **Send Invoice** lets you choose one automation for the open order: Address Validator, Product Separator, Auto Splitter, Order Goods, Shipping Bypasser, Push Back, or Extra Print Areas. Cancel, Reachout, and Stock Issue provide their own workflow menus. Each request targets only the current order and enters the local Automation queue, waiting for any active task. The order page shows queued, working, and review status beside Manual Process and refreshes after a task started from that page completes.
 
-Selecting **Shipping Bypasser** from **Manual Process** is an explicit approval to use SanMar stock without the normal 10-piece per-size safety buffer. It still stops when SanMar has fewer units than the order requires. List-driven Shipping Bypasser runs and Auto-Process retain the 10-piece buffer.
+Selecting **Shipping Bypasser** from **Manual Process** is an explicit approval to use SanMar stock without the normal 10-piece per-size safety buffer. It still stops when SanMar has fewer units than the order requires. List-driven Shipping Bypasser runs retain the 10-piece buffer.
 
 The worker prefers one warehouse, but checks a closer split before stopping when that complete shipment would arrive too late. The split retains the selected buffer setting and must pass cart validation and the delivery-date check for every warehouse. It uses one customer PO and the usual production note describing the boxes and quantities from each warehouse. This worker update loads on the next queued run; no app restart, extension reload, or page refresh is required.
 

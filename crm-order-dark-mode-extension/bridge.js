@@ -4,9 +4,9 @@
 export const LOCAL_AUTOMATION_ENDPOINT = "http://127.0.0.1:5123";
 export const LOCAL_BRIDGE_STATUS_ENDPOINT = `${LOCAL_AUTOMATION_ENDPOINT}/api/extension/bridge/status`;
 export const LOCAL_BRIDGE_PROTOCOL = "automation.chrome-extension.bridge/v2";
-export const LOCAL_ORDER_PROCESS_ENDPOINT = `${LOCAL_AUTOMATION_ENDPOINT}/api/extension/bridge/process-order`;
-export const LOCAL_ORDER_PROCESS_STATUS_ENDPOINT = `${LOCAL_ORDER_PROCESS_ENDPOINT}/status`;
-export const LOCAL_MANUAL_ORDER_PROCESS_ENDPOINT = `${LOCAL_ORDER_PROCESS_ENDPOINT}/manual`;
+const LOCAL_ORDER_PROCESS_BASE = `${LOCAL_AUTOMATION_ENDPOINT}/api/extension/bridge/process-order`;
+export const LOCAL_ORDER_PROCESS_STATUS_ENDPOINT = `${LOCAL_ORDER_PROCESS_BASE}/status`;
+export const LOCAL_MANUAL_ORDER_PROCESS_ENDPOINT = `${LOCAL_ORDER_PROCESS_BASE}/manual`;
 // An older app must reject selected copyright requests, never interpret them
 // as the legacy whole-order cancellation action.
 export const LOCAL_COPYRIGHT_DESIGNS_ENDPOINT = `${LOCAL_MANUAL_ORDER_PROCESS_ENDPOINT}/copyright-designs`;
@@ -72,17 +72,6 @@ export async function getLocalBridgeStatus() {
         : "Local Automation app is not reachable. Start it, then try again."
     };
   }
-}
-
-export async function startLocalOrderProcessing(orderId, shippingTooExpensive) {
-  return bridgeFetch(LOCAL_ORDER_PROCESS_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      order_id: String(orderId || ""),
-      shipping_too_expensive: shippingTooExpensive === true
-    })
-  });
 }
 
 export async function startLocalManualOrderProcessing(orderId, automation, reason = "", structuredData = {}) {

@@ -1,8 +1,7 @@
 import {
   getLocalBridgeStatus,
   getLocalOrderProcessingStatus,
-  startLocalManualOrderProcessing,
-  startLocalOrderProcessing
+  startLocalManualOrderProcessing
 } from "./bridge.js";
 import { isSalesforceUrl, rankSalesforceTabs } from "./salesforce-tabs.mjs";
 
@@ -107,12 +106,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message.type === "crm-dark-mode:get-bridge-status") {
     getLocalBridgeStatus().then(sendResponse);
-    return true;
-  }
-  if (message.type === "crm-order-automation:start") {
-    startLocalOrderProcessing(message.orderId, message.shippingTooExpensive)
-      .then(sendResponse)
-      .catch((error) => sendResponse({ success: false, message: error.message || "Could not queue processing." }));
     return true;
   }
   if (message.type === "crm-order-automation:manual-start") {

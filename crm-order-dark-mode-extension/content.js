@@ -84,14 +84,6 @@ function currentOrderId() {
   return match ? match[1] : "";
 }
 
-function pageShowsShippingTooExpensive() {
-  const pageText = document.body && (document.body.innerText || document.body.textContent) || "";
-  return (
-    /shipping\s+is\s+too\s+expensive/i.test(pageText)
-    || /purchase\s+plan\s+exceeded\s+maximum\s+shipment\s+cost\s+as\s+percentage\s+of\s+product\s+cost/i.test(pageText)
-  );
-}
-
 function crmControlLabel(element) {
   return String(
     element && (element.value || element.innerText || element.textContent || element.getAttribute("aria-label") || element.title) || ""
@@ -110,32 +102,11 @@ function stopOrderProcessorPolling() {
   }
 }
 
-function orderProcessorStageLabel(stage) {
-  const labels = {
-    queued: "Queued",
-    address_validator: "Address",
-    product_separator: "Separating",
-    auto_splitter: "Splitting",
-    order_goods: "Ordering goods",
-    shipping_bypasser: "Shipping bypass"
-  };
-  return labels[String(stage || "")] || "Processing";
-}
-
-function setOrderProcessorButtonStyle(button, background, border) {
-  button.style.setProperty("background", background, "important");
-  button.style.setProperty("border", `1px solid ${border}`, "important");
-}
-
 function manualOrderProcessorButton() {
   return document.getElementById("crm-order-manual-process-button");
 }
 
 function setOrderProcessorControlsDisabled(disabled) {
-  const autoProcessButton = document.getElementById("crm-order-automation-button");
-  const manualProcessButton = manualOrderProcessorButton();
-  if (autoProcessButton) autoProcessButton.disabled = disabled;
-  if (manualProcessButton) manualProcessButton.disabled = disabled;
   document.querySelectorAll("[data-crm-order-process-trigger='true']").forEach((button) => {
     button.disabled = disabled;
   });
@@ -144,27 +115,14 @@ function setOrderProcessorControlsDisabled(disabled) {
   }
 }
 
-function orderProcessorResultSummary(runtime) {
-  const steps = Array.isArray(runtime && runtime.steps) ? runtime.steps : [];
-  if (!steps.length) return String((runtime && runtime.lastMessage) || "");
-  const used = steps.filter((step) => step && step.success && !step.skipped)
-    .map((step) => String(step.label || step.key || "Used"));
-  const skipped = steps.filter((step) => step && step.skipped)
-    .map((step) => String(step.label || step.key || "Skipped"));
-  const parts = [];
-  if (used.length) parts.push(`Used: ${used.join(", ")}.`);
-  if (skipped.length) parts.push(`Not needed: ${skipped.join(", ")}.`);
-  return parts.join(" ") || String((runtime && runtime.lastMessage) || "");
-}
-
 function refreshOrderAfterProcessorCompletion(runtime) {
   if (!runtime || runtime.queued || runtime.running || runtime.lastSuccess === null || runtime.lastSuccess === undefined) return;
   const orderId = currentOrderId();
   const completedAt = String(runtime.completedAt || "");
   if (!orderId || !completedAt || String(runtime.orderId || "") !== orderId) return;
-  const activeRunKey = `crm-auto-process-active:${orderId}`;
+  const activeRunKey = `crm-order-process-active:${orderId}`;
   if (!sessionStorage.getItem(activeRunKey)) return;
-  const refreshKey = `crm-auto-process-refresh:${orderId}:${completedAt}`;
+  const refreshKey = `crm-order-process-refresh:${orderId}:${completedAt}`;
   if (sessionStorage.getItem(refreshKey)) return;
   sessionStorage.setItem(refreshKey, "1");
   sessionStorage.removeItem(activeRunKey);
@@ -186,8 +144,7 @@ function setOrderProcessorResult(button, text, tone) {
       marginLeft: "8px", font: "600 11px system-ui, sans-serif", verticalAlign: "middle"
     });
   }
-  // Keep the result after the complete action group, rather than between its
-  // Auto-Process and Manual Process buttons.
+  // Keep the result after the Manual Process menu.
   const manualControl = document.getElementById("crm-order-manual-process-control");
   const resultAnchor = manualControl || button;
   if (result.previousElementSibling !== resultAnchor) resultAnchor.insertAdjacentElement("afterend", result);
@@ -197,64 +154,25 @@ function setOrderProcessorResult(button, text, tone) {
 
 function renderOrderProcessorStatus(button, response) {
   const runtime = response && response.runtime;
-  if (!runtime || (runtime.orderId && runtime.orderId !== currentOrderId())) return false;
+  if (!button || !runtime || runtime.runKind !== "manual"
+      || (runtime.orderId && runtime.orderId !== currentOrderId())) return false;
   const message = String(runtime.lastMessage || "");
-  const manualProcess = runtime.runKind === "manual";
-  const manualButton = manualOrderProcessorButton();
-  button.title = message || "Validate address, separate products, split over 10 tabs, unlock/order goods, and bypass flagged shipping.";
+  button.title = message || "Choose one automation to run for this order only.";
   if (runtime.queued) {
     setOrderProcessorControlsDisabled(true);
-    if (manualProcess && manualButton) {
-      manualButton.textContent = "Manual Process: Queued";
-      manualButton.title = message || "Queued behind any active CRM automation.";
-      setOrderProcessorResult(manualButton, message || "Queued behind any active CRM automation.", "progress");
-      return true;
-    }
-    button.dataset.autoProcessState = "running";
-    button.textContent = "Auto-Process: Queued";
-    setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
-    setOrderProcessorResult(button, "Queued behind any active CRM automation.", "progress");
+    button.textContent = "Manual Process: Queued";
+    setOrderProcessorResult(button, message || "Queued behind any active CRM automation.", "progress");
     return true;
   }
   if (runtime.running) {
     setOrderProcessorControlsDisabled(true);
-    if (manualProcess && manualButton) {
-      manualButton.textContent = "Manual Process: Working";
-      manualButton.title = message || "Working…";
-      setOrderProcessorResult(manualButton, message || "Working…", "progress");
-      return true;
-    }
-    button.dataset.autoProcessState = "running";
-    button.textContent = `Auto-Process: ${orderProcessorStageLabel(runtime.currentStep)}`;
-    setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
+    button.textContent = "Manual Process: Working";
     setOrderProcessorResult(button, message || "Working…", "progress");
     return true;
   }
   setOrderProcessorControlsDisabled(false);
-  if (manualProcess && manualButton) {
-    manualButton.textContent = runtime.lastSuccess === false ? "Manual Process: Review" : "Manual Process";
-    manualButton.title = message || "Choose one automation to run for this order only.";
-    setOrderProcessorResult(manualButton, message, runtime.lastSuccess === false ? "error" : "success");
-    refreshOrderAfterProcessorCompletion(runtime);
-    return false;
-  }
-  if (runtime.lastSuccess === true) {
-    button.dataset.autoProcessState = "complete";
-    const skipped = Array.isArray(runtime.steps) && runtime.steps.some((step) => step && step.skipped);
-    button.textContent = skipped ? "Auto-Process: Complete" : "Auto-Process: Done";
-    setOrderProcessorButtonStyle(button, skipped ? "#a16207" : "#15803d", skipped ? "#854d0e" : "#166534");
-    setOrderProcessorResult(button, orderProcessorResultSummary(runtime), "success");
-  } else if (runtime.lastSuccess === false) {
-    button.dataset.autoProcessState = "review";
-    button.textContent = "Auto-Process: Review";
-    setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
-    setOrderProcessorResult(button, message || "Processing stopped and needs review.", "error");
-  } else {
-    delete button.dataset.autoProcessState;
-    button.textContent = "Auto-Process";
-    setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
-    setOrderProcessorResult(button, "", "progress");
-  }
+  button.textContent = runtime.lastSuccess === false ? "Manual Process: Review" : "Manual Process";
+  setOrderProcessorResult(button, message, runtime.lastSuccess === false ? "error" : "success");
   refreshOrderAfterProcessorCompletion(runtime);
   return false;
 }
@@ -265,22 +183,18 @@ function beginOrderProcessorPolling(button) {
     try {
       const response = await chrome.runtime.sendMessage({ type: "crm-order-automation:status" });
       if (!response || !response.success) {
-        button.dataset.autoProcessState = "review";
         setOrderProcessorControlsDisabled(false);
-        button.textContent = "Auto-Process: Review";
+        button.textContent = "Manual Process: Review";
         button.title = (response && response.message) || "Could not read the local Automation app status.";
-        setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
         setOrderProcessorResult(button, button.title, "error");
         stopOrderProcessorPolling();
         return;
       }
       if (!renderOrderProcessorStatus(button, response)) stopOrderProcessorPolling();
     } catch (_error) {
-      button.dataset.autoProcessState = "review";
       setOrderProcessorControlsDisabled(false);
-      button.textContent = "Auto-Process: Review";
+      button.textContent = "Manual Process: Review";
       button.title = "Could not read the local Automation app status. Confirm the local app is running, then try again.";
-      setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
       setOrderProcessorResult(button, button.title, "error");
       stopOrderProcessorPolling();
     }
@@ -296,7 +210,7 @@ async function loadOrderProcessorStatus(button) {
       beginOrderProcessorPolling(button);
     }
   } catch (_error) {
-    // The local app may not be running yet; the button remains available to start a run.
+    // The local app may not be running yet; the menu remains available.
   }
 }
 
@@ -317,7 +231,7 @@ function closeAllOrderProcessMenus(exceptControl = null) {
 function queueManualOrderAutomation(
   automation,
   triggerButton,
-  autoProcessButton,
+  statusButton,
   reason = "",
   structuredData = {},
   options = {}
@@ -343,9 +257,9 @@ function queueManualOrderAutomation(
     ...structuredData
   }).then((response) => {
     if (response && response.success) {
-      sessionStorage.setItem(`crm-auto-process-active:${orderId}`, "1");
-      renderOrderProcessorStatus(autoProcessButton, response);
-      beginOrderProcessorPolling(autoProcessButton);
+      sessionStorage.setItem(`crm-order-process-active:${orderId}`, "1");
+      renderOrderProcessorStatus(statusButton, response);
+      beginOrderProcessorPolling(statusButton);
       return response;
     }
     setOrderProcessorControlsDisabled(false);
@@ -488,7 +402,7 @@ function sleevePrintSelectionSummary(selections, tabs, customInkPrice, customEmb
   return { inkTabs, embroideryTabs, reverseTabs, inkQuantity, embroideryQuantity, calculatedInkPrice, inkPrice, embroideryPrice, reversePrice };
 }
 
-function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
+function showSleevePrintsDialog(automation, triggerButton, statusButton) {
   const discoveredTabs = visibleStockIssueDesignTabs();
   if (!discoveredTabs.length) {
     setOrderProcessorResult(triggerButton, "Could not detect any design tabs and quantities for Extra Print Areas.", "error");
@@ -678,7 +592,7 @@ function showSleevePrintsDialog(automation, triggerButton, autoProcessButton) {
     submitting = true;
     refresh();
     try {
-      const response = await queueManualOrderAutomation(automation, triggerButton, autoProcessButton, "", {
+      const response = await queueManualOrderAutomation(automation, triggerButton, statusButton, "", {
         sleeves: state.selected,
         ink_price: state.used.ink ? priceOverrides.ink : null,
         embroidery_price: state.used.embroidery ? priceOverrides.embroidery : null,
@@ -1004,7 +918,7 @@ function validateStockIssueSuggestedSizes(value) {
   return { ...result, sizes: result.values };
 }
 
-function showStockIssueProductDialog(products, automation, triggerButton, autoProcessButton) {
+function showStockIssueProductDialog(products, automation, triggerButton, statusButton) {
   const isColorSuggestion = automation.key === "stock_issue_color";
   const isSizeSuggestion = automation.key === "stock_issue_size";
   const isSuggestion = isColorSuggestion || isSizeSuggestion;
@@ -1244,7 +1158,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
     queueManualOrderAutomation(
       automation,
       triggerButton,
-      autoProcessButton,
+      statusButton,
       "",
       structuredData,
       { surfacePageErrors: false }
@@ -1267,7 +1181,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, autoPr
   detailInput.focus();
 }
 
-async function startStockIssueExtensionSelection(automation, triggerButton, autoProcessButton) {
+async function startStockIssueExtensionSelection(automation, triggerButton, statusButton) {
   const { overlay, dialog } = createStockIssueDialogShell("Scanning Stock Issue products");
   const title = document.createElement("div");
   title.textContent = "Scanning products…";
@@ -1282,7 +1196,7 @@ async function startStockIssueExtensionSelection(automation, triggerButton, auto
     overlay.remove();
     setOrderProcessorControlsDisabled(false);
     if (!products.length) throw new Error("No positive-quantity products were found on this order.");
-    showStockIssueProductDialog(products, automation, triggerButton, autoProcessButton);
+    showStockIssueProductDialog(products, automation, triggerButton, statusButton);
   } catch (error) {
     overlay.remove();
     setOrderProcessorControlsDisabled(false);
@@ -1370,7 +1284,7 @@ async function scanCopyrightDesigns(onProgress = () => {}) {
   return { order_id: metadata.order_id, all_designs: allDesigns };
 }
 
-function showCopyrightCancelConfirmation(automation, triggerButton, autoProcessButton) {
+function showCopyrightCancelConfirmation(automation, triggerButton, statusButton) {
   document.getElementById('crm-copyright-cancel-dialog')?.remove();
   const { overlay, dialog } = createStockIssueDialogShell('Copyright - Cancel');
   overlay.id = 'crm-copyright-cancel-dialog';
@@ -1422,7 +1336,7 @@ function showCopyrightCancelConfirmation(automation, triggerButton, autoProcessB
     const designs = { ...scan, selected_design_ids: selectedIds() };
     queue.disabled = true;
     overlay.remove();
-    queueManualOrderAutomation(automation, triggerButton, autoProcessButton, reason.value.trim(), { designs });
+    queueManualOrderAutomation(automation, triggerButton, statusButton, reason.value.trim(), { designs });
   });
   actions.append(back, queue);
   dialog.append(title, picker, summary, label, reason, actions);
@@ -1536,9 +1450,9 @@ async function scanComplicatedEmbPrintDesigns(onProgress) {
   return scanComplicatedEmbDesigns(onProgress, true);
 }
 
-function showOrderAutomationConfirmation(automation, triggerButton, autoProcessButton) {
+function showOrderAutomationConfirmation(automation, triggerButton, statusButton) {
   if (automation.key === 'copyright_cancel') {
-    showCopyrightCancelConfirmation(automation, triggerButton, autoProcessButton);
+    showCopyrightCancelConfirmation(automation, triggerButton, statusButton);
     return;
   }
   document.getElementById("crm-order-automation-confirmation")?.remove();
@@ -1640,7 +1554,7 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
     const selectedAutomation = asksFeedback
       ? { key: "complicated_emb_feedback", label: "Complicated EMB (Feedback)" }
       : automation;
-    queueManualOrderAutomation(selectedAutomation, triggerButton, autoProcessButton, reason, designs ? { designs } : {});
+    queueManualOrderAutomation(selectedAutomation, triggerButton, statusButton, reason, designs ? { designs } : {});
   });
   reasonInput?.addEventListener("input", refreshContinueButtonState);
   // Keep the confirmation open until the user clicks Back or queues the task.
@@ -1656,7 +1570,7 @@ function showOrderAutomationConfirmation(automation, triggerButton, autoProcessB
       if (!embroideryDesigns || !selectedDesigns().length) return;
       const designs = selectedDesigns();
       overlay.remove();
-      queueManualOrderAutomation(automation, triggerButton, autoProcessButton, '', { designs });
+      queueManualOrderAutomation(automation, triggerButton, statusButton, '', { designs });
     });
     actions.append(no);
   }
@@ -1735,9 +1649,9 @@ function createOrderProcessMenuControl({ controlId, buttonId, label, title, colo
     option.addEventListener("mouseleave", () => { option.style.background = "transparent"; });
     option.addEventListener("click", () => {
       closeOrderProcessMenu(control);
-      if (typeof onSelect === "function") onSelect(automation, button, document.getElementById("crm-order-automation-button"));
-      else if (needsConfirmation) showOrderAutomationConfirmation(automation, button, document.getElementById("crm-order-automation-button"));
-      else queueManualOrderAutomation(automation, button, document.getElementById("crm-order-automation-button"));
+      if (typeof onSelect === "function") onSelect(automation, button, manualOrderProcessorButton());
+      else if (needsConfirmation) showOrderAutomationConfirmation(automation, button, manualOrderProcessorButton());
+      else queueManualOrderAutomation(automation, button, manualOrderProcessorButton());
     });
     menu.appendChild(option);
   }
@@ -1751,24 +1665,24 @@ function createOrderProcessMenuControl({ controlId, buttonId, label, title, colo
   return control;
 }
 
-function ensureManualOrderProcessorControl(autoProcessButton) {
+function ensureManualOrderProcessorControl(anchor) {
   let control = document.getElementById("crm-order-manual-process-control");
   if (!control) {
     control = createOrderProcessMenuControl({
       controlId: "crm-order-manual-process-control", buttonId: "crm-order-manual-process-button", label: "Manual Process",
       title: "Choose one automation to run for this order only.", color: "#475569", border: "#334155",
       automations: MANUAL_ORDER_AUTOMATIONS, needsConfirmation: false,
-      onSelect: (automation, triggerButton, autoProcessButton) => {
+      onSelect: (automation, triggerButton, statusButton) => {
         if (automation.key === "sleeve_prints") {
-          showSleevePrintsDialog(automation, triggerButton, autoProcessButton);
+          showSleevePrintsDialog(automation, triggerButton, statusButton);
           return;
         }
-        queueManualOrderAutomation(automation, triggerButton, autoProcessButton);
+        queueManualOrderAutomation(automation, triggerButton, statusButton);
       }
     });
     control.style.marginLeft = "4px";
   }
-  if (autoProcessButton.nextElementSibling !== control) autoProcessButton.insertAdjacentElement("afterend", control);
+  if (anchor.nextElementSibling !== control) anchor.insertAdjacentElement("afterend", control);
   return control;
 }
 
@@ -1813,77 +1727,29 @@ function ensureSingleOrderSheetScannerControls() {
     controlId: "crm-order-stock-issue-control", buttonId: "crm-order-stock-issue-button", label: "Stock Issue",
     title: "Choose a stock-issue workflow for this order.", color: "#a16207", border: "#854d0e",
     automations: STOCK_ISSUE_AUTOMATIONS, anchor: reachoutControl,
-    onSelect: (automation, triggerButton, autoProcessButton) => {
-      void startStockIssueExtensionSelection(automation, triggerButton, autoProcessButton);
+    onSelect: (automation, triggerButton, statusButton) => {
+      void startStockIssueExtensionSelection(automation, triggerButton, statusButton);
     }
   });
 }
 
-function ensureOrderProcessorButton() {
-  if (!isOrderDocument() || !document.body) return;
-  const sendInvoiceButton = findSendInvoiceButton();
-  const existingButton = document.getElementById("crm-order-automation-button");
+function ensureOrderProcessorControls() {
+  if (!document.body) return;
+  const sendInvoiceButton = isOrderDocument() ? findSendInvoiceButton() : null;
   if (!sendInvoiceButton) {
-    existingButton?.remove();
     document.getElementById("crm-order-manual-process-control")?.remove();
     document.getElementById("crm-order-cancel-control")?.remove();
     document.getElementById("crm-order-reachout-control")?.remove();
     document.getElementById("crm-order-stock-issue-control")?.remove();
+    document.getElementById("crm-order-automation-result")?.remove();
     stopOrderProcessorPolling();
     return;
   }
 
-  const button = existingButton || document.createElement("button");
-  if (!existingButton) {
-    button.id = "crm-order-automation-button";
-    button.type = "button";
-    button.textContent = "Auto-Process";
-    button.title = "Validate address, separate products, split over 10 tabs, unlock/order goods, and bypass flagged shipping.";
-    button.addEventListener("click", async () => {
-      const orderId = currentOrderId();
-      if (!orderId) return;
-      setOrderProcessorControlsDisabled(true);
-      button.textContent = "Starting…";
-      setOrderProcessorResult(button, "Sending the order to the CRM automation queue…", "progress");
-      try {
-        const response = await chrome.runtime.sendMessage({
-          type: "crm-order-automation:start",
-          orderId,
-          shippingTooExpensive: pageShowsShippingTooExpensive()
-        });
-        if (response && response.success) {
-          sessionStorage.setItem(`crm-auto-process-active:${orderId}`, "1");
-          renderOrderProcessorStatus(button, response);
-          beginOrderProcessorPolling(button);
-        } else {
-          button.dataset.autoProcessState = "review";
-          setOrderProcessorControlsDisabled(false);
-          button.textContent = "Auto-Process: Review";
-          button.title = (response && response.message) || "Could not queue the order in the local Automation app.";
-          setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
-          setOrderProcessorResult(button, button.title, "error");
-        }
-      } catch (_error) {
-        button.dataset.autoProcessState = "review";
-        setOrderProcessorControlsDisabled(false);
-        button.textContent = "Auto-Process: Review";
-        button.title = "Could not queue the order in the local Automation app.";
-        setOrderProcessorButtonStyle(button, "#b91c1c", "#991b1b");
-        setOrderProcessorResult(button, button.title, "error");
-      }
-    });
-  }
-
-  Object.assign(button.style, {
-    position: "static", display: "inline-block", boxSizing: "border-box", height: "32px", marginLeft: "4px",
-    padding: "6px 12px", borderRadius: "2px", verticalAlign: "top", font: "600 12px/18px system-ui, sans-serif", cursor: "pointer"
-  });
-  if (!button.dataset.autoProcessState) setOrderProcessorButtonStyle(button, "#0369a1", "#075985");
-  button.style.setProperty("color", "#fff", "important");
-  if (sendInvoiceButton.nextElementSibling !== button) sendInvoiceButton.insertAdjacentElement("afterend", button);
-  ensureManualOrderProcessorControl(button);
+  const existingControl = document.getElementById("crm-order-manual-process-control");
+  ensureManualOrderProcessorControl(sendInvoiceButton);
   ensureSingleOrderSheetScannerControls();
-  if (!existingButton) void loadOrderProcessorStatus(button);
+  if (!existingControl) void loadOrderProcessorStatus(manualOrderProcessorButton());
 }
 
 function isOrderDocument() {
@@ -1899,7 +1765,7 @@ function applyThemeState() {
   const active = themeEnabled && isOrderDocument();
   root.classList.toggle(ROOT_CLASS, active);
   root.setAttribute(ROOT_ATTRIBUTE, active ? "enabled" : "disabled");
-  ensureOrderProcessorButton();
+  ensureOrderProcessorControls();
 }
 
 function queueThemeRefresh() {
@@ -1929,14 +1795,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       enabled: themeEnabled,
       isOrderDocument: isOrderDocument(),
       active: themeEnabled && isOrderDocument()
-    });
-    return false;
-  }
-  if (message.type === "crm-order-automation:get-order-context") {
-    sendResponse({
-      isOrderDocument: isOrderDocument(),
-      orderId: currentOrderId(),
-      shippingTooExpensive: pageShowsShippingTooExpensive()
     });
     return false;
   }

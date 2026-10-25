@@ -56,24 +56,18 @@ test("an older app cannot turn a partial selection into legacy full cancellation
 
 test("queue requests can receive confirmation after the old timeout", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  for (const submit of [
-    () => bridge.startLocalManualOrderProcessing("123", "stock_issue_size"),
-    () => bridge.startLocalOrderProcessing("123", false)
-  ]) {
-    let signal;
-    let finish;
-    t.mock.method(globalThis, "fetch", async (_url, options) => {
-      signal = options.signal;
-      await new Promise((resolve) => { finish = resolve; });
-      return { ok: true, json: async () => ({ success: true }) };
-    });
-    const pending = submit();
-    t.mock.timers.tick(3000);
-    assert.equal(signal.aborted, false);
-    finish();
-    assert.deepEqual(await pending, { success: true });
-    t.mock.restoreAll();
-  }
+  let signal;
+  let finish;
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    signal = options.signal;
+    await new Promise((resolve) => { finish = resolve; });
+    return { ok: true, json: async () => ({ success: true }) };
+  });
+  const pending = bridge.startLocalManualOrderProcessing("123", "stock_issue_size");
+  t.mock.timers.tick(3000);
+  assert.equal(signal.aborted, false);
+  finish();
+  assert.deepEqual(await pending, { success: true });
 });
 
 test("queue timeout explains uncertain acceptance without retrying", async (t) => {
