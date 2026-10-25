@@ -2608,7 +2608,8 @@ def restore_automation_queue():
                 or not isinstance(saved.get("id"), str) or not saved["id"] or saved["id"] in seen_ids
                 or saved.get("status") not in {"queued", "idle", "running", "completed", "failed", "canceled"}
                 or not isinstance(saved.get("task_arguments"), dict)
-                or not isinstance(saved.get("result_context", {}), dict)
+                # Tasks without extra result details are checkpointed as null.
+                or (saved.get("result_context") is not None and not isinstance(saved["result_context"], dict))
                 or not isinstance(saved.get("run_history", []), list)
             ):
                 raise RuntimeError("Invalid saved automation queue; the state file has been preserved for recovery.")

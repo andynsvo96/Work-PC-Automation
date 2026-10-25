@@ -133,6 +133,7 @@ class QueuePersistenceTests(unittest.TestCase):
         crm = self.enqueue("Order Goods Order 5010529", task_type="crm.order_goods", task_arguments={"order_id": "5010529", "dry_run": False}, queue_mode="repeat")
         for task in (communication, crm):
             task.update(status="running", started_at=(datetime.now() - timedelta(minutes=2)).isoformat(), message="Previous progress", result_context={"report": {"message": "Original details"}})
+        communication["result_context"] = None
         server._persist_automation_queue_locked()
         restored = self.restart()
         self.assertTrue(all(task["status"] == "failed" for task in restored))
@@ -249,6 +250,22 @@ class QueuePersistenceTests(unittest.TestCase):
         self.assertEqual(self.saved()[0]["message"], "Confirmed completion")
         self.assertEqual(self.restart()[0]["result_context"]["report"]["message"], "Saved result")
 
+    def test_completed_clock_out_without_result_context_survives_restart(self):
+        task = self.enqueue("Automatic Work Clock Out", task_type="communications.automatic_work_out", task_arguments={})
+        with mock.patch.object(server, "_automation_queue_result_context", return_value=None):
+            self.run_once()
+        self.assertIsNone(self.saved()[0]["result_context"])
+        with mock.patch.object(server, "_run_automatic_work_clock_out_queued") as run:
+            restored = self.restart()[0]
+            self.assertEqual(restored["id"], task["id"])
+            self.assertEqual(restored["status"], "completed")
+            self.assertEqual(restored["message"], "Done")
+            self.assertTrue(restored["success"])
+            self.assertEqual(restored["run_count"], 1)
+            self.assertIsNone(restored["result_context"])
+            self.assertEqual(server.get_automation_queue_payload()["queued_count"], 0)
+            run.assert_not_called()
+
     def test_worker_restores_due_task_and_persists_repeat_wait(self):
         task = self.enqueue(queue_mode="scheduled", scheduled_for=(datetime.now() - timedelta(minutes=1)).isoformat())
         with mock.patch.object(server, "run_slack", return_value=(True, "Confirmed")) as run:
@@ -291,6 +308,19 @@ class QueuePersistenceTests(unittest.TestCase):
     def test_corrupt_or_incompatible_state_is_preserved(self):
         for contents in ("{broken", '{"version":2,"tasks":[]}', '{"version":1,"tasks":[{}]}'):
             with self.subTest(contents=contents):
+                self.path.write_text(contents, encoding="utf-8")
+                server.automation_queue_persistence_enabled = False
+                with self.assertRaisesRegex(RuntimeError, "preserved for recovery"):
+                    server.restore_automation_queue()
+                self.assertEqual(self.path.read_text(encoding="utf-8"), contents)
+
+    def test_invalid_result_context_is_preserved_for_recovery(self):
+        self.enqueue()
+        document = json.loads(self.path.read_text(encoding="utf-8"))
+        for context in ([], "", False, 0, "invalid"):
+            with self.subTest(context=context):
+                document["tasks"][0]["result_context"] = context
+                contents = json.dumps(document)
                 self.path.write_text(contents, encoding="utf-8")
                 server.automation_queue_persistence_enabled = False
                 with self.assertRaisesRegex(RuntimeError, "preserved for recovery"):
