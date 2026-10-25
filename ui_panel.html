@@ -348,6 +348,9 @@ select.queue-sort-select{width:auto;padding:4px 8px;font-size:12px}
 .queue-item.failed,.queue-item.canceled{opacity:.82}
 .queue-drag{width:22px;text-align:center;color:#64748b;font-weight:800}
 .queue-title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.queue-title-text{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.crm-order-link{color:#1d4ed8;text-decoration:underline;text-underline-offset:2px}
+:root[data-theme='dark'] .crm-order-link{color:#4fc1ff}
 .queue-meta{font-size:12px;color:#64748b;margin-top:2px}
 .queue-status{font-size:12px;font-weight:700;text-transform:uppercase}
 .queue-status.running{color:#1d4ed8}
@@ -2399,11 +2402,11 @@ function openCrmProcessingRunReport(runRef = 'latest') {
       const errorHtml = errors.length ? `<ol style='margin:8px 0 0;padding-left:22px'>${errors.map((error) => {
         const orderId = String(error && error.order_id || '').trim();
         const message = String(error && error.message || 'Failure reason was not recorded.');
-        return `<li style='margin-bottom:5px'>${orderId ? `<strong>Order ${esc(orderId)}</strong> — ` : ''}<span class='bad'>${esc(message)}</span></li>`;
+        return `<li style='margin-bottom:5px'>${orderId ? `<strong>Order ${crmOrderLinkHtml(orderId)}</strong> — ` : ''}<span class='bad'>${crmOrderTextHtml(message)}</span></li>`;
       }).join('')}</ol>` : '';
-      return `<section style='border-top:1px solid var(--rough-divider);padding-top:10px;margin-top:10px'><div style='display:flex;justify-content:space-between;gap:10px'><strong>${esc(label)}</strong><span class='${hasErrors ? 'bad' : result ? 'ok' : 'muted'}'>${hasErrors ? '× ' : result ? '✓ ' : ''}${esc(stateText)}</span></div><div class='muted' style='margin-top:4px'>${esc(result && result.message ? result.message : 'No result message recorded.')} • ${esc(fmtDuration(result && result.duration_seconds))}</div>${errorHtml}</section>`;
+      return `<section style='border-top:1px solid var(--rough-divider);padding-top:10px;margin-top:10px'><div style='display:flex;justify-content:space-between;gap:10px'><strong>${esc(label)}</strong><span class='${hasErrors ? 'bad' : result ? 'ok' : 'muted'}'>${hasErrors ? '× ' : result ? '✓ ' : ''}${esc(stateText)}</span></div><div class='muted' style='margin-top:4px'>${crmOrderTextHtml(result && result.message ? result.message : 'No result message recorded.')} • ${esc(fmtDuration(result && result.duration_seconds))}</div>${errorHtml}</section>`;
     }).join('');
-    body.innerHTML = `${metrics}${row.message ? `<div class='notice' style='margin-top:12px'>${esc(row.message)}</div>` : ''}${stepReports || "<div class='muted' style='margin-top:12px'>No tool results recorded.</div>"}`;
+    body.innerHTML = `${metrics}${row.message ? `<div class='notice' style='margin-top:12px'>${crmOrderTextHtml(row.message)}</div>` : ''}${stepReports || "<div class='muted' style='margin-top:12px'>No tool results recorded.</div>"}`;
   }
   if (typeof dialog.showModal === 'function') dialog.showModal();
 }
@@ -2426,8 +2429,8 @@ function openCrmProcessingErrorsDialog() {
           const orderId = String(error && error.order_id || '').trim();
           const status = String(error && error.status || 'Needs attention').trim();
           const message = String(error && error.message || 'Failure reason was not recorded.').trim();
-          const orderText = orderId ? `<strong>Order ${esc(orderId)}</strong> — ` : '';
-          return `<li style='margin:0 0 8px'>${orderText}<span class='bad'>${esc(status)}</span>: ${esc(message)}</li>`;
+          const orderText = orderId ? `<strong>Order ${crmOrderLinkHtml(orderId)}</strong> — ` : '';
+          return `<li style='margin:0 0 8px'>${orderText}<span class='bad'>${esc(status)}</span>: ${crmOrderTextHtml(message)}</li>`;
         }).join('');
         return `<section style='border-top:1px solid #e2e8f0;padding-top:10px;margin-top:10px'><h4 style='margin:0 0 8px'>${esc(group.label)}</h4><ol style='margin:0;padding-left:22px'>${items}</ol></section>`;
       }).join('')
@@ -3215,7 +3218,7 @@ function queueRunHistoryHtml(task) {
         const historyMessage = ok
           ? (row.message || '')
           : conciseAutomationFailureMessage(row.message || '', {}, task.label);
-        return `<tr><td>${esc(runNumber)}</td>${historyWhenCellHtml(fmtDateTime(when), latestRows.has(row))}${progress}<td>${esc(fmtDuration(row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${esc(ok ? 'Completed' : 'Needs attention')}</td><td>${esc(historyMessage)}</td>${processingReport}${scannerReport}</tr>`;
+        return `<tr><td>${esc(runNumber)}</td>${historyWhenCellHtml(fmtDateTime(when), latestRows.has(row))}${progress}<td>${esc(fmtDuration(row.duration_seconds))}</td><td class='${ok ? 'ok' : 'bad'}'>${esc(ok ? 'Completed' : 'Needs attention')}</td><td>${crmOrderTextHtml(historyMessage)}</td>${processingReport}${scannerReport}</tr>`;
       }).join('')}</tbody>
     </table>`;
 }
@@ -3306,10 +3309,11 @@ function renderQueue(payload) {
     const runningProgress = runningIsProcessing ? '' : queueTaskProgressLabel(running);
     const runningMessage = running && running.message ? String(running.message) : '';
     const runningDetail = [runningProgress, runningMessage].filter(Boolean).join(' | ');
-    summary.textContent = running
+    let summaryText = running
       ? `Running: ${running.label || 'Automation'}${runningDetail ? ` | ${runningDetail}` : ''} | ${queuedCount} waiting | ${idleCount} idle`
       : (queuedCount || idleCount ? `${queuedCount} waiting | ${idleCount} idle` : 'No waiting tasks');
-    if (queuePayload.persistence_error) summary.textContent += ` | ${queuePayload.persistence_error}`;
+    if (queuePayload.persistence_error) summaryText += ` | ${queuePayload.persistence_error}`;
+    summary.innerHTML = crmOrderTextHtml(summaryText);
   }
 
   const root = document.getElementById('queueList');
@@ -3370,8 +3374,8 @@ function renderQueue(payload) {
         ondragstart='handleQueueDragStart(event)' ondragover='handleQueueDragOver(event)' ondrop='handleQueueDrop(event)' ondragend='handleQueueDragEnd(event)'>
         <div class='queue-drag'>${dragGlyph}</div>
         <div ${canExpand ? `onclick="toggleQueueRunHistory('${esc(task.id || '')}')" style='cursor:pointer' title='Open repeat run history'` : ''}>
-          <div class='queue-title' style='display:flex;align-items:center'>${esc(pos)}${esc(task.label || 'Automation Task')}${viewReportControl}</div>
-          <div class='queue-meta'>${esc(task.category || 'Automation')}${esc(details)}${esc(advanced)}${sourceVisual}${runnerVisual} | ${esc(queueTimeText(task))}${esc(progressText)}${esc(msg)}</div>
+          <div class='queue-title' style='display:flex;align-items:center'><span class='queue-title-text'>${esc(pos)}${crmOrderTextHtml(task.label || 'Automation Task')}</span>${viewReportControl}</div>
+          <div class='queue-meta'>${esc(task.category || 'Automation')}${crmOrderTextHtml(details)}${crmOrderTextHtml(advanced)}${sourceVisual}${runnerVisual} | ${crmOrderTextHtml(queueTimeText(task))}${crmOrderTextHtml(progressText)}${crmOrderTextHtml(msg)}</div>
         </div>
         <div class='queue-status ${esc(status)}'>${esc(queueStatusLabel(status))}</div>
         <div class='queue-actions'>${canCancel ? `<button class='danger queue-cancel-btn' title='Cancel task' aria-label='Cancel task' onclick="cancelQueueTask('${esc(task.id || '')}')">X</button>` : finishedControl}</div>
@@ -3468,7 +3472,7 @@ function openQueueTaskReport(taskId) {
   const summary = document.getElementById('queueTaskReportDialogSummary');
   const body = document.getElementById('queueTaskReportDialogBody');
   if (!dialog || !title || !summary || !body) return;
-  title.textContent = isRetryReport ? `${task.label || 'Automation'} Retry Report` : `${task.label || 'Automation'} Errors`;
+  title.innerHTML = crmOrderTextHtml(isRetryReport ? `${task.label || 'Automation'} Retry Report` : `${task.label || 'Automation'} Errors`);
   const failureCount = allRows.filter((row) => !Boolean(row && row.success)).length;
   summary.textContent = isRetryReport
     ? `${allRows.length} original order result${allRows.length === 1 ? '' : 's'} retained; ${failureCount} currently failed.`
@@ -3480,7 +3484,7 @@ function openQueueTaskReport(taskId) {
         const status = String(row && (row.retry_status || row.status) || (row && row.success ? 'Success' : 'Failed'));
         const message = String(row && row.message || row && row.original_error || 'No error message recorded.');
         const statusClass = row && row.success ? 'ok' : 'bad';
-        return `<tr><td>${crmOrderLinkHtml(orderId)}</td><td>${esc(automation)}</td><td class='${statusClass}'>${esc(status)}</td><td>${esc(message)}</td></tr>`;
+        return `<tr><td>${crmOrderLinkHtml(orderId)}</td><td>${crmOrderTextHtml(automation)}</td><td class='${statusClass}'>${esc(status)}</td><td>${crmOrderTextHtml(message)}</td></tr>`;
       }).join('')
     : "<tr><td colspan='4' class='muted'>No failed orders were recorded for this task.</td></tr>";
   if (typeof dialog.showModal === 'function') dialog.showModal();
@@ -7517,7 +7521,13 @@ function crmOrderLinkHtml(orderId, label = '') {
   const url = crmOrderUrl(id);
   const linkText = label || id || '-';
   if (!url) return esc(linkText);
-  return `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(linkText)}</a>`;
+  return `<a class="crm-order-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" draggable="false" onclick="event.stopPropagation()" title="Open CRM order ${esc(id)}">${esc(linkText)}</a>`;
+}
+
+function crmOrderTextHtml(text) {
+  // Accept plain text only; escape every non-order segment before adding links.
+  return String(text ?? '').split(/(\b\d{7}\b)/g)
+    .map((part, index) => index % 2 ? crmOrderLinkHtml(part) : esc(part)).join('');
 }
 
 function buildCrmOrderLinksHtml(orderIds) {

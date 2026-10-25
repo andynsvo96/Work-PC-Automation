@@ -7,6 +7,7 @@ const source = await readFile(new URL("../ui_panel.html", import.meta.url), "utf
 const names = [
   "esc", "queueStatusLabel", "queueTaskProgressLabel", "setQueueSortOrder",
   "sortedQueueTasks", "renderQueue", "toggleQueueRunHistory", "handleQueueDrop",
+  "crmOrderUrl", "crmOrderLinkHtml", "crmOrderTextHtml",
 ];
 const functions = names.map((name) => {
   let start = source.indexOf(`function ${name}(`);
