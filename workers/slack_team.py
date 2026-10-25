@@ -41,6 +41,7 @@ from config import (
 )
 from slack_message_rotation import record_slack_day_message_use, select_slack_day_message
 from slack_post_history import record_slack_post
+import slack_delivery_receipts as delivery_receipts
 
 configure_console_utf8()
 
@@ -51,6 +52,7 @@ HARD_MIN_VIEWPORT_WIDTH = 500
 HARD_MIN_VIEWPORT_HEIGHT = 260
 SLACK_CLIENT_URL_MARKER = "app.slack.com/client/"
 SEND_CONFIRMATION_TIMEOUT_SECONDS = 15
+EXISTING_MESSAGE_CHECK_TIMEOUT_SECONDS = 5
 SEND_UNCONFIRMED_MESSAGE = (
     "Slack delivery unconfirmed after submission. Automatic resend stopped to avoid duplicates. "
     "Check the Slack conversation before using a Slack-only action to try again."
@@ -85,6 +87,10 @@ COMPOSER_SELECTORS = [
 
 class SlackBeforeSubmitError(RuntimeError):
     """The send control was never activated, so retrying cannot duplicate a post."""
+
+
+class SlackDuplicateCheckError(RuntimeError):
+    """An earlier order notification may exist; another send requires review."""
 
 
 def write_result(success, message):
@@ -374,8 +380,8 @@ def _normalize_message_text(value):
     return " ".join(str(value or "").split())
 
 
-def _read_message_snapshot(driver):
-    """Read stable Slack timestamps from the conversation, excluding threads/drafts."""
+def _read_message_snapshot(driver, *, include_unidentified=False):
+    """Read conversation rows, excluding threads/drafts and normally requiring timestamps."""
     rows = driver.execute_script(r"""
         const selector = '[data-qa="message-text"], div.c-message__body';
         const seen = new Set();
@@ -417,7 +423,9 @@ def _read_message_snapshot(driver):
     """)
     if not isinstance(rows, list):
         raise RuntimeError("Slack conversation history could not be read.")
-    return [row for row in rows if re.fullmatch(r"\d{10}\.\d{1,6}", str(row.get("id") or ""))]
+    return rows if include_unidentified else [
+        row for row in rows if re.fullmatch(r"\d{10}\.\d{1,6}", str(row.get("id") or ""))
+    ]
 
 
 def _reveal_latest_messages(driver):
@@ -444,9 +452,13 @@ def _reveal_latest_messages(driver):
     """))
 
 
-def _wait_for_new_message(driver, message, channel_url, before_ids, submitted_after, expected_id=None):
-    target = _normalize_message_text(message)
+def _message_text_matches(row, message):
+    return _normalize_message_text(message) in {
+        _normalize_message_text(row.get("text")), _normalize_message_text(row.get("linked_text")),
+    }
 
+
+def _wait_for_new_message(driver, message, channel_url, before_ids, submitted_after, expected_id=None):
     def matching_message(current_driver):
         if not is_expected_slack_channel(current_driver.current_url, channel_url):
             return False
@@ -456,7 +468,7 @@ def _wait_for_new_message(driver, message, channel_url, before_ids, submitted_af
                 continue
             if expected_id and message_id != expected_id:
                 continue
-            if target in {_normalize_message_text(row.get("text")), _normalize_message_text(row.get("linked_text"))}:
+            if _message_text_matches(row, message):
                 return message_id
         # A refresh can restore a position days back in Slack's virtual list.
         # Those DOM rows cannot prove whether the new message persisted. Scroll
@@ -468,6 +480,31 @@ def _wait_for_new_message(driver, message, channel_url, before_ids, submitted_af
         return WebDriverWait(driver, SEND_CONFIRMATION_TIMEOUT_SECONDS, poll_frequency=0.5).until(matching_message)
     except TimeoutException:
         return None
+
+
+def _confirm_existing_order_message(driver, message, channel_url):
+    """Reuse an exact existing channel post only if it survives a refresh."""
+    def existing_message(current):
+        if not is_expected_slack_channel(current.current_url, channel_url):
+            raise SlackDuplicateCheckError("Slack duplicate check is not in the intended conversation; no message was sent.")
+        if _reveal_latest_messages(current):
+            return False
+        for row in _read_message_snapshot(current, include_unidentified=True):
+            if not _message_text_matches(row, message):
+                continue
+            if row.get("unsettled") or not re.fullmatch(r"\d{10}\.\d{1,6}", str(row.get("id") or "")):
+                raise SlackDuplicateCheckError("A matching Slack order message is pending or unidentified. Review the conversation; no duplicate was sent.")
+            return row["id"]
+        return False
+
+    try:
+        message_id = WebDriverWait(driver, EXISTING_MESSAGE_CHECK_TIMEOUT_SECONDS, poll_frequency=0.5).until(existing_message)
+    except TimeoutException:
+        return None
+    driver.refresh()
+    if not _wait_for_new_message(driver, message, channel_url, set(), 0, expected_id=message_id):
+        raise SlackDuplicateCheckError("An existing Slack order message could not be confirmed after refresh. Review the conversation; no duplicate was sent.")
+    return message_id
 
 
 def set_composer_message(driver, composer, message):
@@ -503,8 +540,8 @@ def _find_send_button(driver, composer):
     """, composer)
 
 
-def submit_message(driver, composer, message, channel_url=None):
-    """Submit once and require a new matching message to survive a page refresh."""
+def submit_message(driver, composer, message, channel_url=None, *, before_submit=None):
+    """Submit once and return the new message timestamp only after a refresh confirms it."""
     try:
         target = _normalize_message_text(message)
         channel_url = channel_url or driver.current_url
@@ -520,14 +557,16 @@ def submit_message(driver, composer, message, channel_url=None):
     except Exception as err:
         raise SlackBeforeSubmitError(f"Slack send preflight failed: {err}") from err
     submitted_after = time.time() - 5
+    if before_submit:
+        before_submit()
     # Click once, independently of Slack's Enter-key preference. Do not issue a
     # second send if the editor clears, detaches, or confirmation times out.
     send_button.click()
     message_id = _wait_for_new_message(driver, message, channel_url, before_ids, submitted_after)
     driver.refresh()
-    return bool(_wait_for_new_message(
+    return _wait_for_new_message(
         driver, message, channel_url, before_ids, submitted_after, expected_id=message_id,
-    ))
+    )
 
 
 def open_channel_and_find_composer(driver, channel_url, action, attempts=2):
@@ -623,12 +662,15 @@ def _resolve_day_message(action, now=None):
     return select_slack_day_message(config_module, action, now=now)
 
 
-def _run_once(action, message, channel_url, profile_path, headless_mode):
+def _run_once(action, message, channel_url, profile_path, headless_mode, *, delivery_key=None, reconcile_only=False):
     start_time = time.time()
     mode_name = "headless" if headless_mode else "visible"
     driver = None
     send_attempted = False
     try:
+        receipt = delivery_receipts.load(channel_url, delivery_key, message) if delivery_key else None
+        if receipt and receipt["status"] == "confirmed":
+            return True, "Slack order message already confirmed in its saved receipt; no new message sent.", False
         print(f"Launching Slack browser session ({mode_name})...")
         kill_stale_chrome(profile_path, profile_label="Slack automation")
         driver = build_chrome_driver(
@@ -660,14 +702,28 @@ def _run_once(action, message, channel_url, profile_path, headless_mode):
             return False, msg, issue in RETRYABLE_ISSUES
 
         print(f"Using composer selector: {selector}")
+        if delivery_key:
+            existing_id = _confirm_existing_order_message(driver, message, channel_url)
+            if existing_id:
+                delivery_receipts.confirm(channel_url, delivery_key, message, existing_id)
+                return True, "Existing Slack order message verified after refresh; no new message sent.", False
+            if receipt or reconcile_only:
+                raise SlackDuplicateCheckError(
+                    "Slack delivery unconfirmed from an earlier cancellation. No duplicate was sent. "
+                    "The existing message was not found in loaded channel history; review Slack before resolving this delivery."
+                )
         if not set_composer_message(driver, composer, message):
             safe_take_screenshot(driver, f"slack_{action}_compose_failed")
             return False, "Unable to place message text in Slack composer.", True
 
         send_attempted = True
-        if not submit_message(driver, composer, message, channel_url=channel_url):
+        submission_options = {"before_submit": lambda: delivery_receipts.reserve(channel_url, delivery_key, message)} if delivery_key else {}
+        message_id = submit_message(driver, composer, message, channel_url=channel_url, **submission_options)
+        if not message_id:
             safe_take_screenshot(driver, f"slack_{action}_send_not_confirmed")
             return False, SEND_UNCONFIRMED_MESSAGE, False
+        if delivery_key:
+            delivery_receipts.confirm(channel_url, delivery_key, message, message_id)
 
         channel_name = resolve_channel_name(driver)
         try:
@@ -682,6 +738,10 @@ def _run_once(action, message, channel_url, profile_path, headless_mode):
         safe_take_screenshot(driver, f"slack_{action}_sent")
         elapsed = time.time() - start_time
         return True, f"Slack '{message}' verified in the conversation after refresh. ({elapsed:.1f}s)", False
+    except (SlackDuplicateCheckError, delivery_receipts.SlackReceiptError) as err:
+        if driver:
+            safe_take_screenshot(driver, f"slack_{action}_duplicate_review")
+        return False, str(err), False
     except SlackBeforeSubmitError as err:
         safe_take_screenshot(driver, f"slack_{action}_pre_submit_failed")
         return False, f"Slack team message failed before submit: {err}", True
@@ -697,7 +757,7 @@ def _run_once(action, message, channel_url, profile_path, headless_mode):
             safe_driver_quit(driver, profile_path=profile_path)
 
 
-def run(action, force_test_url=False, custom_message=None, channel_url=None):
+def run(action, force_test_url=False, custom_message=None, channel_url=None, *, delivery_key=None, reconcile_only=False):
     global AUDIT_AUTOMATION_NAME
     AUDIT_AUTOMATION_NAME = f"slack_team.{action}"
     log_automation_event(
@@ -709,6 +769,8 @@ def run(action, force_test_url=False, custom_message=None, channel_url=None):
 
     if action not in ("in", "out", "custom"):
         return False, "Invalid action argument."
+    if (delivery_key and action != "custom") or (reconcile_only and not delivery_key):
+        return False, "Slack order duplicate protection requires a custom message and delivery key."
 
     message_selection = None
     if action == "custom":
@@ -749,7 +811,8 @@ def run(action, force_test_url=False, custom_message=None, channel_url=None):
         attempts = mode_attempts.get(mode, 1)
         for attempt in range(1, attempts + 1):
             print(f"Starting Slack {action} attempt {attempt}/{attempts} in {'headless' if mode else 'visible'} mode...")
-            ok, msg, retryable = _run_once(action, message, channel_url, profile_path, headless_mode=mode)
+            delivery_options = {"delivery_key": delivery_key, "reconcile_only": reconcile_only} if delivery_key else {}
+            ok, msg, retryable = _run_once(action, message, channel_url, profile_path, headless_mode=mode, **delivery_options)
             if ok:
                 if message_selection and not force_test_url:
                     try:

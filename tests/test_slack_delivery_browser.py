@@ -1,6 +1,7 @@
 """Real Chrome confirmation against a local fixture; never opens Slack."""
 
 import os
+from contextlib import ExitStack
 from pathlib import Path
 import sys
 import tempfile
@@ -45,6 +46,128 @@ class SlackDeliveryBrowserTests(unittest.TestCase):
         self.driver.get(self.fixture)
         self.driver.execute_script("localStorage.clear()")
         self.driver.refresh()
+        self.receipts = tempfile.TemporaryDirectory(prefix="receipts-", dir=ROOT / "runtime/debug/slack_delivery_tests")
+        self.addCleanup(self.receipts.cleanup)
+        receipt_patch = mock.patch.object(slack_team.delivery_receipts, "RECEIPT_DIR", Path(self.receipts.name))
+        receipt_patch.start()
+        self.addCleanup(receipt_patch.stop)
+
+    order_message = "https://example.test/order/1234567"
+    order_channel = "https://app.slack.com/client/T123/C456"
+    delivery_key = "copyright_cancel_stock_return:1234567"
+
+    def run_order(self, *, reconcile_only=False, delivery_key=delivery_key):
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.dict(os.environ, {"AUTOMATION_HEADLESS": "1"}))
+            for name in ("kill_stale_chrome", "safe_driver_quit", "safe_take_screenshot", "log_automation_event"):
+                stack.enter_context(mock.patch.object(slack_team, name))
+            stack.enter_context(mock.patch.object(slack_team, "build_chrome_driver", return_value=self.driver))
+            stack.enter_context(mock.patch.object(slack_team, "open_channel_and_find_composer", side_effect=lambda *_args, **_kwargs: (
+                self.driver.find_element(By.ID, "composer"), "", "fixture",
+            )))
+            stack.enter_context(mock.patch.object(slack_team, "is_expected_slack_channel", side_effect=lambda current, target: (
+                current.startswith(self.fixture) and target == self.order_channel
+            )))
+            stack.enter_context(mock.patch.object(slack_team, "SEND_CONFIRMATION_TIMEOUT_SECONDS", 0.6))
+            stack.enter_context(mock.patch.object(slack_team, "EXISTING_MESSAGE_CHECK_TIMEOUT_SECONDS", 0.6))
+            record = stack.enter_context(mock.patch.object(slack_team, "record_slack_post"))
+            result = slack_team.run(
+                "custom", custom_message=self.order_message, channel_url=self.order_channel,
+                delivery_key=delivery_key, reconcile_only=reconcile_only,
+            )
+        return result, record
+
+    def send_attempts(self):
+        return self.driver.execute_script("return JSON.parse(localStorage.getItem('slack-delivery-fixture') || '{}').attempts || 0")
+
+    def test_legacy_retry_reuses_existing_order_link_from_restored_history_without_sending(self):
+        self.driver.get(self.fixture + "?mode=restore-history-clear")
+        self.driver.execute_script("addOldMessage(arguments[0], 86400, {link: true})", self.order_message)
+        for _ in range(2):
+            result, record = self.run_order(reconcile_only=True)
+            self.assertTrue(result[0], result[1])
+            self.assertIn("no new message sent", result[1])
+            self.assertEqual(self.send_attempts(), 0)
+            record.assert_not_called()
+        receipt = slack_team.delivery_receipts.load(self.order_channel, self.delivery_key, self.order_message)
+        self.assertEqual(receipt["status"], "confirmed")
+
+    def test_order_notification_is_sent_once_and_saved_receipt_survives_a_retry(self):
+        first, record = self.run_order()
+        self.assertTrue(first[0], first[1])
+        record.assert_called_once()
+        second, record = self.run_order(reconcile_only=True)
+        self.assertTrue(second[0], second[1])
+        self.assertEqual(self.send_attempts(), 1)
+        record.assert_not_called()
+
+    def test_uncertain_submission_with_no_visible_post_never_sends_again(self):
+        self.driver.get(self.fixture + "?mode=clear")
+        for _ in range(2):
+            result, record = self.run_order()
+            self.assertFalse(result[0])
+            self.assertEqual(self.send_attempts(), 1)
+            record.assert_not_called()
+        receipt = slack_team.delivery_receipts.load(self.order_channel, self.delivery_key, self.order_message)
+        self.assertEqual(receipt["status"], "submitting")
+
+    def test_retry_recovers_a_persisted_post_after_browser_failure_without_resending(self):
+        with mock.patch.object(self.driver, "refresh", side_effect=RuntimeError("browser disconnected after Send")):
+            first, _ = self.run_order()
+        self.assertFalse(first[0])
+        receipt = slack_team.delivery_receipts.load(self.order_channel, self.delivery_key, self.order_message)
+        self.assertEqual(receipt["status"], "submitting")
+        second, record = self.run_order()
+        self.assertTrue(second[0], second[1])
+        self.assertEqual(self.send_attempts(), 1)
+        record.assert_not_called()
+
+    def test_legacy_retry_with_unavailable_history_stops_without_sending(self):
+        result, record = self.run_order(reconcile_only=True)
+        self.assertFalse(result[0])
+        self.assertIn("No duplicate was sent", result[1])
+        self.assertEqual(self.send_attempts(), 0)
+        record.assert_not_called()
+
+    def test_matching_pending_or_unidentified_post_blocks_another_order_notification(self):
+        for options in ({"pending": True}, {"missingId": True}, {"failed": True}):
+            with self.subTest(options=options):
+                self.driver.execute_script("localStorage.clear()")
+                self.driver.refresh()
+                self.driver.execute_script("addOldMessage(arguments[0], 60, arguments[1])", self.order_message, options)
+                result, record = self.run_order()
+                self.assertFalse(result[0])
+                self.assertEqual(self.send_attempts(), 0)
+                record.assert_not_called()
+
+    def test_optimistic_existing_post_that_disappears_after_refresh_is_never_reposted(self):
+        self.driver.execute_script("appendMessage({id: (Date.now() / 1000).toFixed(6), text: arguments[0]})", self.order_message)
+        result, record = self.run_order()
+        self.assertFalse(result[0])
+        self.assertEqual(self.send_attempts(), 0)
+        record.assert_not_called()
+
+    def test_thread_only_and_neighboring_order_messages_do_not_suppress_a_new_notification(self):
+        self.driver.execute_script("addOldMessage(arguments[0], 60, {thread: true})", self.order_message)
+        self.driver.execute_script("addOldMessage(arguments[0], 60)", self.order_message + "8")
+        result, record = self.run_order()
+        self.assertTrue(result[0], result[1])
+        self.assertEqual(self.send_attempts(), 1)
+        record.assert_called_once()
+
+    def test_unscoped_custom_messages_remain_repeatable(self):
+        for _ in range(2):
+            result, record = self.run_order(delivery_key=None)
+            self.assertTrue(result[0], result[1])
+            record.assert_called_once()
+        self.assertEqual(self.send_attempts(), 2)
+
+    def test_receipt_write_failure_stops_before_send(self):
+        with mock.patch.object(slack_team.delivery_receipts, "reserve", side_effect=slack_team.delivery_receipts.SlackReceiptError("receipt storage unavailable")):
+            result, record = self.run_order()
+        self.assertFalse(result[0])
+        self.assertEqual(self.send_attempts(), 0)
+        record.assert_not_called()
 
     def send(self, mode, message="signing on", old_message=False):
         self.driver.get(self.fixture + "?mode=" + mode)

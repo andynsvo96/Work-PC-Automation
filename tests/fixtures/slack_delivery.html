@@ -92,8 +92,8 @@
     persist();
     if (mode !== 'after-refresh') appendMessage(message);
   });
-  window.addOldMessage = (text, age = 60) => {
-    const message = { id: (Date.now() / 1000 - age).toFixed(6), text };
+  window.addOldMessage = (text, age = 60, options = {}) => {
+    const message = { id: (Date.now() / 1000 - age).toFixed(6), text, ...options };
     state.messages.push(message);
     persist();
     if (!viewingHistory) appendMessage(message);

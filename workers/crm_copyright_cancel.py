@@ -824,7 +824,7 @@ def _read_post_cancel_stock_state(driver, crm_handle, order_id):
     return summary
 
 
-def _send_post_cancel_slack_message(channel_url, message, dry_run):
+def _send_post_cancel_slack_message(channel_url, message, dry_run, *, order_id, reconcile_only=False):
     channel_id = _slack_channel_id_from_url(channel_url)
     if dry_run:
         return {
@@ -836,7 +836,10 @@ def _send_post_cancel_slack_message(channel_url, message, dry_run):
         }
     if not str(channel_url or "").strip():
         raise CopyrightCancelError("Post-cancel Slack channel URL is not configured.")
-    ok, result_message = _run_slack_team("custom", custom_message=message, channel_url=channel_url)
+    ok, result_message = _run_slack_team(
+        "custom", custom_message=message, channel_url=channel_url,
+        delivery_key=f"copyright_cancel_stock_return:{order_id}", reconcile_only=reconcile_only,
+    )
     if not ok:
         raise CopyrightCancelError(f"Slack stock-return message failed for {channel_id or channel_url}: {result_message}")
     return {
@@ -849,7 +852,7 @@ def _send_post_cancel_slack_message(channel_url, message, dry_run):
     }
 
 
-def _handle_post_cancel_stock_return(driver, crm_handle, order_id, order_url, dry_run, enabled=True):
+def _handle_post_cancel_stock_return(driver, crm_handle, order_id, order_url, dry_run, enabled=True, *, reconcile_only=False):
     if not enabled:
         return {
             "action": "skipped",
@@ -891,7 +894,9 @@ def _handle_post_cancel_stock_return(driver, crm_handle, order_id, order_url, dr
 
     return {
         "action": action,
-        "slack": _send_post_cancel_slack_message(channel_url, slack_message, dry_run=dry_run),
+        "slack": _send_post_cancel_slack_message(
+            channel_url, slack_message, dry_run=dry_run, order_id=order_id, reconcile_only=reconcile_only,
+        ),
         "stock_state": state,
     }
 
@@ -9328,6 +9333,7 @@ def process_single_order(
             order_url,
             dry_run=dry_run,
             enabled=click_refund_button,
+            reconcile_only=(crm_action.get("cancel") or {}).get("reason") in {"already_cancelled", "already_refunded"},
         )
         return {
             "order_id": order_id,
@@ -9384,6 +9390,7 @@ def post_cancel_stock_slack_single_order(
             order_url,
             dry_run=dry_run,
             enabled=True,
+            reconcile_only=True,
         )
         return {
             "order_id": order_id,
