@@ -3375,7 +3375,7 @@ function renderQueue(payload) {
         <div class='queue-drag'>${dragGlyph}</div>
         <div ${canExpand ? `onclick="toggleQueueRunHistory('${esc(task.id || '')}')" style='cursor:pointer' title='Open repeat run history'` : ''}>
           <div class='queue-title' style='display:flex;align-items:center'><span class='queue-title-text'>${esc(pos)}${crmOrderTextHtml(task.label || 'Automation Task')}</span>${viewReportControl}</div>
-          <div class='queue-meta'>${esc(task.category || 'Automation')}${crmOrderTextHtml(details)}${crmOrderTextHtml(advanced)}${sourceVisual}${runnerVisual} | ${crmOrderTextHtml(queueTimeText(task))}${crmOrderTextHtml(progressText)}${crmOrderTextHtml(msg)}</div>
+          <div class='queue-meta'>${esc(task.category || 'Automation')}${esc(details)}${esc(advanced)}${sourceVisual}${runnerVisual} | ${esc(queueTimeText(task))}${esc(progressText)}${esc(msg)}</div>
         </div>
         <div class='queue-status ${esc(status)}'>${esc(queueStatusLabel(status))}</div>
         <div class='queue-actions'>${canCancel ? `<button class='danger queue-cancel-btn' title='Cancel task' aria-label='Cancel task' onclick="cancelQueueTask('${esc(task.id || '')}')">X</button>` : finishedControl}</div>
