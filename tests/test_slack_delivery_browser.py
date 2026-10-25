@@ -78,6 +78,20 @@ class SlackDeliveryBrowserTests(unittest.TestCase):
     def test_delivery_discovered_only_after_refresh_is_confirmed_without_resending(self):
         self.assertTrue(self.send("after-refresh"))
 
+    def test_delivery_confirms_when_refresh_restores_older_virtualized_history(self):
+        self.assertTrue(self.send("restore-history", old_message=True))
+
+    def test_order_link_confirms_after_returning_to_latest_messages(self):
+        self.assertTrue(self.send("restore-history-link", "https://example.test/order/1234567"))
+
+    def test_returning_to_latest_still_requires_persisted_and_settled_delivery(self):
+        for mode in ("restore-history-optimistic", "restore-history-pending"):
+            with self.subTest(mode=mode):
+                self.assertFalse(self.send(mode, old_message=True))
+
+    def test_preexisting_recent_match_hidden_in_history_cannot_confirm_a_failed_send(self):
+        self.assertFalse(self.send("restore-history-clear", old_message=True))
+
     def test_failed_pending_unidentified_or_thread_messages_never_confirm(self):
         for mode in ("failed", "pending", "missing-id", "thread"):
             with self.subTest(mode=mode):

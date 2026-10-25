@@ -4,11 +4,12 @@
 <style>
   body { font-family: sans-serif; margin: 20px; }
   main { width: 700px; }
+  #message-scroll { max-height: 240px; overflow-y: auto; }
   [data-qa="message_container"] { padding: 8px; }
   [contenteditable] { min-height: 60px; border: 1px solid; white-space: pre-wrap; }
 </style>
 <main>
-  <div id="messages"></div>
+  <div id="message-scroll"><div id="messages"></div></div>
   <div data-qa="message_input">
     <div id="composer" role="textbox" contenteditable="true" aria-label="Message fixture"></div>
     <button data-qa="texty_send_button" aria-label="Send now">Send</button>
@@ -44,7 +45,24 @@
     }
     document.getElementById(message.thread ? 'thread-messages' : 'messages').append(row);
   }
-  state.messages.forEach(appendMessage);
+  const scroller = document.getElementById('message-scroll');
+  const restoresHistory = mode.startsWith('restore-history');
+  let viewingHistory = restoresHistory && (state.attempts > 0 || mode === 'restore-history-clear');
+  if (viewingHistory) {
+    // Slack can restore an older virtual-list position after refresh. The sent
+    // message is persisted but is not mounted until the user scrolls to latest.
+    for (let index = 0; index < 25; index++) {
+      appendMessage({ id: (Date.now() / 1000 - 86400 + index).toFixed(6), text: 'Earlier conversation ' + index });
+    }
+    scroller.addEventListener('scroll', () => {
+      if (scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 1) return;
+      document.getElementById('messages').replaceChildren();
+      viewingHistory = false;
+      state.messages.forEach(appendMessage);
+    }, { once: true });
+  } else {
+    state.messages.forEach(appendMessage);
+  }
   composer.addEventListener('input', event => {
     if (event.isTrusted) draft = composer.innerText.trim();
   });
@@ -61,16 +79,16 @@
     composer.replaceChildren();
     draft = '';
     if (mode === 'detach') composer.replaceWith(composer.cloneNode());
-    if (mode === 'clear' || mode === 'detach' || !message.text) {
+    if (mode === 'clear' || mode === 'detach' || mode === 'restore-history-clear' || !message.text) {
       persist();
       return;
     }
     if (mode === 'thread') message.thread = true;
-    if (mode === 'pending') message.pending = true;
+    if (mode === 'pending' || mode === 'restore-history-pending') message.pending = true;
     if (mode === 'failed') message.failed = true;
     if (mode === 'missing-id') message.missingId = true;
-    if (mode === 'link') message.link = true;
-    if (mode !== 'optimistic') state.messages.push(message);
+    if (mode === 'link' || mode === 'restore-history-link') message.link = true;
+    if (mode !== 'optimistic' && mode !== 'restore-history-optimistic') state.messages.push(message);
     persist();
     if (mode !== 'after-refresh') appendMessage(message);
   });
@@ -78,6 +96,6 @@
     const message = { id: (Date.now() / 1000 - age).toFixed(6), text };
     state.messages.push(message);
     persist();
-    appendMessage(message);
+    if (!viewingHistory) appendMessage(message);
   };
 </script>

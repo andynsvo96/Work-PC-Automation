@@ -420,6 +420,30 @@ def _read_message_snapshot(driver):
     return [row for row in rows if re.fullmatch(r"\d{10}\.\d{1,6}", str(row.get("id") or ""))]
 
 
+def _reveal_latest_messages(driver):
+    """Move the main conversation to latest so Slack mounts its recent rows."""
+    return bool(driver.execute_script("""
+        const threadSelector = '[data-qa="thread_view"], [data-qa="thread_flexpane"], ' +
+            '.p-thread_view, .p-threads_view';
+        const checked = new Set();
+        for (const body of document.querySelectorAll('[data-qa="message-text"], div.c-message__body')) {
+            if (!body.getClientRects().length || body.closest(threadSelector)) continue;
+            const row = body.closest('[data-qa="message_container"]') ||
+                body.closest('[data-ts], [data-item-key]') || body;
+            for (let node = row.parentElement; node && node !== document.body; node = node.parentElement) {
+                if (checked.has(node)) continue;
+                checked.add(node);
+                if (!node.clientHeight || !/^(auto|scroll|overlay)$/.test(getComputedStyle(node).overflowY)) continue;
+                if (node.scrollHeight - node.clientHeight - node.scrollTop > 1) {
+                    node.scrollTop = node.scrollHeight;
+                    return true;
+                }
+            }
+        }
+        return false;
+    """))
+
+
 def _wait_for_new_message(driver, message, channel_url, before_ids, submitted_after, expected_id=None):
     target = _normalize_message_text(message)
 
@@ -434,6 +458,10 @@ def _wait_for_new_message(driver, message, channel_url, before_ids, submitted_af
                 continue
             if target in {_normalize_message_text(row.get("text")), _normalize_message_text(row.get("linked_text"))}:
                 return message_id
+        # A refresh can restore a position days back in Slack's virtual list.
+        # Those DOM rows cannot prove whether the new message persisted. Scroll
+        # the conversation, then let the next poll inspect the newly mounted rows.
+        _reveal_latest_messages(current_driver)
         return False
 
     try:
@@ -484,8 +512,11 @@ def submit_message(driver, composer, message, channel_url=None):
             raise SlackBeforeSubmitError("Slack composer does not contain exactly the intended message.")
         if not is_expected_slack_channel(driver.current_url, channel_url):
             raise SlackBeforeSubmitError("Slack is not showing the intended conversation.")
-        send_button = WebDriverWait(driver, 5).until(lambda current: _find_send_button(current, composer))
+        # Include recent pre-existing posts in the baseline even when Slack
+        # initially opens at an older saved scroll position.
+        WebDriverWait(driver, 5, poll_frequency=0.5).until(lambda current: not _reveal_latest_messages(current))
         before_ids = {row["id"] for row in _read_message_snapshot(driver)}
+        send_button = WebDriverWait(driver, 5).until(lambda current: _find_send_button(current, composer))
     except Exception as err:
         raise SlackBeforeSubmitError(f"Slack send preflight failed: {err}") from err
     submitted_after = time.time() - 5
