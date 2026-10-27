@@ -359,6 +359,74 @@ class ShippingBypassColorConfirmationTests(unittest.TestCase):
 
 
 class ShippingBypassProductSearchTests(unittest.TestCase):
+    def test_reuses_verified_inventory_without_submitting_another_search(self):
+        driver = mock.Mock()
+        with (
+            mock.patch.object(crm_shipping_bypasser, "_sanmar_inventory_controls_visible", return_value=True),
+            mock.patch.object(crm_shipping_bypasser, "_sanmar_active_style_matches", return_value={
+                "success": True, "source": "style_header", "matched": "A903",
+            }) as active_style,
+        ):
+            self.assertTrue(crm_shipping_bypasser._search_sanmar_product(driver, "A903"))
+
+        active_style.assert_called_once_with(driver, ["A903"])
+        driver.execute_script.assert_not_called()
+
+    def test_other_product_or_legacy_text_match_still_requires_search(self):
+        for state in (
+            {"success": False, "source": "style_header"},
+            {"success": True, "matched": "A903"},
+        ):
+            with self.subTest(state=state):
+                driver = mock.Mock()
+                driver.current_url = "https://www.sanmar.com/search?text=A903"
+                driver.execute_script.side_effect = [
+                    {"success": True, "method": "requestSubmit"},
+                    "A903 Pricing and Warehouses",
+                ]
+                with (
+                    mock.patch.object(crm_shipping_bypasser, "_sanmar_inventory_controls_visible", return_value=True),
+                    mock.patch.object(crm_shipping_bypasser, "_sanmar_active_style_matches", return_value=state),
+                    mock.patch.object(crm_shipping_bypasser, "_ensure_sanmar_inventory_view", return_value=True),
+                    mock.patch.object(crm_shipping_bypasser, "_assert_sanmar_active_style", return_value=True),
+                ):
+                    self.assertTrue(crm_shipping_bypasser._search_sanmar_product(driver, "A903"))
+                self.assertEqual(driver.execute_script.call_count, 2)
+
+    def test_slow_search_redirect_can_finish_after_twenty_seconds(self):
+        driver = mock.Mock()
+        driver.current_url = "https://www.sanmar.com/search?text=A903"
+        driver.execute_script.side_effect = [
+            {"success": True, "method": "requestSubmit"},
+            'Results for "A903"',
+            "A903 Pricing and Warehouses",
+        ]
+        with (
+            mock.patch.object(crm_shipping_bypasser, "_sanmar_inventory_controls_visible", return_value=False),
+            mock.patch.object(crm_shipping_bypasser, "_click_sanmar_product_result", return_value=False),
+            mock.patch.object(crm_shipping_bypasser, "_ensure_sanmar_inventory_view", return_value=True),
+            mock.patch.object(crm_shipping_bypasser, "_assert_sanmar_active_style", return_value=True),
+            mock.patch.object(crm_shipping_bypasser.time, "time", side_effect=[0, 0, 0, 0, 25]),
+            mock.patch.object(crm_shipping_bypasser.time, "sleep"),
+        ):
+            self.assertTrue(crm_shipping_bypasser._search_sanmar_product(driver, "A903"))
+
+    def test_absent_product_still_stops_after_bounded_search(self):
+        driver = mock.Mock()
+        driver.current_url = "https://www.sanmar.com/search?text=207GD"
+        driver.execute_script.side_effect = [
+            {"success": True, "method": "requestSubmit"},
+            'No results found for "207GD"',
+        ]
+        with (
+            mock.patch.object(crm_shipping_bypasser, "_sanmar_inventory_controls_visible", return_value=False),
+            mock.patch.object(crm_shipping_bypasser, "_click_sanmar_product_result", return_value=False),
+            mock.patch.object(crm_shipping_bypasser.time, "time", side_effect=[0, 0, 0, 0, 46]),
+            mock.patch.object(crm_shipping_bypasser.time, "sleep"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "SanMar product search did not open.*207GD"):
+                crm_shipping_bypasser._search_sanmar_product(driver, "207GD")
+
     def test_product_search_submits_new_drawer_form_without_selenium_keystrokes(self):
         driver = mock.Mock()
         driver.current_url = "https://www.sanmar.com/p/example?text=PC54#drawer"
@@ -368,6 +436,7 @@ class ShippingBypassProductSearchTests(unittest.TestCase):
         ]
 
         with (
+            mock.patch.object(crm_shipping_bypasser, "_sanmar_inventory_controls_visible", return_value=False),
             mock.patch.object(crm_shipping_bypasser, "_ensure_sanmar_inventory_view", return_value=True),
             mock.patch.object(crm_shipping_bypasser, "_assert_sanmar_active_style", return_value=True),
         ):

@@ -154,6 +154,8 @@ reload is needed.
 
 ## Shipping Bypasser Product/Color Mappings
 
+Shipping Bypasser reuses an open SanMar inventory view when its product style header exactly matches the requested style. It preserves the selected color and still verifies color, size quantities, and cart contents before checkout. Searches that are needed allow up to 45 seconds for SanMar's search-to-product redirects. A slow repeat lookup previously could report an available product such as A903 as not found. The next worker loads this fix; no app restart, extension reload, or page refresh is needed. Products absent from SanMar search still require review.
+
 Shipping Bypasser resolves each design's PO from the selected tab before searching the rest of the order page. A tab without an `H-` prefix keeps its own PO when another tab has an `H-` PO, so receipt checks compare the correct design's products and quantities. Numeric POs such as `5450885` and numeric POs with hyphens such as `5450885-3` are supported, and leading zeros are preserved. This fix loads with the next worker run; no app restart, extension reload, or page refresh is needed. Existing purchase receipts remain intact.
 
 Shipping Bypasser supports XXS in SanMar inventory tables, quantity entry, and cart verification, including mobile and multiple-size cart rows. XXS remains separate from XS; warehouse allocation and the existing stock buffer still apply. This fix loads with the next worker run; no app restart, extension reload, or page refresh is needed.

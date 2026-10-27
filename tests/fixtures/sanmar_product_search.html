@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Local SanMar product search fixture</title>
+<style>
+  body { font: 16px Arial; padding: 24px; }
+  table { border-collapse: collapse; }
+  th, td { min-width: 100px; padding: 8px; }
+</style>
+<body>
+  <h5 data-testid="pdp-product-style-number-text">A903</h5>
+  <div id="offcanvas-drawer" class="show">
+    <form name="search_form">
+      <input id="search-widget-input" placeholder="Enter Style Number" name="text">
+      <button type="submit" data-testid="search-app-submit-button">Search</button>
+    </form>
+    <div id="product"></div>
+    <p>Companion product: <span>A903</span></p>
+  </div>
+</body>
+<script>
+  const params = new URLSearchParams(location.search);
+  window.searchSubmissions = 0;
+  window.unrelatedClicks = 0;
+  window.productResultClicks = 0;
+  function renderProduct(style, color) {
+    document.querySelector('#product').innerHTML = `
+      <h6 data-testid="pdp-drawer-product-style-number-text">${style}</h6>
+      <div data-testid="pdp-header-color-selected"><p>${color}</p></div>
+      <h3>Pricing and Warehouses</h3>
+      <form id="inventory-grid-form">
+        <table class="inventory-grid">
+          <thead><tr data-testid="inventory-size-row"><th>Size</th>
+            <th data-testid="inventory-size-value-cell">OSFA</th></tr></thead>
+          <tbody><tr data-testid="inventory-warehouse-row"><td>Dallas, TX</td><td>
+            <input data-testid="inventory-warehouse-input-cell" data-available="232" value="0">
+          </td></tr></tbody>
+        </table>
+      </form>
+      <button type="button">Add to shopping box</button>`;
+  }
+  renderProduct(params.get('style') || 'A903', 'Duck Brown');
+  document.querySelector('form[name="search_form"]').addEventListener('submit', event => {
+    event.preventDefault();
+    window.searchSubmissions += 1;
+    const style = document.querySelector('#search-widget-input').value;
+    document.querySelector('#product').innerHTML = '<p>Loading product...</p>';
+    setTimeout(() => renderProduct(style, 'Charcoal'), 50);
+  });
+  if (params.has('results')) {
+    document.querySelector('#offcanvas-drawer').style.display = 'none';
+    const card = document.createElement('div');
+    card.innerHTML = '<button>Quick action</button><span>A903</span><a href="#/p/A903">View product</a>';
+    card.querySelector('button').addEventListener('click', () => window.unrelatedClicks += 1);
+    card.querySelector('a').addEventListener('click', event => {
+      event.preventDefault();
+      window.productResultClicks += 1;
+    });
+    document.body.append(card);
+  }
+</script>
+</html>

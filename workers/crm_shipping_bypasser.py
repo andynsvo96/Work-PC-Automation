@@ -114,6 +114,7 @@ WAREHOUSE_ALIASES = {
 }
 SANMAR_WAREHOUSE_STOCK_BUFFER = 10
 SANMAR_UPS_OPTION_WAIT_SECONDS = 30
+SANMAR_PRODUCT_SEARCH_WAIT_SECONDS = 45
 SIZE_TOKENS = {
     "XXS", "XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL", "6XL",
     "S/M", "L/XL", "2/3X", "4/5X",
@@ -2253,6 +2254,18 @@ function hasStyleToken(text, wanted) {
 const visibleDrawer = Array.from(document.querySelectorAll('#offcanvas-drawer.show'))
   .find(isVisible);
 const root = visibleDrawer || document;
+const styleHeaders = Array.from(root.querySelectorAll(
+  '[data-testid="pdp-drawer-product-style-number-text"],[data-testid="pdp-product-style-number-text"]'
+)).filter(isVisible).map((node) => normalize(node.innerText || node.textContent)).filter(Boolean);
+if (styleHeaders.length) {
+  const success = styleHeaders.every((text) => expected.has(key(text)));
+  return {
+    success,
+    matched: success ? key(styleHeaders[0]) : '',
+    candidates: styleHeaders,
+    source: 'style_header',
+  };
+}
 const selector = '[data-testid="pdp-drawer-product-style-number-text"],h1,h2,h3,[class*="product"],[class*="style"],[data-testid*="product"],a,span,p,div';
 const candidates = [];
 for (const node of Array.from(root.querySelectorAll(selector)).filter(isVisible)) {
@@ -2311,8 +2324,12 @@ for (const node of Array.from(document.querySelectorAll('a,button,span,div,h1,h2
   if (!text || !expected.has(key(text))) continue;
   let clickable = node.closest('a,button,[role="button"]');
   if (!clickable) {
-    for (let current = node; current && current !== document.body; current = current.parentElement) {
-      const links = Array.from(current.querySelectorAll('a,button,[role="button"]')).filter(isVisible);
+    for (let current = node; current && current !== document.body && current.id !== 'offcanvas-drawer'; current = current.parentElement) {
+      // A style label can sit beside search/cart controls in an inventory view.
+      // Only a product link is a safe descendant fallback for a result card.
+      const links = Array.from(current.querySelectorAll('a[href]')).filter((link) => (
+        isVisible(link) && /\/p\//i.test(String(link.getAttribute('href') || ''))
+      ));
       if (links.length) {
         clickable = links[0];
         break;
@@ -2371,6 +2388,14 @@ def _ensure_sanmar_inventory_view(driver, force_click=False):
 
 
 def _search_sanmar_product(driver, search_id, click_inventory_button=False, expected_style_keys=None):
+    expected_keys = [_upper_key(key) for key in (expected_style_keys or [search_id]) if _upper_key(key)]
+    # Inventory scanning and cart allocation often visit the same product twice.
+    # Reuse only an explicitly identified inventory view; submitting its drawer
+    # search again needlessly waits for SanMar's search and product redirects.
+    if expected_keys and _sanmar_inventory_controls_visible(driver):
+        active_style = _sanmar_active_style_matches(driver, expected_keys)
+        if active_style.get("success") and active_style.get("source") == "style_header":
+            return True
     search_script = r"""
 const value = String(arguments[0] || '').trim();
 function isVisible(node) {
@@ -2442,8 +2467,7 @@ return { success: true, method: 'enter', placeholder: input.getAttribute('placeh
     if not isinstance(search_result, dict) or not search_result.get("success"):
         detail = f": {last_search_error}" if last_search_error is not None else ""
         raise RuntimeError(f"SanMar search input was not found or could not be submitted for {search_id}{detail}.")
-    deadline = time.time() + 20
-    expected_keys = [_upper_key(key) for key in (expected_style_keys or [search_id]) if _upper_key(key)]
+    deadline = time.time() + SANMAR_PRODUCT_SEARCH_WAIT_SECONDS
     last_product_page_error = None
     while time.time() < deadline:
         try:

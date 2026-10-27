@@ -54,6 +54,32 @@ class NjLocalBrowserTests(unittest.TestCase):
         product = {"index": 1, "product_id": "SXU003", "color": "Navy", "quantities": {"XXS": 1, "XS": 2, "M": 1, "2XL": 3}}
         return {"product": product, "search_id": "SXU003", "quantities": worker._sanmar_quantities_for_product(product)}
 
+    def test_current_inventory_reuses_exact_style_and_preserves_a903_color(self):
+        self.driver.get((ROOT / "tests" / "fixtures" / "sanmar_product_search.html").as_uri())
+        self.assertTrue(worker._search_sanmar_product(self.driver, "A903"))
+        self.assertEqual(self.driver.execute_script("return window.searchSubmissions;"), 0)
+        self.assertEqual(worker._sanmar_selected_color_label(self.driver), "Duck Brown")
+        self.assertTrue(worker._cart_color_matches("Duck Brown", "DuckBrown"))
+        self.assertEqual(worker._sanmar_quantities_for_product({"quantities": {"ONE SIZE": 1}}), {"OSFA": 1})
+        self.assertEqual(worker._sanmar_inventory(self.driver), [{"warehouse": "Dallas, TX", "stock": {"OSFA": 232}}])
+
+    def test_other_style_cannot_reuse_companion_or_underlying_product_header(self):
+        fixture = (ROOT / "tests" / "fixtures" / "sanmar_product_search.html").as_uri()
+        self.driver.get(fixture + "?style=PC54")
+        state = worker._sanmar_active_style_matches(self.driver, ["A903"])
+        self.assertFalse(state["success"])
+        self.assertEqual(state["candidates"], ["PC54"])
+        self.assertTrue(worker._search_sanmar_product(self.driver, "A903"))
+        self.assertEqual(self.driver.execute_script("return window.searchSubmissions;"), 1)
+        self.assertTrue(worker._sanmar_active_style_matches(self.driver, ["A903"])["success"])
+
+    def test_result_card_opens_product_link_instead_of_unrelated_button(self):
+        fixture = (ROOT / "tests" / "fixtures" / "sanmar_product_search.html").as_uri()
+        self.driver.get(fixture + "?results=1")
+        self.assertTrue(worker._click_sanmar_product_result(self.driver, ["A903"]))
+        self.assertEqual(self.driver.execute_script("return window.productResultClicks;"), 1)
+        self.assertEqual(self.driver.execute_script("return window.unrelatedClicks;"), 0)
+
     def test_xxs_inventory_and_quantity_entry_keep_adjacent_sizes_separate(self):
         fixture = (ROOT / "tests" / "fixtures" / "sanmar_xxs_sizes.html").as_uri()
         for layout in ("drawer", "legacy"):
