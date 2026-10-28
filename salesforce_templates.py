@@ -9,10 +9,20 @@ import re
 import tempfile
 import threading
 
+from runtime_paths import STATE_DIR
+
 
 MAX_BODY_BYTES = 1_000_000
 MAX_LIBRARY_BYTES = 32 * 1024 * 1024
 EDITABLE_FIELDS = ("name", "subject", "body_html")
+
+
+def default_template_store():
+    """Use the same machine-local library for Settings and every email worker."""
+    return SalesforceTemplateStore(
+        Path(STATE_DIR) / "salesforce_templates.json",
+        Path(STATE_DIR) / "salesforce_email_templates_capture",
+    )
 
 
 class TemplateLibraryError(ValueError):
@@ -141,7 +151,7 @@ class SalesforceTemplateStore:
         templates = document.get("templates")
         if not isinstance(templates, list) or len(templates) > 500:
             raise TemplateLibraryError("The local template library must contain a list of up to 500 templates.")
-        ids, names = set(), set()
+        ids, names = set(), {}
         for template in templates:
             if not isinstance(template, dict):
                 raise TemplateLibraryError("A local template record is invalid.")
@@ -150,10 +160,16 @@ class SalesforceTemplateStore:
                 raise TemplateLibraryError("A local template ID is invalid.")
             fields = _validate_fields(template)
             name_key = fields["name"].strip().casefold()
-            if template_id in ids or name_key in names:
+            aliases = template.get("previous_names", [])
+            if (not isinstance(aliases, list) or len(aliases) > 500
+                    or any(not isinstance(value, str) or not value.strip() or len(value) > 200
+                           or any(ord(char) < 32 for char in value) for value in aliases)):
+                raise TemplateLibraryError("A local template's previous names are invalid.")
+            keys = {name_key, *(value.strip().casefold() for value in aliases)}
+            if template_id in ids or any(key in names for key in keys):
                 raise TemplateLibraryError("Template IDs and names must be unique.")
             ids.add(template_id)
-            names.add(name_key)
+            names.update({key: template_id for key in keys})
         return document
 
     def _load(self):
@@ -173,6 +189,25 @@ class SalesforceTemplateStore:
                 document["templates"], key=lambda item: item["name"].casefold()
             )]
 
+    def get_template(self, reference):
+        """Resolve an exact ID/name; retained names keep workers bound after a rename."""
+        if not isinstance(reference, str) or not reference.strip():
+            raise TemplateNotFound("A local Salesforce template name is required.")
+        key = reference.strip().casefold()
+        with self._lock:
+            document = self._load()
+            matches = [template for template in document["templates"]
+                       if reference == template["id"] or key in {
+                           template["name"].strip().casefold(),
+                           *(value.strip().casefold() for value in template.get("previous_names", [])),
+                       }]
+            if len(matches) != 1:
+                raise TemplateNotFound(
+                    f"Local Salesforce template {reference!r} was not found. "
+                    "Review Settings > Salesforce Template on this computer before retrying."
+                )
+            return self._public(matches[0])
+
     def save_template(self, template_id, values):
         fields = _validate_fields(values)
         revision = values.get("revision")
@@ -185,11 +220,17 @@ class SalesforceTemplateStore:
                 raise TemplateNotFound("Template was not found. Reload the template list.")
             if revision != _revision(template):
                 raise TemplateConflict("This template changed since you opened it. Reload templates to review the latest version.")
-            if any(item["id"] != template_id and item["name"].strip().casefold() == fields["name"].strip().casefold()
+            if any(item["id"] != template_id and fields["name"].strip().casefold() in {
+                       item["name"].strip().casefold(), *(value.strip().casefold() for value in item.get("previous_names", []))}
                    for item in document["templates"]):
-                raise TemplateLibraryError("Another template already uses that name.")
+                raise TemplateLibraryError("Another template already uses that name or used it before a rename.")
             if any(template[key] != fields[key] for key in EDITABLE_FIELDS):
+                if template["name"].strip().casefold() != fields["name"].strip().casefold():
+                    template["previous_names"] = list(dict.fromkeys([
+                        *template.get("previous_names", []), template["name"],
+                    ]))
                 template.update(fields)
                 template["updated_at"] = datetime.now(timezone.utc).isoformat()
+                self._validate_document(document)
                 self._write(document, backup=True)
             return self._public(template)

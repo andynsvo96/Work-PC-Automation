@@ -62,16 +62,62 @@ The active file uses this structure:
       ]
     }
 
-IDs remain stable when names change. Unknown per-template metadata is retained.
+IDs remain stable when names change. Previous names are retained in
+`previous_names`, so a worker configured with the original template name keeps
+using the same record after a rename. A name reserved by another template's
+history cannot be reused. Unknown per-template metadata is retained.
 Files are written atomically, and a prior version is retained before a changed
 template is saved. The files stay machine-local and ignored by Git. To use the
 same library on another computer, copy the active JSON file there while it is
 not being edited. Windows and macOS use the same relative location and format.
 
 The editor reads and writes through the dashboard's existing PIN, CSRF, and
-version-lock protections. It does not edit Salesforce or send email. Existing
-workers continue to select templates in Salesforce; connecting the local library
-to sending workflows is a separate migration.
+version-lock protections. Saving here updates the local library; it does not edit
+the original Salesforce templates or send email.
+
+## Automated emails
+
+All 16 automation templates now load from this same JSON library: full and
+partial Copyright Cancel, Content Violation, Existing T-shirt, Outside Limit,
+Unresponsive, Copyright Reachout and Removal, both Complicated Embroidery routes,
+Oversize Embroidery, Additional Requests, Comp Sleeves, and Stock Extension,
+Color, and Size. Sleeve, side, reverse-print, and extra embroidery requests share
+the Additional Requests sender. Sheets Scanner, queue actions, direct single-order
+actions, and email recovery use the same sender paths.
+
+Once the customer account and Orders sender are verified, the worker fills the
+subject and switches the composer editor to HTML source mode. It inserts the
+saved HTML in one operation, returns to formatted mode, and verifies the text,
+links, images, bold text, and lists before applying the workflow's placeholders.
+It does not open or search the Salesforce template picker. The send composer
+does not show the template editor's Source toolbar button; its CKEditor source
+command provides the same HTML mode. No operating-system clipboard is needed.
+
+Placeholder replacements retain their surrounding bold, font, and size markup.
+The Additional Requests invoice placeholder becomes a clickable link when it is
+body text, and can also be used in an anchor's `href` with a label such as
+"Pay invoice". Stock Color/Size grammar changes preserve the product name's
+formatting.
+
+Workers resolve an exact configured template name (case-insensitive), a retained
+previous name, or an exact stable ID. They read the latest saved content for each
+draft. A missing, corrupt, ambiguous, or unsupported local template stops the
+email step for review; there is no fallback to a Salesforce template or an older
+plain-text library. Keep each workflow's required placeholders and identifying
+wording when editing its body/title. Images must use public HTTPS URLs. Script,
+form, embedded-frame, event-handler, and resource-loading CSS content is rejected
+before it enters the browser.
+
+Existing CRM save verification, recipient/From checks, Activity confirmation,
+bounded resend checks, workflow receipts, and queue locks remain in effect.
+An edited template does not reset a send receipt or automatically resend an
+already-confirmed email. A retry whose rebuilt subject/body differs from the
+first draft stops before another send. Review an uncertain send in Salesforce
+Activity using its original queue entry and receipts.
+
+Copy the active JSON library to each computer that runs email workers. Missing
+libraries are initialized only from captures already present on that computer;
+there is no implicit cross-machine lookup or execution.
 
 Restart the local app and refresh the dashboard after installing this change.
 No Chrome extension reload is required.
@@ -81,6 +127,14 @@ No Chrome extension reload is required.
 Focused storage/API checks:
 
     python -m unittest discover -s tests -p test_salesforce_templates.py
+
+Worker loading, every template route, saved HTML state, and blocked active content:
+
+    python -m unittest discover -s tests -p test_salesforce_template_composer.py
+
+Send confirmation and recovery guards:
+
+    python -m unittest discover -s tests -p test_salesforce_email_workflows.py
 
 The browser fixture starts its own temporary Flask server and library, uses
 the actual editor markup and assets, and never opens Salesforce or customer

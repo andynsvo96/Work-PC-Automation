@@ -454,7 +454,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertEqual(fill.call_count, 2)
         self.assertEqual(click.call_count, 2)
 
-    def test_copyright_cancel_uses_verified_local_template_when_picker_menu_is_hidden(self):
+    def test_copyright_cancel_stops_when_local_json_cannot_be_loaded(self):
         driver = mock.Mock()
         state = {
             "subject": "NINJA Print House Order #5021194 - A Refund Has Been Issued to Your Account",
@@ -481,15 +481,15 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             "_read_salesforce_email_state",
             return_value=state,
         ):
-            result = crm_copyright_cancel._fill_salesforce_email_from_salesforce_template(
-                driver,
-                order_id="5021194",
-                process=crm_copyright_cancel.COPYRIGHT_CANCEL_PROCESS,
-                reason="Philadelphia Eagles",
-            )
+            with self.assertRaises(crm_copyright_cancel.CopyrightCancelError):
+                crm_copyright_cancel._fill_salesforce_email_from_salesforce_template(
+                    driver,
+                    order_id="5021194",
+                    process=crm_copyright_cancel.COPYRIGHT_CANCEL_PROCESS,
+                    reason="Philadelphia Eagles",
+                )
 
-        self.assertEqual(result["source"], "local_template_fallback")
-        fill_local.assert_called_once_with(driver, state["subject"], state["body"])
+        fill_local.assert_not_called()
 
     def test_salesforce_contact_label_is_read_from_crm(self):
         contact_driver = mock.Mock()

@@ -1,0 +1,33 @@
+<!doctype html><meta charset="utf-8">
+<!-- A local contract fixture for CKEditor source mode, not vendor code. -->
+<div id="container" style="width:1020px;height:410px">
+  <textarea class="cke_source" style="width:1000px;height:380px" hidden></textarea>
+  <iframe title="Email Body" class="cke_wysiwyg_frame" style="width:1000px;height:380px" srcdoc="<html><body contenteditable='true' class='cke_editable'><p><br></p></body></html>"></iframe>
+</div>
+<script>
+  const frame=document.querySelector('iframe'),source=document.querySelector('textarea');
+  frame.onload=()=>{
+    let head='';
+    const editor={name:'editor',status:'ready',mode:'wysiwyg',readOnly:false,
+      container:{$:document.getElementById('container')},commands:{source:{}},document:{$:frame.contentDocument},
+      editable(){return {$:this.document.$.body};},
+      getData(){return '<html><head>'+head+'</head><body>'+this.document.$.body.innerHTML+'</body></html>';},
+      setData(html,callback){
+        const parsed=new DOMParser().parseFromString(html,'text/html');
+        head=parsed.head.innerHTML;this.document.$.body.innerHTML=parsed.body.innerHTML;
+        if(callback)callback();
+      },
+      execCommand(command){
+        if(command!=='source')throw Error('Unexpected editor command');
+        if(this.mode==='wysiwyg'){
+          source.value=this.getData();source.hidden=false;frame.hidden=true;this.mode='source';
+        }else{
+          this.setData(source.value);source.hidden=true;frame.hidden=false;this.mode='wysiwyg';
+        }
+      },
+      updateElement(){parent.document.getElementById('modelHtml').value=this.getData();},
+      fire(name){if(name==='change'||name==='blur')this.updateElement();},focus(){this.document.$.body.focus();}
+    };
+    window.CKEDITOR={instances:{editor}};
+  };
+</script>

@@ -268,9 +268,10 @@ class StockIssueExtensionWorkflowTests(unittest.TestCase):
         self.assertEqual(driver.execute_script.call_args.args[1], "[auto] stock - extension")
         click.assert_called_once_with(driver, exact_option)
 
-    def test_stock_template_insertion_opens_full_picker_and_searches_full_name(self):
+    def test_stock_template_insertion_uses_shared_local_json_loader(self):
         driver = mock.Mock()
         with (
+            mock.patch.object(stock_extension.shared, "_insert_cancel_template", return_value={"source": "local_json"}) as load,
             mock.patch.object(stock_extension.shared, "_focus_salesforce_body_editor") as focus,
             mock.patch.object(stock_extension.shared, "_click_template_button") as template_button,
             mock.patch.object(stock_extension.shared, "_open_full_template_picker_from_menu", return_value=True) as open_picker,
@@ -289,19 +290,10 @@ class StockIssueExtensionWorkflowTests(unittest.TestCase):
             inserted = stock_extension._insert_exact_stock_extension_template(driver)
 
         self.assertTrue(inserted)
-        focus.assert_called_once_with(driver)
-        template_button.assert_called_once_with(driver)
-        open_picker.assert_called_once_with(driver)
-        private_folder.assert_called_once_with(driver)
-        search.assert_called_once_with(driver, "[AUTO] STOCK - Extension")
-        exact_click.assert_called_once_with(driver)
-        confirm.assert_called_once_with(driver)
-        read_state.assert_called_once_with(driver)
-        wait_markers.assert_called_once_with(
-            driver,
-            stock_extension.STOCK_EXTENSION_PROCESS,
-            timeout=20,
-        )
+        load.assert_called_once_with(driver, stock_extension.STOCK_EXTENSION_PROCESS)
+        template_button.assert_not_called()
+        open_picker.assert_not_called()
+        search.assert_not_called()
 
     def test_stock_template_insertion_reports_the_unverified_content(self):
         driver = mock.Mock()
@@ -310,6 +302,7 @@ class StockIssueExtensionWorkflowTests(unittest.TestCase):
             "body": "Wrong Salesforce editor content",
         }
         with (
+            mock.patch.object(stock_extension.shared, "_insert_cancel_template", side_effect=stock_extension.shared.CopyrightCancelError("Local JSON content could not be verified: body was missing")),
             mock.patch.object(stock_extension.shared, "_focus_salesforce_body_editor"),
             mock.patch.object(stock_extension.shared, "_click_template_button"),
             mock.patch.object(stock_extension.shared, "_open_full_template_picker_from_menu", return_value=True),

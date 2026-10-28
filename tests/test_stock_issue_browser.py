@@ -246,6 +246,9 @@ class StockIssueBrowserTests(unittest.TestCase):
         self.assertEqual(result["grammar_adjustments"], 1)
         self.assertEqual(result["[STOCK]"], 1)
         self.assertEqual(self.driver.execute_script("return window.editorUpdates;"), 1)
+        self.assertEqual(self.driver.execute_script(
+            "return document.querySelector('iframe').contentDocument.querySelector('[contenteditable] b').textContent;"
+        ), stock_text)
         self.assertTrue(self.driver.execute_script("return !!document.querySelector('iframe').contentDocument.querySelector('#keep-link b');"))
 
 

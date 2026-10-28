@@ -146,38 +146,11 @@ def _click_exact_stock_extension_template(driver):
 
 
 def _insert_exact_stock_extension_template(driver):
-    """Search the full template name and require the exact Stock Extension result."""
-    shared._focus_salesforce_body_editor(driver)
-    shared._click_template_button(driver)
-    time.sleep(0.5)
-    if not shared._open_full_template_picker_from_menu(driver):
-        raise StockIssueExtensionError("Salesforce full email-template picker could not be opened.")
-    shared._ensure_private_email_templates_folder(driver)
-    deadline = time.monotonic() + 35
-    while time.monotonic() < deadline:
-        shared._search_full_template_modal(driver, SALESFORCE_TEMPLATE)
-        time.sleep(1)
-        if _click_exact_stock_extension_template(driver):
-            shared._confirm_salesforce_template_insert(driver)
-            if shared._wait_for_salesforce_template_markers(driver, STOCK_EXTENSION_PROCESS, timeout=20):
-                state = shared._read_salesforce_email_state(driver) or {}
-                signature_error = _stock_extension_template_signature_error(state)
-                if not signature_error:
-                    return True
-                raise StockIssueExtensionError(
-                    f"Salesforce inserted {SALESFORCE_TEMPLATE}, but its content was not the new approved version: "
-                    f"{signature_error}."
-                )
-            state = shared._read_salesforce_email_state(driver) or {}
-            signature_error = _stock_extension_template_signature_error(state) or "approved subject/body markers were not detected before timeout"
-            raise StockIssueExtensionError(
-                f"Salesforce inserted {SALESFORCE_TEMPLATE}, but its content could not be verified: {signature_error}."
-            )
-        shared._scroll_full_template_modal(driver)
-        time.sleep(0.5)
-    raise StockIssueExtensionError(
-        f"Salesforce template {SALESFORCE_TEMPLATE} was not found after searching its full name."
-    )
+    """Use the exact local template reference; never open Salesforce's picker."""
+    try:
+        return shared._insert_cancel_template(driver, STOCK_EXTENSION_PROCESS)
+    except shared.CopyrightCancelError as exc:
+        raise StockIssueExtensionError(str(exc)) from exc
 
 
 def _clean_text(value, *, field, maximum, required=True):
@@ -814,7 +787,7 @@ def _prepare_and_send_salesforce_email(
     shared._wait_for_email_composer(driver)
     selected_from = shared._set_salesforce_from_orders(driver)
     time.sleep(0.5)
-    _insert_exact_stock_extension_template(driver)
+    template_fill = _insert_exact_stock_extension_template(driver)
 
     deadline = time.monotonic() + 20
     state = {}
@@ -828,7 +801,7 @@ def _prepare_and_send_salesforce_email(
     else:
         raise StockIssueExtensionError(
             f"Salesforce template {SALESFORCE_TEMPLATE} loaded without the required {STOCK_PLACEHOLDER} and "
-            f"{DAYS_PLACEHOLDER} placeholders. Update the live Salesforce template before retrying."
+            f"{DAYS_PLACEHOLDER} placeholders. Update Settings > Salesforce Template before retrying."
         )
     if not shared._subject_has_order_placeholder(subject) and str(order_id) not in subject:
         raise StockIssueExtensionError(f"Salesforce template subject does not contain {ORDER_NUMBER_PLACEHOLDER}.")
@@ -888,6 +861,8 @@ def _prepare_and_send_salesforce_email(
         return {
             "sent": False,
             "dry_run": True,
+            "template_source": "local_json",
+            "template_revision": template_fill.get("revision") if isinstance(template_fill, dict) else None,
             "salesforce_handle": sf_handle,
             "from": selected_from,
             "recipients": recipients,
@@ -910,6 +885,8 @@ def _prepare_and_send_salesforce_email(
         **confirmation,
         "sent": True,
         "dry_run": False,
+        "template_source": "local_json",
+        "template_revision": template_fill.get("revision") if isinstance(template_fill, dict) else None,
         "salesforce_handle": sf_handle,
         "from": selected_from,
         "recipients": recipients,

@@ -4492,44 +4492,13 @@ def _open_full_template_picker_from_menu(driver):
 
 
 def _insert_cancel_template(driver, process=COPYRIGHT_CANCEL_PROCESS):
-    _focus_salesforce_body_editor(driver)
-    _click_template_button(driver)
-    time.sleep(0.5)
-    if _click_template_by_name(driver, process):
-        _confirm_salesforce_template_insert(driver)
-        if _wait_for_salesforce_template_markers(driver, process):
-            return True
-        _click_template_button(driver)
-        time.sleep(0.5)
-    if not _open_full_template_picker_from_menu(driver):
-        raise CopyrightCancelError("Insert a template was not found in Salesforce template menu.")
-    time.sleep(1)
-    _ensure_private_email_templates_folder(driver)
-    deadline = time.monotonic() + 35
-    search_queries = _template_search_queries(process)
-    search_template = _template_modal_searcher(process)
-    scroll_templates = _template_modal_scroller(process)
-    while time.monotonic() < deadline:
-        for query in search_queries:
-            search_template(driver, query)
-            time.sleep(1)
-            if _click_full_template_modal_match(driver, process):
-                _confirm_salesforce_template_insert(driver)
-                if _wait_for_salesforce_template_markers(driver, process):
-                    return True
-                _click_template_button(driver)
-                time.sleep(0.5)
-                if not _open_full_template_picker_from_menu(driver):
-                    raise CopyrightCancelError("Insert a template was not found in Salesforce template menu.")
-                time.sleep(1)
-                _ensure_private_email_templates_folder(driver)
-            if not scroll_templates(driver):
-                time.sleep(0.5)
-            time.sleep(0.4)
-    raise CopyrightCancelError(
-        f"Salesforce could not select {process.display_name.lower()} template "
-        f"'{process.salesforce_template}' after searching for it."
-    )
+    """Retained shared entry point; all senders now use the Settings JSON library."""
+    from workers.salesforce_template_composer import fill_template, TemplateComposerError
+    process = _cancel_process_for_key(process) if isinstance(process, str) else process
+    try:
+        return fill_template(driver, process.salesforce_template)
+    except TemplateComposerError as exc:
+        raise CopyrightCancelError(str(exc)) from exc
 
 
 def _insert_copyright_template(driver):
@@ -5674,49 +5643,7 @@ def _fill_salesforce_email_from_salesforce_template(
     reason="",
     designs=None,
 ):
-    try:
-        _insert_cancel_template(driver, process)
-    except CopyrightCancelError as exc:
-        # Salesforce occasionally hides the template menu behind a UI surface
-        # that Selenium cannot inspect. Copyright Cancel has a checked-in local
-        # equivalent and an existing rich-text filler; use it only for this
-        # exact picker failure and keep the same downstream content checks.
-        if process.key != COPYRIGHT_CANCEL_PROCESS.key or "template menu" not in str(exc).lower():
-            raise
-        rendered = _render_email_template(
-            COPYRIGHT_CANCEL_PROCESS.key,
-            order_number=str(order_id),
-            reason=str(reason or ""),
-        )
-        if designs is not None:
-            from workers.copyright_cancel_designs import design_text
-            replacement = design_text(designs)
-            if not re.search(r"\[\s*DESIGN\s*\]", rendered["body"], re.I):
-                raise CopyrightCancelError("Local Copyright Cancel fallback cannot verify the selected Design Names.")
-            rendered["body"] = re.sub(r"\[\s*DESIGN\s*\]", lambda _: replacement, rendered["body"], flags=re.I)
-        _fill_salesforce_email_from_local_template(
-            driver,
-            rendered["subject"],
-            rendered["body"],
-        )
-        state = _read_salesforce_email_state(driver)
-        subject_text = _clean_text(state.get("subject", ""))
-        body_text = _clean_text(state.get("body", ""))
-        missing = _missing_body_markers(body_text.lower(), process)
-        if str(order_id) not in subject_text:
-            raise CopyrightCancelError(
-                f"Local Salesforce template subject does not contain order {order_id}. "
-                f"Current subject: {subject_text or 'blank'}"
-            )
-        if missing:
-            raise CopyrightCancelError(f"Local Salesforce template body is missing expected text: {', '.join(missing)}")
-        return {
-            "source": "local_template_fallback",
-            "template": process.key,
-            "process": process.key,
-            "state": state,
-            "body_placeholder_replacement": None,
-        }
+    loaded = _insert_cancel_template(driver, process)
     deadline = time.monotonic() + 20
     template_text = ""
     subject_text = ""
@@ -5804,7 +5731,8 @@ def _fill_salesforce_email_from_salesforce_template(
         body_replacement = _replace_salesforce_body_placeholder_with_reason(driver, reason, process=process)
         state = body_replacement.get("state") or _read_salesforce_email_state(driver)
     return {
-        "source": "salesforce_template",
+        **(loaded if isinstance(loaded, dict) else {}),
+        "source": "local_json",
         "template": process.salesforce_template,
         "process": process.key,
         "state": state,

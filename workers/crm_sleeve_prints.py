@@ -808,6 +808,7 @@ def _replace_additional_request_placeholders(driver, request_text, cost_text, in
         }
         function escapeRegExp(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
         const counts = Object.fromEntries(Object.keys(replacements).map((key) => [key, 0]));
+        counts.invoice_link_targets = 0;
         const seenDocuments = new Set();
         function allElements(root, out = []) {
           if (!root || !root.querySelectorAll) return out;
@@ -829,11 +830,11 @@ def _replace_additional_request_placeholders(driver, request_text, cost_text, in
           }
           return nodes;
         }
-        function textPosition(nodes, position) {
+        function textPosition(nodes, position, endBoundary = false) {
           let remaining = Math.max(0, Number(position) || 0);
           for (const node of nodes) {
             const length = String(node.nodeValue || '').length;
-            if (remaining <= length) return {node, offset: remaining};
+            if (remaining < length || (endBoundary && remaining === length)) return {node, offset: remaining};
             remaining -= length;
           }
           const last = nodes[nodes.length - 1];
@@ -842,6 +843,17 @@ def _replace_additional_request_placeholders(driver, request_text, cost_text, in
         function replaceRoot(root) {
           if (!root) return;
           const doc = root.ownerDocument || document;
+          for (const anchor of root.querySelectorAll('a[href]')) {
+            const original = anchor.getAttribute('href') || '';
+            if (/\[INVOICE_LINK\]/i.test(original)) {
+              const target = String(replacements['[INVOICE_LINK]']);
+              const parsed = new URL(target);
+              if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Invoice link must use HTTP or HTTPS.');
+              anchor.setAttribute('href', original.replace(/\[INVOICE_LINK\]/gi, () => target));
+              counts['[INVOICE_LINK]'] += 1;
+              if (anchor.getAttribute('href') === target) counts.invoice_link_targets += 1;
+            }
+          }
           for (const [placeholder, replacement] of Object.entries(replacements)) {
             const nodes = textNodes(root);
             const combined = nodes.map((node) => String(node.nodeValue || '')).join('');
@@ -853,13 +865,32 @@ def _replace_additional_request_placeholders(driver, request_text, cost_text, in
             }
             for (const found of matches.reverse()) {
               const start = textPosition(nodes, found.start);
-              const end = textPosition(nodes, found.end);
+              const end = textPosition(nodes, found.end, true);
               if (!start || !end) continue;
               const range = doc.createRange();
               range.setStart(start.node, start.offset);
               range.setEnd(end.node, end.offset);
+              const existingLink = start.node.parentElement && start.node.parentElement.closest('a');
               range.deleteContents();
-              range.insertNode(doc.createTextNode(String(replacement)));
+              if (root.contains(start.node)) {
+                range.setStart(start.node, Math.min(start.offset, start.node.data.length));
+                range.collapse(true);
+              }
+              if (placeholder === '[INVOICE_LINK]') {
+                const target = String(replacement), parsed = new URL(target);
+                if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Invoice link must use HTTP or HTTPS.');
+                if (existingLink && root.contains(existingLink)) {
+                  existingLink.setAttribute('href', target);
+                  range.insertNode(doc.createTextNode(target));
+                } else {
+                  const anchor = doc.createElement('a');
+                  anchor.setAttribute('href', target);anchor.textContent = target;
+                  range.insertNode(anchor);
+                }
+                counts.invoice_link_targets += 1;
+              } else {
+                range.insertNode(doc.createTextNode(String(replacement)));
+              }
               counts[placeholder] += 1;
             }
           }
@@ -911,14 +942,16 @@ def _prepare_and_send_salesforce_email(driver, crm_handle, order_id, customer_em
     shared._click_salesforce_email(driver, customer_email)
     shared._wait_for_email_composer(driver)
     selected_from = shared._set_salesforce_from_orders(driver)
-    shared._insert_cancel_template(driver, process)
+    template_fill = shared._insert_cancel_template(driver, process)
     deadline = time.monotonic() + 20
     state = {}
     while time.monotonic() < deadline:
         state = shared._read_salesforce_email_state(driver) or {}
         body = shared._clean_text(state.get("body"))
         subject = shared._clean_text(state.get("subject"))
-        if subject and body and all(marker in body.casefold() for marker in process.body_markers):
+        html_body = template_fill.get("state", {}).get("body_html", "") if isinstance(template_fill, dict) else ""
+        marker_source = f"{body} {html_body}".casefold()
+        if subject and body and all(marker in marker_source for marker in process.body_markers):
             break
         time.sleep(0.4)
     else:
@@ -951,12 +984,17 @@ def _prepare_and_send_salesforce_email(driver, crm_handle, order_id, customer_em
     if final_body.casefold().count(request_text.casefold()) < required_requests:
         raise SleevePrintsError("Salesforce email body did not retain both Extra Print Areas request replacements.")
     for placeholder, expected in ((COST_PLACEHOLDER, cost_text), (INVOICE_LINK_PLACEHOLDER, invoice_link)):
-        if (not comp_sleeves or int((replacement or {}).get(placeholder) or 0)) and expected.casefold() not in final_body.casefold():
+        retained = expected.casefold() in final_body.casefold()
+        if placeholder == INVOICE_LINK_PLACEHOLDER:
+            retained = retained or int((replacement or {}).get("invoice_link_targets") or 0) > 0
+        if (not comp_sleeves or int((replacement or {}).get(placeholder) or 0)) and not retained:
             raise SleevePrintsError("Salesforce email body did not retain the Extra Print Areas cost and invoice link.")
     recipients = _verify_final_recipients(driver, customer_email)
     if dry_run:
         return {
             "sent": False, "dry_run": True, "salesforce_handle": sf_handle, "from": selected_from,
+            "template_source": "local_json",
+            "template_revision": template_fill.get("revision") if isinstance(template_fill, dict) else None,
             "template": process.salesforce_template,
             "recipients": recipients, "subject": final_subject, "body": final_body, "replacement": replacement,
         }
@@ -972,6 +1010,8 @@ def _prepare_and_send_salesforce_email(driver, crm_handle, order_id, customer_em
     return {
         **confirmation,
         "sent": True, "dry_run": False, "salesforce_handle": sf_handle, "from": selected_from,
+        "template_source": "local_json",
+        "template_revision": template_fill.get("revision") if isinstance(template_fill, dict) else None,
         "template": process.salesforce_template,
         "recipients": recipients, "subject": final_subject, "body": final_body, "replacement": replacement,
     }

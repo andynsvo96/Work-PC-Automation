@@ -239,37 +239,10 @@ def _click_exact_stock_color_template(driver, template_name=None):
 
 
 def _insert_exact_stock_color_template(driver):
-    shared._focus_salesforce_body_editor(driver)
-    shared._click_template_button(driver)
-    time.sleep(0.5)
-    if not shared._open_full_template_picker_from_menu(driver):
-        raise StockIssueColorError("Salesforce full email-template picker could not be opened.")
-    shared._ensure_private_email_templates_folder(driver)
-    deadline = time.monotonic() + 35
-    while time.monotonic() < deadline:
-        shared._search_full_template_modal(driver, SALESFORCE_TEMPLATE)
-        time.sleep(1)
-        if _click_exact_stock_color_template(driver):
-            shared._confirm_salesforce_template_insert(driver)
-            if shared._wait_for_salesforce_template_markers(driver, STOCK_COLOR_PROCESS, timeout=20):
-                state = shared._read_salesforce_email_state(driver) or {}
-                signature_error = _stock_color_template_signature_error(state)
-                if not signature_error:
-                    return True
-                raise StockIssueColorError(
-                    f"Salesforce inserted {SALESFORCE_TEMPLATE}, but its content was not the approved version: "
-                    f"{signature_error}."
-                )
-            state = shared._read_salesforce_email_state(driver) or {}
-            signature_error = _stock_color_template_signature_error(state) or "approved subject/body markers were not detected before timeout"
-            raise StockIssueColorError(
-                f"Salesforce inserted {SALESFORCE_TEMPLATE}, but its content could not be verified: {signature_error}."
-            )
-        shared._scroll_full_template_modal(driver)
-        time.sleep(0.5)
-    raise StockIssueColorError(
-        f"Salesforce template {SALESFORCE_TEMPLATE} was not found after searching its full name."
-    )
+    try:
+        return shared._insert_cancel_template(driver, STOCK_COLOR_PROCESS)
+    except shared.CopyrightCancelError as exc:
+        raise StockIssueColorError(str(exc)) from exc
 
 
 def _replace_stock_color_placeholders(driver, stock_text, color_text):
@@ -298,14 +271,20 @@ def _replace_stock_color_placeholders(driver, stock_text, color_text):
           const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
           const nodes = [];
           let text = '';
+          let previousBlock = null;
           while (walker.nextNode()) {
             const node = walker.currentNode;
+            if (node.parentElement && node.parentElement.closest('script,style')) continue;
+            const block = node.parentElement && node.parentElement.closest('p,div,li,td,th,h1,h2,h3,h4,h5,h6');
+            if (nodes.length && block !== previousBlock) text += '\n';
             nodes.push({node, start: text.length, end: text.length + node.data.length});
             text += node.data;
+            previousBlock = block;
           }
-          const pattern = /\b(the)\s+\[STOCK\]\s+(?:is|are)\s+currently\s+out\s+of\s+stock\b/gi;
+          const pattern = /\b(the)\s+\[STOCK\](\s+(?:is|are)\s+currently\s+out\s+of\s+stock\b)/gi;
           for (const match of Array.from(text.matchAll(pattern)).reverse()) {
-            const start = match.index, end = start + match[0].length;
+            // Keep the product placeholder's original bold/font markup intact.
+            const end = match.index + match[0].length, start = end - match[2].length;
             const first = nodes.find(item => item.end > start);
             const last = nodes.find(item => item.end >= end);
             if (!first || !last) continue;
@@ -314,41 +293,51 @@ def _replace_stock_color_placeholders(driver, stock_text, color_text):
             range.setEnd(last.node, end - last.start);
             range.deleteContents();
             range.insertNode(doc.createTextNode(
-              `${match[1]} [STOCK] cannot currently be supplied because of stock shortages`
+              ' cannot currently be supplied because of stock shortages'
             ));
             counts.grammar_adjustments += 1;
           }
-        }
-        function replaceText(value, counts) {
-          let output = String(value || '');
-          for (const [placeholder, replacement] of Object.entries(replacements)) {
-            const pattern = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-            const matches = output.match(pattern) || [];
-            counts[placeholder] += matches.length;
-            output = output.replace(pattern, () => replacement);
-          }
-          return output;
         }
         function replaceRoot(root, counts) {
           if (!root) return;
           correctStockSentence(root, counts);
           const doc = root.ownerDocument || document;
-          const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-          const nodes = [];
-          while (walker.nextNode()) nodes.push(walker.currentNode);
-          for (const node of nodes) {
-            const original = node.nodeValue || '';
-            if (!Object.keys(replacements).some((placeholder) => {
-              const pattern = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-              return pattern.test(original);
-            })) continue;
-            const replaced = replaceText(original, counts);
-            const anchor = node.parentElement && node.parentElement.closest('a');
-            node.nodeValue = replaced;
-            if (anchor && root.contains(anchor)) {
-              const text = doc.createTextNode(anchor.textContent || replaced);
-              anchor.replaceWith(text);
-              counts.unwrapped_links += 1;
+          function position(nodes, offset, end = false) {
+            for (const node of nodes) {
+              const length = node.data.length;
+              if (offset < length || (end && offset === length)) return {node, offset};
+              offset -= length;
+            }
+            const node = nodes[nodes.length - 1];
+            return node ? {node, offset: node.data.length} : null;
+          }
+          for (const [placeholder, replacement] of Object.entries(replacements)) {
+            const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT), nodes = [];
+            while (walker.nextNode()) {
+              const node = walker.currentNode;
+              if (!node.parentElement || !node.parentElement.closest('script,style')) nodes.push(node);
+            }
+            const text = nodes.map(node => node.data).join('');
+            const pattern = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+            for (const match of Array.from(text.matchAll(pattern)).reverse()) {
+              const start = position(nodes, match.index), end = position(nodes, match.index + match[0].length, true);
+              if (!start || !end) continue;
+              const anchors = new Set([start.node, end.node].map(node => node.parentElement && node.parentElement.closest('a')).filter(Boolean));
+              const range = doc.createRange();
+              range.setStart(start.node, start.offset);range.setEnd(end.node, end.offset);
+              range.deleteContents();
+              if (root.contains(start.node)) {
+                range.setStart(start.node, Math.min(start.offset, start.node.data.length));
+                range.collapse(true);
+              }
+              range.insertNode(doc.createTextNode(String(replacement)));
+              counts[placeholder] += 1;
+              for (const anchor of anchors) {
+                if (root.contains(anchor)) {
+                  anchor.replaceWith(...Array.from(anchor.childNodes));
+                  counts.unwrapped_links += 1;
+                }
+              }
             }
           }
           try {
@@ -486,7 +475,7 @@ def _prepare_and_send_salesforce_email(
     shared._wait_for_email_composer(driver)
     selected_from = shared._set_salesforce_from_orders(driver)
     time.sleep(0.5)
-    _insert_exact_stock_color_template(driver)
+    template_fill = _insert_exact_stock_color_template(driver)
 
     deadline = time.monotonic() + 20
     state = {}
@@ -505,7 +494,7 @@ def _prepare_and_send_salesforce_email(
     else:
         raise StockIssueColorError(
             f"Salesforce template {SALESFORCE_TEMPLATE} loaded without the required {STOCK_PLACEHOLDER} and "
-            f"{COLOR_PLACEHOLDER} placeholders. Update the live Salesforce template before retrying."
+            f"{COLOR_PLACEHOLDER} placeholders. Update Settings > Salesforce Template before retrying."
         )
     if not shared._subject_has_order_placeholder(subject) and str(order_id) not in subject:
         raise StockIssueColorError(f"Salesforce template subject does not contain {ORDER_NUMBER_PLACEHOLDER}.")
@@ -524,6 +513,8 @@ def _prepare_and_send_salesforce_email(
         return {
             "sent": False,
             "dry_run": True,
+            "template_source": "local_json",
+            "template_revision": template_fill.get("revision") if isinstance(template_fill, dict) else None,
             "salesforce_handle": sf_handle,
             "from": selected_from,
             "recipients": recipients,
@@ -545,6 +536,8 @@ def _prepare_and_send_salesforce_email(
         **confirmation,
         "sent": True,
         "dry_run": False,
+        "template_source": "local_json",
+        "template_revision": template_fill.get("revision") if isinstance(template_fill, dict) else None,
         "salesforce_handle": sf_handle,
         "from": selected_from,
         "recipients": recipients,

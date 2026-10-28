@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Isolated Salesforce composer contract fixture</title>
+<style>
+  body{margin:12px;font:16px Arial}section{width:1100px;min-height:650px;border:1px solid #888;padding:12px}
+  label{display:block;margin-bottom:12px}input,select{width:700px;height:28px;margin-left:20px}
+  iframe{width:1060px;height:430px;border:1px solid #aaa}button{margin:12px;padding:8px 20px}
+</style>
+<section role="dialog" aria-label="Email">
+  <label>From <select><option value="orders@example.test">Orders &lt;orders@rushordertees.com&gt;</option></select></label>
+  <label>To <span>Customer</span></label>
+  <label>Subject <input placeholder="Enter Subject..." aria-label="Subject"></label>
+  <div id="shadowEditor"></div>
+  <button id="picker" onclick="window.pickerClicks++">Insert template</button>
+  <button id="send">Send</button>
+</section>
+<textarea id="modelHtml" hidden></textarea><pre id="sentHtml"></pre>
+<script>
+  window.pickerClicks=0;
+  document.getElementById('shadowEditor').attachShadow({mode:'open'}).innerHTML=
+    '<iframe title="CK Editor Container" src="/editor" style="width:1060px;height:430px"></iframe>';
+  document.getElementById('send').onclick=()=>{
+    document.getElementById('sentHtml').textContent=document.getElementById('modelHtml').value;
+  };
+</script>

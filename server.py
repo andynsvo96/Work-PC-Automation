@@ -71,7 +71,7 @@ from routes.salesforce_template_routes import register_salesforce_template_route
 from routes.system_routes import register_system_routes
 from routes.work_routes import register_work_routes
 from safe_sync import publish_repository_update
-from salesforce_templates import SalesforceTemplateStore
+from salesforce_templates import default_template_store
 from shipping_bypasser_mappings import (
     load_mapping_document,
     mapping_counts,
@@ -15280,10 +15280,7 @@ def api_config_set():
     return jsonify({"success": ok, "message": msg}), (200 if ok else 500)
 
 
-salesforce_template_store = SalesforceTemplateStore(
-    os.path.join(STATE_DIR, "salesforce_templates.json"),
-    os.path.join(STATE_DIR, "salesforce_email_templates_capture"),
-)
+salesforce_template_store = default_template_store()
 register_salesforce_template_routes(app, store=salesforce_template_store)
 
 

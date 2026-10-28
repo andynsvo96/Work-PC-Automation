@@ -9,7 +9,7 @@ from unittest import mock
 from flask import Flask
 
 from routes.salesforce_template_routes import register_salesforce_template_routes
-from salesforce_templates import SalesforceTemplateStore, TemplateConflict, TemplateLibraryError
+from salesforce_templates import SalesforceTemplateStore, TemplateConflict, TemplateLibraryError, TemplateNotFound
 
 
 SOURCE = '<html><head><title></title></head><body><p>Hello &rsquo; [REQUEST]</p><a href="https://example.test/?a=1&amp;b=2">Invoice</a><img src="https://example.test/logo.png" alt="Logo"></body></html>\n'
@@ -119,6 +119,34 @@ class TemplateStoreTests(TemplateFixtures, unittest.TestCase):
         store = SalesforceTemplateStore(self.root / "missing.json")
         self.assertEqual(store.list_templates(), [])
         self.assertFalse(store.path.exists())
+
+    def test_worker_lookup_uses_exact_id_or_case_insensitive_name_and_latest_saved_content(self):
+        first = self.store.get_template(" [auto] FIRST ")
+        self.assertEqual(self.store.get_template("template_a"), first)
+        saved = self.store.save_template(first['id'], {**first, 'subject': 'Latest saved subject'})
+        self.assertEqual(SalesforceTemplateStore(self.path).get_template('[AUTO] First'), saved)
+        for reference in ('First', '[AUTO] Fir', ''):
+            with self.subTest(reference=reference), self.assertRaises(TemplateNotFound):
+                self.store.get_template(reference)
+
+    def test_renames_keep_worker_reference_bound_to_the_same_id(self):
+        first, second = self.store.list_templates()
+        renamed = self.store.save_template(first['id'], {**first, 'name': '[AUTO] Renamed'})
+        again = self.store.save_template(first['id'], {**renamed, 'name': '[AUTO] Final name'})
+        for reference in (first['name'], renamed['name'], again['name'], first['id']):
+            self.assertEqual(SalesforceTemplateStore(self.path).get_template(reference), again)
+        with self.assertRaisesRegex(TemplateLibraryError, 'before a rename'):
+            self.store.save_template(second['id'], {**second, 'name': first['name']})
+
+    def test_ambiguous_aliases_and_missing_local_data_never_choose_another_template(self):
+        self.store.list_templates()
+        document = json.loads(self.path.read_text())
+        document['templates'][1]['previous_names'] = ['[auto] first']
+        self.path.write_text(json.dumps(document), encoding='utf-8')
+        with self.assertRaises(TemplateLibraryError):
+            self.store.get_template('[AUTO] First')
+        with self.assertRaises(TemplateNotFound):
+            SalesforceTemplateStore(self.root / 'absent.json').get_template('[AUTO] First')
 
 
 class TemplateApiTests(TemplateFixtures, unittest.TestCase):
