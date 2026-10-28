@@ -7,6 +7,8 @@
 <meta charset='utf-8'>
 <title>Automation Control Panel</title>
 <meta name='viewport' content='width=device-width, initial-scale=1'>
+<link rel='stylesheet' href='/static/salesforce-template-editor.css'>
+<script src='/static/salesforce-template-editor.js' defer></script>
 <script>
 (() => {
   const key = 'automation.ui.theme';
@@ -1715,6 +1717,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
         <button class='settings-nav-btn active' type='button' data-settings-target='overview' data-search='overview summary common tasks setup status' onclick="showSettingsSection('overview')"><span class='settings-nav-icon'>＋</span><span>Overview</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='connections' data-search='connections profiles setup login paycom crm slack sanmar salesforce' onclick="showSettingsSection('connections')"><span class='settings-nav-icon'>◎</span><span>Connections</span><span class='settings-nav-badge'>5</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='crm' data-search='crm automation links reports lists batch workers browser retry credentials dry run' onclick="showSettingsSection('crm')"><span class='settings-nav-icon'>▤</span><span>CRM automation</span></button>
+        <button class='settings-nav-btn' type='button' data-settings-target='salesforce-templates' data-search='salesforce template email title subject body html formatting auto' onclick="showSettingsSection('salesforce-templates')"><span class='settings-nav-icon'>✉</span><span>Salesforce Template</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='shipping-mappings' data-search='shipping bypasser mappings crm sanmar products colors ids aliases' onclick="showSettingsSection('shipping-mappings')"><span class='settings-nav-icon'>↔</span><span>Shipping mappings</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='work' data-search='work paycom weekly hours cap clock in out sync break schedule pin' onclick="showSettingsSection('work')"><span class='settings-nav-icon'>◷</span><span>Work &amp; Paycom</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='slack' data-search='slack messages channel clock in out lunch return day' onclick="showSettingsSection('slack')"><span class='settings-nav-icon'>▢</span><span>Slack messages</span></button>
@@ -1815,6 +1818,68 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
         </div>
         <div class='settings-panel-card'><div id='crmPreferenceFields'></div></div>
         <div class='settings-panel-card'><div id='crmFields'></div></div>
+      </section>
+
+      <section class='settings-section' data-settings-section='salesforce-templates'>
+        <div class='settings-section-heading'>
+          <div><h2>Salesforce Template</h2><p>Edit the names, titles, and HTML bodies in this computer's saved template library.</p></div>
+        </div>
+        <div class='settings-panel-card sf-template-editor' id='sfTemplateEditor'>
+          <div class='sf-template-picker'>
+            <div class='field'><label for='sfTemplateSelect'>Email template</label><select id='sfTemplateSelect' disabled><option value=''>Loading templates…</option></select></div>
+            <button class='secondary tiny' type='button' id='sfTemplateReload'>Reload templates</button>
+          </div>
+          <div class='sf-template-meta' id='sfTemplateCount'></div>
+          <div class='sf-template-fields'>
+            <div class='field'><label for='sfTemplateName'>Email template name</label><input id='sfTemplateName' type='text' maxlength='200' autocomplete='off' disabled></div>
+            <div class='field'><label for='sfTemplateSubject'>Title</label><input id='sfTemplateSubject' type='text' maxlength='500' autocomplete='off' disabled></div>
+          </div>
+          <div class='sf-template-body-label' id='sfTemplateBodyLabel'>Body</div>
+          <div class='sf-template-body'>
+            <div class='sf-template-toolbar' id='sfTemplateToolbar' role='toolbar' aria-label='Email formatting'>
+              <div class='sf-template-modes' role='group' aria-label='Body view'>
+                <button type='button' data-sf-mode='formatted' aria-pressed='true' disabled>Formatted</button>
+                <button type='button' data-sf-mode='html' aria-pressed='false' disabled>HTML</button>
+              </div>
+              <select id='sfTemplateFont' aria-label='Font' data-sf-format disabled><option value=''>Font</option><option value='Arial'>Arial</option><option value='Georgia'>Georgia</option><option value='Times New Roman'>Times New Roman</option><option value='Tahoma'>Tahoma</option><option value='Verdana'>Verdana</option><option value='Courier New'>Courier New</option></select>
+              <select id='sfTemplateSize' aria-label='Text size' data-sf-format disabled><option value=''>Size</option><option value='1'>10 px</option><option value='2'>13 px</option><option value='3'>16 px</option><option value='4'>18 px</option><option value='5'>24 px</option><option value='6'>32 px</option><option value='7'>48 px</option></select>
+              <span class='sf-template-separator' role='separator'></span>
+              <button type='button' data-sf-command='bold' data-sf-format aria-label='Bold' aria-pressed='false' title='Bold (Ctrl+B)' disabled><b>B</b></button>
+              <button type='button' data-sf-command='italic' data-sf-format aria-label='Italic' aria-pressed='false' title='Italic (Ctrl+I)' disabled><i>I</i></button>
+              <button type='button' data-sf-command='underline' data-sf-format aria-label='Underline' aria-pressed='false' title='Underline (Ctrl+U)' disabled><u>U</u></button>
+              <label class='sf-template-color' title='Text color'><span aria-hidden='true'>A</span><input id='sfTemplateColor' type='color' value='#000000' aria-label='Text color' data-sf-format disabled></label>
+              <span class='sf-template-separator' role='separator'></span>
+              <button type='button' data-sf-command='insertOrderedList' data-sf-format aria-label='Numbered list' title='Numbered list' disabled>1.</button>
+              <button type='button' data-sf-command='insertUnorderedList' data-sf-format aria-label='Bulleted list' title='Bulleted list' disabled>• ≡</button>
+              <button type='button' data-sf-command='outdent' data-sf-format aria-label='Decrease indent' title='Decrease indent' disabled>⇤</button>
+              <button type='button' data-sf-command='indent' data-sf-format aria-label='Increase indent' title='Increase indent' disabled>⇥</button>
+              <span class='sf-template-separator' role='separator'></span>
+              <button type='button' data-sf-command='justifyLeft' data-sf-format aria-label='Align left' title='Align left' disabled><span class='sf-align-icon sf-align-left' aria-hidden='true'><i></i><i></i><i></i></span></button>
+              <button type='button' data-sf-command='justifyCenter' data-sf-format aria-label='Align center' title='Align center' disabled><span class='sf-align-icon sf-align-center' aria-hidden='true'><i></i><i></i><i></i></span></button>
+              <button type='button' data-sf-command='justifyRight' data-sf-format aria-label='Align right' title='Align right' disabled><span class='sf-align-icon sf-align-right' aria-hidden='true'><i></i><i></i><i></i></span></button>
+              <span class='sf-template-separator' role='separator'></span>
+              <button type='button' id='sfTemplateLink' data-sf-format title='Insert or edit link' disabled>Link</button>
+              <button type='button' data-sf-command='unlink' data-sf-format aria-label='Remove link' title='Remove link' disabled>Unlink</button>
+              <button type='button' id='sfTemplateImage' data-sf-format title='Insert image from URL' disabled>Image</button>
+              <button type='button' data-sf-command='removeFormat' data-sf-format aria-label='Clear formatting' title='Clear formatting' disabled>Tx</button>
+            </div>
+            <iframe id='sfTemplateBodyFrame' title='Email body editor' sandbox='allow-same-origin' referrerpolicy='no-referrer' aria-labelledby='sfTemplateBodyLabel'></iframe>
+            <textarea id='sfTemplateBodyHtml' aria-label='Body HTML source' spellcheck='false' wrap='off' hidden disabled></textarea>
+          </div>
+          <div class='sf-template-footer'>
+            <div><div id='sfTemplateStatus' class='sf-template-status' role='status' aria-live='polite'>Loading templates…</div><div class='muted'>Keep order and content placeholders in your templates. Select Save template to apply edits.</div></div>
+            <button type='button' id='sfTemplateSave' disabled>Save template</button>
+          </div>
+          <dialog id='sfTemplateAssetDialog' class='sf-template-dialog'>
+            <form id='sfTemplateAssetForm'>
+              <h3 id='sfTemplateAssetHeading'>Insert link</h3>
+              <div class='field'><label for='sfTemplateAssetUrl'>URL</label><input id='sfTemplateAssetUrl' type='text' required autocomplete='off' placeholder='https://'></div>
+              <div class='field'><label for='sfTemplateAssetText' id='sfTemplateAssetTextLabel'>Link text</label><input id='sfTemplateAssetText' type='text' autocomplete='off'></div>
+              <div id='sfTemplateAssetError' role='alert'></div>
+              <div class='sf-template-dialog-actions'><button class='secondary' type='button' id='sfTemplateAssetCancel'>Cancel</button><button type='submit'>Insert</button></div>
+            </form>
+          </dialog>
+        </div>
       </section>
 
       <section class='settings-section' data-settings-section='shipping-mappings'>
@@ -2832,6 +2897,7 @@ function showSettingsSection(sectionName, options = {}) {
     button.setAttribute('aria-current', active ? 'page' : 'false');
   }
   try { localStorage.setItem(SETTINGS_SECTION_STORAGE_KEY, targetName); } catch (_) {}
+  if (targetName === 'salesforce-templates' && window.SalesforceTemplateEditor) window.SalesforceTemplateEditor.open();
   if (options.focusHeading) {
     const heading = document.querySelector(`[data-settings-section='${targetName}'] h2`);
     if (heading) heading.focus({preventScroll: true});
@@ -9858,6 +9924,10 @@ async function loadConfig() {
 
 async function reloadSettingsPage(button = null) {
   return withButtonBusy(button, 'Reloading...', async () => {
+    if (activeSettingsSection === 'salesforce-templates' && window.SalesforceTemplateEditor) {
+      await window.SalesforceTemplateEditor.reload();
+      return;
+    }
     setSettingsSaveState('Reloading settings…', 'saving');
     await loadNodeRuntime(false);
     await loadCrmOrderGoodsStatus(false);

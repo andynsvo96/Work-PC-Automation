@@ -13,6 +13,7 @@ class SettingsUiStructureTests(unittest.TestCase):
             "overview",
             "connections",
             "crm",
+            "salesforce-templates",
             "shipping-mappings",
             "work",
             "slack",

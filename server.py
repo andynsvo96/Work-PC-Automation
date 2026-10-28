@@ -67,9 +67,11 @@ from runtime_paths import STATE_DIR, log_file as runtime_log_file
 from runtime_paths import resolve_runtime_file, result_file, state_file
 from runtime_maintenance import run_startup_maintenance
 from routes.connectivity_routes import register_connectivity_routes
+from routes.salesforce_template_routes import register_salesforce_template_routes
 from routes.system_routes import register_system_routes
 from routes.work_routes import register_work_routes
 from safe_sync import publish_repository_update
+from salesforce_templates import SalesforceTemplateStore
 from shipping_bypasser_mappings import (
     load_mapping_document,
     mapping_counts,
@@ -15276,6 +15278,13 @@ def api_config_set():
     updates = data.get("values")
     ok, msg = update_config_values(updates)
     return jsonify({"success": ok, "message": msg}), (200 if ok else 500)
+
+
+salesforce_template_store = SalesforceTemplateStore(
+    os.path.join(STATE_DIR, "salesforce_templates.json"),
+    os.path.join(STATE_DIR, "salesforce_email_templates_capture"),
+)
+register_salesforce_template_routes(app, store=salesforce_template_store)
 
 
 @app.route("/api/shipping-bypasser-mappings", methods=["GET"])
