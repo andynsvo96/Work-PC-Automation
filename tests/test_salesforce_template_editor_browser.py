@@ -124,9 +124,12 @@ class SalesforceTemplateEditorBrowserTests(unittest.TestCase):
         element.send_keys(value)
 
     def mode(self, name):
-        self.driver.find_element(By.CSS_SELECTOR, f"[data-sf-mode='{name}']").click()
+        expected_pressed = str(name == "html").lower()
+        toggle = self.driver.find_element(By.ID, "sfTemplateViewToggle")
+        if toggle.get_attribute("aria-pressed") != expected_pressed:
+            toggle.click()
         self.wait.until(lambda driver: driver.find_element(
-            By.CSS_SELECTOR, f"[data-sf-mode='{name}']").get_attribute("aria-pressed") == "true")
+            By.ID, "sfTemplateViewToggle").get_attribute("aria-pressed") == expected_pressed)
         if name == "formatted":
             self.wait.until(lambda driver: driver.find_element(By.ID, "sfTemplateLink").is_enabled())
 
@@ -162,6 +165,10 @@ class SalesforceTemplateEditorBrowserTests(unittest.TestCase):
         self.assertEqual(Select(self.driver.find_element(By.ID, "sfTemplateSelect")).first_selected_option.text, "[AUTO] Renamed Example")
         self.driver.refresh()
         self.wait.until(lambda driver: driver.find_element(By.ID, "sfTemplateSubject").get_attribute("value") == first["subject"])
+        self.driver.set_window_size(1150, 1100)
+        toggle = self.driver.find_element(By.ID, "sfTemplateViewToggle")
+        clear_formatting = self.driver.find_element(By.CSS_SELECTOR, "[data-sf-command='removeFormat']")
+        self.assertAlmostEqual(toggle.rect["y"], clear_formatting.rect["y"], delta=1)
         self.driver.save_screenshot(str(ARTIFACTS / "editor_light.png"))
 
     def test_formatting_links_images_and_placeholders_survive_save(self):

@@ -15,8 +15,7 @@
 .sf-template-toolbar button:focus-visible,.sf-template-toolbar select:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
 .sf-template-toolbar button:disabled,.sf-template-toolbar select:disabled{opacity:.45;cursor:default}
 .sf-template-toolbar select{width:auto;max-width:150px}
-.sf-template-modes{display:flex;gap:2px;margin-right:5px}
-.sf-template-modes button{font-weight:650}
+.sf-template-toolbar .sf-template-view-toggle{font-weight:650;margin-right:5px}
 .sf-template-separator{height:22px;width:1px;background:#cbd5e1;margin:0 3px}
 .sf-align-icon{display:flex;flex-direction:column;gap:3px;width:14px}
 .sf-align-icon i{display:block;width:100%;height:1px;background:currentColor}

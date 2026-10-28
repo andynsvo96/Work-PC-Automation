@@ -1837,10 +1837,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
           <div class='sf-template-body-label' id='sfTemplateBodyLabel'>Body</div>
           <div class='sf-template-body'>
             <div class='sf-template-toolbar' id='sfTemplateToolbar' role='toolbar' aria-label='Email formatting'>
-              <div class='sf-template-modes' role='group' aria-label='Body view'>
-                <button type='button' data-sf-mode='formatted' aria-pressed='true' disabled>Formatted</button>
-                <button type='button' data-sf-mode='html' aria-pressed='false' disabled>HTML</button>
-              </div>
+              <button type='button' id='sfTemplateViewToggle' class='sf-template-view-toggle' aria-pressed='false' aria-controls='sfTemplateBodyHtml sfTemplateBodyFrame' title='Show HTML source' disabled>HTML</button>
               <select id='sfTemplateFont' aria-label='Font' data-sf-format disabled><option value=''>Font</option><option value='Arial'>Arial</option><option value='Georgia'>Georgia</option><option value='Times New Roman'>Times New Roman</option><option value='Tahoma'>Tahoma</option><option value='Verdana'>Verdana</option><option value='Courier New'>Courier New</option></select>
               <select id='sfTemplateSize' aria-label='Text size' data-sf-format disabled><option value=''>Size</option><option value='1'>10 px</option><option value='2'>13 px</option><option value='3'>16 px</option><option value='4'>18 px</option><option value='5'>24 px</option><option value='6'>32 px</option><option value='7'>48 px</option></select>
               <span class='sf-template-separator' role='separator'></span>

@@ -3,7 +3,9 @@
 Open **Settings > Salesforce Template**, then choose an email from the dropdown.
 Edit its **Email template name**, **Title** (email subject), and **Body**.
 
-Use **Formatted** to edit the email visually, or **HTML** to edit its source.
+Use the single **HTML** button to switch between formatted editing and HTML
+source. The button is highlighted while HTML source is active; click it again
+to return to the formatted view.
 The toolbar supports font family, text size, bold, italic, underline, text color,
 numbered and bulleted lists, indentation, alignment, links, unlinking, images,
 and clearing formatting. Select text in the body before formatting it.

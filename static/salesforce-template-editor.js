@@ -88,6 +88,7 @@
       this.status = byId('sfTemplateStatus');
       this.saveButton = byId('sfTemplateSave');
       this.reloadButton = byId('sfTemplateReload');
+      this.viewToggle = byId('sfTemplateViewToggle');
       this.dialog = byId('sfTemplateAssetDialog');
       this.bind();
       this.renderVisual();
@@ -109,9 +110,7 @@
       });
       this.saveButton.addEventListener('click', () => this.save());
       this.reloadButton.addEventListener('click', () => this.load(true));
-      for (const button of this.root.querySelectorAll('[data-sf-mode]')) {
-        button.addEventListener('click', () => this.setMode(button.dataset.sfMode));
-      }
+      this.viewToggle.addEventListener('click', () => this.setMode(this.mode === 'html' ? 'formatted' : 'html'));
       const toolbar = byId('sfTemplateToolbar');
       toolbar.addEventListener('mousedown', (event) => {
         this.rememberSelection();
@@ -164,10 +163,9 @@
       this.select.disabled = busy || this.rows.length === 0;
       this.reloadButton.disabled = busy;
       for (const input of [this.name, this.subject, this.source]) input.disabled = unavailable;
-      for (const button of this.root.querySelectorAll('[data-sf-mode]')) {
-        button.disabled = unavailable;
-        button.setAttribute('aria-pressed', String(button.dataset.sfMode === this.mode));
-      }
+      this.viewToggle.disabled = unavailable;
+      this.viewToggle.setAttribute('aria-pressed', String(this.mode === 'html'));
+      this.viewToggle.title = this.mode === 'html' ? 'Show formatted view' : 'Show HTML source';
       for (const control of this.root.querySelectorAll('[data-sf-format]')) {
         control.disabled = unavailable || this.mode === 'html' || !this.frameReady;
       }
