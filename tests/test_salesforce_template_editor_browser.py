@@ -282,11 +282,43 @@ class SalesforceTemplateEditorBrowserTests(unittest.TestCase):
         self.mode("formatted")
         self.input("sfTemplateName", "[AUTO] Renamed Example")
         self.input("sfTemplateSubject", "New title #[ORDER-NUMBER]")
+        self.select_body_text("Hello")
+        self.driver.execute_script("""
+            window.beforeThemeFrame=document.getElementById('sfTemplateBodyFrame').contentDocument;
+            document.documentElement.dataset.theme='dark';
+        """)
+        self.wait.until(lambda driver: driver.execute_script("""
+            const doc=document.getElementById('sfTemplateBodyFrame').contentDocument;
+            const title=getComputedStyle(document.getElementById('sfTemplateSubject'));
+            const body=doc.defaultView.getComputedStyle(doc.body);
+            return body.backgroundColor===title.backgroundColor && body.color===title.color;
+        """))
+        self.assertTrue(self.driver.execute_script("""
+            const doc=document.getElementById('sfTemplateBodyFrame').contentDocument;
+            return doc===window.beforeThemeFrame && doc.getSelection().toString()==='Hello'
+              && window.SalesforceTemplateEditor.hasUnsavedChanges();
+        """))
+        self.mode("html")
+        self.assertEqual(self.driver.find_element(By.ID, "sfTemplateBodyHtml").get_attribute("value"), self.body)
+        self.assertTrue(self.driver.execute_script("""
+            const title=getComputedStyle(document.getElementById('sfTemplateSubject'));
+            const source=getComputedStyle(document.getElementById('sfTemplateBodyHtml'));
+            return source.backgroundColor===title.backgroundColor && source.color===title.color;
+        """))
+        self.mode("formatted")
         self.save()
         first = next(row for row in self.store.list_templates() if row["id"] == "first")
         self.assertEqual(first["body_html"], self.body)
         self.assertEqual(first["subject"], "New title #[ORDER-NUMBER]")
         self.assertEqual(Select(self.driver.find_element(By.ID, "sfTemplateSelect")).first_selected_option.text, "[AUTO] Renamed Example")
+        self.driver.save_screenshot(str(ARTIFACTS / "editor_dark_body.png"))
+        self.driver.execute_script("document.documentElement.dataset.theme='light';")
+        self.wait.until(lambda driver: driver.execute_script("""
+            const doc=document.getElementById('sfTemplateBodyFrame').contentDocument;
+            return doc.defaultView.getComputedStyle(doc.documentElement).backgroundColor==='rgb(255, 255, 255)'
+              && doc.defaultView.getComputedStyle(doc.body).color==='rgb(17, 17, 17)';
+        """))
+        self.assertFalse(self.driver.execute_script("return window.SalesforceTemplateEditor.hasUnsavedChanges();"))
         self.driver.refresh()
         self.wait.until(lambda driver: driver.find_element(By.ID, "sfTemplateSubject").get_attribute("value") == first["subject"])
         self.driver.set_window_size(1150, 1100)
@@ -331,6 +363,14 @@ class SalesforceTemplateEditorBrowserTests(unittest.TestCase):
             return doc.defaultView.getComputedStyle(span).fontSize;
         """), "24px")
         self.driver.save_screenshot(str(ARTIFACTS / "editor_dark.png"))
+        self.select_body_text("Hello")
+        self.driver.find_element(By.CSS_SELECTOR, "[data-sf-command='italic']").click()
+        self.save()
+        dark_edit = self.store.get_template("first")["body_html"]
+        self.assertNotIn("data-sf-editor-theme", dark_edit)
+        self.assertNotIn("color-scheme", dark_edit)
+        self.assertNotIn("#3c3c3c", dark_edit)
+        self.assertNotIn("#f0f0f0", dark_edit)
         self.driver.set_window_size(420, 1000)
         self.assertTrue(self.driver.execute_script("return document.documentElement.scrollWidth<=window.innerWidth;"))
         self.driver.set_window_size(1250, 1100)

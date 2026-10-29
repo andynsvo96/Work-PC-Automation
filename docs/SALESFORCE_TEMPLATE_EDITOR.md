@@ -43,6 +43,13 @@ exactly when you switch views or edit only the name/title. Editing the formatted
 body serializes the body markup; browsers can normalize entities and formatting
 tags during those edits. The existing document wrapper is retained.
 
+In night mode, the formatted body and HTML source use the title field's dark
+background and light text, with readable links and dark scrollbars. They follow
+theme changes immediately. These display colors do not change the saved HTML
+or the email sent to customers.
+Refresh the dashboard to load this styling change; no app restart or extension
+reload is needed.
+
 Keep placeholders such as [ORDER-NUMBER], [ORDER_NUMBER], [DESIGN], [PRINT],
 [REQUEST], [COST], and [INVOICE_LINK]. Existing image URLs and link attributes
 remain in the source. The two captured embroidery-guide anchors without href

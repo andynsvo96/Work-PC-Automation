@@ -51,8 +51,11 @@
       "; style-src 'unsafe-inline'; font-src 'none'; form-action 'none'; base-uri 'none'";
     parsed.head.prepend(policy);
     const style = parsed.createElement('style');
-    style.textContent = 'html{overflow:auto!important;background:#fff;color:#111}body{min-height:340px!important;height:auto!important;margin:16px;font-family:"Times New Roman",serif;font-size:16px;line-height:1.35;outline:0;overflow-wrap:break-word}img{max-width:100%}';
+    style.textContent = 'html{overflow:auto!important;background:#fff;color:#111;color-scheme:light}body{min-height:340px!important;height:auto!important;margin:16px;font-family:"Times New Roman",serif;font-size:16px;line-height:1.35;outline:0;overflow-wrap:break-word}img{max-width:100%}' +
+      'html[data-sf-editor-theme="dark"],html[data-sf-editor-theme="dark"] body{background:#3c3c3c!important;color:#f0f0f0!important;color-scheme:dark}' +
+      'html[data-sf-editor-theme="dark"] a[href]{color:#4fc1ff}';
     parsed.head.append(style);
+    parsed.documentElement.setAttribute('data-sf-editor-theme', document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
     parsed.body.setAttribute('contenteditable', 'true');
     parsed.body.setAttribute('role', 'textbox');
     parsed.body.setAttribute('aria-label', 'Email template body');
@@ -98,6 +101,8 @@
       this.viewToggle = byId('sfTemplateViewToggle');
       this.dialog = byId('sfTemplateAssetDialog');
       this.bind();
+      this.themeObserver = new MutationObserver(() => this.syncVisualTheme());
+      this.themeObserver.observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
       this.renderVisual();
     }
 
@@ -347,6 +352,13 @@
       this.controls();
     }
 
+    syncVisualTheme() {
+      if (!this.frameReady) return;
+      // Keep theme styling in the frame head/root, outside the saved body markup.
+      this.frame.contentDocument.documentElement.setAttribute('data-sf-editor-theme',
+        document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+    }
+
     renderVisual() {
       const version = ++this.frameVersion;
       this.frameReady = false;
@@ -357,6 +369,7 @@
         const doc = this.frame.contentDocument;
         if (!doc || !doc.body || doc.documentElement.getAttribute('data-sf-frame-version') !== String(version)) return;
         this.frameReady = true;
+        this.syncVisualTheme();
         doc.execCommand('styleWithCSS', false, true);
         doc.addEventListener('selectionchange', () => this.rememberSelection());
         doc.addEventListener('input', () => this.visualChanged());

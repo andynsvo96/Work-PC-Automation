@@ -46,7 +46,8 @@
 .sf-template-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
 #sfTemplateAssetError{font-size:12px}
 :root[data-theme='dark'] .sf-template-meta,:root[data-theme='dark'] .sf-template-status{color:#b8b8b8}
-:root[data-theme='dark'] .sf-template-body{border-color:#52525b}
+:root[data-theme='dark'] .sf-template-body{border-color:#52525b;background:#3c3c3c}
+:root[data-theme='dark'] #sfTemplateBodyFrame,:root[data-theme='dark'] #sfTemplateBodyHtml{background:#3c3c3c;color:#f0f0f0;color-scheme:dark}
 :root[data-theme='dark'] .sf-template-toolbar{background:#2d2d30;border-color:#52525b}
 :root[data-theme='dark'] .sf-template-toolbar button,:root[data-theme='dark'] .sf-template-toolbar select{background:#38383c;color:#e5e7eb;border-color:#606068}
 :root[data-theme='dark'] .sf-template-toolbar button:hover:not(:disabled){background:#45454a}
