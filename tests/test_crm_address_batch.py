@@ -613,11 +613,12 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         self.assertTrue(result["send_clicked"])
         self.assertTrue(result["activity_verified"])
 
-    def test_salesforce_contact_skips_email_and_allows_hdd_crm_changes(self):
+    def test_salesforce_contact_sends_email_for_processing_and_email_recovery(self):
         for email_only in (False, True):
             with self.subTest(email_only=email_only), ExitStack() as stack:
                 driver = mock.Mock(current_window_handle="crm-tab")
-                stack.enter_context(mock.patch("complicated_emb.resolve_print_designs", return_value=[{"tab_number": 1, "design_name": "Hat", "print_areas": ["Front"]}]))
+                designs = [{"tab_number": 1, "design_name": "Hat", "print_areas": ["Front"]}]
+                resolve = stack.enter_context(mock.patch("complicated_emb.resolve_print_designs", return_value=designs))
                 stack.enter_context(mock.patch.object(crm_copyright_cancel, "_open_driver", return_value=driver))
                 for name in (
                     "safe_get_with_partial_load", "_login_to_crm_if_needed",
@@ -637,18 +638,34 @@ class CrmCopyrightCancelTests(unittest.TestCase):
                 open_salesforce = stack.enter_context(mock.patch.object(
                     crm_copyright_cancel, "_open_salesforce_account",
                 ))
-                sleep = stack.enter_context(mock.patch.object(crm_copyright_cancel.time, "sleep"))
+                for name in ("_verify_salesforce_email", "_click_salesforce_email",
+                             "_wait_for_email_composer", "_set_salesforce_from_orders"):
+                    stack.enter_context(mock.patch.object(crm_copyright_cancel, name))
+                state = {"subject": "Order #5301167", "body": "Verified local template"}
+                fill = stack.enter_context(mock.patch.object(
+                    crm_copyright_cancel, "_fill_salesforce_email_from_salesforce_template",
+                    return_value={"source": "local_json", "state": state},
+                ))
+                send = stack.enter_context(mock.patch.object(
+                    crm_copyright_cancel, "_send_salesforce_email",
+                    return_value={"sent": True, "activity_verified": True},
+                ))
+                stack.enter_context(mock.patch.object(crm_copyright_cancel.time, "sleep"))
                 run = (crm_copyright_cancel.send_salesforce_email_single_order if email_only
                        else crm_copyright_cancel.process_single_order)
                 result = run("5301167", reason="", dry_run=False,
                              process=crm_copyright_cancel.COMPLICATED_EMB_TO_HDD_PROCESS)
-                self.assertFalse(result["salesforce"]["sent"])
-                self.assertTrue(result["salesforce"]["skipped"])
-                self.assertIn("Salesforce Contact account detected. Email not sent", result["salesforce"]["message"])
+                self.assertTrue(result["salesforce"]["sent"])
+                self.assertTrue(result["salesforce"]["activity_verified"])
+                self.assertEqual(result["salesforce"]["fill"]["source"], "local_json")
                 get_contact.assert_called_once()
+                resolve.assert_called_once_with(driver, None)
                 driver.refresh.assert_not_called()
-                sleep.assert_not_called()
-                open_salesforce.assert_not_called()
+                open_salesforce.assert_called_once()
+                fill.assert_called_once()
+                self.assertEqual(fill.call_args.kwargs["designs"], designs)
+                send.assert_called_once()
+                self.assertEqual(send.call_args.kwargs["customer_email"], "buyer@example.com")
                 if email_only:
                     crm_action.assert_not_called()
                 else:

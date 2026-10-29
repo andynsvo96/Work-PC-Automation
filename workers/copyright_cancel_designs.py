@@ -420,8 +420,6 @@ def process_partial(shared, driver, crm_handle, selection, reason, contact, *, d
     selection = normalize_selection(selection)
     if not is_partial(selection):
         raise CopyrightSelectionError("The partial copyright workflow requires some, but not all, design tabs.")
-    if " ".join(str(contact.get("salesforce_label", "")).split()).casefold() == "salesforce contact":
-        raise CopyrightSelectionError("Salesforce Contact accounts cannot send this email; review the partial cancellation manually.")
     if not str(reason).strip():
         raise CopyrightSelectionError("Copyright cancellation requires a reason.")
     path = receipt_path(selection, reason)

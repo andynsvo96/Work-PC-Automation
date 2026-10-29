@@ -52,15 +52,13 @@ class SheetScannerEmailResultTests(unittest.TestCase):
             "process": self.args.process,
             "dry_run": False,
             "crm_action": {"sales_note": {"updated": True}},
-            "salesforce": scanner._prepare_and_maybe_send_salesforce_email(
-                mock.Mock(),
-                "crm-tab",
-                self.args.order_id,
-                "buyer@example.test",
-                dry_run=False,
-                process=scanner.OVERSIZE_EMB_TO_HDD_PROCESS,
-                contact={"salesforce_label": " Salesforce   Contact "},
-            ),
+            # An older worker result must still fail safely on recovery.
+            "salesforce": {
+                "sent": False,
+                "skipped": True,
+                "skip_reason": "salesforce_contact",
+                "message": "Salesforce Contact email was skipped by an older worker.",
+            },
         }
 
     def read_result(self):

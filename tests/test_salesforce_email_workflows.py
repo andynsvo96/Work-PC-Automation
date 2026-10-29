@@ -64,7 +64,8 @@ class SalesforceEmailWorkflowTests(unittest.TestCase):
                     shared, '_fill_salesforce_email_from_salesforce_template', return_value={'state': final}))
                 stack.enter_context(patch.object(shared, '_verify_salesforce_email_ready_to_send', return_value=final))
                 result = shared._prepare_and_maybe_send_salesforce_email(
-                    driver, 'crm', '1234567', 'customer@example.test', False, process=process, reason='Reason')
+                    driver, 'crm', '1234567', 'customer@example.test', False, process=process, reason='Reason',
+                    contact={'salesforce_label': 'Salesforce Contact'})
                 self.assertTrue(result['activity_verified'])
                 self.assertEqual(result['send_attempts'], 2)
                 self.assertEqual(click.call_count, 2)

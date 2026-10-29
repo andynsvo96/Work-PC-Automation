@@ -146,6 +146,30 @@ class LocalTemplateBrowserTests(unittest.TestCase):
         self.assertIn('Latest edit',updated['state']['body'])
         self.assertEqual(self.driver.execute_script('return window.pickerClicks;'),0)
 
+    def test_contact_reachout_dry_run_loads_local_json_and_checks_the_completed_draft(self):
+        process = shared.COPYRIGHT_REACHOUT_PROCESS
+        self.write_library([{'id': 'reachout', 'name': process.salesforce_template,
+            'subject': 'Order #[ORDER-NUMBER] - License Required',
+            'body_html': '<p>While reviewing your order, <strong>[REASON]</strong> may be protected by copyright.</p>'}])
+        self.open_fixture()
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(composer, 'default_template_store', return_value=self.store))
+            for name in ('_open_salesforce_account', '_verify_salesforce_email',
+                         '_click_salesforce_email', '_wait_for_email_composer', '_set_salesforce_from_orders'):
+                stack.enter_context(mock.patch.object(shared, name))
+            send = stack.enter_context(mock.patch.object(shared, '_click_salesforce_send_button'))
+            result = shared._prepare_and_maybe_send_salesforce_email(
+                self.driver, 'crm', '1234567', 'customer@example.test', True,
+                process=process, reason='Test University', contact={'salesforce_label': 'Salesforce Contact'})
+        self.assertEqual(result['fill']['source'], 'local_json')
+        self.assertEqual(result['email_state']['subject'], 'Order #1234567 - License Required')
+        self.assertIn('Test University may be protected by copyright', result['email_state']['body'])
+        self.assertTrue(result['dry_run'])
+        self.assertFalse(result['sent'])
+        self.assertEqual(self.driver.execute_script('return window.pickerClicks;'), 0)
+        self.assertEqual(self.driver.find_element('id', 'sentHtml').text, '')
+        send.assert_not_called()
+
     def test_invoice_placeholder_can_be_a_link_target_without_showing_the_url_as_text(self):
         self.write_library([{'id':'invoice','name':sleeves.SLEEVE_PRINTS_PROCESS.salesforce_template,
             'subject':'Order #[ORDER_NUMBER]','body_html':'<p>[REQUEST] [REQUEST] [COST]</p><p><a href="[INVOICE_LINK]">Pay invoice</a></p>'}])

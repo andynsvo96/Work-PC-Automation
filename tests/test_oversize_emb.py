@@ -151,7 +151,7 @@ class OversizeEmbTests(unittest.TestCase):
                     self.assertEqual(email.call_args.kwargs["designs"], DESIGNS)
                 resolve.assert_called_once_with(driver, DESIGNS)
 
-    def test_email_recovery_rechecks_selections_and_preserves_contact_skip(self):
+    def test_email_recovery_rechecks_selections_for_accounts_and_contacts(self):
         for label in ("Salesforce Account", "Salesforce Contact"):
             with self.subTest(label=label), ExitStack() as stack:
                 driver = mock.Mock(current_window_handle="crm-tab")
@@ -165,10 +165,7 @@ class OversizeEmbTests(unittest.TestCase):
                 resolve = stack.enter_context(mock.patch.object(oversize_emb, "resolve_designs", return_value=DESIGNS))
                 email = stack.enter_context(mock.patch.object(worker, "_prepare_and_maybe_send_salesforce_email", return_value={"sent": True}))
                 worker.send_salesforce_email_single_order("1234567", process="oversize_emb_to_hdd", designs=DESIGNS)
-                if label == "Salesforce Contact":
-                    resolve.assert_not_called()
-                else:
-                    resolve.assert_called_once_with(driver, DESIGNS)
+                resolve.assert_called_once_with(driver, DESIGNS)
                 self.assertEqual(email.call_args.kwargs["designs"], DESIGNS)
 
 

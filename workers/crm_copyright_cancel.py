@@ -6190,16 +6190,8 @@ def _prepare_and_maybe_send_salesforce_email(
     designs=None,
     receipt_scope=None,
 ):
-    if " ".join(str((contact or {}).get("salesforce_label") or "").split()).casefold() == "salesforce contact":
-        return {
-            "sent": False,
-            "skipped": True,
-            "skip_reason": "salesforce_contact",
-            "dry_run": bool(dry_run),
-            "email": customer_email,
-            "process": process.key,
-            "message": "Salesforce Contact account detected. Email not sent because this business account uses a different email structure.",
-        }
+    # The local JSON template loader uses the composer for both Accounts and
+    # Contacts; neither record type needs Salesforce's template picker.
     preparation_retry_error = None
     for attempt in range(2):
         try:
@@ -8790,8 +8782,7 @@ def send_salesforce_email_single_order(
             if designs is not None:
                 raise CopyrightCancelError("Resume selected copyright cancellations through their original queue task, including email recovery.")
             designs = copyright_designs.scan_designs(driver, order_id)
-        if (process.key in (OVERSIZE_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key)
-                and _clean_text(contact.get("salesforce_label", "")).casefold() != "salesforce contact"):
+        if process.key in (OVERSIZE_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_TO_HDD_PROCESS.key, COMPLICATED_EMB_FEEDBACK_PROCESS.key):
             if process.key == OVERSIZE_EMB_TO_HDD_PROCESS.key:
                 from oversize_emb import resolve_designs
                 designs = resolve_designs(driver, designs)
@@ -9050,7 +9041,7 @@ def _concise_sheet_scanner_error(error):
 
 
 def _sheet_scanner_email_error(details):
-    """An unsupported Contact email remains incomplete even after CRM edits."""
+    """Keep legacy skipped-email results failed until a confirmed send replaces them."""
     salesforce = (details or {}).get("salesforce") or {}
     if salesforce.get("skip_reason") == "salesforce_contact":
         return salesforce.get("message") or (
@@ -9164,8 +9155,7 @@ def process_single_order(
                 login_wait_seconds=login_wait_seconds,
             )
             if process.key == COMPLICATED_EMB_FEEDBACK_PROCESS.key:
-                # Contact accounts still need the CRM issue even though their email is skipped.
-                if not dry_run and not salesforce.get("sent") and salesforce.get("skip_reason") != "salesforce_contact":
+                if not dry_run and not salesforce.get("sent"):
                     raise CopyrightCancelError("Complicated EMB feedback email was not sent.")
                 driver.switch_to.window(crm_handle)
                 _activate_crm_context(driver)

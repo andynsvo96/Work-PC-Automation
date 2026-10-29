@@ -329,6 +329,18 @@ class PartialWorkflowTests(unittest.TestCase):
             mutation.assert_not_called()
         self.assertFalse(copyright.receipt_path(SELECTION, "Protected character").exists())
 
+    def test_contact_uses_partial_template_preflight_without_mutating_crm_in_dry_run(self):
+        contact = {**CONTACT, "salesforce_label": "Salesforce Contact"}
+        result = copyright.process_partial(
+            shared, self.driver, "crm", SELECTION, "Protected character", contact,
+            dry_run=True, process=shared.COPYRIGHT_CANCEL_PARTIAL_PROCESS,
+        )
+        self.assertTrue(result["salesforce"]["dry_run"])
+        self.email.assert_called_once()
+        self.assertEqual(self.email.call_args.kwargs["contact"], contact)
+        for mutation in (self.removal, self.save, self.note, self.refund, self.case):
+            mutation.assert_not_called()
+
     def test_missing_or_wrong_partial_template_stops_before_removal(self):
         self.email.side_effect = shared.CopyrightCancelError("Wrong template")
         with self.assertRaisesRegex(shared.CopyrightCancelError, "Wrong template"):
