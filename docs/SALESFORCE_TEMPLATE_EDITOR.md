@@ -3,6 +3,25 @@
 Open **Settings > Salesforce Template**, then choose an email from the dropdown.
 Edit its **Email template name**, **Title** (email subject), and **Body**.
 
+Use **Add** to open a new template draft. **Duplicate** copies the currently
+displayed name, title, and HTML body into a new draft with a unique copy name;
+this includes unsaved edits. Review it and select **Create template** to save.
+The original saved template stays unchanged. Copies receive a new ID and do not
+inherit the original template's previous-name references. **Cancel** discards the
+new draft and returns to the saved library.
+
+**Remove** confirms the selected saved template before deleting its local
+record. If the editor has unsaved changes, the confirmation also explains that
+they will be discarded. Automations that reference a removed template stop for
+review until it is replaced. The previous library remains in the backup file,
+and original captures are untouched. Removing the final template leaves an
+empty library; use **Add** to create one again. Reload does not restore removed
+templates from the capture.
+
+New templates are available in this local library; adding or duplicating one
+does not create a new automation or change an existing automation's configured
+template reference. No email is sent by these controls.
+
 Use the single **HTML** button to switch between formatted editing and HTML
 source. The button is highlighted while HTML source is active; click it again
 to return to the formatted view.
@@ -67,7 +86,10 @@ IDs remain stable when names change. Previous names are retained in
 using the same record after a rename. A name reserved by another template's
 history cannot be reused. Unknown per-template metadata is retained.
 Files are written atomically, and a prior version is retained before a changed
-template is saved. The files stay machine-local and ignored by Git. To use the
+template is saved, created, or removed. Duplicate names (including names retained
+after a rename) are rejected. Removal requires the revision that was opened, so
+another tab's newer changes cannot be deleted accidentally. The library holds up
+to 500 templates. The files stay machine-local and ignored by Git. To use the
 same library on another computer, copy the active JSON file there while it is
 not being edited. Windows and macOS use the same relative location and format.
 
@@ -143,7 +165,10 @@ orders:
     python -m unittest discover -s tests -p test_salesforce_template_editor_browser.py
 
 It checks source preservation, saving and reloading, formatting, links, images,
-draft conflicts, responsive layout, and blocked script/local-endpoint execution.
+adding, duplicating unsaved content, removal/cancel confirmation, empty-library
+recovery, draft conflicts, responsive layout, and blocked script/local-endpoint
+execution. Storage/API tests also check name/history collisions, backup recovery,
+failed writes, and the existing PIN/CSRF/version protections for create/remove.
 If needed, set SALESFORCE_EDITOR_CHROMEDRIVER to a local ChromeDriver path and
 SALESFORCE_EDITOR_CHROME to the Chrome executable. Profiles, screenshots, and
 test artifacts live under runtime/debug/salesforce_template_editor_tests.

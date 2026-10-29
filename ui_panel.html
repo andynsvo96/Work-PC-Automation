@@ -1827,7 +1827,12 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
         <div class='settings-panel-card sf-template-editor' id='sfTemplateEditor'>
           <div class='sf-template-picker'>
             <div class='field'><label for='sfTemplateSelect'>Email template</label><select id='sfTemplateSelect' disabled><option value=''>Loading templates…</option></select></div>
-            <button class='secondary tiny' type='button' id='sfTemplateReload'>Reload templates</button>
+            <div class='sf-template-picker-actions'>
+              <button class='secondary tiny' type='button' id='sfTemplateAdd' disabled>Add</button>
+              <button class='secondary tiny' type='button' id='sfTemplateDuplicate' disabled>Duplicate</button>
+              <button class='danger tiny' type='button' id='sfTemplateRemove' disabled>Remove</button>
+              <button class='secondary tiny' type='button' id='sfTemplateReload'>Reload templates</button>
+            </div>
           </div>
           <div class='sf-template-meta' id='sfTemplateCount'></div>
           <div class='sf-template-fields'>
@@ -1865,7 +1870,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
           </div>
           <div class='sf-template-footer'>
             <div><div id='sfTemplateStatus' class='sf-template-status' role='status' aria-live='polite'>Loading templates…</div><div class='muted'>Keep order and content placeholders in your templates. Select Save template to apply edits.</div></div>
-            <button type='button' id='sfTemplateSave' disabled>Save template</button>
+            <div class='sf-template-save-actions'><button class='secondary' type='button' id='sfTemplateCancel' hidden>Cancel</button><button type='button' id='sfTemplateSave' disabled>Save template</button></div>
           </div>
           <dialog id='sfTemplateAssetDialog' class='sf-template-dialog'>
             <form id='sfTemplateAssetForm'>

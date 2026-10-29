@@ -71,6 +71,9 @@
       this.root = root;
       this.rows = [];
       this.current = null;
+      this.isNew = false;
+      this.returnId = '';
+      this.operation = '';
       this.rawBody = '';
       this.mode = 'formatted';
       this.loaded = false;
@@ -88,6 +91,10 @@
       this.status = byId('sfTemplateStatus');
       this.saveButton = byId('sfTemplateSave');
       this.reloadButton = byId('sfTemplateReload');
+      this.addButton = byId('sfTemplateAdd');
+      this.duplicateButton = byId('sfTemplateDuplicate');
+      this.removeButton = byId('sfTemplateRemove');
+      this.cancelButton = byId('sfTemplateCancel');
       this.viewToggle = byId('sfTemplateViewToggle');
       this.dialog = byId('sfTemplateAssetDialog');
       this.bind();
@@ -98,10 +105,11 @@
       this.select.addEventListener('change', () => {
         const selected = this.select.value;
         if (!this.discardAllowed()) {
-          this.select.value = this.current ? this.current.id : '';
+          this.select.value = this.isNew ? '' : (this.current ? this.current.id : '');
           return;
         }
         this.choose(selected);
+        this.populateOptions(selected);
       });
       for (const input of [this.name, this.subject]) input.addEventListener('input', () => this.changed());
       this.source.addEventListener('input', () => {
@@ -110,6 +118,10 @@
       });
       this.saveButton.addEventListener('click', () => this.save());
       this.reloadButton.addEventListener('click', () => this.load(true));
+      this.addButton.addEventListener('click', () => this.add());
+      this.duplicateButton.addEventListener('click', () => this.duplicate());
+      this.removeButton.addEventListener('click', () => this.remove());
+      this.cancelButton.addEventListener('click', () => this.cancelNew());
       this.viewToggle.addEventListener('click', () => this.setMode(this.mode === 'html' ? 'formatted' : 'html'));
       const toolbar = byId('sfTemplateToolbar');
       toolbar.addEventListener('mousedown', (event) => {
@@ -162,6 +174,12 @@
       const unavailable = busy || !this.current;
       this.select.disabled = busy || this.rows.length === 0;
       this.reloadButton.disabled = busy;
+      this.addButton.disabled = busy || !this.loaded;
+      this.duplicateButton.disabled = unavailable || this.isNew;
+      this.removeButton.disabled = unavailable || this.isNew;
+      this.removeButton.textContent = this.saving && this.operation === 'remove' ? 'Removing…' : 'Remove';
+      this.cancelButton.hidden = !this.isNew;
+      this.cancelButton.disabled = busy;
       for (const input of [this.name, this.subject, this.source]) input.disabled = unavailable;
       this.viewToggle.disabled = unavailable;
       this.viewToggle.setAttribute('aria-pressed', String(this.mode === 'html'));
@@ -171,7 +189,7 @@
       }
       if (this.frameReady) this.frame.contentDocument.body.contentEditable = String(!unavailable);
       this.saveButton.disabled = unavailable || !this.dirty;
-      this.saveButton.textContent = this.saving ? 'Saving…' : 'Save template';
+      this.saveButton.textContent = this.saving && this.operation === 'save' ? 'Saving…' : (this.isNew ? 'Create template' : 'Save template');
     }
 
     draft() {
@@ -179,7 +197,7 @@
     }
 
     changed() {
-      this.dirty = !!this.current && !sameDraft(this.draft(), this.current);
+      this.dirty = !!this.current && (this.isNew || !sameDraft(this.draft(), this.current));
       this.message(this.dirty ? 'Unsaved template changes' : 'No unsaved template changes', this.dirty ? 'dirty' : '');
       this.controls();
     }
@@ -196,13 +214,19 @@
         option.textContent = row.name;
         this.select.append(option);
       }
-      if (!this.rows.length) this.select.append(new Option('No saved templates', ''));
-      this.select.value = this.rows.some((row) => row.id === selectedId) ? selectedId : (this.rows[0] ? this.rows[0].id : '');
+      if (this.isNew) this.select.append(new Option('New template (unsaved)', ''));
+      else if (!this.rows.length) this.select.append(new Option('No saved templates', ''));
+      this.select.value = this.isNew ? '' : (this.rows.some((row) => row.id === selectedId) ? selectedId : (this.rows[0] ? this.rows[0].id : ''));
       byId('sfTemplateCount').textContent = this.rows.length + (this.rows.length === 1 ? ' saved template' : ' saved templates');
     }
 
     choose(id) {
+      this.isNew = false;
       this.current = this.rows.find((row) => row.id === id) || null;
+      this.showCurrent();
+    }
+
+    showCurrent() {
       this.name.value = this.current ? this.current.name : '';
       this.subject.value = this.current ? this.current.subject : '';
       this.rawBody = this.current ? this.current.body_html : '';
@@ -214,8 +238,78 @@
       byId('sfTemplateColor').value = '#000000';
       byId('sfTemplateColor').parentElement.style.borderBottomColor = '#000000';
       this.renderVisual();
-      this.message(this.current ? 'No unsaved template changes' : 'No saved template library was found on this computer.');
+      this.message(this.current ? 'No unsaved template changes' : 'No saved templates. Select Add to create one.');
       this.controls();
+    }
+
+    uniqueName(base, copy = false) {
+      const names = new Set(this.rows.map((row) => row.name.trim().toLocaleLowerCase()));
+      for (let number = 1; ; number += 1) {
+        const suffix = copy ? (number === 1 ? ' (copy)' : ' (copy ' + number + ')') : (number === 1 ? '' : ' (' + number + ')');
+        const name = base.slice(0, 200 - suffix.length).replace(/[\uD800-\uDBFF]$/, '').trimEnd() + suffix;
+        if (!names.has(name.trim().toLocaleLowerCase())) return name;
+      }
+    }
+
+    beginNew(fields) {
+      this.returnId = (this.current && this.current.id) || this.returnId || (this.rows[0] && this.rows[0].id) || '';
+      this.current = {...fields, id: null, revision: null};
+      this.isNew = true;
+      this.showCurrent();
+      this.dirty = true;
+      this.populateOptions('');
+      this.message('New template draft. Select Create template to save it.', 'dirty');
+      this.controls();
+      this.name.focus();
+      this.name.select();
+    }
+
+    add() {
+      if (!this.loaded || this.loading || this.saving || !this.discardAllowed()) return;
+      this.beginNew({name: this.uniqueName('[AUTO] New template'), subject: 'Order #[ORDER-NUMBER]', body_html: '<p>Hello,</p>\n<p><br></p>'});
+    }
+
+    duplicate() {
+      if (!this.current || this.isNew || this.loading || this.saving) return;
+      const fields = this.draft();
+      this.beginNew({...fields, name: this.uniqueName(fields.name.trim() || this.current.name, true)});
+    }
+
+    cancelNew() {
+      if (!this.isNew || this.loading || this.saving || !this.discardAllowed()) return;
+      const selected = this.rows.some((row) => row.id === this.returnId) ? this.returnId : (this.rows[0] ? this.rows[0].id : '');
+      this.choose(selected);
+      this.populateOptions(selected);
+    }
+
+    async remove() {
+      if (!this.current || this.isNew || this.loading || this.saving) return;
+      const template = this.current;
+      const warning = 'Remove "' + template.name + '" from this computer\'s library?\n\nAutomations that use it will stop until it is replaced.' +
+        (this.dirty ? '\nYour unsaved edits will also be discarded.' : '');
+      if (!window.confirm(warning)) return;
+      this.saving = true;
+      this.operation = 'remove';
+      this.controls();
+      this.message('Removing template…', 'saving');
+      try {
+        const data = await window.api('/api/salesforce-templates/' + encodeURIComponent(template.id), {
+          method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({revision: template.revision}),
+        });
+        if (!data.success) throw new Error(data.message || 'Template could not be removed.');
+        const index = this.rows.findIndex((row) => row.id === template.id);
+        this.rows = this.rows.filter((row) => row.id !== template.id);
+        const next = this.rows[Math.min(index, this.rows.length - 1)];
+        this.choose(next ? next.id : '');
+        this.populateOptions(next ? next.id : '');
+        this.message(data.message || 'Template removed.', 'saved');
+      } catch (error) {
+        this.message(error.message || 'Template could not be removed.', 'error');
+      } finally {
+        this.saving = false;
+        this.operation = '';
+        this.controls();
+      }
     }
 
     async load(force = false) {
@@ -227,8 +321,9 @@
       try {
         const data = await window.api('/api/salesforce-templates');
         if (!data.success || !Array.isArray(data.templates)) throw new Error(data.message || 'Templates could not be loaded.');
-        const previous = this.current && this.current.id;
+        const previous = (this.current && this.current.id) || (this.isNew ? this.returnId : '');
         this.rows = data.templates.sort((a, b) => a.name.localeCompare(b.name));
+        this.isNew = false;
         this.populateOptions(previous);
         this.choose(this.select.value);
         this.loaded = true;
@@ -377,26 +472,30 @@
         return;
       }
       this.saving = true;
+      this.operation = 'save';
       this.controls();
       this.message('Saving template…', 'saving');
       const id = this.current.id;
+      const creating = this.isNew;
       try {
-        const data = await window.api('/api/salesforce-templates/' + encodeURIComponent(id), {
+        const data = await window.api('/api/salesforce-templates' + (creating ? '' : '/' + encodeURIComponent(id)), {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({...this.draft(), revision: this.current.revision}),
         });
         if (!data.success || !data.template) throw new Error(data.message || 'Template could not be saved.');
         this.current = data.template;
-        this.rows = this.rows.map((row) => row.id === id ? this.current : row)
+        this.isNew = false;
+        this.rows = (creating ? [...this.rows, this.current] : this.rows.map((row) => row.id === id ? this.current : row))
           .sort((a, b) => a.name.localeCompare(b.name));
-        this.populateOptions(id);
+        this.populateOptions(this.current.id);
         this.dirty = false;
         this.message(data.message || 'Template saved.', 'saved');
       } catch (error) {
         this.message(error.message || 'Template could not be saved. Your draft is still open.', 'error');
       } finally {
         this.saving = false;
+        this.operation = '';
         this.controls();
       }
     }

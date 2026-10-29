@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import tempfile
 import threading
+from uuid import uuid4
 
 from runtime_paths import STATE_DIR
 
@@ -207,6 +208,39 @@ class SalesforceTemplateStore:
                     "Review Settings > Salesforce Template on this computer before retrying."
                 )
             return self._public(matches[0])
+
+    def create_template(self, values):
+        fields = _validate_fields(values)
+        with self._lock:
+            document = self._load()
+            if len(document["templates"]) >= 500:
+                raise TemplateLibraryError("The local template library can contain at most 500 templates.")
+            if any(fields["name"].strip().casefold() in {
+                    item["name"].strip().casefold(), *(name.strip().casefold() for name in item.get("previous_names", []))}
+                   for item in document["templates"]):
+                raise TemplateLibraryError("Another template already uses that name or used it before a rename.")
+            now = datetime.now(timezone.utc).isoformat()
+            # Copies receive a new identity and never inherit another template's aliases.
+            template = {"id": "local_" + uuid4().hex, **fields, "created_at": now, "updated_at": now}
+            document["templates"].append(template)
+            self._validate_document(document)
+            self._write(document, backup=True)
+            return self._public(template)
+
+    def delete_template(self, template_id, values):
+        revision = values.get("revision") if isinstance(values, dict) else None
+        if not isinstance(revision, str) or not revision:
+            raise TemplateLibraryError("Reload the template before removing it; its revision is missing.")
+        with self._lock:
+            document = self._load()
+            template = next((item for item in document["templates"] if item["id"] == template_id), None)
+            if template is None:
+                raise TemplateNotFound("Template was not found. Reload the template list.")
+            if revision != _revision(template):
+                raise TemplateConflict("This template changed since you opened it. Reload templates before removing it.")
+            document["templates"] = [item for item in document["templates"] if item["id"] != template_id]
+            self._write(document, backup=True)
+            return self._public(template)
 
     def save_template(self, template_id, values):
         fields = _validate_fields(values)
