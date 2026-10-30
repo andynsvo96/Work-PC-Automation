@@ -1,6 +1,6 @@
 # CRM Order Assistant
 
-Private Manifest V3 extension for the Automation project's CRM order pages. It provides local dark mode, queued single-order tools, and reliable Salesforce tab reuse. It never processes CRM report lists from the extension.
+Private Manifest V3 extension for the Automation project's CRM pages. It provides local order-page dark mode, queued single-order tools, Friday list highlighting, and reliable Salesforce tab reuse. It never queues or processes CRM report lists from the extension.
 
 ## Install locally
 
@@ -14,6 +14,24 @@ The preference is stored locally in that Chrome profile. Removing or reloading t
 After extension updates, reload the extension at `chrome://extensions` and refresh open CRM order pages. Updates that also change the local Automation app require an app restart as noted below.
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
+
+## Friday list highlighting
+
+Version **1.6.3** adds the missing next-business-day urgency color on Fridays.
+Orders with a **Fulfillment Date** (also spelled **Fulfilment Date**) or **Due
+Date** on the immediately following Monday display the CRM's neon green
+(`rgb(34, 236, 72)`) in order/report lists. The date determines this urgency
+highlight; a Production Date on Monday does not qualify. The rule uses the
+computer's local calendar and always targets Monday, without a holiday calendar.
+
+Highlighting is automatic, independent of the dark-mode setting and local
+Automation app. It follows list refreshes, pagination, and changed dates, and
+removes its highlight when Friday ends or the list changes. Existing CRM colors
+on other weekdays and printed pages retain their normal behavior. Unreadable or
+conflicting fulfillment dates are left unchanged.
+
+Reload **CRM Order Assistant** at `chrome://extensions`, then refresh open CRM
+list/report pages. **No local Automation app restart is needed.**
 
 ## Retry an unfinished automation
 
@@ -196,7 +214,12 @@ The extension also catches Salesforce links that create a new tab or window thro
 - `https://crm2.legacy.printfly.com/order/<id>`
 - The same-origin embedded order app at `https://crm2.legacy.printfly.com/app#/order/<id>`
 
-The manifest injects across the CRM host only to reach the embedded order frame; `content.js` refuses to activate anywhere except these order routes. Styling exists only in screen media, so CRM printing stays light.
+Dark mode and order tools remain scoped to these order routes. The separate
+Friday highlighter supports `/report`, `/reports`, and `/orders` list routes,
+including their embedded `/app#` forms. It only styles rows containing one
+identifiable order and a readable fulfillment/due date. The manifest injects
+across the CRM host to reach embedded frames; `content.js` keeps its order-page
+gate. Styling exists only in screen media, so CRM printing stays light.
 
 ## Local app bridge and order tools
 

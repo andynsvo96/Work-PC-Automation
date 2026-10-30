@@ -33,6 +33,7 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 
 - **Custom Processing lists:** in Processing's **New main automation run**, select **Custom**, then choose a **CRM list link** or **Order IDs or order links**. The second option accepts up to 100 orders as seven-digit numbers (with an optional `#`), individual CRM order links, or a mix, separated by commas, spaces, or new lines. Direct `/order/1234567` and embedded `/app#/order/1234567` links are converted to IDs before queuing; duplicates run once even when pasted as both an ID and a link. Report links belong in **CRM list link**. Select **Use this input**, choose the tools appropriate for the list, and **Add to Queue**. All seven tools are available and retain their existing save-verification and retry rules. Order ID lists target only those orders, in the pasted order, for each selected tool. If a step needs review, later tools skip that order while the remaining orders continue; failed-order retries stay targeted. Unlocker uses the configured locked-orders report and verifies a single-order selection before Apply. Custom keeps separate tool selections and offers **Edit input**; choosing another list mode restores that mode's selections. Queued, repeated, and scheduled runs retain their original custom input. Address Validator uses its existing All-mode per-order shipping rules. Restart the local app and refresh the dashboard to load this change; no extension reload is needed.
 - **Order-page controls:** Chrome extension with dark mode, queued single-order Manual Process, Cancel, Reachout, and Stock Issue actions, plus Salesforce tab reuse across windows in the same Chrome profile. Version 1.6.2 removes Auto-Process from the order page and Process current order from the toolbar popup. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages; no local app restart is needed for this removal.
+- **Friday urgency highlighting:** CRM Order Assistant **1.6.3** colors list/report orders neon green when their Fulfillment/Due Date is the immediately following Monday, using the computer's local date. It updates as list rows change and Friday ends, and works independently of dark mode. Reload the extension at `chrome://extensions` and refresh CRM lists; no local app restart is needed. See the [extension guide](crm-order-dark-mode-extension/README.md#friday-list-highlighting).
 - **Copyright cancellation by design:** Cancel > Copyright - Cancel scans every tab's Design Name. Tabs that share the same artwork Design ID remain individually selectable using their saved order-tab IDs. Selecting all tabs retains whole-order cancellation and **[AUTO] Copyright Cancel**. Selecting some removes only those designs, accepts purchased-stock tabs retained at QTY 0/$0.00, verifies the recalculated credit, and uses **[AUTO] Copyright Cancel - Partial** while the remaining order stays active. Partial work and financial submissions have recovery receipts; retry the original queued task. Restart the local app, reload CRM Order Assistant 1.6.1, and refresh CRM order pages after updating. See the extension guide for refund checks and recovery details.
 - **Partial copyright cancellation recovery:** if a refund is completed while a task is stopped after removing designs, Retry verifies the exact credit amount, reduced Paid, zero Balance Due, unchanged total/fees, and retained transaction history before resuming the Sales Note and email. It does not issue the refund again. A missing Sales Note is saved again once after reload and must persist before the workflow continues. Note entry waits for Edit Order to initialize, and an unsaved draft is saved rather than treated as a completed note. Unrelated payment changes still stop for review; existing Salesforce email confirmation receipts still apply. The next worker loads this change; no app restart, extension reload, or page refresh is needed. Keep the original queue entry and recovery receipt.
 - **Manual single-order processing:** choose address validation, mixed-product separation, auto-splitting, stock unlocking and goods ordering, shipping bypass, push back, or Extra Print Areas from the extension's Manual Process menu.
@@ -206,6 +207,17 @@ Run the extension's Node tests with:
 ```powershell
 node --test tests/test_extension_bridge.mjs tests/test_salesforce_tabs.mjs
 ```
+
+Check Friday list highlighting and its offline Chrome fixture with:
+
+```powershell
+node --test tests/test_rush_list_highlight.mjs
+python -m unittest discover -s tests -p test_rush_list_browser.py
+```
+
+The browser check uses a local ChromeDriver (set `CHROMEDRIVER` if needed), an
+isolated profile under `runtime/debug/`, and a loopback fixture server. It never
+opens live CRM orders.
 
 Verify Queue sorting and its interaction with task controls and execution order with:
 

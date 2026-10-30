@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Offline CRM fulfillment list</title>
+<style>
+  body { font: 14px sans-serif; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { padding: 8px; text-align: left; }
+  tr, .report-row { background-color: rgb(243, 196, 156); }
+  .striped > tbody > tr:nth-child(odd) > td { background-color: rgb(238, 238, 238); }
+  .native-green, .native-green > td { background-color: rgb(34, 236, 72); }
+  .report-row { padding: 8px; margin: 8px 0; }
+</style>
+<h1>Rush orders</h1>
+<table class="striped">
+  <thead><tr><th>Order</th><th>Production Date</th><th>Fulfillment Date</th></tr></thead>
+  <tbody>
+    <tr id="monday"><td><a href="/order/1234567">1234567</a></td><td>10/30/2026</td><td class="due">11/02/2026</td></tr>
+    <tr id="tuesday"><td><a href="/order/1234568">1234568</a></td><td>11/02/2026</td><td>11/03/2026</td></tr>
+    <tr id="later-monday"><td><a href="/app#/order/1234569">1234569</a></td><td>11/06/2026</td><td>11/09/2026</td></tr>
+    <tr id="native" class="native-green"><td><a href="/order/1234570">1234570</a></td><td>10/30/2026</td><td>10/31/2026</td></tr>
+    <tr id="invalid"><td><a href="/order/1234571">1234571</a></td><td>11/02/2026</td><td>11/32/2026</td></tr>
+  </tbody>
+</table>
+<div id="card" class="report-row"><div class="row"><a href="/order/1234572">1234572</a></div>Production Date: 10/30/2026 Fulfilment Date: <span class="due">2026-11-02</span></div>
+<div id="attribute" class="report-row" data-fulfillment-date="2026-11-02T00:00:00Z"><a href="/order/1234573">1234573</a></div>
+<div id="bound" class="report-row"><a href="/order/1234574">1234574</a> <span ng-bind="order.fulfillmentDate">11/02/26</span></div>
+<div id="production-only" class="report-row"><a href="/order/1234575">1234575</a> Production Date: 11/02/2026</div>
+<div id="ambiguous" class="report-row"><a href="/order/1234576">1234576</a> Due Date: 11/02/2026 Fulfillment Date: 11/03/2026</div>
+<table><thead><tr><th>Order</th><th>Due Date</th><th>Production Date</th></tr></thead>
+  <tbody><tr id="due-column"><td><a href="/order/1234577">1234577</a></td><td>11/02/26</td><td>10/30/2026</td></tr></tbody>
+</table>
+</html>

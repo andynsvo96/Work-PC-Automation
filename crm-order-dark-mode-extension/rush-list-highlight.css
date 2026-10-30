@@ -1,0 +1,11 @@
+/* Screen-only, independent of the order-page dark-mode preference. */
+@media screen {
+  .crm-friday-rush,
+  .crm-friday-rush > td,
+  .crm-friday-rush > th,
+  .crm-friday-rush > [role="cell"],
+  .crm-friday-rush > [role="gridcell"] {
+    background-color: rgb(34, 236, 72) !important;
+    color: #111 !important;
+  }
+}

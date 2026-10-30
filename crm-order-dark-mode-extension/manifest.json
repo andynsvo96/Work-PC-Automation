@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CRM Order Assistant",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "description": "CRM order tools with queued single-order automations and reliable Salesforce tab reuse.",
   "permissions": ["storage", "tabs", "webNavigation"],
   "host_permissions": [
@@ -31,6 +31,13 @@
       "matches": ["https://crm2.legacy.printfly.com/*"],
       "js": ["content.js"],
       "css": ["dark-mode.css"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://crm2.legacy.printfly.com/*"],
+      "js": ["rush-list-highlight.js"],
+      "css": ["rush-list-highlight.css"],
       "run_at": "document_start",
       "all_frames": true
     }
