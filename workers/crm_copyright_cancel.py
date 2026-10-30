@@ -5780,7 +5780,7 @@ def _read_salesforce_email_state(driver):
             });
         }
         function readFrom(composer) {
-          const labels = Array.from(composer.querySelectorAll('label,span,div,td,th'))
+          const labels = walk(composer)
             .filter((el) => {
               if (!visible(el)) return false;
               const text = clean(el.innerText || el.textContent || '').toLowerCase();
@@ -5789,28 +5789,31 @@ def _read_salesforce_email_state(driver):
             .sort((a, b) => a.getBoundingClientRect().y - b.getBoundingClientRect().y);
           for (const label of labels) {
             const lr = label.getBoundingClientRect();
-            const controls = Array.from(composer.querySelectorAll('select,input,button,[role=combobox],a,div,span'))
+            // Read the selected control on the From row, not overlapping parent
+            // containers or the adjacent To row. Those repeat labels and pills.
+            const controls = walk(composer)
               .filter((el) => {
-                if (!visible(el) || el === label) return false;
+                if (!visible(el) || !el.matches('select,input,button,[role=combobox],a[role=button],a.select')) return false;
                 const rect = el.getBoundingClientRect();
                 if (rect.left <= lr.right) return false;
-                if (Math.abs((rect.top + rect.height / 2) - (lr.top + lr.height / 2)) > 36) return false;
-                return rect.width > 120 && rect.height > 18;
+                return rect.top < lr.bottom && rect.bottom > lr.top;
               })
               .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
-            const pieces = [];
+            const values = new Set();
             for (const control of controls) {
+              let value = '';
               if ((control.tagName || '').toLowerCase() === 'select') {
                 const selected = control.options && control.selectedIndex >= 0 ? control.options[control.selectedIndex] : null;
-                if (selected) pieces.push(selected.text || selected.label || selected.value || '');
+                if (selected) value = selected.text || selected.label || selected.value || '';
+              } else {
+                value = control.value || control.innerText || control.textContent
+                  || control.getAttribute('aria-label') || control.getAttribute('title') || '';
               }
-              pieces.push(control.innerText || '');
-              pieces.push(control.value || '');
-              pieces.push(control.getAttribute('aria-label') || '');
-              pieces.push(control.getAttribute('title') || '');
+              value = clean(value);
+              if (value) values.add(value);
             }
-            const text = clean(pieces.join(' '));
-            if (text) return text;
+            if (values.size === 1) return Array.from(values)[0];
+            if (values.size > 1) return ''; // Ambiguous sender controls require review.
           }
           return '';
         }
@@ -6078,6 +6081,16 @@ def _send_salesforce_email(driver, dry_run, order_id, subject, body, skip_ready_
     }
 
 
+def _verify_salesforce_email_recipients(driver, customer_email):
+    # Reuse the checks already shared by Stock Issue and Extra Print Areas.
+    from crm_stock_issue_extension import _verify_final_recipients
+    recipients = _verify_final_recipients(driver, customer_email)
+    sender_emails = re.findall(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", recipients["from"], re.I)
+    if [email.casefold() for email in sender_emails] != [SALESFORCE_COPYRIGHT_CANCEL_FROM_EMAIL.casefold()]:
+        raise CopyrightCancelError("Salesforce must show exactly one Orders sender before Send.")
+    return recipients
+
+
 def _click_salesforce_send_button(driver):
     _restore_salesforce_email_composer(driver)
     _wait_for_email_composer(driver, timeout=10)
@@ -6234,6 +6247,8 @@ def _prepare_and_maybe_send_salesforce_email(
             driver.refresh()
             _activate_crm_context(driver)
             _wait_for_order_scope(driver, order_id=order_id, timeout=30)
+    recipients = _verify_salesforce_email_recipients(driver, customer_email)
+    selected_from = recipients["from"]
     result = _send_salesforce_email(
         driver,
         dry_run=dry_run,
@@ -6257,6 +6272,7 @@ def _prepare_and_maybe_send_salesforce_email(
         "subject": subject,
         "process": process.key,
         "fill": fill_result,
+        "recipients": recipients,
         "preparation_retried": bool(preparation_retry_error),
         "first_preparation_error": preparation_retry_error,
         **result,

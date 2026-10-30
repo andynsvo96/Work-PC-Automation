@@ -46,6 +46,7 @@ class SalesforceEmailWorkflowTests(unittest.TestCase):
                      '_click_salesforce_email', '_wait_for_email_composer',
                      '_set_salesforce_from_orders', '_replace_subject_order_number'):
             stack.enter_context(patch.object(shared, name))
+        stack.enter_context(patch.object(shared, '_verify_salesforce_email_recipients', return_value={'from': 'Orders'}))
         stack.enter_context(patch.object(shared.time, 'sleep'))
         return stack.enter_context(patch.object(shared, '_click_salesforce_send_button', return_value=True))
 
@@ -87,6 +88,23 @@ class SalesforceEmailWorkflowTests(unittest.TestCase):
                 shared._prepare_and_maybe_send_salesforce_email(
                     driver, 'crm', '1234567', 'customer@example.test', False, reason='Reason')
             self.assertEqual(click.call_count, 2)
+
+    def test_contact_resend_stops_if_recipient_verification_changes(self):
+        shared = sleeves.shared
+        subject = 'Order #1234567 - Copyright'
+        driver = self.confirmation_driver(subject, confirmed=False)
+        with ExitStack() as stack:
+            click = self.setup_confirmation(stack, shared)
+            final = {'subject': subject, 'body': 'Verified email body', 'from': 'Orders'}
+            stack.enter_context(patch.object(shared, '_fill_salesforce_email_from_salesforce_template', return_value={'state': final}))
+            stack.enter_context(patch.object(shared, '_verify_salesforce_email_ready_to_send', return_value=final))
+            stack.enter_context(patch.object(shared, '_verify_salesforce_email_recipients',
+                side_effect=[{'from': 'Orders'}, RuntimeError('Recipient changed')]))
+            with self.assertRaisesRegex(confirmation.UnconfirmedEmailError, 'Recipient changed'):
+                shared._prepare_and_maybe_send_salesforce_email(
+                    driver, 'crm', '1234567', 'customer@example.test', False,
+                    contact={'salesforce_label': 'Salesforce Contact'})
+            self.assertEqual(click.call_count, 1)
 
     def test_extra_print_and_comp_sleeves_rebuild_same_draft_and_confirm_activity(self):
         for process in (sleeves.SLEEVE_PRINTS_PROCESS, sleeves.COMP_SLEEVES_PROCESS):

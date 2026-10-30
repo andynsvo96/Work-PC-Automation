@@ -543,6 +543,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(crm_copyright_cancel, "_click_salesforce_email"))
             stack.enter_context(mock.patch.object(crm_copyright_cancel, "_wait_for_email_composer"))
             stack.enter_context(mock.patch.object(crm_copyright_cancel, "_set_salesforce_from_orders", return_value="Orders"))
+            stack.enter_context(mock.patch.object(crm_copyright_cancel, "_verify_salesforce_email_recipients", return_value={"from": "Orders"}))
             stack.enter_context(
                 mock.patch.object(crm_copyright_cancel, "_fill_salesforce_email_from_salesforce_template", return_value=fill)
             )
@@ -641,6 +642,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
                 for name in ("_verify_salesforce_email", "_click_salesforce_email",
                              "_wait_for_email_composer", "_set_salesforce_from_orders"):
                     stack.enter_context(mock.patch.object(crm_copyright_cancel, name))
+                stack.enter_context(mock.patch.object(crm_copyright_cancel, "_verify_salesforce_email_recipients", return_value={"from": "Orders"}))
                 state = {"subject": "Order #5301167", "body": "Verified local template"}
                 fill = stack.enter_context(mock.patch.object(
                     crm_copyright_cancel, "_fill_salesforce_email_from_salesforce_template",

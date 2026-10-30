@@ -162,6 +162,10 @@ class LocalTemplateBrowserTests(unittest.TestCase):
                 self.driver, 'crm', '1234567', 'customer@example.test', True,
                 process=process, reason='Test University', contact={'salesforce_label': 'Salesforce Contact'})
         self.assertEqual(result['fill']['source'], 'local_json')
+        self.assertEqual(result['from'], 'Orders <orders@rushordertees.com>')
+        self.assertEqual(result['recipients']['to'], ['customer@example.test'])
+        self.assertEqual(result['recipients']['cc'], [])
+        self.assertEqual(result['recipients']['bcc'], [])
         self.assertEqual(result['email_state']['subject'], 'Order #1234567 - License Required')
         self.assertIn('Test University may be protected by copyright', result['email_state']['body'])
         self.assertTrue(result['dry_run'])
@@ -169,6 +173,33 @@ class LocalTemplateBrowserTests(unittest.TestCase):
         self.assertEqual(self.driver.execute_script('return window.pickerClicks;'), 0)
         self.assertEqual(self.driver.find_element('id', 'sentHtml').text, '')
         send.assert_not_called()
+
+    def test_contact_draft_with_wrong_or_extra_recipients_or_senders_never_sends(self):
+        process = shared.COPYRIGHT_REACHOUT_PROCESS
+        self.write_library([{'id': 'reachout', 'name': process.salesforce_template,
+            'subject': 'Order #[ORDER-NUMBER]',
+            'body_html': '<p>While reviewing your order, [REASON] may be protected by copyright.</p>'}])
+        mutations = (
+            "document.querySelector('[data-email]').setAttribute('data-email', 'other@example.test'); document.querySelector('[data-email]').title = 'other@example.test';",
+            "document.querySelector('[data-email]').setAttribute('data-email', 'customer@example.test, other@example.test');",
+            "document.querySelector('select option').textContent = 'Other <other@example.test>';",
+            "document.querySelector('select option').textContent += ' Orders <orders@rushordertees.com>';",
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation), ExitStack() as stack:
+                self.open_fixture()
+                self.driver.execute_script(mutation)
+                stack.enter_context(mock.patch.object(composer, 'default_template_store', return_value=self.store))
+                for name in ('_open_salesforce_account', '_verify_salesforce_email',
+                             '_click_salesforce_email', '_wait_for_email_composer', '_set_salesforce_from_orders'):
+                    stack.enter_context(mock.patch.object(shared, name))
+                send = stack.enter_context(mock.patch.object(shared, '_click_salesforce_send_button'))
+                with self.assertRaisesRegex((RuntimeError, shared.CopyrightCancelError), 'recipient verification failed|From is not Orders|exactly one Orders sender'):
+                    shared._prepare_and_maybe_send_salesforce_email(
+                        self.driver, 'crm', '1234567', 'customer@example.test', False,
+                        process=process, reason='Test University', contact={'salesforce_label': 'Salesforce Contact'})
+                self.assertEqual(self.driver.find_element('id', 'sentHtml').text, '')
+                send.assert_not_called()
 
     def test_invoice_placeholder_can_be_a_link_target_without_showing_the_url_as_text(self):
         self.write_library([{'id':'invoice','name':sleeves.SLEEVE_PRINTS_PROCESS.salesforce_template,
