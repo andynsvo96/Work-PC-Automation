@@ -1,11 +1,49 @@
 /* Screen-only, independent of the order-page dark-mode preference. */
 @media screen {
-  .crm-friday-rush,
-  .crm-friday-rush > td,
-  .crm-friday-rush > th,
-  .crm-friday-rush > [role="cell"],
-  .crm-friday-rush > [role="gridcell"] {
+  .crm-list-rush,
+  .crm-list-rush > td,
+  .crm-list-rush > th,
+  .crm-list-rush > [role="cell"],
+  .crm-list-rush > [role="gridcell"] {
     background-color: rgb(34, 236, 72) !important;
     color: #111 !important;
   }
+
+  .crm-list-tools-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .crm-list-tools-heading::before,
+  .crm-list-tools-heading::after { display: none; }
+
+  .crm-list-tools-heading > .dashhead-titles {
+    min-width: 0;
+    flex: 1;
+  }
+
+  #crm-select-applicable-controls {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 5px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  #crm-select-applicable-controls [role="status"] {
+    max-width: 28em;
+    font-size: 12px;
+    white-space: normal;
+    text-align: right;
+  }
+
+  #crm-select-applicable-controls [role="status"]:empty { display: none; }
+}
+
+@media print {
+  #crm-select-applicable-controls { display: none; }
 }

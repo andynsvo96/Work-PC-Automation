@@ -1,6 +1,6 @@
 # CRM Order Assistant
 
-Private Manifest V3 extension for the Automation project's CRM pages. It provides local order-page dark mode, queued single-order tools, Friday list highlighting, and reliable Salesforce tab reuse. It never queues or processes CRM report lists from the extension.
+Private Manifest V3 extension for the Automation project's CRM pages. It provides local order-page dark mode, queued single-order tools, list selection and rush highlighting, and reliable Salesforce tab reuse. List controls select orders and open tabs; queued tools remain scoped to individual order pages.
 
 ## Install locally
 
@@ -11,24 +11,52 @@ Private Manifest V3 extension for the Automation project's CRM pages. It provide
 
 The preference is stored locally in that Chrome profile. Removing or reloading the extension keeps the preference unless Chrome extension data is cleared.
 
-After extension updates, reload the extension at `chrome://extensions` and refresh open CRM order pages. Updates that also change the local Automation app require an app restart as noted below.
+After extension updates, reload the extension at `chrome://extensions` and refresh open CRM order and list pages. Updates that also change the local Automation app require an app restart as noted below.
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
-## Friday list highlighting
+## Select Applicable
 
-Version **1.6.3** adds the missing next-business-day urgency color on Fridays.
-Orders with a **Fulfillment Date** (also spelled **Fulfilment Date**) or **Due
-Date** on the immediately following Monday display the CRM's neon green
-(`rgb(34, 236, 72)`) in order/report lists. The date determines this urgency
-highlight; a Production Date on Monday does not qualify. The rule uses the
-computer's local calendar and always targets Monday, without a holiday calendar.
+Version **1.6.4** adds **Select Applicable** at the right of the report title,
+below **Show Images & Sizes**. On the currently loaded CRM list page, it:
+
+1. Selects exactly the **tan** (`#f3c49c`) and **neon-green** (`#22ec48`) orders
+   using CRM's native selection. Any selected orders of other colors are
+   deselected. Brown, pale green, maroon, and other colors are excluded.
+2. Opens one new order tab per applicable order, in list order, in the **same
+   Chrome window**. The CRM list stays active with those orders selected.
+
+Native selection may turn a row gray with a yellow selection marker; its
+underlying status color still determines eligibility. Both native neon green
+and the extension's rush highlight qualify. The regular and **Lite** links to
+one order produce only one new tab. Hidden rows, image-preview rows, and orders
+on other pagination pages are excluded. Clicking again after completion opens
+a fresh set of tabs. The button is disabled while a batch is in progress.
+
+If CRM's selection cannot be verified or the list changes during selection, no
+tabs are opened. If Chrome opens only part of a batch, the status reports the
+count and keeps the selection; inspect the open tabs before clicking again.
+
+## Friday and weekend list highlighting
+
+Version **1.6.4** extends the Friday rule and requires both **Production Date**
+and **Fulfillment Date** (also spelled **Fulfilment Date**) or **Due Date**:
+
+| Viewing day | Production Date | Fulfillment / Due Date |
+| --- | --- | --- |
+| Friday | That Friday | Immediately following Monday |
+| Saturday or Sunday | Immediately following Monday | Immediately following Tuesday |
+
+Matching orders display the CRM's neon green (`rgb(34, 236, 72)`). On weekends,
+this treats Monday as the working day. Production dates in report group headers
+are supported. The rule uses the computer's local calendar without a holiday
+calendar. Monday through Thursday retain CRM's own urgency behavior.
 
 Highlighting is automatic, independent of the dark-mode setting and local
-Automation app. It follows list refreshes, pagination, and changed dates, and
-removes its highlight when Friday ends or the list changes. Existing CRM colors
-on other weekdays and printed pages retain their normal behavior. Unreadable or
-conflicting fulfillment dates are left unchanged.
+Automation app. It follows list refreshes, pagination, changed dates, and local
+midnight, removing stale extension highlights as the date or list changes.
+Unreadable or conflicting dates are left unchanged. Printed pages retain their
+original CRM colors and omit the Select Applicable control.
 
 Reload **CRM Order Assistant** at `chrome://extensions`, then refresh open CRM
 list/report pages. **No local Automation app restart is needed.**
@@ -215,9 +243,10 @@ The extension also catches Salesforce links that create a new tab or window thro
 - The same-origin embedded order app at `https://crm2.legacy.printfly.com/app#/order/<id>`
 
 Dark mode and order tools remain scoped to these order routes. The separate
-Friday highlighter supports `/report`, `/reports`, and `/orders` list routes,
+list highlighter supports `/report`, `/reports`, and `/orders` list routes,
 including their embedded `/app#` forms. It only styles rows containing one
-identifiable order and a readable fulfillment/due date. The manifest injects
+identifiable order and matching readable production and fulfillment/due dates.
+Select Applicable uses the native selectable rows in CRM's report table. The manifest injects
 across the CRM host to reach embedded frames; `content.js` keeps its order-page
 gate. Styling exists only in screen media, so CRM printing stays light.
 

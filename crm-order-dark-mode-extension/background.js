@@ -4,6 +4,7 @@ import {
   startLocalManualOrderProcessing
 } from "./bridge.js";
 import { isSalesforceUrl, rankSalesforceTabs } from "./salesforce-tabs.mjs";
+import { openApplicableCRMOrders } from "./crm-list-tabs.mjs";
 
 export const THEME_STORAGE_KEY = "crmOrderDarkModeEnabled";
 
@@ -96,6 +97,12 @@ async function setThemeEnabled(enabled) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || typeof message.type !== "string") return false;
+  if (message.type === "crm-list:open-applicable") {
+    openApplicableCRMOrders(message.orderIds, _sender)
+      .then(sendResponse)
+      .catch(() => sendResponse({ success: false, message: "Could not open the order tabs. Selection remains in the CRM list." }));
+    return true;
+  }
   if (message.type === "crm-dark-mode:get-theme") {
     getThemeEnabled().then((enabled) => sendResponse({ enabled }));
     return true;

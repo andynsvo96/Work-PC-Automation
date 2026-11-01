@@ -8,16 +8,31 @@ const context = vm.createContext({ document: { readyState: "loading", addEventLi
 vm.runInContext(source, context);
 const evaluate = expression => vm.runInContext(expression, context);
 
-test("Friday targets only the immediately following Monday, using local calendar dates", () => {
-  assert.equal(evaluate("crmFridayMondayDate(new Date(2026, 9, 30, 23, 59))"), "2026-11-02");
-  assert.equal(evaluate("crmFridayMondayDate(new Date(2026, 2, 6, 0, 1))"), "2026-03-09");
-  assert.equal(evaluate("crmFridayMondayDate(new Date(2027, 11, 31))"), "2028-01-03");
-  assert.equal(evaluate("crmFridayMondayDate(new Date(2036, 1, 29))"), "2036-03-03");
+test("Friday requires Friday production and the immediately following Monday fulfillment", () => {
+  for (const [date, production, fulfillment] of [
+    ["2026, 9, 30, 23, 59", "2026-10-30", "2026-11-02"],
+    ["2026, 2, 6, 0, 1", "2026-03-06", "2026-03-09"],
+    ["2027, 11, 31", "2027-12-31", "2028-01-03"],
+    ["2036, 1, 29", "2036-02-29", "2036-03-03"]
+  ]) {
+    assert.equal(evaluate(`JSON.stringify(crmListRushDates(new Date(${date})))`), JSON.stringify({ production, fulfillment }));
+  }
 });
 
-test("other weekdays leave CRM's own urgency colors alone", () => {
-  for (const day of [25, 26, 27, 28, 29, 31]) {
-    assert.equal(evaluate(`crmFridayMondayDate(new Date(2026, 9, ${day}))`), "");
+test("Saturday and Sunday both use Monday production with Tuesday fulfillment", () => {
+  for (const date of ["2026, 9, 31, 23, 59", "2026, 10, 1, 0, 1"]) {
+    assert.equal(evaluate(`JSON.stringify(crmListRushDates(new Date(${date})))`),
+      JSON.stringify({ production: "2026-11-02", fulfillment: "2026-11-03" }));
+  }
+  for (const date of ["2028, 11, 30", "2028, 11, 31"]) {
+    assert.equal(evaluate(`JSON.stringify(crmListRushDates(new Date(${date})))`),
+      JSON.stringify({ production: "2029-01-01", fulfillment: "2029-01-02" }));
+  }
+});
+
+test("Monday through Thursday leave CRM's own urgency colors alone", () => {
+  for (const day of [26, 27, 28, 29]) {
+    assert.equal(evaluate(`crmListRushDates(new Date(2026, 9, ${day}))`), null);
   }
 });
 
@@ -32,6 +47,8 @@ test("missing, impossible, and conflicting dates are not guessed", () => {
     assert.equal(evaluate(`crmListDateKey(${JSON.stringify(value)})`), "");
   }
   assert.equal(evaluate('crmListDateKey("2028-02-29")'), "2028-02-29");
+  assert.equal(evaluate('crmListConsistentDate(["11/02/2026", "2026-11-03"])'), "");
+  assert.equal(evaluate('crmListConsistentDate(["11/02/2026", "unreadable"])'), "");
 });
 
 test("the highlighter supports direct and embedded lists but excludes order and unrelated routes", () => {

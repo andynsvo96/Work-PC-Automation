@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Offline CRM native list selection</title>
+<style>
+  body { font: 14px sans-serif; background: #252830; color: #cfd2da; margin: 20px; }
+  .report-functions { display: flex; justify-content: flex-end; padding-bottom: 15px; border-bottom: 1px solid #434857; }
+  .dashhead { margin: 20px 0; }
+  .dashhead::before, .dashhead::after { content: " "; display: table; }
+  .dashhead::after { clear: both; }
+  .dashhead-title { font-size: 22px; margin: 0; }
+  .btn { padding: 8px 12px; background: #1ca8dd; color: white; border: 1px solid #1ca8dd; border-radius: 4px; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px; text-align: left; }
+  tr[data-id] { color: #252830; }
+  tr.previewPaneSelected, tr.previewPaneSelected + tr.image-preview { color: #cfd2da !important; background-color: #656e87 !important; }
+  tr.previewPaneSelected > td:first-child, tr.previewPaneSelected + tr.image-preview > td:first-child { border-left: 12px solid #e4d836; }
+  .image-preview td { height: 12px; padding: 0; }
+</style>
+<div class="content middle-pane">
+  <div class="report-functions"><form id="advanceUserOptionsListForm"><button type="button" class="btn">Show Images &amp; Sizes</button></form></div>
+  <div class="dashhead"><div class="dashhead-titles"><h2 class="dashhead-title">Non High Value Goods - Unreviewed DS Orders</h2></div></div>
+  <div id="report-container">
+    <table id="report-table">
+      <thead><tr><th>Order ID</th><th>Fulfillment Date</th><th>Quantity</th></tr></thead>
+      <tbody>
+        <tr id="monday-group"><td colspan="3">Production Date: 2026-11-02 | Total - 8</td></tr>
+        <tr id="tan-one" data-id="1234601" class="selectable previewPaneActive" style="background-color: #f3c49c"><td><a href="/order/1234601">1234601</a> | <a href="/app#/order/1234601" target="_blank">Lite</a></td><td>2026-11-04</td><td>1</td></tr>
+        <tr class="image-preview" style="background-color: #f3c49c"><td colspan="3"></td></tr>
+        <tr id="brown" data-id="1234602" class="selectable previewPaneSelected" style="background-color: #c47d54; opacity: .5"><td><a href="/order/1234602">1234602</a></td><td>2026-11-04</td><td>1</td></tr>
+        <tr id="tan-selected" data-id="1234603" class="selectable previewPaneSelected" style="background-color: #f3c49c"><td><a href="/order/1234603">1234603</a></td><td>2026-11-06</td><td>1</td></tr>
+        <tr id="pale-green" data-id="1234604" class="selectable previewPaneActive" style="background-color: #afdaac; opacity: .5"><td><a href="/order/1234604">1234604</a></td><td>2026-11-04</td><td>1</td></tr>
+        <tr id="native-neon" data-id="1234605" class="selectable previewPaneActive" style="background-color: #22ec48"><td><a href="/order/1234605">1234605</a></td><td>2026-11-04</td><td>1</td></tr>
+        <tr id="weekend-rush" data-id="1234606" class="selectable previewPaneActive" style="background-color: #f3c49c"><td><a href="/order/1234606">1234606</a></td><td>2026-11-03</td><td>1</td></tr>
+        <tr class="image-preview" style="background-color: #f3c49c"><td colspan="3"></td></tr>
+        <tr id="maroon" data-id="1234607" class="selectable previewPaneActive" style="background-color: #800000; opacity: .5"><td><a href="/order/1234607">1234607</a></td><td>2026-11-04</td><td>1</td></tr>
+        <tr id="hidden-tan" data-id="1234608" class="selectable previewPaneActive" style="background-color: #f3c49c; display: none"><td><a href="/order/1234608">1234608</a></td><td>2026-11-04</td><td>1</td></tr>
+        <tr id="tuesday-group"><td colspan="3">Production Date: 2026-11-03 | Total - 1</td></tr>
+        <tr id="wrong-group" data-id="1234609" class="selectable previewPaneActive" style="background-color: #afdaac"><td><a href="/order/1234609">1234609</a></td><td>2026-11-03</td><td>1</td></tr>
+        <tr id="unknown-group"><td colspan="3">Production Date: unreadable | Total - 1</td></tr>
+        <tr id="unreadable-group" data-id="1234610" class="selectable previewPaneActive" style="background-color: #afdaac"><td><a href="/order/1234610">1234610</a></td><td>2026-11-03</td><td>1</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<div id="preview-pane" class="loading-container"><span id="selection-count"></span><a href="/order/1234699">Preview link outside the list</a></div>
+<script>
+  // Stand-in for the legacy CRM controller: modifiers toggle the native model,
+  // selected rows turn gray, and loading briefly blocks subsequent selections.
+  window.fixtureSelection = new Set(['1234602', '1234603']);
+  window.fixtureClicks = [];
+  window.fixtureMessages = [];
+  window.fixtureIgnoreClicks = false;
+  window.fixtureReply = null;
+  const preview = document.querySelector('#preview-pane');
+  const updateCount = () => { document.querySelector('#selection-count').textContent = `${fixtureSelection.size} orders selected`; };
+  for (const row of document.querySelectorAll('#report-table tr.selectable')) {
+    row.addEventListener('click', event => {
+      fixtureClicks.push({ id: row.dataset.id, ctrlKey: event.ctrlKey, metaKey: event.metaKey, shiftKey: event.shiftKey });
+      if (fixtureIgnoreClicks || preview.classList.contains('loading') || event.target.closest('a')) return;
+      if (!event.ctrlKey && !event.metaKey) fixtureSelection.clear();
+      const id = row.dataset.id;
+      if (fixtureSelection.has(id)) fixtureSelection.delete(id);
+      else fixtureSelection.add(id);
+      for (const item of document.querySelectorAll('#report-table tr.selectable')) {
+        item.classList.toggle('previewPaneSelected', fixtureSelection.has(item.dataset.id));
+        item.classList.toggle('previewPaneActive', !fixtureSelection.has(item.dataset.id));
+      }
+      updateCount();
+      preview.classList.add('loading');
+      setTimeout(() => preview.classList.remove('loading'), 30);
+    });
+  }
+  window.chrome = { runtime: { sendMessage: async message => {
+    fixtureMessages.push(message);
+    return fixtureReply || { success: true, openedOrderIds: message.orderIds };
+  } } };
+  updateCount();
+</script>
+</html>

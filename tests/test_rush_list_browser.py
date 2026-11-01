@@ -1,4 +1,4 @@
-"""Offline CRM list highlighting checks; no live orders or Automation server."""
+"""Offline CRM list highlighting and native selection; no live orders/server."""
 
 import http.server
 import os
@@ -6,9 +6,11 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 
 
@@ -30,13 +32,16 @@ class RushListBrowserTests(unittest.TestCase):
             raise unittest.SkipTest("No local ChromeDriver available for offline browser tests.")
 
         fixture = (ROOT / "tests/fixtures/crm_rush_list.html").read_bytes()
+        selection_fixture = (ROOT / "tests/fixtures/crm_select_applicable.html").read_bytes()
 
         class FixtureHandler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                url = urlsplit(self.path)
+                is_selection = url.path == "/report/select-applicable" or parse_qs(url.query).get("fixture") == ["selection"]
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
-                self.wfile.write(fixture)
+                self.wfile.write(selection_fixture if is_selection else fixture)
 
             def log_message(self, *_args):
                 pass
@@ -84,7 +89,7 @@ class RushListBrowserTests(unittest.TestCase):
         self.driver.execute_async_script("requestAnimationFrame(() => requestAnimationFrame(arguments[0]));")
 
     def highlighted(self):
-        return self.driver.execute_script("return [...document.querySelectorAll('.crm-friday-rush')].map(row => row.id).sort();")
+        return self.driver.execute_script("return [...document.querySelectorAll('.crm-list-rush')].map(row => row.id).sort();")
 
     def wait_for_rows(self, ids):
         WebDriverWait(self.driver, 5).until(lambda _: self.highlighted() == sorted(ids))
@@ -98,7 +103,7 @@ class RushListBrowserTests(unittest.TestCase):
         self.assertFalse(self.driver.execute_script("return document.documentElement.classList.contains('crm-order-dark-mode');"))
 
     def test_other_weekdays_and_order_pages_keep_their_existing_colors(self):
-        for day, route in [(29, "/report/967"), (31, "/report/967"), (30, "/order/1234567"), (30, "/app#/order/1234567")]:
+        for day, route in [(29, "/report/967"), (33, "/report/967"), (30, "/order/1234567"), (30, "/app#/order/1234567")]:
             with self.subTest(day=day, route=route):
                 self.show_list(day, route)
                 self.assertEqual(self.highlighted(), [])
@@ -112,14 +117,18 @@ class RushListBrowserTests(unittest.TestCase):
         """)
         self.wait_for_rows(["bound", "due-column"])
         self.driver.execute_script("document.querySelector('#tuesday td:last-child').textContent = '11/02/2026';")
+        self.wait_for_rows(["bound", "due-column"])
+        self.driver.execute_script("document.querySelector('#tuesday td:nth-child(2)').textContent = '10/30/2026';")
         self.wait_for_rows(["bound", "due-column", "tuesday"])
+        self.driver.execute_script("document.querySelector('#bound span[ng-bind*=scheduledPrintDate]').textContent = '11/02/2026';")
+        self.wait_for_rows(["due-column", "tuesday"])
 
     def test_new_rows_and_embedded_route_navigation_refresh_without_reloading(self):
         self.show_list(route="/app#/reports/orders")
         self.driver.execute_script("""
             const row = document.createElement('div');
             row.id = 'added';
-            row.innerHTML = '<a href="/order/1234599">1234599</a> Due Date: 11/02/2026';
+            row.innerHTML = '<a href="/order/1234599">1234599</a> Production Date: 10/30/2026 Due Date: 11/02/2026';
             document.body.append(row);
         """)
         self.wait_for_rows(["added", "attribute", "bound", "card", "due-column", "monday"])
@@ -131,10 +140,10 @@ class RushListBrowserTests(unittest.TestCase):
     def test_date_rollover_removes_only_extension_highlights(self):
         self.show_list()
         self.driver.execute_script("fixtureNow = new RealDate(2026, 9, 31, 0, 1).getTime(); window.dispatchEvent(new Event('focus'));")
-        self.wait_for_rows([])
+        self.wait_for_rows(["tuesday"])
         self.assertEqual(self.driver.execute_script("return getComputedStyle(document.querySelector('#native td')).backgroundColor;"), "rgb(34, 236, 72)")
 
-    def test_midnight_timer_enables_friday_and_clears_saturday_without_user_input(self):
+    def test_midnight_timer_switches_from_friday_to_weekend_and_clears_monday(self):
         self.show_list(day=29)
         self.assertEqual(self.highlighted(), [])
         self.assertEqual(self.driver.execute_script("return fixtureMidnightTimers[0].delay;"), 12 * 60 * 60 * 1000 + 50)
@@ -147,7 +156,130 @@ class RushListBrowserTests(unittest.TestCase):
             fixtureNow = new RealDate(2026, 9, 31, 0, 0, 1).getTime();
             fixtureMidnightTimers.shift().callback();
         """)
+        self.wait_for_rows(["tuesday"])
+        self.driver.execute_script("""
+            fixtureNow = new RealDate(2026, 10, 1, 0, 0, 1).getTime();
+            fixtureMidnightTimers.shift().callback();
+        """)
+        self.wait_for_rows(["tuesday"])
+        self.driver.execute_script("""
+            fixtureNow = new RealDate(2026, 10, 2, 0, 0, 1).getTime();
+            fixtureMidnightTimers.shift().callback();
+        """)
         self.wait_for_rows([])
+
+    def test_both_weekend_days_require_monday_production_and_tuesday_fulfillment(self):
+        for day in [31, 32]:
+            with self.subTest(day=day):
+                self.show_list(day)
+                self.assertEqual(self.highlighted(), ["tuesday"])
+                self.driver.execute_script("document.querySelector('#tuesday td:nth-child(2)').textContent = '10/30/2026';")
+                self.wait_for_rows([])
+
+    def test_group_headers_supply_production_dates_without_crossing_groups(self):
+        self.show_list(31, "/report/select-applicable")
+        self.assertEqual(self.highlighted(), ["weekend-rush"])
+        self.driver.execute_script("document.querySelector('#weekend-rush').setAttribute('data-production-date', '2026-11-03');")
+        self.wait_for_rows([])
+        self.driver.execute_script("document.querySelector('#weekend-rush').removeAttribute('data-production-date');")
+        self.wait_for_rows(["weekend-rush"])
+        self.driver.execute_script("document.querySelector('#monday-group td').textContent = 'Production Date: 2026-11-03 | Total - 8';")
+        self.wait_for_rows([])
+        self.driver.execute_script("document.querySelector('#monday-group td').textContent = 'Production Date: 2026-11-02 | Total - 8';")
+        self.wait_for_rows(["weekend-rush"])
+
+    def selected_order_ids(self):
+        return self.driver.execute_script("return [...fixtureSelection].sort();")
+
+    def select_applicable(self):
+        button = self.driver.find_element(By.CSS_SELECTOR, "#crm-select-applicable-controls button")
+        button.click()
+        WebDriverWait(self.driver, 8).until(lambda _: not button.get_property("disabled"))
+        return self.driver.find_element(By.CSS_SELECTOR, "#crm-select-applicable-controls [role='status']").text
+
+    def test_button_is_below_options_opposite_title_and_only_on_list_routes(self):
+        self.show_list(31, "/app?fixture=selection#/report/967")
+        positions = self.driver.execute_script("""
+            const rect = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return {left:r.left, right:r.right, top:r.top, bottom:r.bottom}; };
+            return {button:rect('#crm-select-applicable-controls button'), title:rect('.dashhead-title'), options:rect('#advanceUserOptionsListForm button')};
+        """)
+        self.assertGreaterEqual(positions["button"]["top"], positions["options"]["bottom"])
+        self.assertGreater(positions["button"]["left"], positions["title"]["right"])
+        self.assertEqual(positions["button"]["right"], positions["options"]["right"])
+        self.driver.execute_script("location.hash = '#/order/1234601';")
+        WebDriverWait(self.driver, 5).until(lambda _: not self.driver.find_elements(By.ID, "crm-select-applicable-controls"))
+        self.driver.execute_script("location.hash = '#/report/967';")
+        WebDriverWait(self.driver, 5).until(lambda _: len(self.driver.find_elements(By.ID, "crm-select-applicable-controls")) == 1)
+
+    def test_selects_exact_native_model_and_opens_unique_tan_and_neon_orders(self):
+        self.show_list(31, "/report/select-applicable")
+        original_url = self.driver.current_url
+        original_tab = self.driver.current_window_handle
+        self.assertEqual(self.select_applicable(), "4 selected · 4 tabs opened")
+        expected = ["1234601", "1234603", "1234605", "1234606"]
+        self.assertEqual(self.selected_order_ids(), expected)
+        self.assertEqual(self.driver.execute_script("return [...document.querySelectorAll('#report-table .previewPaneSelected')].map(row => row.dataset.id).sort();"), expected)
+        messages = self.driver.execute_script("return fixtureMessages;")
+        self.assertEqual(messages, [{"type": "crm-list:open-applicable", "orderIds": expected}])
+        self.assertEqual(self.driver.current_url, original_url)
+        self.assertEqual(self.driver.current_window_handle, original_tab)
+        clicks = self.driver.execute_script("return fixtureClicks;")
+        self.assertNotIn("1234603", [click["id"] for click in clicks])
+        self.assertTrue(all(click["ctrlKey"] and click["metaKey"] and not click["shiftKey"] for click in clicks))
+        # A second click must still recognize inline status colors under gray
+        # native selection and must not toggle already selected orders off.
+        self.assertEqual(self.select_applicable(), "4 selected · 4 tabs opened")
+        self.assertEqual(self.selected_order_ids(), expected)
+        self.assertEqual(self.driver.execute_script("return fixtureClicks.length;"), len(clicks))
+
+    def test_empty_applicable_list_clears_other_selection_and_opens_nothing(self):
+        self.show_list(29, "/report/select-applicable")
+        self.driver.execute_script("document.querySelectorAll('#report-table tr[data-id]').forEach(row => row.style.backgroundColor = '#afdaac');")
+        self.assertEqual(self.select_applicable(), "No tan or neon-green orders on this page.")
+        self.assertEqual(self.selected_order_ids(), [])
+        self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [])
+
+    def test_selection_failure_never_opens_tabs(self):
+        self.show_list(31, "/report/select-applicable")
+        self.driver.execute_script("fixtureIgnoreClicks = true;")
+        self.assertIn("could not be verified", self.select_applicable())
+        self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [])
+
+    def test_opening_failure_preserves_selected_orders_and_reports_partial_result(self):
+        self.show_list(31, "/report/select-applicable")
+        self.driver.execute_script("fixtureReply = {success: false, openedOrderIds: ['1234601'], message: 'Opened 1 of 4 order tabs. Selection remains in the CRM list.'};")
+        self.assertIn("Opened 1 of 4", self.select_applicable())
+        self.assertEqual(self.selected_order_ids(), ["1234601", "1234603", "1234605", "1234606"])
+        self.assertEqual(self.driver.execute_script("return fixtureMessages.length;"), 1)
+
+    def test_replaced_rows_stop_opening_until_selection_can_be_verified(self):
+        self.show_list(31, "/report/select-applicable")
+        self.driver.execute_script("""
+            const first = document.querySelector('#tan-one');
+            first.addEventListener('click', () => { first.replaceWith(first.cloneNode(true)); }, {once:true});
+        """)
+        self.assertIn("list changed", self.select_applicable())
+        self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [])
+
+    def test_applicability_changes_during_selection_stop_tab_opening(self):
+        self.show_list(31, "/report/select-applicable")
+        self.driver.execute_script("""
+            document.querySelector('#tan-one').addEventListener('click', event => {
+                event.currentTarget.style.backgroundColor = '#c47d54';
+            }, {once:true});
+        """)
+        self.assertIn("list changed", self.select_applicable())
+        self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [])
+
+    def test_repeated_clicks_while_selection_is_busy_open_only_one_batch(self):
+        self.show_list(31, "/report/select-applicable")
+        self.driver.execute_script("""
+            const button = document.querySelector('#crm-select-applicable-controls button');
+            button.click();
+            button.dispatchEvent(new MouseEvent('click', {bubbles:true}));
+        """)
+        WebDriverWait(self.driver, 8).until(lambda _: self.driver.execute_script("return fixtureMessages.length === 1 && !document.querySelector('#crm-select-applicable-controls button').disabled;"))
+        self.assertEqual(self.driver.execute_script("return fixtureMessages.length;"), 1)
 
     def test_printing_uses_the_original_crm_row_colors(self):
         self.show_list()

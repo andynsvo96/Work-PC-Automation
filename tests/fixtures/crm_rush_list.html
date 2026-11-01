@@ -23,11 +23,14 @@
   </tbody>
 </table>
 <div id="card" class="report-row"><div class="row"><a href="/order/1234572">1234572</a></div>Production Date: 10/30/2026 Fulfilment Date: <span class="due">2026-11-02</span></div>
-<div id="attribute" class="report-row" data-fulfillment-date="2026-11-02T00:00:00Z"><a href="/order/1234573">1234573</a></div>
-<div id="bound" class="report-row"><a href="/order/1234574">1234574</a> <span ng-bind="order.fulfillmentDate">11/02/26</span></div>
+<div id="attribute" class="report-row" data-production-date="2026-10-30" data-fulfillment-date="2026-11-02T00:00:00Z"><a href="/order/1234573">1234573</a></div>
+<div id="bound" class="report-row"><a href="/order/1234574">1234574</a> <span ng-bind="order.scheduledPrintDate">10/30/26</span> <span ng-bind="order.fulfillmentDate">11/02/26</span></div>
 <div id="production-only" class="report-row"><a href="/order/1234575">1234575</a> Production Date: 11/02/2026</div>
 <div id="ambiguous" class="report-row"><a href="/order/1234576">1234576</a> Due Date: 11/02/2026 Fulfillment Date: 11/03/2026</div>
 <table><thead><tr><th>Order</th><th>Due Date</th><th>Production Date</th></tr></thead>
   <tbody><tr id="due-column"><td><a href="/order/1234577">1234577</a></td><td>11/02/26</td><td>10/30/2026</td></tr></tbody>
 </table>
+<div id="wrong-production" class="report-row"><a href="/order/1234578">1234578</a> Production Date: 10/29/2026 Due Date: 11/02/2026</div>
+<div id="missing-production" class="report-row"><a href="/order/1234579">1234579</a> Due Date: 11/02/2026</div>
+<div id="conflicting-production" class="report-row" data-production-date="2026-10-29"><a href="/order/1234580">1234580</a> Production Date: 10/30/2026 Due Date: 11/02/2026</div>
 </html>
