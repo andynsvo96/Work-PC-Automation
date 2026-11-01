@@ -15,23 +15,31 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
-## Select Applicable
+## Open Applicable and Select Applicable
 
-Version **1.6.4** adds **Select Applicable** at the right of the report title,
-below **Show Images & Sizes**. On the currently loaded CRM list page, it:
+Version **1.6.6** provides two adjacent buttons at the right of the report title,
+below **Show Images & Sizes**, on the currently loaded CRM list page:
 
-1. Selects exactly the **tan** (`#f3c49c`) and **neon-green** (`#22ec48`) orders
-   using CRM's native selection. Any selected orders of other colors are
-   deselected. Brown, pale green, maroon, and other colors are excluded.
-2. Opens one new order tab per applicable order, in list order, in the **same
-   Chrome window**. The CRM list stays active with those orders selected.
+- **Open Applicable** (previously named Select Applicable) selects the **tan**,
+  **neon-green**, and **purple** orders using CRM's native selection, deselects
+  any other colors, and opens one new order tab per applicable order. Tabs open
+  in list order in the **same Chrome window**; the CRM list stays active with
+  those orders selected. Brown, pale green, maroon, and other colors are excluded.
+- **Select Applicable** applies the same **tan**, **neon-green**, and **purple**
+  selection, deselecting other colors, without opening tabs. It uses CRM's native
+  selection and requires no connection to the local Automation app or tab-opening
+  bridge.
+
+Applicable status colors include tan (`#f3c49c`), native/extension neon green
+(`#20df4b` / `#22ec48`), and purple (`#86209f` / `#9c27b0`).
 
 Native selection may turn a row gray with a yellow selection marker; its
-underlying status color still determines eligibility. Both native neon green
-and the extension's rush highlight qualify. The regular and **Lite** links to
-one order produce only one new tab. Hidden rows, image-preview rows, and orders
-on other pagination pages are excluded. Clicking again after completion opens
-a fresh set of tabs. The button is disabled while a batch is in progress.
+underlying status color still determines eligibility for both buttons. Both native
+neon green and the extension's rush highlight qualify. The regular and **Lite**
+links to one order produce only one new tab. Both buttons exclude hidden rows,
+image-preview rows, and orders on other pagination pages. Clicking Open Applicable
+again after completion opens a fresh set of tabs; repeating Select Applicable
+keeps the applicable orders selected. Both buttons are disabled while either action runs.
 
 If CRM's selection cannot be verified or the list changes during selection, no
 tabs are opened. If Chrome opens only part of a batch, the status reports the
@@ -56,7 +64,7 @@ Highlighting is automatic, independent of the dark-mode setting and local
 Automation app. It follows list refreshes, pagination, changed dates, and local
 midnight, removing stale extension highlights as the date or list changes.
 Unreadable or conflicting dates are left unchanged. Printed pages retain their
-original CRM colors and omit the Select Applicable control.
+original CRM colors and omit both list controls.
 
 Reload **CRM Order Assistant** at `chrome://extensions`, then refresh open CRM
 list/report pages. **No local Automation app restart is needed.**
@@ -246,7 +254,7 @@ Dark mode and order tools remain scoped to these order routes. The separate
 list highlighter supports `/report`, `/reports`, and `/orders` list routes,
 including their embedded `/app#` forms. It only styles rows containing one
 identifiable order and matching readable production and fulfillment/due dates.
-Select Applicable uses the native selectable rows in CRM's report table. The manifest injects
+Both list buttons use the native selectable rows in CRM's report table. The manifest injects
 across the CRM host to reach embedded frames; `content.js` keeps its order-page
 gate. Styling exists only in screen media, so CRM printing stays light.
 

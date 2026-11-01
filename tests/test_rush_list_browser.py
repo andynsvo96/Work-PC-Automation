@@ -191,32 +191,42 @@ class RushListBrowserTests(unittest.TestCase):
     def selected_order_ids(self):
         return self.driver.execute_script("return [...fixtureSelection].sort();")
 
-    def select_applicable(self):
-        button = self.driver.find_element(By.CSS_SELECTOR, "#crm-select-applicable-controls button")
+    def run_list_action(self, button_id):
+        button = self.driver.find_element(By.ID, button_id)
         button.click()
         WebDriverWait(self.driver, 8).until(lambda _: not button.get_property("disabled"))
         return self.driver.find_element(By.CSS_SELECTOR, "#crm-select-applicable-controls [role='status']").text
 
-    def test_button_is_below_options_opposite_title_and_only_on_list_routes(self):
+    def open_applicable(self):
+        return self.run_list_action("crm-open-applicable-button")
+
+    def select_applicable(self):
+        return self.run_list_action("crm-select-applicable-button")
+
+    def test_buttons_are_adjacent_below_options_opposite_title_and_only_on_list_routes(self):
         self.show_list(31, "/app?fixture=selection#/report/967")
         positions = self.driver.execute_script("""
             const rect = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return {left:r.left, right:r.right, top:r.top, bottom:r.bottom}; };
-            return {button:rect('#crm-select-applicable-controls button'), title:rect('.dashhead-title'), options:rect('#advanceUserOptionsListForm button')};
+            return {open:rect('#crm-open-applicable-button'), select:rect('#crm-select-applicable-button'), title:rect('.dashhead-title'), options:rect('#advanceUserOptionsListForm button')};
         """)
-        self.assertGreaterEqual(positions["button"]["top"], positions["options"]["bottom"])
-        self.assertGreater(positions["button"]["left"], positions["title"]["right"])
-        self.assertEqual(positions["button"]["right"], positions["options"]["right"])
+        self.assertGreaterEqual(positions["open"]["top"], positions["options"]["bottom"])
+        self.assertGreater(positions["open"]["left"], positions["title"]["right"])
+        self.assertLess(positions["open"]["right"], positions["select"]["left"])
+        self.assertEqual(positions["open"]["top"], positions["select"]["top"])
+        self.assertEqual(positions["select"]["right"], positions["options"]["right"])
+        self.assertEqual(self.driver.find_element(By.ID, "crm-open-applicable-button").text, "Open Applicable")
+        self.assertEqual(self.driver.find_element(By.ID, "crm-select-applicable-button").text, "Select Applicable")
         self.driver.execute_script("location.hash = '#/order/1234601';")
         WebDriverWait(self.driver, 5).until(lambda _: not self.driver.find_elements(By.ID, "crm-select-applicable-controls"))
         self.driver.execute_script("location.hash = '#/report/967';")
         WebDriverWait(self.driver, 5).until(lambda _: len(self.driver.find_elements(By.ID, "crm-select-applicable-controls")) == 1)
 
-    def test_selects_exact_native_model_and_opens_unique_tan_and_neon_orders(self):
+    def test_opens_unique_tan_neon_and_purple_orders_with_exact_native_selection(self):
         self.show_list(31, "/report/select-applicable")
         original_url = self.driver.current_url
         original_tab = self.driver.current_window_handle
-        self.assertEqual(self.select_applicable(), "4 selected · 4 tabs opened")
-        expected = ["1234601", "1234603", "1234605", "1234606"]
+        self.assertEqual(self.open_applicable(), "5 selected · 5 tabs opened")
+        expected = ["1234601", "1234603", "1234605", "1234606", "1234611"]
         self.assertEqual(self.selected_order_ids(), expected)
         self.assertEqual(self.driver.execute_script("return [...document.querySelectorAll('#report-table .previewPaneSelected')].map(row => row.dataset.id).sort();"), expected)
         messages = self.driver.execute_script("return fixtureMessages;")
@@ -228,28 +238,30 @@ class RushListBrowserTests(unittest.TestCase):
         self.assertTrue(all(click["ctrlKey"] and click["metaKey"] and not click["shiftKey"] for click in clicks))
         # A second click must still recognize inline status colors under gray
         # native selection and must not toggle already selected orders off.
-        self.assertEqual(self.select_applicable(), "4 selected · 4 tabs opened")
+        self.assertEqual(self.open_applicable(), "5 selected · 5 tabs opened")
         self.assertEqual(self.selected_order_ids(), expected)
         self.assertEqual(self.driver.execute_script("return fixtureClicks.length;"), len(clicks))
 
     def test_empty_applicable_list_clears_other_selection_and_opens_nothing(self):
-        self.show_list(29, "/report/select-applicable")
-        self.driver.execute_script("document.querySelectorAll('#report-table tr[data-id]').forEach(row => row.style.backgroundColor = '#afdaac');")
-        self.assertEqual(self.select_applicable(), "No tan or neon-green orders on this page.")
-        self.assertEqual(self.selected_order_ids(), [])
-        self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [])
+        for action in [self.select_applicable, self.open_applicable]:
+            with self.subTest(action=action.__name__):
+                self.show_list(29, "/report/select-applicable")
+                self.driver.execute_script("document.querySelectorAll('#report-table tr[data-id]').forEach(row => row.style.backgroundColor = '#afdaac');")
+                self.assertEqual(action(), "No tan, neon-green, or purple orders on this page.")
+                self.assertEqual(self.selected_order_ids(), [])
+                self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [])
 
     def test_selection_failure_never_opens_tabs(self):
         self.show_list(31, "/report/select-applicable")
         self.driver.execute_script("fixtureIgnoreClicks = true;")
-        self.assertIn("could not be verified", self.select_applicable())
+        self.assertIn("could not be verified", self.open_applicable())
         self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [])
 
     def test_opening_failure_preserves_selected_orders_and_reports_partial_result(self):
         self.show_list(31, "/report/select-applicable")
-        self.driver.execute_script("fixtureReply = {success: false, openedOrderIds: ['1234601'], message: 'Opened 1 of 4 order tabs. Selection remains in the CRM list.'};")
-        self.assertIn("Opened 1 of 4", self.select_applicable())
-        self.assertEqual(self.selected_order_ids(), ["1234601", "1234603", "1234605", "1234606"])
+        self.driver.execute_script("fixtureReply = {success: false, openedOrderIds: ['1234601'], message: 'Opened 1 of 5 order tabs. Selection remains in the CRM list.'};")
+        self.assertIn("Opened 1 of 5", self.open_applicable())
+        self.assertEqual(self.selected_order_ids(), ["1234601", "1234603", "1234605", "1234606", "1234611"])
         self.assertEqual(self.driver.execute_script("return fixtureMessages.length;"), 1)
 
     def test_replaced_rows_stop_opening_until_selection_can_be_verified(self):
@@ -258,28 +270,76 @@ class RushListBrowserTests(unittest.TestCase):
             const first = document.querySelector('#tan-one');
             first.addEventListener('click', () => { first.replaceWith(first.cloneNode(true)); }, {once:true});
         """)
-        self.assertIn("list changed", self.select_applicable())
+        self.assertIn("list changed", self.open_applicable())
         self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [])
 
     def test_applicability_changes_during_selection_stop_tab_opening(self):
-        self.show_list(31, "/report/select-applicable")
-        self.driver.execute_script("""
-            document.querySelector('#tan-one').addEventListener('click', event => {
-                event.currentTarget.style.backgroundColor = '#c47d54';
-            }, {once:true});
-        """)
-        self.assertIn("list changed", self.select_applicable())
-        self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [])
+        for action in [self.select_applicable, self.open_applicable]:
+            with self.subTest(action=action.__name__):
+                self.show_list(31, "/report/select-applicable")
+                self.driver.execute_script("""
+                    document.querySelector('#tan-one').addEventListener('click', event => {
+                        event.currentTarget.style.backgroundColor = '#c47d54';
+                    }, {once:true});
+                """)
+                self.assertIn("list changed", action())
+                self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [])
 
     def test_repeated_clicks_while_selection_is_busy_open_only_one_batch(self):
         self.show_list(31, "/report/select-applicable")
         self.driver.execute_script("""
-            const button = document.querySelector('#crm-select-applicable-controls button');
+            const button = document.querySelector('#crm-open-applicable-button');
             button.click();
             button.dispatchEvent(new MouseEvent('click', {bubbles:true}));
+            document.querySelector('#crm-select-applicable-button').dispatchEvent(new MouseEvent('click', {bubbles:true}));
+            window.fixtureBothDisabled = [...document.querySelectorAll('#crm-select-applicable-controls button')].every(item => item.disabled);
         """)
-        WebDriverWait(self.driver, 8).until(lambda _: self.driver.execute_script("return fixtureMessages.length === 1 && !document.querySelector('#crm-select-applicable-controls button').disabled;"))
+        WebDriverWait(self.driver, 8).until(lambda _: self.driver.execute_script("return fixtureMessages.length === 1 && [...document.querySelectorAll('#crm-select-applicable-controls button')].every(button => !button.disabled);"))
+        self.assertTrue(self.driver.execute_script("return fixtureBothDisabled;"))
         self.assertEqual(self.driver.execute_script("return fixtureMessages.length;"), 1)
+
+    def test_select_only_selects_tan_neon_and_purple_without_opening_tabs_or_using_bridge(self):
+        self.show_list(31, "/report/select-applicable")
+        original_url = self.driver.current_url
+        original_tab = self.driver.current_window_handle
+        self.driver.execute_script("chrome.runtime.sendMessage = () => { throw new Error('Selection must not use the tab bridge'); };")
+        expected = ["1234601", "1234603", "1234605", "1234606", "1234611"]
+        self.assertEqual(self.select_applicable(), "5 orders selected")
+        self.assertEqual(self.selected_order_ids(), expected)
+        self.assertEqual(self.driver.execute_script("return [...document.querySelectorAll('#report-table .previewPaneSelected')].map(row => row.dataset.id).sort();"), expected)
+        self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [])
+        self.assertEqual(self.driver.current_url, original_url)
+        self.assertEqual(self.driver.current_window_handle, original_tab)
+        click_count = self.driver.execute_script("return fixtureClicks.length;")
+        self.assertEqual(self.select_applicable(), "5 orders selected")
+        self.assertEqual(self.driver.execute_script("return fixtureClicks.length;"), click_count)
+
+    def test_open_after_select_only_keeps_the_same_applicable_orders_selected(self):
+        self.show_list(31, "/report/select-applicable")
+        self.assertEqual(self.select_applicable(), "5 orders selected")
+        click_count = self.driver.execute_script("return fixtureClicks.length;")
+        self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [])
+        self.assertEqual(self.open_applicable(), "5 selected · 5 tabs opened")
+        self.assertEqual(self.selected_order_ids(), ["1234601", "1234603", "1234605", "1234606", "1234611"])
+        self.assertEqual(self.driver.execute_script("return fixtureClicks.length;"), click_count)
+        self.assertEqual(self.driver.execute_script("return fixtureMessages.length;"), 1)
+
+    def test_select_only_on_empty_page_opens_nothing(self):
+        self.show_list(31, "/report/select-applicable")
+        self.driver.execute_script("document.querySelector('#report-table tbody').replaceChildren(); fixtureSelection.clear();")
+        self.assertEqual(self.select_applicable(), "No tan, neon-green, or purple orders on this page.")
+        self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [])
+
+    def test_supported_purple_and_neon_shades_open_while_other_colors_remain_excluded(self):
+        for purple, neon in [("#86209f", "#20df4b"), ("#9c27b0", "#22ec48")]:
+            with self.subTest(purple=purple, neon=neon):
+                self.show_list(31, "/report/select-applicable")
+                self.driver.execute_script("document.querySelector('#purple').style.backgroundColor = arguments[0]; document.querySelector('#native-neon').style.backgroundColor = arguments[1];", purple, neon)
+                self.assertEqual(self.open_applicable(), "5 selected · 5 tabs opened")
+                self.assertEqual(self.selected_order_ids(), ["1234601", "1234603", "1234605", "1234606", "1234611"])
+        self.driver.execute_script("document.querySelector('#purple').style.backgroundColor = '#e6007a';")
+        self.assertEqual(self.open_applicable(), "4 selected · 4 tabs opened")
+        self.assertNotIn("1234611", self.selected_order_ids())
 
     def test_printing_uses_the_original_crm_row_colors(self):
         self.show_list()

@@ -41,6 +41,11 @@
     text-align: right;
   }
 
+  #crm-select-applicable-controls .crm-list-action-buttons {
+    display: flex;
+    gap: 8px;
+  }
+
   #crm-select-applicable-controls [role="status"]:empty { display: none; }
 }
 

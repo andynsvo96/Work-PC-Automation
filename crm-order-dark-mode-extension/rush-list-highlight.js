@@ -1,5 +1,10 @@
 // List tools have their own route gate; order tools and dark mode stay order-only.
 const CRM_LIST_RUSH_CLASS = "crm-list-rush";
+const CRM_LIST_APPLICABLE_COLORS = new Set([
+  "rgb(243, 196, 156)", // Tan.
+  "rgb(32, 223, 75)", "rgb(34, 236, 72)", // Native and extension neon green.
+  "rgb(134, 32, 159)", "rgb(156, 39, 176)" // Purple.
+]);
 const CRM_LIST_DATE_PATTERN = /\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}\/(?:\d{4}|\d{2}))(?!\d)/g;
 const CRM_LIST_DATE_FIELDS = {
   fulfillment: {
@@ -170,7 +175,7 @@ function crmListRowIsApplicable(row) {
   // Native selection/hover paints rows gray. The inline CRM status color keeps
   // the original eligibility available even while an order is selected.
   const color = row.style.backgroundColor || getComputedStyle(row).backgroundColor;
-  return color === "rgb(243, 196, 156)" || color === "rgb(34, 236, 72)";
+  return CRM_LIST_APPLICABLE_COLORS.has(color);
 }
 
 function crmListRowIsSelected(row) {
@@ -186,22 +191,22 @@ async function crmWaitForListState(ready) {
   }
 }
 
-async function crmSelectApplicableOrders(controls) {
+async function crmSelectListOrders(controls, openTabs) {
   if (crmListSelectionBusy) return;
   crmListSelectionBusy = true;
-  const button = controls.querySelector("button");
+  const buttons = controls.querySelectorAll("button");
   const status = controls.querySelector("[role='status']");
-  button.disabled = true;
+  for (const button of buttons) button.disabled = true;
   status.textContent = "Selecting applicable orders…";
   try {
     crmRefreshRushListRows();
     const rows = crmListSelectableRows();
     const originalIds = rows.map(row => row.getAttribute("data-id"));
-    const applicable = new Set(rows.filter(crmListRowIsApplicable));
+    const selectedRows = new Set(rows.filter(crmListRowIsApplicable));
     // Toggle only the rows that need to change. CRM owns selection and preview
     // state; adding a CSS class alone would leave bulk actions out of sync.
     for (const row of rows) {
-      const selected = applicable.has(row);
+      const selected = selectedRows.has(row);
       if (crmListRowIsSelected(row) === selected) continue;
       await crmWaitForListState(() => !document.querySelector("#preview-pane.loading"));
       if (!row.isConnected || !crmIsOrderListRoute()) throw new Error("The CRM list changed. Try again on the updated list.");
@@ -216,12 +221,17 @@ async function crmSelectApplicableOrders(controls) {
     const currentRows = crmListSelectableRows();
     if (!crmIsOrderListRoute() || currentRows.length !== rows.length
         || rows.some((row, index) => !currentRows.includes(row) || row.getAttribute("data-id") !== originalIds[index]
-          || crmListRowIsApplicable(row) !== applicable.has(row) || crmListRowIsSelected(row) !== applicable.has(row))) {
+          || crmListRowIsApplicable(row) !== selectedRows.has(row)
+          || crmListRowIsSelected(row) !== selectedRows.has(row))) {
       throw new Error("The CRM list changed or selection could not be verified. Try again on the updated list.");
     }
-    const orderIds = [...new Set(Array.from(applicable, row => row.getAttribute("data-id")))];
+    const orderIds = [...new Set(Array.from(selectedRows, row => row.getAttribute("data-id")))];
     if (!orderIds.length) {
-      status.textContent = "No tan or neon-green orders on this page.";
+      status.textContent = "No tan, neon-green, or purple orders on this page.";
+      return;
+    }
+    if (!openTabs) {
+      status.textContent = `${orderIds.length} orders selected`;
       return;
     }
     status.textContent = `Opening ${orderIds.length} orders…`;
@@ -232,7 +242,7 @@ async function crmSelectApplicableOrders(controls) {
     status.textContent = error.message || "Could not select applicable orders. Refresh CRM and try again.";
   } finally {
     crmListSelectionBusy = false;
-    button.disabled = false;
+    for (const button of buttons) button.disabled = false;
   }
 }
 
@@ -250,15 +260,24 @@ function crmRefreshListControls() {
   heading.classList.add("crm-list-tools-heading");
   const controls = document.createElement("div");
   controls.id = "crm-select-applicable-controls";
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "btn btn-primary";
-  button.textContent = "Select Applicable";
-  button.title = "Select the tan and neon-green orders on this page and open them in background tabs in this window.";
-  button.addEventListener("click", () => { void crmSelectApplicableOrders(controls); });
+  const actions = document.createElement("div");
+  actions.className = "crm-list-action-buttons";
+  for (const [id, label, title, openTabs] of [
+    ["crm-open-applicable-button", "Open Applicable", "Select the tan, neon-green, and purple orders on this page and open them in background tabs in this window.", true],
+    ["crm-select-applicable-button", "Select Applicable", "Select the tan, neon-green, and purple orders on this page without opening tabs.", false]
+  ]) {
+    const button = document.createElement("button");
+    button.id = id;
+    button.type = "button";
+    button.className = "btn btn-primary";
+    button.textContent = label;
+    button.title = title;
+    button.addEventListener("click", () => { void crmSelectListOrders(controls, openTabs); });
+    actions.append(button);
+  }
   const status = document.createElement("span");
   status.setAttribute("role", "status");
-  controls.append(button, status);
+  controls.append(actions, status);
   heading.append(controls);
 }
 
