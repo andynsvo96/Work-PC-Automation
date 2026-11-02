@@ -171,6 +171,7 @@ CRM_PUSH_BACK_813_URL = ""
 SANMAR_URL = "https://www.sanmar.com/"
 SANMAR_CART_URL = "https://www.sanmar.com/cart"
 SANMAR_PROFILE_DIR = "chrome_profile_sanmar"
+SSACTIVEWEAR_PROFILE_DIR = "chrome_profile_ssactivewear"
 CRM_SHIPPING_URL = CRM_SHIPPING_FREE_URL
 CRM_SHIPPING_FILTER_DEFAULT = "free"
 

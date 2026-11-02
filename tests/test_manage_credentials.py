@@ -7,6 +7,12 @@ from credential_store import PaycomCredential
 
 
 class ManageCredentialsTests(unittest.TestCase):
+    def test_sxs_service_uses_its_own_windows_credential_target(self):
+        from credential_store import CREDENTIAL_TARGETS
+        self.assertEqual(CREDENTIAL_TARGETS["ssactivewear"], "WorkAutomation/SSActivewear")
+        parsed = manage_credentials.build_parser().parse_args(["set", "ssactivewear"])
+        self.assertEqual(parsed.service, "ssactivewear")
+
     def test_paycom_set_verifies_complete_saved_credential(self):
         options = argparse.Namespace(service="paycom", username="paycom-user", json_file=None)
         with mock.patch.object(

@@ -131,6 +131,18 @@ class ShippingBypassTabPoTests(unittest.TestCase):
 
 
 class ShippingBypassDestinationTests(unittest.TestCase):
+    def test_philly_banner_and_pipe_separated_preferred_fields_are_inhouse(self):
+        for fields in (
+            {"bodyText": "Subcontractor: M6 Print and Ship to Philly (PA) | Preferred File Types: None"},
+            {"bodyText": "Subcontractor: Old visible text | Preferred File Types: None", "subcontractorBannerText": "Subcontractor: M6 Print and Ship to Philly (PA)"},
+        ):
+            driver = mock.Mock()
+            driver.execute_script.return_value = {**ShippingBypassExistingStockTests()._crm_data(), **fields}
+            with mock.patch.object(crm_shipping_bypasser, "refresh_if_crm_challenge_attempts_exceeded", return_value=False):
+                order = crm_shipping_bypasser._extract_order_data(driver, "5000001")
+            self.assertEqual(order["order_type"], "inhouse")
+            self.assertIsNone(crm_shipping_bypasser._production_destination_error(order))
+
     def test_subcontractor_banner_never_defaults_to_inhouse(self):
         for name, expected in (("Mach 6 Manufacturing (CA)", "mach6"), ("Mach6 Manufacturing (CA)", "mach6"), ("Other Manufacturing", "unsupported_subcontractor"), ("Other Manufacturing / Mach6", "unsupported_subcontractor"), ("", "unsupported_subcontractor")):
             with self.subTest(name=name), mock.patch.object(crm_shipping_bypasser, "refresh_if_crm_challenge_attempts_exceeded", return_value=False):
@@ -427,24 +439,20 @@ class ShippingBypassProductSearchTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "SanMar product search did not open.*207GD"):
                 crm_shipping_bypasser._search_sanmar_product(driver, "207GD")
 
-    def test_product_search_submits_new_drawer_form_without_selenium_keystrokes(self):
+    def test_product_search_navigates_directly_without_selenium_keystrokes(self):
         driver = mock.Mock()
         driver.current_url = "https://www.sanmar.com/p/example?text=PC54#drawer"
-        driver.execute_script.side_effect = [
-            {"success": True, "method": "requestSubmit"},
-            "PC54 Check inventory and pricing",
-        ]
+        driver.execute_script.return_value = "PC54 Check inventory and pricing"
 
         with (
+            mock.patch.object(crm_shipping_bypasser, "safe_get_with_partial_load") as navigate,
             mock.patch.object(crm_shipping_bypasser, "_sanmar_inventory_controls_visible", return_value=False),
             mock.patch.object(crm_shipping_bypasser, "_ensure_sanmar_inventory_view", return_value=True),
             mock.patch.object(crm_shipping_bypasser, "_assert_sanmar_active_style", return_value=True),
         ):
             self.assertTrue(crm_shipping_bypasser._search_sanmar_product(driver, "PC54"))
 
-        search_script = driver.execute_script.call_args_list[0].args[0]
-        self.assertIn("#offcanvas-drawer.show #search-widget-input", search_script)
-        self.assertIn("form.requestSubmit", search_script)
+        self.assertEqual(navigate.call_args.args[1], "https://www.sanmar.com/search?text=PC54")
         driver.find_elements.assert_not_called()
 
 

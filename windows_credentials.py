@@ -12,6 +12,7 @@ from ctypes import wintypes
 PAYCOM_CREDENTIAL_TARGET = "WorkAutomation/Paycom"
 CRM_CREDENTIAL_TARGET = "WorkAutomation/CRM"
 SANMAR_CREDENTIAL_TARGET = "WorkAutomation/SanMar"
+SSACTIVEWEAR_CREDENTIAL_TARGET = "WorkAutomation/SSActivewear"
 SLACK_CREDENTIAL_TARGET = "WorkAutomation/Slack"
 SALESFORCE_CREDENTIAL_TARGET = "WorkAutomation/Salesforce"
 GOOGLE_SHEETS_CREDENTIAL_TARGET = "WorkAutomation/GoogleSheets"
@@ -21,6 +22,7 @@ CREDENTIAL_TARGETS = {
     "paycom": PAYCOM_CREDENTIAL_TARGET,
     "crm": CRM_CREDENTIAL_TARGET,
     "sanmar": SANMAR_CREDENTIAL_TARGET,
+    "ssactivewear": SSACTIVEWEAR_CREDENTIAL_TARGET,
     "slack": SLACK_CREDENTIAL_TARGET,
     "salesforce": SALESFORCE_CREDENTIAL_TARGET,
     "google_sheets": GOOGLE_SHEETS_CREDENTIAL_TARGET,

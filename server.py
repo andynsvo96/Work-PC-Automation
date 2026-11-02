@@ -70,6 +70,7 @@ from routes.connectivity_routes import register_connectivity_routes
 from routes.salesforce_template_routes import register_salesforce_template_routes
 from routes.system_routes import register_system_routes
 from routes.work_routes import register_work_routes
+from routes.reorder_routes import register_reorder_routes
 from safe_sync import publish_repository_update
 from salesforce_templates import default_template_store
 from shipping_bypasser_mappings import (
@@ -134,6 +135,7 @@ CRM_ADDRESS_VALIDATOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_validate_address.p
 CRM_PRODUCT_SEPARATOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_product_separator.py")
 CRM_ORDER_GOODS_SCRIPT = os.path.join(WORKERS_DIR, "crm_order_goods.py")
 CRM_SHIPPING_BYPASSER_SCRIPT = os.path.join(WORKERS_DIR, "crm_shipping_bypasser.py")
+CRM_REORDER_SCRIPT = os.path.join(WORKERS_DIR, "crm_reorder.py")
 CRM_PUSH_BACK_SCRIPT = os.path.join(WORKERS_DIR, "crm_push_back.py")
 CRM_AUTO_SPLITTER_SCRIPT = os.path.join(WORKERS_DIR, "crm_auto_splitter.py")
 CRM_MASS_EMAILER_SCRIPT = os.path.join(WORKERS_DIR, "crm_copyright_cancel.py")
@@ -153,6 +155,7 @@ BROWSER_WORKER_FILENAMES = frozenset(
         os.path.basename(CRM_PRODUCT_SEPARATOR_SCRIPT),
         os.path.basename(CRM_ORDER_GOODS_SCRIPT),
         os.path.basename(CRM_SHIPPING_BYPASSER_SCRIPT),
+        os.path.basename(CRM_REORDER_SCRIPT),
         os.path.basename(CRM_PUSH_BACK_SCRIPT),
         os.path.basename(CRM_AUTO_SPLITTER_SCRIPT),
         os.path.basename(CRM_MASS_EMAILER_SCRIPT),
@@ -576,7 +579,7 @@ def _powershell_single_quote(value):
 def _launch_credential_setup_terminal(service):
     """Open an interactive OS terminal for the credential setup command."""
     service_key = str(service or "").strip().lower()
-    allowed_services = {"paycom", "crm", "slack", "sanmar", "salesforce"}
+    allowed_services = {"paycom", "crm", "slack", "sanmar", "ssactivewear", "salesforce"}
     if service_key not in allowed_services or service_key not in CREDENTIAL_TARGETS:
         raise ValueError("Unknown credential setup service.")
 
@@ -2501,6 +2504,7 @@ _RETRYABLE_SINGLE_ORDER_TASK_TYPES = frozenset(
         "crm.push_back",
         "crm.sheet_scanner_order",
         "crm.shipping_bypasser",
+        "crm.reorder",
         "crm.sleeve_prints",
         "crm.stock_issue_color",
         "crm.stock_issue_extension",
@@ -2565,6 +2569,7 @@ def _restore_automation_queue_callables(task):
         "crm.product_separator": (run_crm_product_separator_run_queued, get_crm_product_separator_status_payload),
         "crm.order_goods": (run_crm_order_goods_run_queued, get_crm_order_goods_status_payload),
         "crm.shipping_bypasser": (run_crm_shipping_bypasser_run_queued, get_crm_shipping_bypasser_status_payload),
+        "crm.reorder": (run_crm_reorder_order_queued, get_crm_reorder_status_payload),
         "crm.push_back": (run_crm_push_back_run_queued, get_crm_push_back_status_payload),
         "crm.auto_splitter": (run_crm_auto_splitter_run_queued, get_crm_auto_splitter_status_payload),
         "crm.mass_emailer": (run_crm_mass_emailer_run_queued, get_crm_mass_emailer_status_payload),
@@ -13905,6 +13910,42 @@ def run_crm_order_goods_run_queued(dry_run=False, batch_size=None, parallel_work
     return _wait_for_status_completion(get_crm_order_goods_status_payload, msg)
 
 
+crm_reorder_runtime = {}
+crm_reorder_runtime_lock = threading.Lock()
+
+
+def get_crm_reorder_status_payload():
+    with crm_reorder_runtime_lock:
+        runtime = dict(crm_reorder_runtime)
+    return {"running": bool(runtime.get("running")), "runtime": runtime}
+
+
+def run_crm_reorder_order_queued(order_id, dry_run=False):
+    if not re.fullmatch(r"\d{7}", str(order_id)):
+        return False, "Reorder requires a seven-digit CRM order number."
+    if not crm_lock.acquire(blocking=False):
+        return False, "Another CRM automation is running."
+    try:
+        with crm_reorder_runtime_lock:
+            crm_reorder_runtime.clear()
+            crm_reorder_runtime.update(running=True, targetOrderId=order_id, startedAt=datetime.now().isoformat())
+        arguments = ["--order-id", order_id]
+        if dry_run:
+            arguments.append("--dry-run")
+        ok, message, payload = _run_script(CRM_REORDER_SCRIPT, arguments, "CRMReorder", timeout=1800, require_result=True)
+        if not isinstance(payload, dict):
+            payload = {"success": False, "message": "Reorder worker returned no result."}
+            ok = False
+        with crm_reorder_runtime_lock:
+            crm_reorder_runtime.update(payload=payload, lastSuccess=bool(ok), lastMessage=message)
+        _audit_result("crm.reorder", ok, message)
+        return ok, message
+    finally:
+        with crm_reorder_runtime_lock:
+            crm_reorder_runtime.update(running=False, completedAt=datetime.now().isoformat())
+        crm_lock.release()
+
+
 def run_crm_shipping_bypasser_run_queued(dry_run=False, batch_size=None, list_url=None, order_id=None, allow_low_stock_buffer=False):
     ok, msg = start_crm_shipping_bypasser_run(
         dry_run=dry_run,
@@ -14992,6 +15033,11 @@ def _chrome_profile_setup_targets():
             "profile_path": _resolve_profile_path(getattr(config_module, "SANMAR_PROFILE_DIR", "chrome_profile_sanmar")),
             "url": sanmar_login_url,
         },
+        "ssactivewear": {
+            "label": "S&S Activewear",
+            "profile_path": _resolve_profile_path(getattr(config_module, "SSACTIVEWEAR_PROFILE_DIR", "chrome_profile_ssactivewear")),
+            "url": "https://www.ssactivewear.com/myaccount/login",
+        },
         "salesforce": {
             "label": "Salesforce",
             "profile_path": _resolve_profile_path(getattr(config_module, "CRM_PROFILE_DIR", "chrome_profile_crm")),
@@ -15386,6 +15432,11 @@ def _build_local_work_status_payload():
 
 def get_work_status_payload():
     return _build_local_work_status_payload()
+
+register_reorder_routes(
+    app, enqueue_automation=enqueue_automation,
+    run_reorder=run_crm_reorder_order_queued, get_status=get_crm_reorder_status_payload,
+)
 
 register_work_routes(
     app,

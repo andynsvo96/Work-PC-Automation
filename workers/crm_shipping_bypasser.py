@@ -14,6 +14,7 @@ import re
 import sys
 import time
 from datetime import datetime, timedelta
+from urllib.parse import quote
 
 from _bootstrap import ensure_project_root_on_path
 
@@ -77,6 +78,7 @@ SHIPPING_BYPASS_PENDING_SUBMISSIONS_PATH = state_file("shipping_bypasser_pending
 NJ_STOCK_ORDER_STATE_DIR = state_file("shipping_bypass_nj_orders")
 NJ_WAREHOUSE = "Robbinsville, NJ"
 MACH6_SUBCONTRACTOR_PATTERN = re.compile(r"^mach\s*6\s+manufacturing\b", flags=re.I)
+INHOUSE_SUBCONTRACTOR_PATTERN = re.compile(r"^M6 Print and Ship to Philly(?:\s*\(PA\))?$", flags=re.I)
 WAREHOUSE_DISTANCE = {
     "inhouse": [
         "Robbinsville, NJ",
@@ -1182,6 +1184,14 @@ return {
   activeTabText: activeTab ? activeTab.text : '',
   activePanelText: activePanelTextFor(heading),
   activePanelStockOrders: activePanelStockOrders(),
+  subcontractorBannerText: (() => {
+    const banners = Array.from(document.querySelectorAll('.panel-heading .vendor')).filter((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && /^Subcontractor\s*:/i.test(normalize(node.innerText));
+    }).map(node => normalize(node.innerText));
+    const unique = [...new Set(banners)];
+    return unique.length === 1 ? unique[0] : unique.length > 1 ? 'Subcontractor: ambiguous banners' : '';
+  })(),
 };
 """
 
@@ -1259,12 +1269,13 @@ def _extract_order_data(driver, order_id, tab_context=None):
         }
         product["is_gildan"] = _is_gildan_product(product)
         products.append(product)
-    subcontractor_match = re.search(r"\bSubcontractor\s*:\s*([^|]+?)(?:\s*Preferred|\s*$)", body_text, flags=re.I)
+    subcontractor_source = _normalize_text(data.get("subcontractorBannerText")) or body_text
+    subcontractor_match = re.search(r"\bSubcontractor\s*:\s*([^|]+?)(?:\s*\||\s*Preferred|\s*$)", subcontractor_source, flags=re.I)
     subcontractor = _normalize_text(subcontractor_match.group(1) if subcontractor_match else "")
     subcontractor_banner_present = bool(re.search(r"\bSubcontractor\s*:", body_text, flags=re.I))
     order_type = (
         "mach6" if MACH6_SUBCONTRACTOR_PATTERN.match(subcontractor)
-        else "unsupported_subcontractor" if subcontractor_banner_present
+        else "unsupported_subcontractor" if subcontractor_banner_present and not INHOUSE_SUBCONTRACTOR_PATTERN.fullmatch(subcontractor)
         else "inhouse"
     )
     shipping_class = _order_shipping_class_from_text(body_text) or "rush"
@@ -2396,77 +2407,10 @@ def _search_sanmar_product(driver, search_id, click_inventory_button=False, expe
         active_style = _sanmar_active_style_matches(driver, expected_keys)
         if active_style.get("success") and active_style.get("source") == "style_header":
             return True
-    search_script = r"""
-const value = String(arguments[0] || '').trim();
-function isVisible(node) {
-  if (!node || node.disabled || node.readOnly) return false;
-  const rect = node.getBoundingClientRect();
-  if ((rect.width || 0) <= 0 || (rect.height || 0) <= 0) return false;
-  for (let current = node; current; current = current.parentElement) {
-    const style = window.getComputedStyle(current);
-    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
-  }
-  return true;
-}
-const preferredSelectors = [
-  '#offcanvas-drawer.show #search-widget-input',
-  '#offcanvas-drawer.show [data-testid="search-app-main-search-input"]',
-  '[data-testid="search-app-main-search-input"]',
-  'input[placeholder*="Style" i]',
-  'input[placeholder*="Product" i]',
-  'input[placeholder*="PMS" i]',
-];
-const candidates = [];
-const seen = new Set();
-for (let selectorIndex = 0; selectorIndex < preferredSelectors.length; selectorIndex += 1) {
-  for (const input of Array.from(document.querySelectorAll(preferredSelectors[selectorIndex]))) {
-    if (seen.has(input) || !isVisible(input)) continue;
-    seen.add(input);
-    const rect = input.getBoundingClientRect();
-    candidates.push({
-      input,
-      score: selectorIndex * 100000 + Math.max(0, rect.top) + Math.max(0, rect.left),
-    });
-  }
-}
-candidates.sort((a, b) => a.score - b.score);
-if (!value || !candidates.length) return { success: false, reason: 'input_not_found' };
-const input = candidates[0].input;
-const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
-input.focus();
-if (setter && setter.set) setter.set.call(input, value);
-else input.value = value;
-input.dispatchEvent(new Event('input', { bubbles: true }));
-input.dispatchEvent(new Event('change', { bubbles: true }));
-const form = input.closest('form');
-const submit = form && form.querySelector('[data-testid="search-app-submit-button"],button[type="submit"],input[type="submit"]');
-if (form && typeof form.requestSubmit === 'function') {
-  form.requestSubmit(submit || undefined);
-  return { success: true, method: 'requestSubmit', placeholder: input.getAttribute('placeholder') || '' };
-}
-if (submit) {
-  submit.click();
-  return { success: true, method: 'click', placeholder: input.getAttribute('placeholder') || '' };
-}
-input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-return { success: true, method: 'enter', placeholder: input.getAttribute('placeholder') || '' };
-"""
-    search_result = None
-    deadline = time.time() + 12
-    last_search_error = None
-    while time.time() < deadline:
-        try:
-            search_result = driver.execute_script(search_script, search_id)
-        except Exception as exc:
-            last_search_error = exc
-            search_result = None
-        if isinstance(search_result, dict) and search_result.get("success"):
-            break
-        time.sleep(0.2)
-    if not isinstance(search_result, dict) or not search_result.get("success"):
-        detail = f": {last_search_error}" if last_search_error is not None else ""
-        raise RuntimeError(f"SanMar search input was not found or could not be submitted for {search_id}{detail}.")
+    if not str(search_id or '').strip():
+        raise RuntimeError("SanMar product search ID is empty.")
+    search_url = "https://www.sanmar.com/search?text=" + quote(str(search_id).strip(), safe="")
+    safe_get_with_partial_load(driver, search_url, label=f"SanMar product {search_id}")
     deadline = time.time() + SANMAR_PRODUCT_SEARCH_WAIT_SECONDS
     last_product_page_error = None
     while time.time() < deadline:
@@ -3143,7 +3087,7 @@ def _production_destination_error(order):
     subcontractor = _normalize_text(order.get("subcontractor"))
     has_banner = bool(order.get("subcontractor_banner_present") or subcontractor)
     is_mach6 = bool(MACH6_SUBCONTRACTOR_PATTERN.match(subcontractor))
-    if order_type == "inhouse" and not has_banner:
+    if order_type == "inhouse" and (not has_banner or INHOUSE_SUBCONTRACTOR_PATTERN.fullmatch(subcontractor)):
         return None
     if order_type == "mach6" and is_mach6:
         return None

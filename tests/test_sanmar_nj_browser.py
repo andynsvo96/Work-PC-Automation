@@ -26,6 +26,9 @@ class NjLocalBrowserTests(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory(prefix="nj_checkout_fixture_", dir=profile_root)
         assert Path(cls.temp.name).resolve().is_relative_to(profile_root.resolve())
         options = webdriver.ChromeOptions()
+        if os.name == "nt":
+            options.add_argument("--no-sandbox")  # Isolated offline fixture profile only.
+        options.add_argument("--disable-gpu")
         if os.environ.get("SANMAR_FIXTURE_CHROME"):
             options.binary_location = os.environ["SANMAR_FIXTURE_CHROME"]
         for option in ("--headless=new", "--disable-background-networking", "--disable-sync", "--no-first-run", "--no-default-browser-check"):
@@ -69,8 +72,13 @@ class NjLocalBrowserTests(unittest.TestCase):
         state = worker._sanmar_active_style_matches(self.driver, ["A903"])
         self.assertFalse(state["success"])
         self.assertEqual(state["candidates"], ["PC54"])
-        self.assertTrue(worker._search_sanmar_product(self.driver, "A903"))
-        self.assertEqual(self.driver.execute_script("return window.searchSubmissions;"), 1)
+        def local_search(driver, url, label=None):
+            self.assertEqual(url, "https://www.sanmar.com/search?text=A903")
+            driver.get(fixture + "?style=A903")
+        with mock.patch.object(worker, "safe_get_with_partial_load", side_effect=local_search) as navigate:
+            self.assertTrue(worker._search_sanmar_product(self.driver, "A903"))
+        navigate.assert_called_once()
+        self.assertEqual(self.driver.execute_script("return window.searchSubmissions;"), 0)
         self.assertTrue(worker._sanmar_active_style_matches(self.driver, ["A903"])["success"])
 
     def test_result_card_opens_product_link_instead_of_unrelated_button(self):

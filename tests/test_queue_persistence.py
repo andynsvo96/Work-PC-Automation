@@ -199,6 +199,7 @@ class QueuePersistenceTests(unittest.TestCase):
             ("crm.product_separator", "run_crm_product_separator_run_queued", {"dry_run": True, "list_mode": "all", "parallel_workers": 2}),
             ("crm.order_goods", "run_crm_order_goods_run_queued", {"dry_run": False, "order_id": "5010529"}),
             ("crm.shipping_bypasser", "run_crm_shipping_bypasser_run_queued", {"dry_run": False, "order_id": "5010529", "allow_low_stock_buffer": True}),
+            ("crm.reorder", "run_crm_reorder_order_queued", {"order_id": "5010529"}),
             ("crm.push_back", "run_crm_push_back_run_queued", {"dry_run": True, "processing_filter": "rush"}),
             ("crm.auto_splitter", "run_crm_auto_splitter_run_queued", {"dry_run": False, "order_target": "5010529", "minimum_tabs": 10}),
             ("crm.mass_emailer", "run_crm_mass_emailer_run_queued", {"action": "process_queue", "dry_run": True, "retry_errors": True}),

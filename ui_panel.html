@@ -1387,6 +1387,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
     </div>
     <div class='bad' id='crmProcessingCustomInputError' role='alert' style='margin-top:10px'></div>
     <div class='row' style='justify-content:flex-end;margin-top:12px'>
+      <button type='button' class='secondary' id='crmReorderStockBtn' style='display:none;margin-right:auto' onclick='queueCrmReorderStock()'>Reorder Stock</button>
       <button type='button' class='secondary' onclick="document.getElementById('crmProcessingCustomInputDialog').close()">Cancel</button>
       <button type='submit' id='crmProcessingCustomInputSaveBtn'>Use this input</button>
     </div>
@@ -1715,7 +1716,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
       <div class='settings-nav-label'>Settings</div>
       <nav class='settings-nav' id='settingsNav'>
         <button class='settings-nav-btn active' type='button' data-settings-target='overview' data-search='overview summary common tasks setup status' onclick="showSettingsSection('overview')"><span class='settings-nav-icon'>＋</span><span>Overview</span></button>
-        <button class='settings-nav-btn' type='button' data-settings-target='connections' data-search='connections profiles setup login paycom crm slack sanmar salesforce' onclick="showSettingsSection('connections')"><span class='settings-nav-icon'>◎</span><span>Connections</span><span class='settings-nav-badge'>5</span></button>
+        <button class='settings-nav-btn' type='button' data-settings-target='connections' data-search='connections profiles setup login paycom crm slack sanmar ssactivewear salesforce' onclick="showSettingsSection('connections')"><span class='settings-nav-icon'>◎</span><span>Connections</span><span class='settings-nav-badge'>6</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='crm' data-search='crm automation links reports lists batch workers browser retry credentials dry run' onclick="showSettingsSection('crm')"><span class='settings-nav-icon'>▤</span><span>CRM automation</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='salesforce-templates' data-search='salesforce template email title subject body html formatting auto' onclick="showSettingsSection('salesforce-templates')"><span class='settings-nav-icon'>✉</span><span>Salesforce Template</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='shipping-mappings' data-search='shipping bypasser mappings crm sanmar products colors ids aliases' onclick="showSettingsSection('shipping-mappings')"><span class='settings-nav-icon'>↔</span><span>Shipping mappings</span></button>
@@ -1795,6 +1796,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
             <div class='settings-connection-card has-credential-action'><button class='settings-connection-profile-btn' type='button' onclick="openChromeProfileSetup('crm', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>C</span>CRM</span><span class='settings-connection-action'>Open profile setup →</span></button><button class='secondary tiny settings-credential-btn' type='button' title='Set CRM credentials in the operating system credential store' onclick="openCredentialSetup('crm', this)">Set credentials</button></div>
             <div class='settings-connection-card has-credential-action'><button class='settings-connection-profile-btn' type='button' onclick="openChromeProfileSetup('slack', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>Slack</span><span class='settings-connection-action'>Open profile setup →</span></button><button class='secondary tiny settings-credential-btn' type='button' title='Set Slack credentials in the operating system credential store' onclick="openCredentialSetup('slack', this)">Set credentials</button></div>
             <div class='settings-connection-card has-credential-action'><button class='settings-connection-profile-btn' type='button' onclick="openChromeProfileSetup('sanmar', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>SanMar</span><span class='settings-connection-action'>Open profile setup →</span></button><button class='secondary tiny settings-credential-btn' type='button' title='Set SanMar credentials in the operating system credential store' onclick="openCredentialSetup('sanmar', this)">Set credentials</button></div>
+            <div class='settings-connection-card has-credential-action'><button class='settings-connection-profile-btn' type='button' onclick="openChromeProfileSetup('ssactivewear', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>S&amp;S Activewear</span><span class='settings-connection-action'>Open profile setup &rarr;</span></button><button class='secondary tiny settings-credential-btn' type='button' title='Set S&amp;S credentials in the operating system credential store' onclick="openCredentialSetup('ssactivewear', this)">Set credentials</button></div>
           </div>
           <div class='salesforce-worker-panel'>
             <div class='salesforce-worker-heading'>
@@ -7360,6 +7362,27 @@ function syncCrmProcessingCustomInputControls() {
   document.getElementById('crmProcessingCustomOrderFields').style.display = orders ? 'block' : 'none';
   document.getElementById('crmProcessingCustomLinkInput').disabled = orders;
   document.getElementById('crmProcessingCustomOrderIdsInput').disabled = !orders;
+  document.getElementById('crmReorderStockBtn').style.display = orders ? '' : 'none';
+}
+
+async function queueCrmReorderStock() {
+  const error = document.getElementById('crmProcessingCustomInputError');
+  error.textContent = '';
+  if (document.getElementById('crmProcessingCustomInputType').value !== 'orders') return;
+  return withButtonBusy(document.getElementById('crmReorderStockBtn'), 'QUEUING...', async () => {
+    try {
+      const result = await api('/crm/reorder', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
+        processing_filter: 'custom', custom_input_type: 'orders',
+        custom_order_ids: document.getElementById('crmProcessingCustomOrderIdsInput').value,
+      })});
+      if (result.success === false) error.textContent = result.message || 'Reorder could not be queued.';
+      else {
+        document.getElementById('crmProcessingCustomInputDialog').close();
+        setStatus(result.message);
+        loadQueue(false);
+      }
+    } catch (e) { error.textContent = e.message; }
+  });
 }
 
 async function saveCrmProcessingCustomInput() {
