@@ -98,11 +98,19 @@ code and are not returned by HTTP endpoints.
 without submitting. Complete login there if needed. The non-secret default is
 `SSACTIVEWEAR_PROFILE_DIR = "chrome_profile_ssactivewear"`.
 
+Reorder selects **Accept All Cookies** on S&S's OneTrust banner when it is visible
+and waits for the banner to close. It checks again while waiting for page controls
+and before login, covering banners that appear after the initial page load. The
+site stores consent in the dedicated browser profile. The handler is restricted
+to the S&S HTTPS origin and the banner's own Accept control.
+
 If S&S shows **Looks like we're having some problems**, Reorder stops with the
 site's Ray ID instead of waiting for missing login or checkout controls. Resolve
 site access in the S&S profile, or with S&S support, before retrying. An error
 after a purchase click still requires reviewing supplier history and the saved
-receipt before another submission.
+receipt before another submission. A server response of HTTP 403 before the site
+loads still requires resolving access; cookie-banner handling does not suppress
+that error.
 
 Restart the local app and refresh the dashboard after updating. No extension reload
 is needed. Windows secure-prompt launch was checked during development; macOS's

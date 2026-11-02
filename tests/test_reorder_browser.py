@@ -58,6 +58,23 @@ class ReorderBrowserTests(unittest.TestCase):
         self.driver.execute_script("document.querySelector('tr[ng-repeat]').style.backgroundColor='green'")
         self.assertIsNone(worker._read_rows(self.driver)["records"][0]["assigned"])
 
+    def test_delayed_cookie_banner_is_accepted_before_clicking_the_page(self):
+        self.driver.execute_script(r"""
+localStorage.removeItem('reorder_fixture_cookie_consent');
+window.cookieAccepts=0;window.nextClicks=0;window.unrelatedClicks=0;
+const next=document.createElement('button');next.id='cookie-guarded-next';next.textContent='Continue';next.disabled=true;next.style='position:fixed;top:40px;left:20px';next.onclick=()=>window.nextClicks++;document.body.append(next);
+const unrelated=document.createElement('button');unrelated.textContent='Accept All Cookies';unrelated.onclick=()=>window.unrelatedClicks++;document.body.append(unrelated);
+const banner=document.createElement('div');banner.id='onetrust-banner-sdk';banner.style='position:fixed;inset:0;z-index:99999;background:white;display:none';banner.innerHTML='<button id="onetrust-accept-btn-handler">Accept All Cookies</button>';document.body.append(banner);
+banner.querySelector('button').onclick=()=>{window.cookieAccepts++;localStorage.setItem('reorder_fixture_cookie_consent','accepted');banner.style.display='none';next.disabled=false};
+setTimeout(()=>banner.style.display='block',150);
+""")
+        sxs._click(self.driver, '#cookie-guarded-next')
+        self.assertEqual(self.driver.execute_script('return [window.cookieAccepts,window.nextClicks,window.unrelatedClicks]'), [1, 1, 0])
+        self.assertFalse(sxs.accept_cookie_banner(self.driver))
+        self.driver.refresh()
+        self.assertEqual(self.driver.execute_script("return localStorage.getItem('reorder_fixture_cookie_consent')"), 'accepted')
+        self.assertFalse(sxs.accept_cookie_banner(self.driver))
+
     def test_production_note_waits_for_append_field_and_retry_keeps_history_unique(self):
         fixture = (ROOT / 'tests/fixtures/crm_append_production_note.html').as_uri()
         self.driver.get(fixture)

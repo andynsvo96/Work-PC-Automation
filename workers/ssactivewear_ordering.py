@@ -91,6 +91,7 @@ def select_product(product, candidates):
 def _wait(driver, fn, timeout=25):
     def ready(_driver):
         _raise_site_error(driver)
+        accept_cookie_banner(driver)
         return fn()
     return WebDriverWait(driver, timeout, poll_frequency=0.25).until(ready)
 
@@ -107,6 +108,23 @@ def _require_site(driver):
         raise RuntimeError("Unexpected S&S website origin; credentials and checkout were not submitted.")
 
 
+def accept_cookie_banner(driver):
+    """Accept the site's OneTrust banner when it appears, including after load."""
+    _require_site(driver)
+    selector = "#onetrust-banner-sdk #onetrust-accept-btn-handler"
+    buttons = [button for button in driver.find_elements(By.CSS_SELECTOR, selector)
+               if button.is_displayed() and button.is_enabled()]
+    if not buttons:
+        return False
+    if len(buttons) != 1:
+        raise RuntimeError("The S&S cookie consent control is ambiguous; review the banner.")
+    bypass._click_with_fallback(driver, buttons[0])
+    WebDriverWait(driver, 5, poll_frequency=0.25).until(
+        lambda _driver: not any(button.is_displayed() for button in driver.find_elements(By.CSS_SELECTOR, selector))
+    )
+    return True
+
+
 def _raise_site_error(driver):
     text = str(driver.execute_script("return document.body ? document.body.innerText : '';") or "")
     if not re.search(r"looks like we['’]re having some problems", text, re.I):
@@ -119,6 +137,7 @@ def _raise_site_error(driver):
 def ensure_login(driver):
     safe_get_with_partial_load(driver, CART_URL, "S&S cart/login")
     _raise_site_error(driver)
+    accept_cookie_banner(driver)
     def authenticated():
         return driver.find_elements(By.CSS_SELECTOR, 'a[href="https://www.ssactivewear.com/myaccount/signout"],a[href="/myaccount/signout"]')
     if authenticated():
@@ -126,6 +145,7 @@ def ensure_login(driver):
     safe_get_with_partial_load(driver, LOGIN_URL, "S&S login")
     _require_site(driver)
     _raise_site_error(driver)
+    accept_cookie_banner(driver)
     from profile_setup_autofill import _first_visible, _USERNAME_SELECTORS, _PASSWORD_SELECTORS, _fill
     credential = read_credential(SSACTIVEWEAR_CREDENTIAL_TARGET)
     username = _wait(driver, lambda: _first_visible(driver, _USERNAME_SELECTORS))
@@ -136,6 +156,7 @@ def ensure_login(driver):
     login = next((x for x in buttons if x.is_displayed() and re.fullmatch(r"log\s*in|sign\s*in", (x.get_attribute("value") or x.text or "").strip(), re.I)), None)
     if login is None:
         raise RuntimeError("S&S login submit control was not found. Complete S&S profile setup.")
+    accept_cookie_banner(driver)
     bypass._click_with_fallback(driver, login)
     _wait(driver, authenticated)
     safe_get_with_partial_load(driver, CART_URL, "S&S cart")

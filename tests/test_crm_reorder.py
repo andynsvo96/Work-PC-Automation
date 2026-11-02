@@ -116,6 +116,13 @@ class ReorderPlanningTests(unittest.TestCase):
 
 
 class SxsPlanningTests(unittest.TestCase):
+    def test_cookie_consent_is_never_clicked_on_another_origin(self):
+        driver = mock.Mock(current_url="https://example.com/")
+        with mock.patch.object(sxs.bypass, "_click_with_fallback") as click:
+            with self.assertRaisesRegex(RuntimeError, "origin"):
+                sxs.accept_cookie_banner(driver)
+        click.assert_not_called()
+
     def test_supplier_error_stops_before_saved_credentials_are_read(self):
         error = "ERROR Looks like we're having some problems. Ray ID - aabbccddeeff0011 Client IP - 192.0.2.1"
         for location in ("cart", "login"):
@@ -131,7 +138,8 @@ class SxsPlanningTests(unittest.TestCase):
                 credentials.assert_not_called()
 
     def test_supplier_error_during_a_wait_is_reported_without_timeout(self):
-        driver = mock.Mock()
+        driver = mock.Mock(current_url=sxs.BASE_URL)
+        driver.find_elements.return_value = []
         driver.execute_script.return_value = "Looks like we’re having some problems. Ray ID - aabbccddeeff0011"
         ready = mock.Mock(return_value=False)
         with self.assertRaisesRegex(RuntimeError, "Ray ID: aabbccddeeff0011"):
