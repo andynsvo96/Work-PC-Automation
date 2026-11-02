@@ -68,6 +68,9 @@ as well as the older numbered confirmation format. A live S&S checkout and its
 confirmation were verified through an existing logged-in Chrome session. The
 dedicated worker browser still receives an S&S website error before login on
 this machine; unattended S&S access and credential login remain unverified.
+A read-only Firefox comparison loaded the homepage and accepted cookie consent,
+but cart access, direct sign-in, and reuse of that profile also encountered the
+S&S error before login. Firefox has not been enabled for production Reorders.
 
 All supplier carts and delivery dates are preflighted before the first purchase.
 Existing vendor cart contents stop the run and are retained. Only verified carts
