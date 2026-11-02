@@ -131,8 +131,8 @@ class LocalTemplateBrowserTests(unittest.TestCase):
         self.store.path.write_text(json.dumps({'schema_version':1,'templates':records}),encoding='utf-8')
 
     def test_stock_swap_reads_original_quote_and_current_style_sub_without_edits(self):
-        self.driver.get(self.url + '/stock-crm#/quotes/1234567')
-        original = stock_swap._read_snapshot(self.driver, '1234567', quote=True, timeout=2)
+        self.driver.get(self.url + '/stock-crm#/quotes/7654321')
+        original = stock_swap._read_snapshot(self.driver, '1234567', quote=True, quote_id='7654321', account_id='1', timeout=2)
         self.assertEqual(self.driver.execute_script('return window.events'), [])
         self.driver.get(self.url + '/stock-crm#/order/1234567')
         self.driver.refresh()

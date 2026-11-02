@@ -15,7 +15,7 @@ if (!quotePage) {
   shirt.styleSubs = [{style: 'PC54', color: 'Navy', description: 'Core Cotton T-Shirts'}];
 }
 const designs = [{id: 'tab-1', designId: 'art-1', PO: 'Team Logo', designItems: [shirt]},
-  {id: 'tab-2', designId: 'art-1', PO: 'Team Logo', designItems: [{
+  {id: 'tab-2', designId: 'art-1', PO: 'Cap Logo', designItems: [{
     id: 'cap-1', style: 'CAP', color: 'White', label: 'Classic Caps', splitIntoSizes: 0, quantity: 2,
   }]},
   {id: 'deleted-tab', crudAction: 'd', designItems: [shirt]}];
@@ -26,8 +26,11 @@ const scope = window.fixtureScope = {
   editMode: false, copyOrder: forbidden('copy'), editModeOn: forbidden('edit'),
   saveOrder: forbidden('save'), saveQuote: forbidden('save quote'),
 };
-if (quotePage) scope.quote = {id: 1234567, orderId: 1234567, options: [{designs}]};
-else scope.order = {getResource: () => ({id: 1234567, designs})};
+if (quotePage) scope.quote = {id: 7654321, orderId: 1234567, accountId: 1, options: [{designs: designs.map(d => {
+  const {PO, designItems, ...rest} = d;
+  return {...rest, id: 'quote-' + d.id, po: PO, items: designItems};
+})}]};
+else scope.order = {getResource: () => ({id: 1234567, quoteId: 7654321, accountId: 1, designs})};
 window.angular = {element: element => ({scope: () => element._scope || scope})};
 for (const design of designs) for (const item of design.designItems) {
   const block = document.createElement('div');

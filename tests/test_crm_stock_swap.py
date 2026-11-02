@@ -21,7 +21,7 @@ def design(*items, identity="tab-1", artwork="art-1", name="Team Logo"):
 
 
 def snapshot(*designs):
-    return {"id": "1234567", "editing": False, "designs": list(designs)}
+    return {"id": "1234567", "quote_id": "7654321", "account_id": "account-1", "editing": False, "designs": list(designs)}
 
 
 def swaps():
@@ -62,6 +62,16 @@ class StockSwapComparisonTests(unittest.TestCase):
         self.assertEqual([(p["stock"]["style"], p["product"]["style"]) for p in result],
                          [("5000", "PC54"), ("DM130", "PC61")])
 
+    def test_single_replacement_preserves_different_original_and_replacement_sizes(self):
+        original = snapshot(design(item("3413T", sizes={"3T": 1}, quantity=1)))
+        current = snapshot(design(item("G500", sizes={"L": 1}, quantity=1)))
+        result = stock.find_swaps(original, current)
+        self.assertEqual(result[0]["stock"]["quantities"], {"3T": 1})
+        self.assertEqual(result[0]["product"]["quantities"], {"L": 1})
+        values = stock.placeholder_values("1234567", result)
+        self.assertIn("(3T: 1)", values["[STOCK]"])
+        self.assertIn("(L: 1)", values["[PRODUCT]"])
+
     def test_reassigned_item_ids_do_not_create_swaps_when_products_are_unchanged(self):
         before = snapshot(design({**item(), "id": "item-1"}, {**item("DM130"), "id": "item-2"}))
         after = snapshot(design({**item(), "id": "item-2"}, {**item("DM130"), "id": "item-1"}))
@@ -101,7 +111,7 @@ class StockSwapComparisonTests(unittest.TestCase):
     def test_quantity_changes_unknown_products_and_ambiguous_pairs_stop(self):
         invalid = [
             (snapshot(design(item())), snapshot(design(item("PC54", quantity=4)))),
-            (snapshot(design(item())), snapshot(design(item("PC54", sizes={"L": 3})))),
+            (snapshot(design(item())), snapshot(design(item("PC54", sizes={"L": 4}, quantity=4)))),
             (snapshot(design(item())), snapshot(design(item("PC54"), item("EXTRA")))),
             (snapshot(design(item(), item("DM130"))), snapshot(design(item("PC54"), item("PC55")))),
             (snapshot(design(item(quantity=3), item("DM130", quantity=5))),
@@ -263,7 +273,7 @@ class StockSwapExecutionTests(unittest.TestCase):
             result = stock.process_stock_swap_order("1234567")
         self.assertTrue(result["success"])
         self.assertEqual([call.args[1] for call in navigate.call_args_list], [
-            "https://crm2.legacy.printfly.com/order/1234567", "https://crm2.legacy.printfly.com/app#/quotes/1234567",
+            "https://crm2.legacy.printfly.com/order/1234567", "https://crm2.legacy.printfly.com/app#/quotes/7654321",
             "https://crm2.legacy.printfly.com/order/1234567", "https://crm2.legacy.printfly.com/order/1234567"])
         self.assertEqual(send.call_count, 1)
         self.assertEqual(send.call_args.args[-1], swaps())
@@ -305,6 +315,19 @@ class StockSwapExecutionTests(unittest.TestCase):
         self.assertEqual(result["failed_stage"], "stock_comparison")
         send.assert_not_called()
 
+    def test_order_without_a_saved_quote_link_stops_without_guessing_its_number(self):
+        current = snapshot(design(item('PC54')))
+        current.pop('quote_id')
+        with ExitStack() as stack:
+            for name in ('_open_driver', 'safe_get_with_partial_load', '_login_to_crm_if_needed', 'safe_driver_quit', 'safe_take_screenshot'):
+                stack.enter_context(mock.patch.object(stock.shared, name))
+            stack.enter_context(mock.patch.object(stock, '_read_snapshot', return_value=current))
+            send = stack.enter_context(mock.patch.object(stock, '_send_email'))
+            ok, message, failed = stock.run_stock_swap_order('1234567')
+        self.assertFalse(ok)
+        self.assertIn('no readable original quote ID', message)
+        send.assert_not_called()
+
     def test_invalid_order_never_opens_browser(self):
         with mock.patch.object(stock.shared, "_open_driver") as open_browser:
             ok, message, result = stock.run_stock_swap_order("invalid")
@@ -321,6 +344,29 @@ class StockSwapExecutionTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(stock, "_quote_scope", side_effect=[response, option_count]))
                 with self.assertRaises(stock.StockSwapError):
                     stock._read_snapshot(mock.Mock(), "1234567", quote=quote)
+
+    def test_blank_identity_and_unloaded_products_are_waited_for(self):
+        complete = snapshot(design(item()))
+        pending = deepcopy(complete)
+        pending["designs"][0]["items_loaded"] = False
+        with mock.patch.object(stock.shared, "_activate_crm_context"), \
+                mock.patch.object(stock.time, "sleep"), \
+                mock.patch.object(stock.shared, "_order_scope", side_effect=[
+                    {"id": "", "designs": []}, {"id": "1234567", "designs": []}, pending, complete]) as read:
+            self.assertEqual(stock._read_snapshot(mock.Mock(), "1234567"), complete)
+        self.assertEqual(read.call_count, 4)
+
+    def test_quote_id_is_distinct_from_order_and_customer_must_match(self):
+        quote = {"id": "7654321", "order_id": "1234567", "account_id": "account-1", "designs": [design(item())]}
+        with mock.patch.object(stock.shared, "_activate_crm_context"), \
+                mock.patch.object(stock, "_quote_scope", side_effect=[quote, 1]):
+            self.assertEqual(stock._read_snapshot(mock.Mock(), "1234567", quote=True,
+                quote_id="7654321", account_id="account-1"), quote)
+        wrong = {**quote, "account_id": "different-customer"}
+        with mock.patch.object(stock.shared, "_activate_crm_context"), \
+                mock.patch.object(stock, "_quote_scope", return_value=wrong):
+            with self.assertRaisesRegex(stock.StockSwapError, "does not belong"):
+                stock._read_snapshot(mock.Mock(), "1234567", quote=True, quote_id="7654321", account_id="account-1")
 
     def test_missing_template_placeholders_stop_before_salesforce_navigation(self):
         with mock.patch.object(stock, "default_template_store") as factory, mock.patch.object(stock.shared, "_open_salesforce_account") as open_sf:

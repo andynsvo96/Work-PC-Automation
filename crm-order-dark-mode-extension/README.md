@@ -273,10 +273,17 @@ The worker prefers one warehouse, but checks a closer split before stopping when
 Version **1.6.7** adds **Reachout > Stock Swap**. Save the replacement products
 in CRM first, then queue the action from that order. It sends one Salesforce
 email covering every detected swap on that order. It reads the original items
-from `https://crm2.legacy.printfly.com/app#/quotes/<order-number>` and the
+from `https://crm2.legacy.printfly.com/app#/quotes/<linked-quote-id>` and the
 replacement items from the saved current order, including **Style Sub** fields.
 The product comparison reads both pages; the workflow records the confirmed
 customer reachout in the order's Sales Notes.
+
+The quote ID comes from the saved order's **Quote** link (`quoteId`), rather
+than assuming it equals the order number. For example, an order numbered
+**1234567** can link to quote **7654321**. The worker checks
+the quote ID, linked order when present, and customer account before comparison.
+It waits for CRM's identity, design, and product data to load, and supports the
+original quote's `items`/`po` fields as well as the order's `designItems`/`PO`.
 
 Edit **[AUTO] Stock Swap** in the app's **Settings > Salesforce Template**.
 The initial title is `Order #[ORDER-NUMBER] - Stock Swap`; the body contains
@@ -289,8 +296,11 @@ placeholders. Unchanged products and unaffected quantities are excluded.
 The scanner matches design tabs by unique saved IDs, artwork/name, or name,
 then compares style/color and quantities by size. Saved product IDs distinguish
 multiple equal-quantity swaps when available. A missing or wrong quote,
-multiple quote options, unmatched designs, added/removed quantities, size
-changes, or ambiguous replacement pairs stop for review before sending.
+multiple quote options, unmatched designs, added/removed quantities, or
+ambiguous replacement pairs stop for review before sending. A single original
+and replacement with equal total quantities can have different size labels;
+the email and Sales Note retain each item's own sizes. Multiple products still
+require an unambiguous pairing.
 
 The existing recipient/Orders sender checks, Salesforce Activity confirmation,
 and bounded resend policy apply. Per-order receipts under
@@ -313,6 +323,9 @@ to save, Retry uses the confirmed-email receipt and recovers the note without
 resending the email. Dry runs preview the note without saving it. The Sales
 Note update loads on the next queued run; no app restart or extension reload
 is needed for this worker update.
+
+The loading, linked-quote, and original-quote product-field fixes also load on
+the next queued run; no app restart or extension reload is needed.
 
 For a single-order draft check, `python workers/crm_stock_swap.py --order-id
 1234567 --dry-run` reads both pages and verifies the Salesforce draft without

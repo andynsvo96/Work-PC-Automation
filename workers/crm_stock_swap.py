@@ -27,7 +27,7 @@ from workers import salesforce_template_composer as composer
 
 AUTOMATION_KEY = "stock_swap"
 AUTOMATION_NAME = "crm.stock_swap"
-QUOTE_URL = "https://crm2.legacy.printfly.com/app#/quotes/{order_id}"
+QUOTE_URL = "https://crm2.legacy.printfly.com/app#/quotes/{quote_id}"
 
 
 class StockSwapError(RuntimeError):
@@ -36,18 +36,19 @@ class StockSwapError(RuntimeError):
         self.result = result or {}
 
 
-# Both the order resource and quote option use designItems. Style Sub overrides
-# the catalog product and must be resolved before comparing either page.
+# Orders expose designItems; original quotes expose items and lowercase po.
+# Style Sub overrides the catalog product on either page.
 SNAPSHOT_JS = r"""
 function clean(v) { return typeof v === 'string' || typeof v === 'number' ? String(v).replace(/\s+/g, ' ').trim() : ''; }
 function active(xs) { return (xs || []).filter(x => x && x.crudAction !== 'd'); }
 const blocks = Array.from(document.querySelectorAll('[ng-repeat="($itemIndex, item) in design.designItems"]'));
 return {
-  id: clean(r.id), order_id: clean(r.orderId),
+  id: clean(r.id), order_id: clean(r.orderId), quote_id: clean(r.quoteId), account_id: clean(r.accountId),
   editing: !!s.editMode,
   designs: active(r.designs).map(d => ({
-    id: clean(d.id), artwork_id: clean(d.designId), name: clean(d.PO),
-    items: active(d.designItems).map(item => {
+    id: clean(d.id), artwork_id: clean(d.designId), name: clean(d.PO) || clean(d.po),
+    items_loaded: Array.isArray(d.designItems) || Array.isArray(d.items),
+    items: active(Array.isArray(d.designItems) ? d.designItems : d.items).map(item => {
       const sc = blocks.map(el => angular.element(el).scope()).find(sc => sc && sc.item === item);
       const form = sc && sc.formItem || {}, cat = form.selectedCatalogItem || {};
       const subs = active(item.styleSubs), sub = subs[0] || {};
@@ -70,7 +71,7 @@ return {
 """
 
 
-def _read_snapshot(driver, order_id, *, quote=False, timeout=45):
+def _read_snapshot(driver, order_id, *, quote=False, quote_id=None, account_id=None, timeout=45):
     deadline = time.monotonic() + timeout
     last_error = "The page has not loaded."
     while True:
@@ -78,20 +79,28 @@ def _read_snapshot(driver, order_id, *, quote=False, timeout=45):
             shared._activate_crm_context(driver)
             if quote:
                 snapshot = _quote_scope(driver, "const r = op;\n" + SNAPSHOT_JS.replace(
-                    "id: clean(r.id), order_id: clean(r.orderId)", "id: clean(q.id), order_id: clean(q.orderId)"))
+                    "id: clean(r.id), order_id: clean(r.orderId), quote_id: clean(r.quoteId), account_id: clean(r.accountId)",
+                    "id: clean(q.id), order_id: clean(q.orderId), quote_id: clean(q.id), account_id: clean(q.accountId)"))
                 linked_order = snapshot.get("order_id")
-                if (linked_order and linked_order != order_id) or (not linked_order and snapshot.get("id") != order_id):
+                if ((linked_order and linked_order != order_id)
+                        or (snapshot.get("id") and snapshot["id"] != str(quote_id or order_id))
+                        or (account_id and snapshot.get("account_id") and snapshot["account_id"] != str(account_id))):
                     raise StockSwapError("The original quote does not belong to this order; review it before sending.")
                 if _quote_scope(driver, "return (q.options || []).length;") != 1:
                     raise StockSwapError("The original quote has multiple options; review which products were ordered.")
             else:
                 snapshot = shared._order_scope(driver, SNAPSHOT_JS)
-                if snapshot.get("id") != order_id:
+                if snapshot.get("id") and snapshot["id"] != order_id:
                     raise StockSwapError("CRM loaded a different order; no Stock Swap email was sent.")
             if not quote and snapshot.get("editing"):
                 raise StockSwapError("Save the CRM changes before queueing Stock Swap.")
-            if snapshot.get("designs"):
+            ready = (bool(snapshot.get("id")) and bool(snapshot.get("designs"))
+                     and all(design.get("items_loaded", True) for design in snapshot["designs"]))
+            if quote and account_id and not snapshot.get("account_id"):
+                ready = False
+            if ready:
                 return snapshot
+            last_error = "CRM is still loading the order/quote identity, designs, or products."
         except StockSwapError:
             raise
         except Exception as exc:
@@ -184,6 +193,13 @@ def find_swaps(original, current):
             new[key]["quantities"].subtract(unchanged)
         removed = [p for p in old.values() if +p["quantities"]]
         added = [p for p in new.values() if +p["quantities"]]
+        if len(removed) == len(added) == 1 and sum(removed[0]["quantities"].values()) == sum(added[0]["quantities"].values()):
+            # A single replacement is unambiguous even when the saved size labels
+            # differ. Keep each side's sizes instead of assigning the old size to it.
+            swaps.append({"design": before.get("name") or before.get("artwork_id"),
+                          "stock": {**removed[0], "quantities": dict(+removed[0]["quantities"])},
+                          "product": {**added[0], "quantities": dict(+added[0]["quantities"])}})
+            continue
         sizes = dict.fromkeys(size for product in [*removed, *added] for size in +product["quantities"])
         pairs = {}
         for size in sizes:
@@ -361,7 +377,7 @@ def _send_email(driver, crm_handle, order_id, customer_email, swaps, *, dry_run=
 def process_stock_swap_order(order_id, *, dry_run=False, visible=False, progress_callback=None, login_wait_seconds=0):
     order_id = shared._normalize_order_id(order_id)
     order_url = shared.PROCESSOR_ORDER_URL_TEMPLATE.format(order_id=order_id)
-    result = {"order_id": order_id, "order_url": order_url, "quote_url": QUOTE_URL.format(order_id=order_id),
+    result = {"order_id": order_id, "order_url": order_url,
               "automation": AUTOMATION_KEY, "dry_run": bool(dry_run), "stages": [], "success": False}
     driver = None
     stage = "browser_start"
@@ -378,12 +394,16 @@ def process_stock_swap_order(order_id, *, dry_run=False, visible=False, progress
         shared.safe_get_with_partial_load(driver, order_url, f"CRM order {order_id}")
         shared._login_to_crm_if_needed(driver, order_url, login_wait_seconds=login_wait_seconds)
         current = _read_snapshot(driver, order_id)
+        quote_id = str(current.get("quote_id") or "").strip()
+        if not re.fullmatch(r"[1-9]\d{0,11}", quote_id):
+            raise StockSwapError("The saved order has no readable original quote ID; review before sending.")
+        result.update({"quote_id": quote_id, "quote_url": QUOTE_URL.format(quote_id=quote_id)})
         crm_handle = driver.current_window_handle
         contact = shared._wait_for_crm_contact_info(driver, order_id=order_id)
         begin("original_quote", f"Reading the original quote for order {order_id}.")
         shared.safe_get_with_partial_load(driver, result["quote_url"], f"Original quote for {order_id}")
         shared._login_to_crm_if_needed(driver, result["quote_url"], login_wait_seconds=login_wait_seconds)
-        original = _read_snapshot(driver, order_id, quote=True)
+        original = _read_snapshot(driver, order_id, quote=True, quote_id=quote_id, account_id=current.get("account_id"))
         begin("stock_comparison", "Matching every saved stock swap with its original product.")
         swaps = find_swaps(original, current)
         # Re-read the persisted order before drafting to catch changes during the quote scan.
