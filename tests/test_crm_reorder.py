@@ -40,15 +40,48 @@ class ReorderPlanningTests(unittest.TestCase):
         self.assertEqual(products[0]["quantities"], {"L": 2, "XL": 2, "2XL": 2})
         self.assertEqual(worker.aggregate_products([tab()], "ssactivewear"), [])
 
-    def test_free_shipping_extends_dates_for_arrival_and_preserves_existing_later_date(self):
+    def test_all_shipping_classes_extend_dates_and_preserve_existing_later_dates(self):
         eta = date(2026, 11, 5)
-        production, due = worker.date_changes({"shipping_class": "free", "production_date": date(2026, 11, 2), "due_date": date(2026, 11, 4)}, eta)
-        self.assertEqual((production, due), (eta, date(2026, 11, 6)))
-        self.assertEqual(worker.date_changes({"shipping_class": "free", "production_date": date(2026, 11, 9), "due_date": date(2026, 11, 12)}, eta), (date(2026, 11, 9), date(2026, 11, 12)))
+        for shipping_class in ("free", "rush", "", None):
+            with self.subTest(shipping_class=shipping_class):
+                production, due = worker.date_changes({"shipping_class": shipping_class, "production_date": date(2026, 11, 2), "due_date": date(2026, 11, 4)}, eta)
+                self.assertEqual((production, due), (eta, date(2026, 11, 6)))
+                self.assertEqual(worker.date_changes({"shipping_class": shipping_class, "production_date": date(2026, 11, 9), "due_date": date(2026, 11, 12)}, eta), (date(2026, 11, 9), date(2026, 11, 12)))
 
-    def test_paid_arrival_on_due_date_stops_for_review(self):
-        with self.assertRaisesRegex(RuntimeError, "Paid/rush"):
-            worker.date_changes({"shipping_class": "rush", "due_date": date(2026, 11, 5)}, date(2026, 11, 5))
+    def test_arrival_on_due_date_moves_both_dates_and_weekends_roll_forward(self):
+        order = {"shipping_class": "rush", "production_date": date(2026, 11, 3), "due_date": date(2026, 11, 4)}
+        self.assertEqual(worker.date_changes(order, date(2026, 11, 4)), (date(2026, 11, 4), date(2026, 11, 5)))
+        self.assertEqual(worker.date_changes(order, date(2026, 11, 6)), (date(2026, 11, 6), date(2026, 11, 9)))
+        self.assertEqual(worker.date_changes(order, date(2026, 11, 7)), (date(2026, 11, 9), date(2026, 11, 10)))
+
+    def test_sanmar_reorder_accepts_exact_low_stock_and_still_rejects_shortages(self):
+        p = product(quantities={"L": 1})
+        warehouse = worker.bypass.NJ_WAREHOUSE
+        inventory = [{"warehouse": warehouse, "stock": {"L": 1}}]
+        with ExitStack() as stack:
+            for name in ("_search_sanmar_product", "_select_sanmar_color"):
+                stack.enter_context(mock.patch.object(worker.bypass, name))
+            available = stack.enter_context(mock.patch.object(worker.bypass, "_wait_for_sanmar_inventory", return_value=inventory))
+            stack.enter_context(mock.patch.object(worker.bypass, "_sanmar_closed_warehouses", return_value=set()))
+            groups = worker.sanmar_groups(mock.Mock(), [p])
+            self.assertEqual(groups[0]["lines"][0]["quantities"], {"L": 1})
+            self.assertEqual(groups[0]["lines"][0]["warehouse"], warehouse)
+            # The shared default used by ordinary Shipping Bypasser is unchanged.
+            self.assertIsNone(worker.bypass._choose_warehouse_plan([{"quantities": {"L": 1}, "inventory": inventory}], "inhouse")[1])
+            available.return_value = [{"warehouse": warehouse, "stock": {"L": 0}}]
+            with self.assertRaisesRegex(RuntimeError, "all required stock quantities"):
+                worker.sanmar_groups(mock.Mock(), [p])
+
+    def test_sanmar_reorder_can_split_exact_low_stock_across_warehouses(self):
+        p = product(quantities={"L": 3})
+        with ExitStack() as stack:
+            for name in ("_search_sanmar_product", "_select_sanmar_color"):
+                stack.enter_context(mock.patch.object(worker.bypass, name))
+            stack.enter_context(mock.patch.object(worker.bypass, "_wait_for_sanmar_inventory", return_value=[{"warehouse": worker.bypass.NJ_WAREHOUSE, "stock": {"L": 2}}, {"warehouse": "Richmond, VA", "stock": {"L": 1}}]))
+            stack.enter_context(mock.patch.object(worker.bypass, "_sanmar_closed_warehouses", return_value=set()))
+            groups = worker.sanmar_groups(mock.Mock(), [p])
+        self.assertEqual(len(groups), 2)
+        self.assertEqual({line["warehouse"]: line["quantities"] for group in groups for line in group["lines"]}, {worker.bypass.NJ_WAREHOUSE: {"L": 2}, "Richmond, VA": {"L": 1}})
 
     def test_missing_production_date_can_be_assigned_but_missing_due_cannot(self):
         self.assertEqual(worker.date_changes({"shipping_class": "free", "due_date": date(2026, 11, 6)}, date(2026, 11, 5)), (date(2026, 11, 5), date(2026, 11, 6)))
@@ -68,11 +101,15 @@ class ReorderPlanningTests(unittest.TestCase):
         with ExitStack() as stack:
             for name in ("_search_sanmar_product", "_select_sanmar_color", "_wait_for_text"):
                 stack.enter_context(mock.patch.object(worker.bypass, name))
-            stack.enter_context(mock.patch.object(worker.bypass, "_wait_for_sanmar_inventory", return_value=[{"warehouse": worker.bypass.NJ_WAREHOUSE, "stock": {"L": 50}}]))
+            inventory = stack.enter_context(mock.patch.object(worker.bypass, "_wait_for_sanmar_inventory", return_value=[{"warehouse": worker.bypass.NJ_WAREHOUSE, "stock": {"L": 1}}]))
             stack.enter_context(mock.patch.object(worker.bypass, "_sanmar_closed_warehouses", return_value=set()))
             prepare = stack.enter_context(mock.patch.object(worker.bypass, "_prepare_sanmar_shipping_plan", return_value={"success": True, "shipping": {"ship_mode": "pickup"}}))
             review = stack.enter_context(mock.patch.object(worker.bypass, "_fill_review_and_submit"))
             worker.prepare_group(driver, group, {"order_id": "5000001"})
+            inventory.return_value = [{"warehouse": worker.bypass.NJ_WAREHOUSE, "stock": {"L": 0}}]
+            with self.assertRaisesRegex(RuntimeError, "no longer available"):
+                worker.prepare_group(driver, group, {"order_id": "5000001"})
+            self.assertEqual(prepare.call_count, 1)
         self.assertTrue(prepare.call_args.kwargs["nj_pickup_order"])
         self.assertEqual(review.call_args.args[1], "5000001")
         self.assertTrue(review.call_args.kwargs["dry_run"])
@@ -145,6 +182,13 @@ class SxsPlanningTests(unittest.TestCase):
         line["inventory"][1]["stock"]["L"] = 1
         self.assertEqual(sxs.allocate([line])[0]["warehouse"], "Middleboro, MA")
 
+    def test_sxs_reorder_accepts_one_available_piece_without_an_extra_buffer(self):
+        line = self.line([("Reading, PA", {"L": 1})], quantities={"L": 1})
+        self.assertEqual(sxs.allocate([line])[0]["quantities"], {"L": 1})
+        line["inventory"][0]["stock"]["L"] = 0
+        with self.assertRaisesRegex(RuntimeError, "every required size"):
+            sxs.allocate([line])
+
     def test_split_is_used_only_when_no_complete_warehouse_and_never_short_ships(self):
         line = self.line([("Reading, PA", {"L": 1}), ("Middleboro, MA", {"L": 1})])
         allocation = sxs.allocate([line])
@@ -173,6 +217,16 @@ class SxsPlanningTests(unittest.TestCase):
         for altered, location in ((text.replace("5000001", "50000010"), url), ("PO Number: 5000001", url), (text, "https://example.com/confirmation"), (text.replace("PO Number:", "Phone:"), url)):
             self.assertIsNone(sxs.confirmation_from_text(altered, "5000001", location))
 
+    def test_actual_order_confirmation_heading_accepts_line_breaks_and_combined_labels(self):
+        url = "https://www.ssactivewear.com/checkout/orderconfirmation?orderguid=fixture"
+        for text in ("Order Confirmation: 98765432\nPO Number: 5000001\nWarehouse: Reading, PA", "Order Confirmation: 98765432PO Number: 5000001Warehouse: Reading, PA"):
+            with self.subTest(text=text):
+                result = sxs.confirmation_from_text(text, "5000001", url)
+                self.assertEqual(result["order_number"], "98765432")
+                self.assertEqual(result["po"], "5000001")
+                self.assertIsNone(sxs.confirmation_from_text(text.replace("5000001", "50000010"), "5000001", url))
+                self.assertIsNone(sxs.confirmation_from_text(text + "\nOrder Confirmation: 87654321", "5000001", url))
+
     def test_split_cart_supports_separate_rows_and_verified_grouped_quantities(self):
         line = self.line([("Reading, PA", {"L": 1}), ("Middleboro, MA", {"L": 1})])
         lines = sxs.allocate([line])
@@ -192,7 +246,7 @@ class ReorderRecoveryTests(unittest.TestCase):
         self.order = {"order_id": "5000001", "po": "H-Fixture", "production_date": date.today(), "due_date": date.today() + timedelta(days=10), "shipping_class": "free"}
         self.tabs = [tab()]
         self.scan = self.stack.enter_context(mock.patch.object(worker, "scan_order", side_effect=lambda *_: (dict(self.order), copy.deepcopy(self.tabs))))
-        self.stack.enter_context(mock.patch.object(worker.bypass, "_order_shipping_class_from_text", return_value="free"))
+        self.shipping_class = self.stack.enter_context(mock.patch.object(worker.bypass, "_order_shipping_class_from_text", side_effect=AssertionError("Reorder must not classify shipping charges")))
         self.stack.enter_context(mock.patch.object(worker.bypass, "_ensure_sanmar_logged_in"))
         self.empty = self.stack.enter_context(mock.patch.object(worker, "_empty"))
         self.plan = self.stack.enter_context(mock.patch.object(worker, "sanmar_groups", return_value=[{"vendor": "sanmar", "state": "planned", "plan": {}, "lines": []}]))
@@ -222,6 +276,19 @@ class ReorderRecoveryTests(unittest.TestCase):
         self.assertEqual(self.run_order(dry_run=True)["outcome"], "reorder_ready")
         self.assertIsNone(worker.load_receipt("5000001"))
         self.submit.assert_not_called(); self.finish.assert_not_called()
+
+    def test_late_paid_reorder_saves_both_dates_before_purchasing(self):
+        self.order.update(shipping_class="rush", production_date=date(2026, 11, 3), due_date=date(2026, 11, 4))
+        self.prepare.return_value = {"eta": date(2026, 11, 4), "shipping_requirements": {}}
+        def submit(*_args, **_kwargs):
+            self.assertEqual(self.order["production_date"], date(2026, 11, 4))
+            self.assertEqual(self.order["due_date"], date(2026, 11, 5))
+            self.assertEqual(worker.load_receipt("5000001")["groups"][0]["state"], "submitting")
+        self.submit.side_effect = submit
+        self.assertEqual(self.run_order()["outcome"], "reordered")
+        self.submit.assert_called_once()
+        self.finish.assert_called_once()
+        self.shipping_class.assert_not_called()
 
     def test_confirmed_purchase_recovers_crm_without_second_purchase(self):
         self.finish.side_effect = [RuntimeError("CRM record save failed"), None]

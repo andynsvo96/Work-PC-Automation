@@ -35,8 +35,11 @@ mode overrides, are not used as the source of truth.
 ## Ordering
 
 SanMar reuses Shipping Bypasser's style/color mapping, quantity and cart checks,
-closed-warehouse checks, ten-piece stock buffer, delivery estimates, and review-page
-fulfillment checks. Searches use `https://www.sanmar.com/search?text=<style>` and
+closed-warehouse checks, delivery estimates, and review-page fulfillment checks.
+Reorder uses no extra stock buffer: exact required quantities are sufficient,
+including stock of ten pieces or fewer. Every size must still be fully available
+at allocation and again before checkout. Ordinary Shipping Bypasser keeps its
+existing ten-piece buffer. Searches use `https://www.sanmar.com/search?text=<style>` and
 still verify the resulting product. An existing, verified inventory view can be
 reused. Complete NJ-only stock is ordered manually for Robbinsville pickup.
 NJ and shipped stock are prepared as separate purchases when a split requires NJ.
@@ -57,19 +60,26 @@ checked without applying changes. Unreadable allocations require review.
 S&S checkout verifies the shipping-address section is **2727 Commerce Way,
 Philadelphia, PA 19154**, every warehouse uses **UPS Ground**, payment is **Net 60**,
 and PO Number is exactly the CRM order number. It uses Complete Order and the
-final Yes confirmation once, then requires a supplier success page, a unique
-numeric order reference, and the exact labelled PO. The supplied archives cover
-search/product/cart/checkout and CRM stock records; an actual S&S success page has
-not yet been supplied. Its final receipt parser has offline coverage but still
-needs comparison with an existing successful S&S vendor confirmation before live
-acceptance. No live purchase was made during development.
+final confirmation once (shown as Confirm in the observed live Chrome session and
+Yes in the supplied archive), then requires a supplier success page, a unique
+order reference, and the exact labelled PO. Receipt parsing covers the observed
+`Order Confirmation: <number>` heading, including combined PO/warehouse labels,
+as well as the older numbered confirmation format. A live S&S checkout and its
+confirmation were verified through an existing logged-in Chrome session. The
+dedicated worker browser still receives an S&S website error before login on
+this machine; unattended S&S access and credential login remain unverified.
 
 All supplier carts and delivery dates are preflighted before the first purchase.
 Existing vendor cart contents stop the run and are retained. Only verified carts
-created by this run are emptied after preflight. For free shipping, production can
-move to the stock arrival date and due date moves out when needed to retain a
-production day. Paid/rush stock arriving on or after the required production
-deadline stops for review. Important CRM date saves are reloaded and verified.
+created by this run are emptied after preflight. Every Reorder follows the same
+date rules regardless of shipping charges: production moves to the latest stock
+arrival date, rounded forward to a business day, when later than its current date.
+The due date moves out when needed to allow the following business day after
+production. Existing later dates are preserved. Important CRM date saves are
+reloaded and verified before purchase; date changes during checkout still stop
+for review. These Reorder rules load on the next worker run without an app restart.
+Due-date verification also reopens the same CRM order when a refresh loses its
+iframe context, using the existing production-date verification recovery.
 
 ## Credentials and setup
 

@@ -423,9 +423,11 @@ def checkout(driver, po, lines):
 
 def confirmation_from_text(text, po, url):
     parsed = urlsplit(url)
+    text = re.sub(r"(?<=\d)(?=PO\s+Number\s*:|Warehouse\s*:)", "\n", text, flags=re.I)
     if parsed.hostname != "www.ssactivewear.com" or not re.search(r"thank\s+you.*order|order\s+confirmation", text, re.I):
         return None
     references = {m.group(1) for m in re.finditer(r"\b(?:order|confirmation)\s*(?:number|no\.?|#)\s*:?\s*([A-Z0-9-]+)", text, re.I) if re.search(r"\d", m.group(1))}
+    references.update(m.group(1) for m in re.finditer(r"\border\s+confirmation\s*:\s*(\d+)(?=\s|$|PO\s*Number\s*:)", text, re.I))
     po_match = re.search(r"\b(?:customer\s+)?PO\s*(?:number|no\.?|#)?\s*:?\s*" + re.escape(str(po)) + r"(?![A-Za-z0-9_-])", text, re.I)
     if len(references) == 1 and po_match:
         return {"vendor": "S&S Activewear", "url": url, "order_number": next(iter(references)), "po": str(po), "po_confirmed": True}

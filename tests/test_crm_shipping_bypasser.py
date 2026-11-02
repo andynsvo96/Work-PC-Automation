@@ -18,6 +18,29 @@ import crm_shipping_bypasser  # noqa: E402
 import shipping_bypasser_mappings  # noqa: E402
 
 
+class ShippingBypassDateVerificationTests(unittest.TestCase):
+    def test_due_date_verification_recovers_lost_iframe_and_rejects_unsaved_values(self):
+        target = crm_shipping_bypasser.datetime(2026, 11, 5).date()
+        for persisted in (target, None):
+            with self.subTest(persisted=persisted), ExitStack() as stack:
+                driver = mock.Mock()
+                state = {"in_order": True}
+                driver.refresh.side_effect = lambda: state.update(in_order=False)
+                for name in ("_find_clickable_by_text", "_click_with_fallback", "_wait_for_text"):
+                    stack.enter_context(mock.patch.object(crm_shipping_bypasser, name))
+                stack.enter_context(mock.patch.object(crm_shipping_bypasser.time, "sleep"))
+                stack.enter_context(mock.patch.object(crm_shipping_bypasser, "_set_crm_edit_date_field", return_value=target))
+                stack.enter_context(mock.patch.object(crm_shipping_bypasser, "_wait_for_order_goods_page_ready", side_effect=lambda *_args, **_kwargs: state["in_order"]))
+                reopen = stack.enter_context(mock.patch.object(crm_shipping_bypasser, "_open_target_order", side_effect=lambda *_args, **_kwargs: state.update(in_order=True)))
+                stack.enter_context(mock.patch.object(crm_shipping_bypasser, "_extract_order_data", side_effect=lambda *_args: {"due_date": persisted if state["in_order"] else None}))
+                if persisted:
+                    self.assertEqual(crm_shipping_bypasser._change_crm_due_date(driver, "5000001", target), target)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "did not persist"):
+                        crm_shipping_bypasser._change_crm_due_date(driver, "5000001", target)
+                reopen.assert_called_once_with(driver, "5000001", shipping_filter=crm_shipping_bypasser.RUSH_FILTER, list_url_override=None)
+
+
 class ShippingBypassExistingStockTests(unittest.TestCase):
     def _crm_data(self):
         return {

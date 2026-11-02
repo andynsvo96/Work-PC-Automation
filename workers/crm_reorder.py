@@ -167,9 +167,9 @@ def sanmar_groups(driver, products):
         inventory = bypass._wait_for_sanmar_inventory(driver, options["search_id"])
         inventory = bypass._exclude_closed_sanmar_warehouses(inventory, bypass._sanmar_closed_warehouses(driver))
         lines.append({"product": product, **options, "quantities": bypass._sanmar_quantities_for_product(product), "inventory": inventory})
-    _, plan = bypass._choose_warehouse_plan(lines, "inhouse")
+    _, plan = bypass._choose_warehouse_plan(lines, "inhouse", stock_buffer=0)
     if not plan:
-        raise RuntimeError("SanMar cannot fill all required stock with the existing stock buffer.")
+        raise RuntimeError("SanMar cannot fill all required stock quantities.")
     plans = [plan["nj_plan"], plan["add_plan"]] if plan["mode"] == "nj_pickup_and_add" else [plan]
     return [{"vendor": "sanmar", "plan": p, "lines": p["expanded_lines"], "state": "planned"} for p in plans]
 
@@ -188,12 +188,8 @@ def date_changes(order, eta):
     if not due:
         raise RuntimeError("CRM due date is missing.")
     target = bypass._shipping_bypasser_production_target_for_eta(eta)
-    free = order.get("shipping_class") == "free"
-    if not free and target >= due:
-        raise RuntimeError("Paid/rush stock would arrive too late for production. Review required; no further purchase was submitted.")
     production = max(target, order.get("production_date") or target)
-    if free:
-        due = max(due, bypass._next_business_day_after(production))
+    due = max(due, bypass._next_business_day_after(production))
     return production, due
 
 
@@ -210,7 +206,7 @@ def prepare_group(driver, group, order):
             bypass._select_sanmar_color(driver, line["product"]["color"], product=line["product"])
             inventory = bypass._exclude_closed_sanmar_warehouses(bypass._wait_for_sanmar_inventory(driver, line["search_id"]), bypass._sanmar_closed_warehouses(driver))
             available = bypass._inventory_by_warehouse(inventory).get(line["warehouse"], {}).get("stock", {})
-            if not all(bypass._stock_qty_can_cover_order(available.get(size, 0), qty) for size, qty in line["quantities"].items()):
+            if not all(bypass._stock_qty_can_cover_order(available.get(size, 0), qty, stock_buffer=0) for size, qty in line["quantities"].items()):
                 raise RuntimeError("The saved SanMar warehouse allocation is no longer available.")
         state = bypass._prepare_sanmar_shipping_plan(driver, po, order, group["lines"], group["plan"], check_closed_warehouses=True, nj_pickup_order=True)
         if not state.get("success"):
@@ -300,9 +296,6 @@ def process_order(crm, vendors, order_id, dry_run=False):
             if any(not confirmed or r.get("po") != order_id or vendor_key(r.get("vendor")) != tab["vendor"] for r in tab["valid_records"]):
                 raise RuntimeError("Mixed stock records are not accounted for by the confirmed Reorder receipt. Review required.")
     order.update(order_id=order_id, po=order_id, order_type="inhouse")
-    order["shipping_class"] = bypass._order_shipping_class_from_text(bypass._normalize_text(crm.execute_script("return document.body.innerText;")))
-    if order["shipping_class"] not in {"free", "rush"}:
-        raise RuntimeError("CRM shipping charge could not be verified as free or paid.")
     required_vendors = sorted({t["vendor"] for t in tabs})
     if not receipt or not all(g.get("state") == "confirmed" for g in receipt["groups"]):
         for vendor in required_vendors:
@@ -358,9 +351,6 @@ def process_order(crm, vendors, order_id, dry_run=False):
             raise RuntimeError("New current-destination stock appeared during checkout. Review required before purchasing.")
         if fresh_order.get("production_date") != production or fresh_order.get("due_date") != due:
             raise RuntimeError("CRM production or due date changed during checkout. Review required before purchasing.")
-        current_shipping_class = bypass._order_shipping_class_from_text(bypass._normalize_text(crm.execute_script("return document.body.innerText;")))
-        if current_shipping_class != order["shipping_class"]:
-            raise RuntimeError("CRM free/paid shipping changed during checkout. Review required before purchasing.")
         group["state"] = "submitting"
         save_receipt(receipt)  # A crash from here can never automatically repeat the purchase.
         try:

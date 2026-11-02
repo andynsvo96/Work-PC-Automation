@@ -5121,8 +5121,7 @@ def _change_crm_due_date(driver, order_id, target_date):
         raise RuntimeError("CRM save order button was not found after due date update.")
     _click_with_fallback(driver, save)
     _wait_for_text(driver, r"edit\s+order", timeout=25)
-    driver.refresh()
-    _wait_for_order_goods_page_ready(driver, order_id)
+    _reload_crm_order_for_production_verify(driver, order_id)
     refreshed = _extract_order_data(driver, order_id)
     if refreshed.get("due_date") != saved_target_date:
         raise RuntimeError("CRM due date did not persist after save.")
