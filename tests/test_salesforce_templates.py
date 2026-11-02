@@ -9,7 +9,10 @@ from unittest import mock
 from flask import Flask
 
 from routes.salesforce_template_routes import register_salesforce_template_routes
-from salesforce_templates import SalesforceTemplateStore, TemplateConflict, TemplateLibraryError, TemplateNotFound
+from salesforce_templates import (
+    SalesforceTemplateStore, TemplateConflict, TemplateLibraryError, TemplateNotFound,
+    STOCK_SWAP_TEMPLATE_NAME,
+)
 
 
 SOURCE = '<html><head><title></title></head><body><p>Hello &rsquo; [REQUEST]</p><a href="https://example.test/?a=1&amp;b=2">Invoice</a><img src="https://example.test/logo.png" alt="Logo"></body></html>\n'
@@ -224,6 +227,53 @@ class TemplateStoreTests(TemplateFixtures, unittest.TestCase):
         self.path.write_text(json.dumps(document), encoding='utf-8')
         with self.assertRaisesRegex(TemplateLibraryError, 'at most 500'):
             self.store.create_template({'name': 'One too many', 'subject': 'Title', 'body_html': SOURCE})
+
+
+class StockSwapTemplateInitializationTests(TemplateFixtures, unittest.TestCase):
+    def enabled_store(self):
+        return SalesforceTemplateStore(self.path, self.root / "captures", include_stock_swap=True)
+
+    def test_seeds_existing_library_once_with_backup_and_required_placeholders(self):
+        originals = self.store.list_templates()
+        before = self.path.read_bytes()
+        store = self.enabled_store()
+        rows = store.list_templates()
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(all(row in rows for row in originals))
+        template = store.get_template(STOCK_SWAP_TEMPLATE_NAME)
+        self.assertIn("[ORDER-NUMBER]", template["subject"])
+        self.assertIn("[STOCK]", template["body_html"])
+        self.assertIn("[PRODUCT]", template["body_html"])
+        self.assertEqual(self.path.with_suffix(".json.bak").read_bytes(), before)
+        with mock.patch.object(store, "_write") as write:
+            self.assertEqual(len(store.list_templates()), 3)
+        write.assert_not_called()
+
+    def test_new_computer_without_captures_has_the_editable_stock_swap_template(self):
+        store = SalesforceTemplateStore(self.root / "new.json", include_stock_swap=True)
+        self.assertEqual([row["name"] for row in store.list_templates()], [STOCK_SWAP_TEMPLATE_NAME])
+
+    def test_keeps_edits_renames_and_deliberate_removal_after_reload(self):
+        store = self.enabled_store()
+        template = store.get_template(STOCK_SWAP_TEMPLATE_NAME)
+        saved = store.save_template(template["id"], {**template, "subject": "My title [ORDER-NUMBER]", "name": "My Stock Swap"})
+        self.assertEqual(self.enabled_store().get_template(STOCK_SWAP_TEMPLATE_NAME), saved)
+        store.delete_template(saved["id"], saved)
+        self.assertEqual(len(self.enabled_store().list_templates()), 2)
+        with self.assertRaises(TemplateNotFound):
+            self.enabled_store().get_template(STOCK_SWAP_TEMPLATE_NAME)
+
+    def test_adopts_existing_custom_template_including_renames_without_overwriting(self):
+        template = self.store.create_template({"name": STOCK_SWAP_TEMPLATE_NAME, "subject": "Custom title", "body_html": SOURCE})
+        renamed = self.store.save_template(template["id"], {**template, "name": "Custom name"})
+        self.assertEqual(self.enabled_store().get_template(STOCK_SWAP_TEMPLATE_NAME), renamed)
+        self.assertEqual(len(self.enabled_store().list_templates()), 3)
+
+    def test_corrupt_library_is_never_replaced_by_defaults(self):
+        self.path.write_text("{invalid", encoding="utf-8")
+        with self.assertRaises(TemplateLibraryError):
+            self.enabled_store().list_templates()
+        self.assertEqual(self.path.read_text(), "{invalid")
 
 
 class TemplateApiTests(TemplateFixtures, unittest.TestCase):

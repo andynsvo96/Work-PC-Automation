@@ -265,6 +265,42 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
         self.assertEqual(enqueue.call_args.kwargs["task_arguments"]["order_id"], "4917538")
         self.assertEqual(enqueue.call_args.kwargs["task_arguments"]["list_mode"], "all")
 
+    def test_stock_swap_queues_one_order_and_restores_the_same_retry_runner(self):
+        with mock.patch("server.enqueue_automation", return_value=(True, "Stock Swap queued.", {"id": "stock-swap"})) as enqueue:
+            response = self.client.post(
+                "/api/extension/bridge/process-order/manual",
+                json={"order_id": "1234567", "automation": "stock_swap"},
+                headers={"Origin": self.ORIGIN}, environ_overrides={"REMOTE_ADDR": "127.0.0.1"})
+        self.assertEqual(response.status_code, 202)
+        saved = enqueue.call_args.kwargs
+        self.assertEqual(saved["task_type"], "crm.stock_swap")
+        self.assertEqual(saved["task_arguments"], {"order_id": "1234567", "dry_run": False})
+        self.assertEqual(saved["execution_descriptor"]["arguments"]["automation_key"], "stock_swap")
+        with mock.patch("server.run_crm_extension_manual_order_run_queued", return_value=(True, "Done")) as execute:
+            # Restore again so the new callable captures the patched runner.
+            runner, status = server._restore_automation_queue_callables(saved)
+            self.assertEqual(runner(), (True, "Done"))
+        execute.assert_called_once_with(order_id="1234567", automation_key="stock_swap", reason="", request_data={})
+        self.assertEqual(status, server.get_crm_extension_order_status_payload)
+        self.assertIn("crm.stock_swap", server._RETRYABLE_SINGLE_ORDER_TASK_TYPES)
+
+    def test_stock_swap_runner_holds_and_releases_the_existing_crm_lock(self):
+        with mock.patch("server.crm_lock") as lock, mock.patch("server._run_script") as worker:
+            lock.acquire.return_value = True
+            worker.return_value = (True, "Done", {})
+            self.assertEqual(server.run_crm_stock_swap_queued("1234567"), (True, "Done", {}))
+        lock.acquire.assert_called_once_with(blocking=False)
+        lock.release.assert_called_once()
+        worker.assert_called_once_with(server.CRM_STOCK_SWAP_SCRIPT, ["--order-id", "1234567", "--real"],
+                                       "Stock Swap", timeout=900, require_result=True)
+        self.assertIn("crm_stock_swap.py", server.CRM_VISIBLE_FLAG_WORKER_FILENAMES)
+        with mock.patch("server.crm_lock") as lock, mock.patch("server._run_script") as worker:
+            lock.acquire.return_value = True
+            worker.side_effect = RuntimeError("worker failed")
+            with self.assertRaises(RuntimeError):
+                server.run_crm_stock_swap_queued("1234567")
+            lock.release.assert_called_once()
+
     def test_manual_shipping_bypasser_explicitly_allows_low_sanmar_stock_buffer(self):
         with mock.patch(
             "server.enqueue_automation",

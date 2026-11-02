@@ -16,6 +16,18 @@ from runtime_paths import STATE_DIR
 MAX_BODY_BYTES = 1_000_000
 MAX_LIBRARY_BYTES = 32 * 1024 * 1024
 EDITABLE_FIELDS = ("name", "subject", "body_html")
+_WORKFLOW_TEMPLATE_LOCK = threading.RLock()
+STOCK_SWAP_TEMPLATE_NAME = "[AUTO] Stock Swap"
+STOCK_SWAP_TEMPLATE = {
+    "id": "builtin_stock_swap",
+    "name": STOCK_SWAP_TEMPLATE_NAME,
+    "subject": "Order #[ORDER-NUMBER] - Stock Swap",
+    "body_html": (
+        "<p>Hello,</p><p>Due to stock availability, we have swapped the following item(s):</p>"
+        "<p>[STOCK]</p><p>Your comparable replacement item(s):</p><p>[PRODUCT]</p>"
+        "<p>Thank you for your understanding.</p>"
+    ),
+}
 
 
 def default_template_store():
@@ -23,6 +35,7 @@ def default_template_store():
     return SalesforceTemplateStore(
         Path(STATE_DIR) / "salesforce_templates.json",
         Path(STATE_DIR) / "salesforce_email_templates_capture",
+        include_stock_swap=True,
     )
 
 
@@ -72,10 +85,11 @@ def _validate_fields(values):
 
 
 class SalesforceTemplateStore:
-    def __init__(self, path, capture_root=None):
+    def __init__(self, path, capture_root=None, *, include_stock_swap=False):
         self.path = Path(path)
         self.capture_root = Path(capture_root) if capture_root is not None else None
-        self._lock = threading.RLock()
+        self._lock = _WORKFLOW_TEMPLATE_LOCK if include_stock_swap else threading.RLock()
+        self.include_stock_swap = include_stock_swap
 
     @staticmethod
     def _read_json(path):
@@ -175,9 +189,25 @@ class SalesforceTemplateStore:
 
     def _load(self):
         self._initialize()
-        if not self.path.exists():
-            return {"schema_version": 1, "templates": []}
-        return self._validate_document(self._read_json(self.path))
+        document = (self._validate_document(self._read_json(self.path)) if self.path.exists()
+                    else {"schema_version": 1, "templates": []})
+        if self.include_stock_swap:
+            initialized = document.get("initialized_workflow_templates", [])
+            if not isinstance(initialized, list) or any(not isinstance(key, str) for key in initialized):
+                raise TemplateLibraryError("The template initialization history is invalid.")
+            if "stock_swap" not in initialized:
+                # Seed once. Edits, renames, and deliberate removal survive reloads.
+                if not any(
+                    item["id"] == STOCK_SWAP_TEMPLATE["id"] or STOCK_SWAP_TEMPLATE_NAME.casefold() in {
+                        item["name"].strip().casefold(),
+                        *(name.strip().casefold() for name in item.get("previous_names", [])),
+                    } for item in document["templates"]
+                ):
+                    document["templates"].append(dict(STOCK_SWAP_TEMPLATE))
+                document["initialized_workflow_templates"] = [*initialized, "stock_swap"]
+                self._validate_document(document)
+                self._write(document, backup=self.path.exists())
+        return document
 
     @staticmethod
     def _public(template):

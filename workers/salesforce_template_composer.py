@@ -1,5 +1,6 @@
 """Load the Settings JSON template into the active Salesforce email composer."""
 
+from html import escape
 from html.parser import HTMLParser
 import ipaddress
 import re
@@ -163,16 +164,24 @@ def _enter_editor(driver, frames, timeout):
     raise TemplateComposerError("The Salesforce email HTML editor was not found in the active composer.")
 
 
-def fill_template(driver, reference, *, store=None, timeout=15):
+def fill_template(driver, reference, *, store=None, timeout=15, replacements=None):
     """Read the current local template, paste its subject/HTML, and verify the draft.
 
     No template picker, clipboard, Salesforce save, or Send action is used here.
-    Workflow-specific placeholder replacement and send receipts remain with callers.
+    Callers can supply literal placeholder values; HTML replacements are escaped
+    as text. Workflow validation and send receipts remain with callers.
     """
     try:
         template = (store or default_template_store()).get_template(reference)
     except (TemplateLibraryError, OSError) as exc:
         raise TemplateComposerError(f"Could not load the local Salesforce template: {exc}") from exc
+    if replacements:
+        template = dict(template)
+        # Replace in one pass so product text can never become another placeholder.
+        pattern = re.compile("|".join(re.escape(token) for token in replacements))
+        template["subject"] = pattern.sub(lambda match: str(replacements[match[0]]), template["subject"])
+        template["body_html"] = pattern.sub(
+            lambda match: escape(str(replacements[match[0]]), quote=True), template["body_html"])
     _EmailHtml().feed(template["body_html"])
     try:
         driver.switch_to.default_content()

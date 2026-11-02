@@ -1,0 +1,39 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Offline Stock Swap CRM fixture</title>
+<body><main id="products"></main>
+<script>
+window.events = [];
+const quotePage = location.hash.includes('/quotes/');
+const shirt = {
+  id: 'shirt-1', style: '5000', color: 'Black', label: 'Heavy Cotton T-Shirts',
+  splitIntoSizes: 1, quantity: 5,
+  sizes: [{size: 'M', quantity: 3}, {size: {name: 'L'}, quantity: 2}, {size: 'XL', quantity: 0}],
+};
+if (!quotePage) {
+  shirt.isStyleSub = 1;
+  shirt.styleSubs = [{style: 'PC54', color: 'Navy', description: 'Core Cotton T-Shirts'}];
+}
+const designs = [{id: 'tab-1', designId: 'art-1', PO: 'Team Logo', designItems: [shirt]},
+  {id: 'tab-2', designId: 'art-1', PO: 'Team Logo', designItems: [{
+    id: 'cap-1', style: 'CAP', color: 'White', label: 'Classic Caps', splitIntoSizes: 0, quantity: 2,
+  }]},
+  {id: 'deleted-tab', crudAction: 'd', designItems: [shirt]}];
+designs[0].designItems.push({...shirt, id: 'removed-product', crudAction: 'd'});
+if (!quotePage) designs.reverse();
+function forbidden(name) { return () => { events.push(name); throw Error('Read-only fixture: ' + name); }; }
+const scope = window.fixtureScope = {
+  editMode: false, copyOrder: forbidden('copy'), editModeOn: forbidden('edit'),
+  saveOrder: forbidden('save'), saveQuote: forbidden('save quote'),
+};
+if (quotePage) scope.quote = {id: 1234567, orderId: 1234567, options: [{designs}]};
+else scope.order = {getResource: () => ({id: 1234567, designs})};
+window.angular = {element: element => ({scope: () => element._scope || scope})};
+for (const design of designs) for (const item of design.designItems) {
+  const block = document.createElement('div');
+  block.setAttribute('ng-repeat', '($itemIndex, item) in design.designItems');
+  block._scope = {item, formItem: {selectedCatalogItem: {label: item.label}}};
+  block.textContent = item.style + ' ' + item.label;
+  document.getElementById('products').append(block);
+}
+</script>

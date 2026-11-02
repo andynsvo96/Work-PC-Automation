@@ -50,7 +50,7 @@ or the email sent to customers.
 Refresh the dashboard to load this styling change; no app restart or extension
 reload is needed.
 
-Keep placeholders such as [ORDER-NUMBER], [ORDER_NUMBER], [DESIGN], [PRINT],
+Keep placeholders such as [ORDER-NUMBER], [ORDER_NUMBER], [DESIGN], [PRINT], [STOCK], [PRODUCT],
 [REQUEST], [COST], and [INVOICE_LINK]. Existing image URLs and link attributes
 remain in the source. The two captured embroidery-guide anchors without href
 remain unchanged until they are explicitly edited.
@@ -72,7 +72,13 @@ names start with [AUTO] from the latest local capture:
 
 The captured files remain a source backup. A malformed active library is reported
 as an error and is never silently replaced from the capture. On a computer with
-no active library or captures, the editor shows an empty list.
+no active library or captures, the editor starts with the Stock Swap template.
+
+The Stock Swap update adds **[AUTO] Stock Swap** once to the active library,
+retaining a backup when the library already exists. An existing template with
+that name (including a retained previous name) is preserved. The initialization
+is recorded in `initialized_workflow_templates`, so later edits, renames, and
+deliberate removal survive reloads.
 
 The active file uses this structure:
 
@@ -106,11 +112,11 @@ the original Salesforce templates or send email.
 
 ## Automated emails
 
-All 16 automation templates now load from this same JSON library: full and
+All 17 automation templates now load from this same JSON library: full and
 partial Copyright Cancel, Content Violation, Existing T-shirt, Outside Limit,
 Unresponsive, Copyright Reachout and Removal, both Complicated Embroidery routes,
 Oversize Embroidery, Additional Requests, Comp Sleeves, and Stock Extension,
-Color, and Size. Sleeve, side, reverse-print, and extra embroidery requests share
+Color, Size, and Stock Swap. Sleeve, side, reverse-print, and extra embroidery requests share
 the Additional Requests sender. Sheets Scanner, queue actions, direct single-order
 actions, and email recovery use the same sender paths.
 
@@ -144,12 +150,23 @@ already-confirmed email. A retry whose rebuilt subject/body differs from the
 first draft stops before another send. Review an uncertain send in Salesforce
 Activity using its original queue entry and receipts.
 
+**Reachout > Stock Swap** uses `[ORDER-NUMBER]` in the title and `[STOCK]` and
+`[PRODUCT]` in the body. Stock is the original product from the order's CRM quote;
+Product is its saved replacement on the current order. One email covers every
+unambiguous swap, with corresponding numbered lists for multiple swaps. Product
+text is escaped as text while retaining surrounding template HTML formatting.
+Keep each placeholder intact when formatting it. Its additional per-order
+receipt prevents a changed template title from sending a confirmed email again.
+
 Copy the active JSON library to each computer that runs email workers. Missing
-libraries are initialized only from captures already present on that computer;
-there is no implicit cross-machine lookup or execution.
+libraries use captures already present on that computer plus the built-in
+Stock Swap starter template; there is no implicit cross-machine lookup or execution.
 
 Restart the local app and refresh the dashboard after installing this change.
 No Chrome extension reload is required.
+
+For the Stock Swap addition, restart the local app, refresh the dashboard,
+reload CRM Order Assistant **1.6.7**, and refresh open CRM order pages.
 
 ## Validation
 

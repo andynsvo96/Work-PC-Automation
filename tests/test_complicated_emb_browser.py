@@ -70,6 +70,26 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
                     self.assertEqual(self.driver.execute_script("return window.queued[0].data.designs"), [{"tab_number": 2, "design_name": "Schuti Hats", "print_areas": ["Back"]}])
                 self.assertFalse(self.driver.find_elements(By.CSS_SELECTOR, '[role="dialog"]'))
 
+    def test_stock_swap_queues_one_reachout_without_a_product_or_reason_picker(self):
+        source = (ROOT / "crm-order-dark-mode-extension/content.js").read_text(encoding="utf-8")
+        choices = source[source.index("const REACHOUT_ORDER_AUTOMATIONS"):source.index("const STOCK_ISSUE_AUTOMATIONS")]
+        popup = source[source.index("function showOrderAutomationConfirmation"):source.index("function createOrderProcessMenuControl")]
+        for button in ("Back", "Queue task"):
+            with self.subTest(button=button):
+                self.driver.get("about:blank")
+                self.driver.execute_script('''
+                    window.queued = [];
+                    window.queueManualOrderAutomation = (...args) => window.queued.push({key: args[0].key, data: args[4]});
+                ''' + choices + popup + '''
+                    showOrderAutomationConfirmation(REACHOUT_ORDER_AUTOMATIONS.find(a => a.key === 'stock_swap'), null, null);
+                ''')
+                dialog = self.driver.find_element(By.CSS_SELECTOR, '[role="dialog"]')
+                self.assertIn("one email covering every stock swap", dialog.text)
+                self.assertFalse(dialog.find_elements(By.CSS_SELECTOR, "input, textarea"))
+                dialog.find_element(By.XPATH, f'.//button[text()="{button}"]').click()
+                self.assertEqual(self.driver.execute_script("return window.queued"),
+                                 [{"key": "stock_swap", "data": {}}] if button == "Queue task" else [])
+
     def test_multiple_designs_require_selection_and_share_one_email(self):
         designs = [{"tab_number": 1, "design_name": "A", "print_areas": ["Back"]},
                    {"tab_number": 3, "design_name": "B", "print_areas": ["Front-left Chest"]}]

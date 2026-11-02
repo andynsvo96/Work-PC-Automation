@@ -70,7 +70,8 @@ const REACHOUT_ORDER_AUTOMATIONS = [
   { key: "complicated_emb_to_hdd", label: "Complicated EMB" },
   { key: "oversize_emb_to_hdd", label: "Oversize EMB to HDD" },
   { key: "copyright_removal", label: "Copyright Removal", requiresReason: true },
-  { key: "copyright_reachout", label: "Copyright - Reachout", requiresReason: true }
+  { key: "copyright_reachout", label: "Copyright - Reachout", requiresReason: true },
+  { key: "stock_swap", label: "Stock Swap" }
 ];
 
 const STOCK_ISSUE_AUTOMATIONS = [
@@ -1483,7 +1484,9 @@ function showOrderAutomationConfirmation(automation, triggerButton, statusButton
   const explanation = document.createElement("p");
   explanation.textContent = asksFeedback
     ? "Yes: request embroidery feedback. No: use the existing EMB to HDD process."
-    : `This will queue ${automation.label} for the currently open order.`;
+    : automation.key === "stock_swap"
+      ? "This will compare the original quote with the saved order and send one email covering every stock swap."
+      : `This will queue ${automation.label} for the currently open order.`;
   Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
   dialog.append(title, explanation);
   let embroideryDesigns = null;

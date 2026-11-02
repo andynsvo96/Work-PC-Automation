@@ -140,6 +140,7 @@ CRM_MASS_EMAILER_SCRIPT = os.path.join(WORKERS_DIR, "crm_copyright_cancel.py")
 CRM_STOCK_ISSUE_EXTENSION_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_extension.py")
 CRM_STOCK_ISSUE_COLOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_color.py")
 CRM_STOCK_ISSUE_SIZE_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_size.py")
+CRM_STOCK_SWAP_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_swap.py")
 CRM_SLEEVE_PRINTS_SCRIPT = os.path.join(WORKERS_DIR, "crm_sleeve_prints.py")
 SLACK_SCRIPT_TIMEOUT_SECONDS = 150
 BROWSER_WORKER_FILENAMES = frozenset(
@@ -158,6 +159,7 @@ BROWSER_WORKER_FILENAMES = frozenset(
         os.path.basename(CRM_STOCK_ISSUE_EXTENSION_SCRIPT),
         os.path.basename(CRM_STOCK_ISSUE_COLOR_SCRIPT),
         os.path.basename(CRM_STOCK_ISSUE_SIZE_SCRIPT),
+        os.path.basename(CRM_STOCK_SWAP_SCRIPT),
         os.path.basename(CRM_SLEEVE_PRINTS_SCRIPT),
     }
 )
@@ -2503,6 +2505,7 @@ _RETRYABLE_SINGLE_ORDER_TASK_TYPES = frozenset(
         "crm.stock_issue_color",
         "crm.stock_issue_extension",
         "crm.stock_issue_size",
+        "crm.stock_swap",
     }
 )
 _QUEUE_ORDER_LABEL_RE = re.compile(r"\border\s+\d{7}\b", re.IGNORECASE)
@@ -12157,6 +12160,8 @@ def _crm_extension_order_runtime_snapshot():
 
 def get_crm_extension_order_status_payload():
     runtime = _crm_extension_order_runtime_snapshot()
+    if runtime.get("runKind") == "manual" and runtime.get("currentStep") == "stock_swap":
+        runtime = _merge_live_automation_status(runtime, "crm.stock_swap")
     return {
         "success": True,
         "queued": bool(runtime.get("queued")),
@@ -12605,7 +12610,7 @@ def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
         if stock_issue_order_ids:
             summary = (
                 f"Stock issue: order(s) {', '.join(stock_issue_order_ids)} have no available inventory. "
-                "Skipped for the future Stock Swap automation."
+                "Skipped for stock review. Save a replacement before using Reachout > Stock Swap."
             )
         elif unclassified_no_purchase_plan_ids:
             summary = f"Order {order_id} needs attention: CRM Automated Notes did not classify the No Purchase Plan result."
@@ -12803,6 +12808,35 @@ def _normalize_stock_issue_extension_request(data):
 
     payload = data if isinstance(data, dict) else {}
     return normalize_request(payload.get("days"), payload.get("products"))
+
+
+def run_crm_stock_swap_queued(order_id, progress_callback=None):
+    """Read the original quote and email the saved swaps for this order only."""
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    if not normalized_order_id:
+        return False, "Open a CRM order with a valid 7-digit order number first.", {}
+    if not crm_lock.acquire(blocking=False):
+        return False, "A CRM automation run is already in progress.", {}
+    try:
+        if callable(progress_callback):
+            progress_callback("stock_swap", f"Reading the saved stock swaps for order {normalized_order_id}.")
+        return _report_salesforce_email_result(*_run_script(
+            CRM_STOCK_SWAP_SCRIPT, ["--order-id", normalized_order_id, "--real"],
+            "Stock Swap", timeout=900, require_result=True))
+    finally:
+        crm_lock.release()
+
+
+CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["stock_swap"] = {
+    "label": "Stock Swap",
+    "task_type": "crm.stock_swap",
+    "status_fn": get_crm_extension_order_status_payload,
+    "structured_request": True,
+    "request_validator": lambda _data: {},
+    "task_arguments": lambda order_id, _reason="", request_data=None: {"order_id": order_id, "dry_run": False},
+    "runner": lambda order_id, _reason="", request_data=None, progress_callback=None: run_crm_stock_swap_queued(
+        order_id, progress_callback=progress_callback),
+}
 
 
 def run_crm_stock_issue_extension_queued(order_id, days, products, progress_callback=None):

@@ -23,6 +23,7 @@ from workers import crm_sleeve_prints as sleeves
 from workers import crm_stock_issue_extension as extension
 from workers import crm_stock_issue_color as color
 from workers import crm_stock_issue_size as size
+from workers import crm_stock_swap as stock_swap
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -97,6 +98,10 @@ class LocalTemplateBrowserTests(unittest.TestCase):
         def editor():
             return Response((ROOT/'tests/fixtures/salesforce_ckeditor_contract.html').read_text(encoding='utf-8'),mimetype='text/html')
 
+        @app.get('/stock-crm')
+        def stock_crm():
+            return Response((ROOT/'tests/fixtures/stock_swap_crm.html').read_text(encoding='utf-8'),mimetype='text/html')
+
         cls.http=make_server('127.0.0.1',0,app,threaded=True)
         cls.addClassCleanup(cls.http.server_close)
         cls.addClassCleanup(cls.http.shutdown)
@@ -124,6 +129,74 @@ class LocalTemplateBrowserTests(unittest.TestCase):
 
     def write_library(self, records):
         self.store.path.write_text(json.dumps({'schema_version':1,'templates':records}),encoding='utf-8')
+
+    def test_stock_swap_reads_original_quote_and_current_style_sub_without_edits(self):
+        self.driver.get(self.url + '/stock-crm#/quotes/1234567')
+        original = stock_swap._read_snapshot(self.driver, '1234567', quote=True, timeout=2)
+        self.assertEqual(self.driver.execute_script('return window.events'), [])
+        self.driver.get(self.url + '/stock-crm#/order/1234567')
+        self.driver.refresh()
+        current = stock_swap._read_snapshot(self.driver, '1234567', timeout=2)
+        swaps = stock_swap.find_swaps(original, current)
+        self.assertEqual(len(swaps), 1)
+        self.assertEqual(swaps[0]['stock']['style'], '5000')
+        self.assertEqual(swaps[0]['product']['style'], 'PC54')
+        self.assertEqual(swaps[0]['stock']['quantities'], {'M': 3, 'L': 2})
+        self.assertEqual(swaps[0]['product']['color'], 'Navy')
+        self.assertEqual(self.driver.execute_script('return window.events'), [])
+        self.driver.execute_script('fixtureScope.editMode = true')
+        with self.assertRaisesRegex(stock_swap.StockSwapError, 'Save the CRM changes'):
+            stock_swap._read_snapshot(self.driver, '1234567', timeout=2)
+
+    def test_stock_swap_uses_edited_template_and_escapes_product_text_preserving_formatting(self):
+        self.write_library([{'id': 'stock_swap', 'name': stock_swap.STOCK_SWAP_TEMPLATE_NAME,
+            'subject': 'Custom update for #[ORDER-NUMBER]',
+            'body_html': '<p>Original: <strong>[STOCK]</strong></p><p>Replaced with <span style="font-size:20px">[PRODUCT]</span>.</p>'
+                         '<p>Again: [PRODUCT]</p><a href="https://example.test/guide">Guide</a>'}])
+        swaps = [{'stock': {'style': '5000', 'color': 'Black', 'description': 'Soft & Light <Tees>', 'quantities': {'M': 3}},
+                  'product': {'style': 'PC54', 'color': 'Navy', 'description': 'Core Cotton', 'quantities': {'M': 3}}}]
+        self.open_fixture()
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(stock_swap, 'default_template_store', return_value=self.store))
+            for name in ('_open_salesforce_account', '_verify_salesforce_email', '_click_salesforce_email',
+                         '_wait_for_email_composer', '_set_salesforce_from_orders'):
+                stack.enter_context(mock.patch.object(stock_swap.shared, name))
+            send = stack.enter_context(mock.patch.object(stock_swap.shared, '_click_salesforce_send_button'))
+            result = stock_swap._prepare_email(self.driver, 'crm', '1234567', 'customer@example.test', swaps)
+        self.assertEqual(result['subject'], 'Custom update for #1234567')
+        self.assertIn('5000 Black Soft & Light <Tees> (M: 3)', result['body'])
+        self.assertEqual(result['body'].count('PC54 Navy Core Cotton (M: 3)'), 2)
+        self.assertEqual(result['recipients']['to'], ['customer@example.test'])
+        self.assertEqual(self.driver.execute_script('return window.pickerClicks'), 0)
+        self.assertEqual(self.driver.find_element('id', 'sentHtml').text, '')
+        send.assert_not_called()
+        self.driver.find_element('id', 'send').click()
+        saved = self.driver.find_element('id', 'sentHtml').text
+        self.assertIn('<strong>5000 Black Soft &amp; Light &lt;Tees&gt; (M: 3)</strong>', saved)
+        self.assertIn('font-size:20px', saved)
+        self.assertIn('href="https://example.test/guide"', saved)
+
+    def test_stock_swap_refuses_extra_recipients_and_unknown_placeholders(self):
+        self.write_library([{'id': 'stock_swap', 'name': stock_swap.STOCK_SWAP_TEMPLATE_NAME,
+            'subject': 'Order #[ORDER-NUMBER]', 'body_html': '<p>[STOCK] replaced with [PRODUCT]</p>'}])
+        swaps = [{'stock': {'style': '5000', 'color': 'Black', 'description': 'Cotton Tees', 'quantities': {'M': 3}},
+                  'product': {'style': 'PC54', 'color': 'Navy', 'description': 'Core Cotton', 'quantities': {'M': 3}}}]
+        for invalid_token in (False, True):
+            self.open_fixture()
+            if invalid_token:
+                template = self.store.get_template(stock_swap.STOCK_SWAP_TEMPLATE_NAME)
+                self.store.save_template(template['id'], {**template, 'body_html': template['body_html'] + '<p>[UNKNOWN]</p>'})
+            else:
+                self.driver.execute_script("document.querySelector('[data-email]').setAttribute('data-email', 'customer@example.test,other@example.test')")
+            with self.subTest(invalid_token=invalid_token), ExitStack() as stack:
+                stack.enter_context(mock.patch.object(stock_swap, 'default_template_store', return_value=self.store))
+                for name in ('_open_salesforce_account', '_verify_salesforce_email', '_click_salesforce_email',
+                             '_wait_for_email_composer', '_set_salesforce_from_orders'):
+                    stack.enter_context(mock.patch.object(stock_swap.shared, name))
+                send = stack.enter_context(mock.patch.object(stock_swap.shared, '_click_salesforce_send_button'))
+                with self.assertRaises((RuntimeError, stock_swap.shared.CopyrightCancelError)):
+                    stock_swap._prepare_email(self.driver, 'crm', '1234567', 'customer@example.test', swaps)
+                send.assert_not_called()
 
     def test_source_html_model_retains_links_images_unicode_and_saved_edits(self):
         body='<html><body><p><strong>Bold &amp; café</strong> <span style="font-size:24px;color:#123456;text-decoration:underline">[REQUEST]</span></p><ol><li>First</li></ol><a href="https://example.test/?a=1&amp;b=2">Guide</a><img src="https://images.example.test/logo.png" alt="Logo"></body></html>'

@@ -268,6 +268,43 @@ Selecting **Shipping Bypasser** from **Manual Process** is an explicit approval 
 
 The worker prefers one warehouse, but checks a closer split before stopping when that complete shipment would arrive too late. The split retains the selected buffer setting and must pass cart validation and the delivery-date check for every warehouse. It uses one customer PO and the usual production note describing the boxes and quantities from each warehouse. This worker update loads on the next queued run; no app restart, extension reload, or page refresh is required.
 
+## Stock Swap reachout
+
+Version **1.6.7** adds **Reachout > Stock Swap**. Save the replacement products
+in CRM first, then queue the action from that order. It sends one Salesforce
+email covering every detected swap on that order. It reads the original items
+from `https://crm2.legacy.printfly.com/app#/quotes/<order-number>` and the
+replacement items from the saved current order, including **Style Sub** fields.
+It does not perform the stock swap itself or edit the quote/order.
+
+Edit **[AUTO] Stock Swap** in the app's **Settings > Salesforce Template**.
+The initial title is `Order #[ORDER-NUMBER] - Stock Swap`; the body contains
+placeholder copy for you to edit. Keep `[ORDER-NUMBER]` in the title,
+`[STOCK]` for the original item(s), and `[PRODUCT]` for the replacement item(s)
+in the body. Each item includes its style, color, description, and affected
+size quantities. Multiple swaps use corresponding numbered lists in both
+placeholders. Unchanged products and unaffected quantities are excluded.
+
+The scanner matches design tabs by unique saved IDs, artwork/name, or name,
+then compares style/color and quantities by size. Saved product IDs distinguish
+multiple equal-quantity swaps when available. A missing or wrong quote,
+multiple quote options, unmatched designs, added/removed quantities, size
+changes, or ambiguous replacement pairs stop for review before sending.
+
+The existing recipient/Orders sender checks, Salesforce Activity confirmation,
+and bounded resend policy apply. Per-order receipts under
+`runtime/state/stock_swap_emails/` also prevent title edits from repeating a
+confirmed email. An uncertain send, changed swap, or changed recipient requires
+review of Salesforce Activity; keep the original queue entry and receipts.
+Use **Retry** on that entry after resolving the reported issue.
+
+For a single-order draft check, `python workers/crm_stock_swap.py --order-id
+1234567 --dry-run` reads both pages and verifies the Salesforce draft without
+clicking Send. The queue uses the same worker subprocess and saved result contract.
+
+Restart the local app, refresh the dashboard, reload CRM Order Assistant at
+`chrome://extensions`, and refresh open CRM order pages after updating.
+
 # Complicated EMB design selection
 
 Reachout > Complicated EMB scans the order design tabs and offers tabs with
