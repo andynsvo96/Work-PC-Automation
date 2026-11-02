@@ -275,7 +275,8 @@ in CRM first, then queue the action from that order. It sends one Salesforce
 email covering every detected swap on that order. It reads the original items
 from `https://crm2.legacy.printfly.com/app#/quotes/<order-number>` and the
 replacement items from the saved current order, including **Style Sub** fields.
-It does not perform the stock swap itself or edit the quote/order.
+The product comparison reads both pages; the workflow records the confirmed
+customer reachout in the order's Sales Notes.
 
 Edit **[AUTO] Stock Swap** in the app's **Settings > Salesforce Template**.
 The initial title is `Order #[ORDER-NUMBER] - Stock Swap`; the body contains
@@ -297,6 +298,21 @@ and bounded resend policy apply. Per-order receipts under
 confirmed email. An uncertain send, changed swap, or changed recipient requires
 review of Salesforce Activity; keep the original queue entry and receipts.
 Use **Retry** on that entry after resolving the reported issue.
+
+After Salesforce Activity confirms the email, the workflow appends this Sales
+Note, using the same original and replacement item lists as the email:
+
+```text
+Swapped [STOCK] to [PRODUCT]
+Emailed
+```
+
+It preserves existing notes and draft text, reloads the order to verify the new
+note persisted, and skips a matching saved note on retries. If the note fails
+to save, Retry uses the confirmed-email receipt and recovers the note without
+resending the email. Dry runs preview the note without saving it. The Sales
+Note update loads on the next queued run; no app restart or extension reload
+is needed for this worker update.
 
 For a single-order draft check, `python workers/crm_stock_swap.py --order-id
 1234567 --dry-run` reads both pages and verifies the Salesforce draft without

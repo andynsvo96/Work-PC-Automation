@@ -1,4 +1,4 @@
-"""Email one order's saved stock swaps, comparing its original quote read-only."""
+"""Email one order's saved stock swaps and record its confirmed reachout in CRM."""
 
 import argparse
 from collections import Counter
@@ -246,6 +246,54 @@ def placeholder_values(order_id, swaps):
     return {"[ORDER-NUMBER]": order_id, "[STOCK]": listing("stock"), "[PRODUCT]": listing("product")}
 
 
+def format_sales_note(order_id, swaps):
+    values = placeholder_values(order_id, swaps)
+    return f"Swapped {values['[STOCK]']} to {values['[PRODUCT]']}\nEmailed"
+
+
+def _append_sales_note(driver, order_id, note, *, dry_run=False):
+    """Append once, preserving drafts, and require the saved note after reload."""
+    shared._activate_crm_context(driver)
+    shared._wait_for_order_scope(driver, order_id=order_id)
+
+    def saved_note_present():
+        saved = shared._order_scope(driver, "return String(r.salesNotes || r.filteredSalesNotes || '');")
+        normalize = lambda value: str(value or "").replace("\r\n", "\n").replace("\r", "\n").casefold()
+        return normalize(note) in normalize(saved)
+
+    if saved_note_present():
+        return {"note": note, "updated": False, "already_present": True,
+                "confirmed": True, "dry_run": bool(dry_run)}
+    if dry_run:
+        return {"note": note, "updated": False, "already_present": False, "dry_run": True}
+    # Opening Edit Order can replace the resource and initialize its note field.
+    previous_draft = shared._order_scope(driver, "return String(r.addSalesNotes || '').trim();")
+    shared._product_separator._enter_edit_mode(driver)
+    shared._order_scope(driver, r"""
+        const note = arguments[0];
+        const draft = String(r.addSalesNotes || '').trim();
+        const normalize = text => String(text).replace(/\r\n?/g, '\n').toLowerCase();
+        const previous = String(arguments[1] || '').trim();
+        const merged = normalize(draft).includes(normalize(previous)) ? draft
+          : normalize(previous).includes(normalize(draft)) ? previous : [previous, draft].filter(Boolean).join('\n');
+        const after = normalize(merged).includes(normalize(note)) ? merged : [merged, note].filter(Boolean).join('\n');
+        runInAngular(s, () => {
+          r.addSalesNotes = after;
+          if (s.order.setAddSalesNotes) s.order.setAddSalesNotes(after);
+        });
+        return true;
+    """, note, previous_draft)
+    save = shared._save_order_and_wait(driver)
+    driver.refresh()
+    shared._activate_crm_context(driver)
+    shared._wait_for_order_scope(driver, order_id=order_id)
+    if not saved_note_present():
+        raise StockSwapError("The Stock Swap Sales Note did not persist after reload. "
+                             "Retry the original task to recover the note without resending the confirmed email.")
+    return {"note": note, "updated": True, "already_present": False,
+            "confirmed": True, "dry_run": False, "save": save}
+
+
 def _prepare_email(driver, crm_handle, order_id, customer_email, swaps, *, login_wait_seconds=0):
     store = default_template_store()
     template = store.get_template(STOCK_SWAP_TEMPLATE_NAME)
@@ -343,12 +391,20 @@ def process_stock_swap_order(order_id, *, dry_run=False, visible=False, progress
         verified = _read_snapshot(driver, order_id)
         if verified != current:
             raise StockSwapError("The saved order changed during the quote scan; review it and queue Stock Swap again.")
-        result.update({"swaps": swaps, "placeholders": placeholder_values(order_id, swaps)})
+        note = format_sales_note(order_id, swaps)
+        result.update({"swaps": swaps, "placeholders": placeholder_values(order_id, swaps), "sales_note_text": note})
         result["stages"].append({"key": "stock_comparison", "success": True, "details": {"swaps": swaps}})
         begin("salesforce_email", "Preparing one Stock Swap email covering every swap.")
         result["salesforce"] = _send_email(driver, crm_handle, order_id, contact["email"], swaps,
                                            dry_run=dry_run, login_wait_seconds=login_wait_seconds)
         result["stages"].append({"key": "salesforce_email", "success": True, "details": result["salesforce"]})
+        if not dry_run and result["salesforce"].get("activity_verified") is not True:
+            raise StockSwapError("Salesforce Activity has not confirmed the Stock Swap email; the Emailed note was not saved.")
+        begin("sales_note", "Saving and verifying the Stock Swap Sales Note.")
+        driver.switch_to.window(crm_handle)
+        shared.safe_get_with_partial_load(driver, order_url, f"CRM order {order_id} Sales Note")
+        result["sales_note"] = _append_sales_note(driver, order_id, note, dry_run=dry_run)
+        result["stages"].append({"key": "sales_note", "success": True, "details": result["sales_note"]})
         result["success"] = True
         return result
     except Exception as exc:

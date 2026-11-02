@@ -34,6 +34,10 @@ class StockSwapComparisonTests(unittest.TestCase):
         self.assertEqual(values, {"[ORDER-NUMBER]": "1234567", "[STOCK]": "5000 Black Cotton Tees (M: 3)",
                                   "[PRODUCT]": "PC54 Black Cotton Tees (M: 3)"})
 
+    def test_sales_note_uses_original_replacement_and_a_real_newline(self):
+        self.assertEqual(stock.format_sales_note("1234567", swaps()),
+                         "Swapped 5000 Black Cotton Tees (M: 3) to PC54 Black Cotton Tees (M: 3)\nEmailed")
+
     def test_only_changed_sizes_are_included_in_partial_swap(self):
         before = snapshot(design(item(quantity=7, sizes={"M": 5, "L": 2})))
         after = snapshot(design(item(quantity=4, sizes={"M": 2, "L": 2}), item("PC54")))
@@ -74,6 +78,8 @@ class StockSwapComparisonTests(unittest.TestCase):
         self.assertTrue(values["[STOCK]"].startswith("1. 5000"))
         self.assertIn("; 2. DM130 Black", values["[STOCK]"])
         self.assertIn("; 2. DM130 Navy", values["[PRODUCT]"])
+        self.assertEqual(stock.format_sales_note("1234567", result),
+                         f"Swapped {values['[STOCK]']} to {values['[PRODUCT]']}\nEmailed")
 
     def test_unchanged_products_and_description_edits_do_not_become_swaps(self):
         before = snapshot(design(item(), item("HAT", quantity=2)))
@@ -209,28 +215,79 @@ class StockSwapReceiptTests(unittest.TestCase):
         self.prepare.assert_not_called()
         self.click.assert_not_called()
 
+    def test_retry_after_note_failure_recovers_note_without_resending_email(self):
+        self.confirmed_after_second_attempt()
+        before, after = snapshot(design(item())), snapshot(design(item("PC54")))
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(stock.shared, "_open_driver", return_value=self.driver))
+            for name in ("safe_get_with_partial_load", "_login_to_crm_if_needed", "safe_driver_quit", "safe_take_screenshot"):
+                stack.enter_context(mock.patch.object(stock.shared, name))
+            stack.enter_context(mock.patch.object(stock.shared, "_wait_for_crm_contact_info", return_value={"email": "customer@example.test"}))
+            stack.enter_context(mock.patch.object(stock, "_read_snapshot", side_effect=[after, before, after] * 2))
+            note = stack.enter_context(mock.patch.object(stock, "_append_sales_note", side_effect=[
+                stock.StockSwapError("Sales Note did not persist"), {"confirmed": True}]))
+            ok, message, failed = stock.run_stock_swap_order("1234567")
+            self.assertFalse(ok)
+            self.assertEqual(failed["failed_stage"], "sales_note")
+            self.assertTrue(failed["salesforce"]["activity_verified"])
+            ok, message, recovered = stock.run_stock_swap_order("1234567")
+        self.assertTrue(ok)
+        self.assertTrue(recovered["salesforce"]["skipped"])
+        self.assertTrue(recovered["sales_note"]["confirmed"])
+        self.assertEqual(note.call_count, 2)
+        self.assertEqual(self.click.call_count, 2)
+
 
 class StockSwapExecutionTests(unittest.TestCase):
-    def test_order_and_quote_are_read_only_and_one_email_uses_every_swap(self):
+    def test_one_email_uses_every_swap_then_the_note_is_saved(self):
         before = snapshot(design(item()))
         after = snapshot(design(item("PC54")))
+        sequence = []
         with ExitStack() as stack:
             driver = stack.enter_context(mock.patch.object(stock.shared, "_open_driver")).return_value
             navigate = stack.enter_context(mock.patch.object(stock.shared, "safe_get_with_partial_load"))
             stack.enter_context(mock.patch.object(stock.shared, "_login_to_crm_if_needed"))
             stack.enter_context(mock.patch.object(stock.shared, "_wait_for_crm_contact_info", return_value={"email": "customer@example.test"}))
             stack.enter_context(mock.patch.object(stock, "_read_snapshot", side_effect=[after, before, after]))
-            send = stack.enter_context(mock.patch.object(stock, "_send_email", return_value={"sent": True}))
+            def send_email(*args, **kwargs):
+                sequence.append("email")
+                return {"sent": True, "activity_verified": True}
+
+            def save_note(*args, **kwargs):
+                sequence.append("note")
+                return {"confirmed": True}
+
+            send = stack.enter_context(mock.patch.object(stock, "_send_email", side_effect=send_email))
+            note = stack.enter_context(mock.patch.object(stock, "_append_sales_note", side_effect=save_note))
             quit_browser = stack.enter_context(mock.patch.object(stock.shared, "safe_driver_quit"))
             result = stock.process_stock_swap_order("1234567")
         self.assertTrue(result["success"])
         self.assertEqual([call.args[1] for call in navigate.call_args_list], [
             "https://crm2.legacy.printfly.com/order/1234567", "https://crm2.legacy.printfly.com/app#/quotes/1234567",
-            "https://crm2.legacy.printfly.com/order/1234567"])
+            "https://crm2.legacy.printfly.com/order/1234567", "https://crm2.legacy.printfly.com/order/1234567"])
         self.assertEqual(send.call_count, 1)
         self.assertEqual(send.call_args.args[-1], swaps())
+        self.assertEqual(sequence, ["email", "note"])
+        note.assert_called_once_with(driver, "1234567", stock.format_sales_note("1234567", swaps()), dry_run=False)
+        self.assertTrue(result["sales_note"]["confirmed"])
         self.assertEqual(driver.execute_script.call_count, 0)
         quit_browser.assert_called_once()
+
+    def test_no_emailed_note_is_saved_for_an_unconfirmed_email(self):
+        before, after = snapshot(design(item())), snapshot(design(item("PC54")))
+        for response in ({"sent": True}, stock.confirmation.UnconfirmedEmailError("email unconfirmed")):
+            with self.subTest(response=response), ExitStack() as stack:
+                for name in ("_open_driver", "safe_get_with_partial_load", "_login_to_crm_if_needed", "safe_driver_quit", "safe_take_screenshot"):
+                    stack.enter_context(mock.patch.object(stock.shared, name))
+                stack.enter_context(mock.patch.object(stock.shared, "_wait_for_crm_contact_info", return_value={"email": "customer@example.test"}))
+                stack.enter_context(mock.patch.object(stock, "_read_snapshot", side_effect=[after, before, after]))
+                stack.enter_context(mock.patch.object(stock, "_send_email",
+                    **({"side_effect": response} if isinstance(response, Exception) else {"return_value": response})))
+                note = stack.enter_context(mock.patch.object(stock, "_append_sales_note"))
+                ok, message, failed = stock.run_stock_swap_order("1234567")
+                self.assertFalse(ok)
+                self.assertEqual(failed["failed_stage"], "salesforce_email")
+                note.assert_not_called()
 
     def test_changed_order_stops_before_email(self):
         after = snapshot(design(item("PC54")))

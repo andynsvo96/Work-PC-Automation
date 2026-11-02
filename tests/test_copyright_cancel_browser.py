@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "workers"))
 import crm_copyright_cancel as shared
 from workers import copyright_cancel_designs as copyright
 from workers.complicated_emb import replace_design_placeholder
+from workers import crm_stock_swap as stock_swap
 
 
 class CopyrightCancelBrowserTests(unittest.TestCase):
@@ -189,6 +190,49 @@ class CopyrightCancelBrowserTests(unittest.TestCase):
         state = shared._get_order_live_state(self.driver)
         self.assertIn('Protected character copyright', state['sales_notes'])
         self.assertEqual(self.driver.execute_script("return localStorage.getItem('copyright-note-save-attempts');"), '1')
+
+    def test_stock_swap_sales_note_survives_reload_and_retry_preserves_other_notes(self):
+        note = 'Swapped 5000 Black Cotton Tees to PC54 Navy Core Cotton\nEmailed'
+        self.driver.execute_script("""
+            resource.salesNotes = 'Existing sales note';
+            resource.addSalesNotes = 'Another pending note';
+        """)
+        result = stock_swap._append_sales_note(self.driver, '5451301', note)
+        self.assertTrue(result['confirmed'])
+        saved = shared._get_order_live_state(self.driver)['sales_notes']
+        self.assertIn('Existing sales note', saved)
+        self.assertIn('Another pending note', saved)
+        self.assertEqual(saved.count(note), 1)
+        reused = stock_swap._append_sales_note(self.driver, '5451301', note)
+        self.assertTrue(reused['already_present'])
+        self.assertEqual(self.driver.execute_script("return localStorage.getItem('copyright-note-save-attempts');"), '1')
+
+    def test_stock_swap_saves_a_matching_unsaved_draft_after_editor_initializes(self):
+        note = 'Swapped 5000 Black Cotton Tees to PC54 Navy Core Cotton\nEmailed'
+        self.driver.execute_script("resource.addSalesNotes = arguments[0];", note)
+        stock_swap._append_sales_note(self.driver, '5451301', note)
+        self.assertEqual(shared._get_order_live_state(self.driver)['sales_notes'].count(note), 1)
+        self.driver.execute_script("""
+            resetFixture(false);
+            resource.addSalesNotes = 'Another pending note';
+            localStorage.setItem('copyright-reset-note-on-edit', 'true');
+        """)
+        stock_swap._append_sales_note(self.driver, '5451301', note)
+        self.assertEqual(shared._get_order_live_state(self.driver)['sales_notes'].count(note), 1)
+        self.assertIn('Another pending note', shared._get_order_live_state(self.driver)['sales_notes'])
+
+    def test_stock_swap_note_dry_run_and_failed_persistence(self):
+        note = 'Swapped 5000 Black Cotton Tees to PC54 Navy Core Cotton\nEmailed'
+        result = stock_swap._append_sales_note(self.driver, '5451301', note, dry_run=True)
+        self.assertTrue(result['dry_run'])
+        self.assertEqual(self.driver.execute_script('return fixtureCounters.saves;'), 0)
+        self.assertEqual(shared._get_order_live_state(self.driver)['sales_notes'], '')
+        self.driver.execute_script("localStorage.setItem('copyright-note-save-failures', '1');")
+        with self.assertRaisesRegex(stock_swap.StockSwapError, 'did not persist after reload'):
+            stock_swap._append_sales_note(self.driver, '5451301', note)
+        self.assertEqual(shared._get_order_live_state(self.driver)['sales_notes'], '')
+        self.assertTrue(stock_swap._append_sales_note(self.driver, '5451301', note)['confirmed'])
+        self.assertEqual(shared._get_order_live_state(self.driver)['sales_notes'].count(note), 1)
 
     def test_unsaved_note_draft_is_saved_and_other_draft_text_is_preserved(self):
         note = shared._copyright_cancel_sales_note('Protected character')
