@@ -26,6 +26,15 @@ def tab(**changes):
 
 
 class ReorderPlanningTests(unittest.TestCase):
+    def test_sanmar_cart_status_uses_the_has_items_flag(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = {"hasItems": False, "text": "Your shopping cart is empty"}
+        with mock.patch.object(worker.bypass, "safe_get_with_partial_load"):
+            worker._empty(driver, "sanmar")
+            driver.execute_script.return_value = {"hasItems": True, "text": "Checkout"}
+            with self.assertRaisesRegex(RuntimeError, "cart already contains stock"):
+                worker._empty(driver, "sanmar")
+
     def test_stock_is_aggregated_once_across_designs_with_same_numeric_po(self):
         products = worker.aggregate_products([tab(), tab(tab_index=2)], "sanmar")
         self.assertEqual(products[0]["quantities"], {"L": 2, "XL": 2, "2XL": 2})

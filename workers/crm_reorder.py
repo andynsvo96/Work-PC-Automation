@@ -250,7 +250,7 @@ def _empty(driver, vendor, owned=False):
             raise RuntimeError("SanMar Reorder cart could not be emptied; review before retrying.")
     else:
         bypass.safe_get_with_partial_load(driver, bypass.SANMAR_CART_URL, "SanMar cart")
-        if bypass._sanmar_cart_has_items(driver):
+        if bypass._sanmar_cart_has_items(driver).get("hasItems"):
             raise RuntimeError("SanMar cart already contains stock; review before Reorder.")
 
 
