@@ -28,6 +28,16 @@ to return to the formatted view.
 The toolbar supports font family, text size, bold, italic, underline, text color,
 numbered and bulleted lists, indentation, alignment, links, unlinking, images,
 and clearing formatting. Select text in the body before formatting it.
+Use **Automatic** beside the text-color picker to reset only the selected
+text's color. It follows light/dark mode while retaining fonts, sizes, bold,
+italic, underline, links, lists, and other formatting. With only a caret,
+Automatic applies to text typed next. New templates start with automatic text
+color; choosing a color in the picker keeps that color fixed in either theme.
+Existing template colors stay unchanged until you explicitly edit them. To
+reset an existing body, select its normal text and choose Automatic, leaving
+intentional accent colors unselected, then **Save template**.
+Automatic saves inherited color rather than a light- or dark-mode RGB value;
+the email's inherited color depends on its surrounding HTML and email client.
 The Image control accepts a public HTTPS image URL, keeping the image hosted
 with Salesforce or another public image host. Link URLs can also use a template
 placeholder such as [INVOICE_LINK].
@@ -44,10 +54,11 @@ body serializes the body markup; browsers can normalize entities and formatting
 tags during those edits. The existing document wrapper is retained.
 
 In night mode, the formatted body and HTML source use the title field's dark
-background and light text, with readable links and dark scrollbars. They follow
-theme changes immediately. These display colors do not change the saved HTML
-or the email sent to customers.
-Refresh the dashboard to load this styling change; no app restart or extension
+background and default light text, with readable links and dark scrollbars.
+Automatic text follows theme changes immediately; explicitly assigned text
+colors remain fixed. Switching themes does not change the saved HTML or the
+email sent to customers.
+Refresh the dashboard to load the Automatic control; no app restart or extension
 reload is needed.
 
 Keep placeholders such as [ORDER-NUMBER], [ORDER_NUMBER], [DESIGN], [PRINT], [STOCK], [PRODUCT],
@@ -188,8 +199,9 @@ orders:
 
     python -m unittest discover -s tests -p test_salesforce_template_editor_browser.py
 
-It checks source preservation, saving and reloading, formatting, links, images,
-adding, duplicating unsaved content, removal/cancel confirmation, empty-library
+It checks source preservation, saving and reloading, formatting, automatic and
+fixed colors across themes, color resets on selections and newly typed text,
+links, images, adding, duplicating unsaved content, removal/cancel confirmation, empty-library
 recovery, draft conflicts, responsive layout, and blocked script/local-endpoint
 execution. Storage/API tests also check name/history collisions, backup recovery,
 failed writes, and the existing PIN/CSRF/version protections for create/remove.

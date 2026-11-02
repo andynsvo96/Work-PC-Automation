@@ -146,6 +146,13 @@
         this.command('foreColor', event.target.value);
         event.target.parentElement.style.borderBottomColor = event.target.value;
       });
+      byId('sfTemplateAutomaticColor').addEventListener('click', () => {
+        // Let the browser split color runs while retaining other formatting,
+        // unselected text, pending typing style, and the native undo history.
+        // Inheritance follows the preview theme without saving its RGB color.
+        this.command('foreColor', 'inherit');
+        byId('sfTemplateColor').parentElement.style.borderBottomColor = '';
+      });
       byId('sfTemplateLink').addEventListener('click', () => this.openAsset('link'));
       byId('sfTemplateImage').addEventListener('click', () => this.openAsset('image'));
       byId('sfTemplateAssetCancel').addEventListener('click', () => this.dialog.close());
@@ -241,7 +248,7 @@
       byId('sfTemplateFont').value = '';
       byId('sfTemplateSize').value = '';
       byId('sfTemplateColor').value = '#000000';
-      byId('sfTemplateColor').parentElement.style.borderBottomColor = '#000000';
+      byId('sfTemplateColor').parentElement.style.borderBottomColor = '';
       this.renderVisual();
       this.message(this.current ? 'No unsaved template changes' : 'No saved templates. Select Add to create one.');
       this.controls();

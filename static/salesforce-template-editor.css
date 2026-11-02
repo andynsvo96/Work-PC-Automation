@@ -11,7 +11,7 @@
 .sf-template-body-label{font-weight:650;font-size:13px;margin-bottom:7px}
 .sf-template-body{border:1px solid #cbd5e1;border-radius:8px;overflow:hidden;background:white}
 .sf-template-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:8px;background:#f1f5f9;border-bottom:1px solid #cbd5e1}
-.sf-template-toolbar button,.sf-template-toolbar select{min-height:30px;padding:3px 8px;margin:0;border:1px solid #cbd5e1;border-radius:4px;background:#fff;color:#334155;font:13px 'Segoe UI',Tahoma,sans-serif;box-shadow:none}
+.sf-template-toolbar button,.sf-template-toolbar select{min-height:30px;padding:3px 6px;margin:0;border:1px solid #cbd5e1;border-radius:4px;background:#fff;color:#334155;font:13px 'Segoe UI',Tahoma,sans-serif;box-shadow:none}
 .sf-template-toolbar button:hover:not(:disabled){background:#e2e8f0}
 .sf-template-toolbar button[aria-pressed='true']{background:#dbeafe;border-color:#93c5fd;color:#1d4ed8}
 .sf-template-toolbar button:focus-visible,.sf-template-toolbar select:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
@@ -26,7 +26,7 @@
 .sf-align-left{align-items:flex-start}
 .sf-align-center{align-items:center}
 .sf-align-right{align-items:flex-end}
-.sf-template-color{position:relative;display:flex;align-items:center;justify-content:center;width:30px;height:30px;margin:0!important;border-bottom:3px solid #000;box-sizing:border-box;font-weight:700}
+.sf-template-color{position:relative;display:flex;align-items:center;justify-content:center;width:30px;height:30px;margin:0!important;border-bottom:3px solid currentColor;box-sizing:border-box;font-weight:700}
 .sf-template-color input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
 #sfTemplateBodyFrame{display:block;width:100%;min-height:380px;border:0;background:white}
 #sfTemplateBodyHtml{display:block;width:100%;min-height:380px;padding:14px;box-sizing:border-box;margin:0;border:0;border-radius:0;resize:vertical;background:#fff;color:#1f2937;font:13px/1.6 Consolas,'Courier New',monospace}

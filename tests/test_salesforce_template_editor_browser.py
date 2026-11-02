@@ -153,6 +153,23 @@ class SalesforceTemplateEditorBrowserTests(unittest.TestCase):
         self.driver.find_element(By.ID, "sfTemplateSave").click()
         self.wait.until(lambda driver: driver.find_element(By.ID, "sfTemplateStatus").get_attribute("data-state") == "saved")
 
+    def body_text_style(self, text):
+        return self.driver.execute_script("""
+            const doc=document.getElementById('sfTemplateBodyFrame').contentDocument;
+            const walker=doc.createTreeWalker(doc.body,NodeFilter.SHOW_TEXT);
+            let node;while(node=walker.nextNode()) {
+                if(!node.textContent.includes(arguments[0]))continue;
+                const element=node.parentElement, style=doc.defaultView.getComputedStyle(element);
+                const ancestors=[];for(let parent=element;parent;parent=parent.parentElement)ancestors.push(parent);
+                return {color:style.color,font:style.fontFamily,size:style.fontSize,
+                    bold:style.fontWeight,italic:style.fontStyle,
+                    underline:ancestors.some(parent=>doc.defaultView.getComputedStyle(parent).textDecorationLine.includes('underline')),
+                    align:doc.defaultView.getComputedStyle(element.closest('p')||element).textAlign,
+                    href:element.closest('a')?.getAttribute('href')};
+            }
+            throw new Error('Body text not found: '+arguments[0]);
+        """, text)
+
     def test_add_and_duplicate_preserve_draft_source_without_changing_the_original(self):
         before = self.store.path.read_bytes()
         self.driver.find_element(By.ID, 'sfTemplateAdd').click()
@@ -417,6 +434,110 @@ class SalesforceTemplateEditorBrowserTests(unittest.TestCase):
         self.assertEqual(styles["color"], "rgb(0, 128, 0)")
         self.assertEqual(styles["align"], "center")
         self.assertGreaterEqual(styles["lists"], 1)
+
+    def test_automatic_color_preserves_partial_selection_formatting_and_saved_html(self):
+        body = (
+            '<html><head><title>Email</title></head><body style="height:auto;">'
+            '<p style="color:#000000;text-align:center"><span style="font-family:Arial;font-size:24px">'
+            '<strong>Before <em><u>[REQUEST]</u></em> after</strong></span></p>'
+            '<p><font color="#008000" face="Georgia" size="4">Legacy <b>reset</b> stays</font></p>'
+            '<p><a href="https://example.test/invoice">Invoice</a>'
+            '<span style="color:#b40000">Accent</span></p>'
+            '<img src="https://images.example.test/logo.png" alt="Logo"></body></html>'
+        )
+        self.mode("html")
+        self.input("sfTemplateBodyHtml", body)
+        self.mode("formatted")
+        self.driver.execute_script("document.documentElement.dataset.theme='dark';")
+        self.wait.until(lambda _: self.body_text_style("[REQUEST]")["color"] == "rgb(0, 0, 0)")
+        for text in ("[REQUEST]", "reset", "Invoice"):
+            self.select_body_text(text)
+            self.driver.find_element(By.ID, "sfTemplateAutomaticColor").click()
+            self.assertEqual(self.body_text_style(text)["color"], "rgb(240, 240, 240)")
+        self.assertEqual(self.body_text_style("Before")["color"], "rgb(0, 0, 0)")
+        self.assertEqual(self.body_text_style("after")["color"], "rgb(0, 0, 0)")
+        self.assertEqual(self.body_text_style("Legacy")["color"], "rgb(0, 128, 0)")
+        self.assertEqual(self.body_text_style("stays")["color"], "rgb(0, 128, 0)")
+        self.assertEqual(self.body_text_style("Accent")["color"], "rgb(180, 0, 0)")
+        style = self.body_text_style("[REQUEST]")
+        self.assertIn("Arial", style["font"])
+        self.assertEqual(style["size"], "24px")
+        self.assertEqual(style["bold"], "700")
+        self.assertEqual(style["italic"], "italic")
+        self.assertTrue(style["underline"])
+        self.assertEqual(style["align"], "center")
+        self.assertIn("Georgia", self.body_text_style("reset")["font"])
+        self.assertEqual(self.body_text_style("Invoice")["href"], "https://example.test/invoice")
+        self.save()
+        saved = self.store.get_template("first")["body_html"]
+        self.assertTrue(saved.startswith('<html><head><title>Email</title></head><body style="height:auto;">'))
+        self.assertIn('src="https://images.example.test/logo.png"', saved)
+        self.assertIn("[REQUEST]", saved)
+        for preview_color in ("#f0f0f0", "rgb(240, 240, 240)", "data-sf-editor-theme", "color-scheme"):
+            self.assertNotIn(preview_color, saved)
+        self.mode("html")
+        self.assertFalse(self.driver.find_element(By.ID, "sfTemplateAutomaticColor").is_enabled())
+        self.assertEqual(self.driver.find_element(By.ID, "sfTemplateBodyHtml").get_attribute("value"), saved)
+        self.driver.execute_script("document.documentElement.dataset.theme='light';")
+        self.mode("formatted")
+        for text in ("[REQUEST]", "reset", "Invoice"):
+            self.assertEqual(self.body_text_style(text)["color"], "rgb(17, 17, 17)")
+        self.driver.refresh()
+        self.wait.until(lambda driver: driver.find_element(By.ID, "sfTemplateAutomaticColor").is_enabled())
+        self.assertEqual(self.body_text_style("[REQUEST]")["color"], "rgb(17, 17, 17)")
+        self.assertEqual(self.body_text_style("Accent")["color"], "rgb(180, 0, 0)")
+        self.assertEqual(self.store.get_template("first")["body_html"], saved)
+        self.assertFalse(self.driver.execute_script("return window.SalesforceTemplateEditor.hasUnsavedChanges();"))
+
+    def test_automatic_color_applies_to_caret_typing_and_supports_undo(self):
+        self.mode("html")
+        self.input("sfTemplateBodyHtml", '<p><strong style="color:#b40000">Colored</strong></p>')
+        self.mode("formatted")
+        self.select_body_text("Colored")
+        self.driver.execute_script("""
+            const doc=document.getElementById('sfTemplateBodyFrame').contentDocument;
+            doc.getSelection().collapseToEnd();doc.dispatchEvent(new Event('selectionchange'));
+        """)
+        self.driver.find_element(By.ID, "sfTemplateAutomaticColor").click()
+        self.driver.switch_to.frame(self.driver.find_element(By.ID, "sfTemplateBodyFrame"))
+        self.driver.switch_to.active_element.send_keys(" New")
+        self.driver.switch_to.default_content()
+        self.assertEqual(self.body_text_style("Colored")["color"], "rgb(180, 0, 0)")
+        self.assertEqual(self.body_text_style("New")["color"], "rgb(17, 17, 17)")
+        self.assertEqual(self.body_text_style("New")["bold"], "700")
+        self.driver.execute_script("document.documentElement.dataset.theme='dark';")
+        self.wait.until(lambda _: self.body_text_style("New")["color"] == "rgb(240, 240, 240)")
+        self.assertEqual(self.body_text_style("Colored")["color"], "rgb(180, 0, 0)")
+        self.select_body_text("Colored")
+        self.driver.find_element(By.ID, "sfTemplateAutomaticColor").click()
+        self.assertEqual(self.body_text_style("Colored")["color"], "rgb(240, 240, 240)")
+        self.driver.execute_script("document.getElementById('sfTemplateBodyFrame').contentDocument.execCommand('undo');")
+        self.assertEqual(self.body_text_style("Colored")["color"], "rgb(180, 0, 0)")
+        self.assertEqual(self.body_text_style("New")["color"], "rgb(240, 240, 240)")
+        self.save()
+        self.assertNotIn("rgb(240, 240, 240)", self.store.get_template("first")["body_html"])
+
+    def test_new_template_defaults_to_automatic_and_manual_colors_stay_fixed(self):
+        self.driver.find_element(By.ID, "sfTemplateAdd").click()
+        self.wait.until(lambda driver: driver.find_element(By.ID, "sfTemplateAutomaticColor").is_enabled())
+        self.select_body_text("Hello")
+        self.assertEqual(self.body_text_style("Hello")["color"], "rgb(17, 17, 17)")
+        self.driver.execute_script("document.documentElement.dataset.theme='dark';")
+        self.wait.until(lambda _: self.body_text_style("Hello")["color"] == "rgb(240, 240, 240)")
+        self.driver.execute_script("""
+            const color=document.getElementById('sfTemplateColor');
+            color.value='#008000';color.dispatchEvent(new Event('input',{bubbles:true}));
+        """)
+        self.assertEqual(self.body_text_style("Hello")["color"], "rgb(0, 128, 0)")
+        self.driver.execute_script("document.documentElement.dataset.theme='light';")
+        self.wait.until(lambda _: self.body_text_style("Hello")["color"] == "rgb(0, 128, 0)")
+        self.driver.find_element(By.ID, "sfTemplateAutomaticColor").click()
+        self.assertEqual(self.body_text_style("Hello")["color"], "rgb(17, 17, 17)")
+        self.save()
+        self.driver.set_window_size(420, 1000)
+        self.assertTrue(self.driver.execute_script("return document.documentElement.scrollWidth<=window.innerWidth;"))
+        self.driver.save_screenshot(str(ARTIFACTS / "editor_automatic_mobile.png"))
+        self.driver.set_window_size(1250, 1100)
 
     def test_conflict_retains_draft_and_canceling_switch_keeps_selection(self):
         original = next(row for row in self.store.list_templates() if row["id"] == "first")
