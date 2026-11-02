@@ -88,6 +88,12 @@ code and are not returned by HTTP endpoints.
 without submitting. Complete login there if needed. The non-secret default is
 `SSACTIVEWEAR_PROFILE_DIR = "chrome_profile_ssactivewear"`.
 
+If S&S shows **Looks like we're having some problems**, Reorder stops with the
+site's Ray ID instead of waiting for missing login or checkout controls. Resolve
+site access in the S&S profile, or with S&S support, before retrying. An error
+after a purchase click still requires reviewing supplier history and the saved
+receipt before another submission.
+
 Restart the local app and refresh the dashboard after updating. No extension reload
 is needed. Windows secure-prompt launch was checked during development; macOS's
 interactive terminal and live S&S login remain unverified on this machine.
@@ -110,6 +116,12 @@ purchases. The worker records the numeric PO with the correct supplier through
 Manual Order/Add Box, reloads the same design, and verifies a current-destination
 record. Production notes retain supplier references, warehouse allocations, and
 product/color/size quantities; they must persist after reload.
+
+The production-note writer waits for CRM's append-only Production Notes field in
+its dedicated section. It preserves existing note history and checks that history
+before appending again. Verification reopens the same order if a refresh loses
+the CRM iframe context; unsaved draft text does not count as a persisted note.
+These worker changes load on the next run without an app restart.
 
 ## Offline checks
 

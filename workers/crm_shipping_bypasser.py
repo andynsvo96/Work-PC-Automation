@@ -5133,6 +5133,18 @@ def _append_crm_production_note(driver, order_id, note):
     note = str(note or "").strip()
     if not note:
         return "no_note"
+    if driver.execute_script(r"""
+const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+function visible(node) { return !!node && node.getClientRects().length > 0 && getComputedStyle(node).display !== 'none'; }
+const root = document.querySelector('#order-notes-production-notes');
+if (!root || !visible(root)) return false;
+const saving = Array.from(document.querySelectorAll('button,a,input[type="submit"]')).some(node => visible(node) && /^save\s+order$/i.test(normalize(node.innerText || node.value)));
+if (saving) return false;
+const persisted = root.cloneNode(true);
+persisted.querySelectorAll('textarea,input,button').forEach(node => node.remove());
+return normalize(persisted.textContent).includes(normalize(arguments[0]));
+""", note) is True:
+        return "already_present"
     edit = _find_clickable_by_text(driver, r"edit\s+order")
     if edit is None:
         raise RuntimeError("CRM edit order button was not found for production note update.")
@@ -5151,10 +5163,24 @@ function isVisible(node) {
   }
   return true;
 }
+const productionRoot = document.querySelector('#order-notes-production-notes');
+let textarea = null;
+if (productionRoot) {
+  const fields = Array.from(productionRoot.querySelectorAll('textarea')).filter((node) => isVisible(node) && !node.disabled && !node.readOnly);
+  if (fields.length > 1) return { success: false, message: 'Production Notes textarea is ambiguous; review before saving.' };
+  if (!fields.length) return { success: false, retryable: true, message: 'Production Notes textarea was not found.' };
+  textarea = fields[0];
+  const model = String(textarea.getAttribute('ng-model') || '');
+  if (model && model !== 'order.getResource().addProductionNotes') return { success: false, message: 'Production Notes field model is unexpected; review before saving.' };
+  const persisted = productionRoot.cloneNode(true);
+  persisted.querySelectorAll('textarea,input,button').forEach(node => node.remove());
+  if (normalize(persisted.textContent).includes(normalize(note))) return { success: true, alreadyPresent: true };
+} else {
 const labels = Array.from(document.querySelectorAll('body *')).filter((node) =>
   isVisible(node) && /^Production\s+Notes\s*:?$/i.test(normalize(node.innerText || node.textContent))
 );
 const candidates = new Set();
+let ambiguous = false;
 for (const label of labels) {
   const linked = label.htmlFor && document.getElementById(label.htmlFor);
   if (linked && linked.tagName === 'TEXTAREA' && isVisible(linked)) {
@@ -5165,17 +5191,20 @@ for (const label of labels) {
     const areas = Array.from(scope.querySelectorAll('textarea')).filter(isVisible);
     if (areas.length) {
       if (areas.length === 1) candidates.add(areas[0]);
+      else ambiguous = true;
       break;
     }
   }
 }
 if (candidates.size > 1) return { success: false, message: 'Production Notes textarea is ambiguous; review before saving.' };
-let textarea = candidates.size === 1 ? Array.from(candidates)[0] : null;
+textarea = candidates.size === 1 ? Array.from(candidates)[0] : null;
 if (!textarea && !labels.length) {
   const areas = Array.from(document.querySelectorAll('textarea')).filter(isVisible);
   if (areas.length === 1) textarea = areas[0];
+  else if (areas.length > 1) ambiguous = true;
 }
-if (!textarea) return { success: false, message: 'Production Notes textarea was not found.' };
+if (!textarea) return { success: false, retryable: !ambiguous, message: 'Production Notes textarea was not found.' };
+}
 const current = String(textarea.value || textarea.textContent || '').trim();
 if (normalize(current).includes(normalize(note))) return { success: true, alreadyPresent: true };
 const next = current ? `${current}\n${note}` : note;
@@ -5187,7 +5216,14 @@ textarea.dispatchEvent(new Event('change', { bubbles: true }));
 textarea.dispatchEvent(new Event('blur', { bubbles: true }));
 return { success: true, alreadyPresent: false };
 """
-    result = driver.execute_script(script, note)
+    deadline = time.monotonic() + max(5, min(20, CRM_ACTION_TIMEOUT))
+    while True:
+        result = driver.execute_script(script, note)
+        if isinstance(result, dict) and (result.get("success") or not result.get("retryable")):
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.25)
     if not isinstance(result, dict) or not result.get("success"):
         raise RuntimeError((result or {}).get("message") or "CRM production note could not be filled.")
     save = _find_clickable_by_text(driver, r"save\s+order")
@@ -5195,8 +5231,7 @@ return { success: true, alreadyPresent: false };
         raise RuntimeError("CRM save order button was not found after production note update.")
     _click_with_fallback(driver, save)
     _wait_for_text(driver, r"edit\s+order", timeout=25)
-    driver.refresh()
-    _wait_for_order_goods_page_ready(driver, order_id)
+    _reload_crm_order_for_production_verify(driver, order_id)
     return "already_present" if result.get("alreadyPresent") else "recorded"
 
 
@@ -6028,6 +6063,12 @@ def _verify_crm_production_note(driver, order_id, note, timeout=12):
         if driver.execute_script(r"""
 const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
 const note = normalize(arguments[0]);
+const root = document.querySelector('#order-notes-production-notes');
+if (root) {
+  const persisted = root.cloneNode(true);
+  persisted.querySelectorAll('textarea,input,button').forEach(node => node.remove());
+  return normalize(persisted.textContent).includes(note);
+}
 return normalize(document.body && (document.body.innerText || document.body.textContent)).includes(note)
   || Array.from(document.querySelectorAll('textarea')).some((node) => normalize(node.value).includes(note));
 """, note) is True:
@@ -6050,8 +6091,7 @@ def _save_and_verify_crm_production_note(driver, order_id, note):
                 f"Refreshing CRM order {order_id} and retrying the production-note save (2/2). Confirmed stock purchases will not be repeated.",
                 stage="retrying_production_note", order_id=order_id,
             )
-            driver.refresh()
-            _wait_for_order_goods_page_ready(driver, order_id)
+            _reload_crm_order_for_production_verify(driver, order_id)
 
 
 def _process_nj_stock_order(crm_driver, sanmar_driver, order, warehouse_plan=None, receipt=None, dry_run=False, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):

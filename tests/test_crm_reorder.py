@@ -79,6 +79,31 @@ class ReorderPlanningTests(unittest.TestCase):
 
 
 class SxsPlanningTests(unittest.TestCase):
+    def test_supplier_error_stops_before_saved_credentials_are_read(self):
+        error = "ERROR Looks like we're having some problems. Ray ID - aabbccddeeff0011 Client IP - 192.0.2.1"
+        for location in ("cart", "login"):
+            with self.subTest(location=location):
+                driver = mock.Mock(current_url=sxs.LOGIN_URL)
+                driver.find_elements.return_value = []
+                driver.execute_script.side_effect = [error] if location == "cart" else ["Sign In", error]
+                with mock.patch.object(sxs, "safe_get_with_partial_load"), mock.patch.object(sxs, "read_credential") as credentials:
+                    with self.assertRaisesRegex(RuntimeError, "S&S returned its website error page") as raised:
+                        sxs.ensure_login(driver)
+                self.assertIn("aabbccddeeff0011", str(raised.exception))
+                self.assertNotIn("192.0.2.1", str(raised.exception))
+                credentials.assert_not_called()
+
+    def test_supplier_error_during_a_wait_is_reported_without_timeout(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = "Looks like we’re having some problems. Ray ID - aabbccddeeff0011"
+        ready = mock.Mock(return_value=False)
+        with self.assertRaisesRegex(RuntimeError, "Ray ID: aabbccddeeff0011"):
+            sxs._wait(driver, ready, timeout=0)
+        ready.assert_not_called()
+        driver.execute_script.return_value = "Sign In Welcome to S&S"
+        ready.return_value = "ready"
+        self.assertEqual(sxs._wait(driver, ready, timeout=0), "ready")
+
     def test_credentials_and_checkout_require_the_exact_https_supplier_origin(self):
         sxs._require_site(mock.Mock(current_url="https://www.ssactivewear.com/checkout/"))
         for url in ("http://www.ssactivewear.com/checkout", "https://www.ssactivewear.com.example.com/login", "https://example.com/login"):
@@ -89,6 +114,14 @@ class SxsPlanningTests(unittest.TestCase):
         p = product(product_id="C1717", product_name="Comfort Colors Heavyweight T-Shirt")
         candidates = [{"url": "https://www.ssactivewear.com/p/comfort_colors/1717", "title": "1717 Comfort Colors Garment-Dyed Heavyweight T-Shirt"}]
         self.assertEqual(sxs.select_product(p, candidates), candidates[0])
+
+    def test_tultex_fine_jersey_matches_its_brand_and_style(self):
+        p = product(product_id="202", product_name="Tultex Unisex Fine Jersey T-Shirt")
+        candidate = {"url": "https://www.ssactivewear.com/p/tultex/202", "title": "202 Tultex Unisex Fine Jersey T-Shirt"}
+        other = {"url": "https://www.ssactivewear.com/p/other_brand/202", "title": "202 Other Brand Unisex Fine Jersey T-Shirt"}
+        self.assertEqual(sxs.select_product(p, [other, candidate]), candidate)
+        with self.assertRaisesRegex(RuntimeError, "unambiguous"):
+            sxs.select_product(p, [other])
 
     def candidates(self):
         return [{"url": "https://www.ssactivewear.com/p/gildan/5000", "title": "5000 Gildan Unisex Heavy Cotton T-Shirt"}, {"url": "https://www.ssactivewear.com/p/bayside/5000", "title": "5000 Bayside Unisex USA-Made Fine Jersey T-Shirt"}]

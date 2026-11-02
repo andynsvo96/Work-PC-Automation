@@ -58,6 +58,26 @@ class ReorderBrowserTests(unittest.TestCase):
         self.driver.execute_script("document.querySelector('tr[ng-repeat]').style.backgroundColor='green'")
         self.assertIsNone(worker._read_rows(self.driver)["records"][0]["assigned"])
 
+    def test_production_note_waits_for_append_field_and_retry_keeps_history_unique(self):
+        fixture = (ROOT / 'tests/fixtures/crm_append_production_note.html').as_uri()
+        self.driver.get(fixture)
+        self.driver.execute_script('localStorage.clear()')
+        self.driver.refresh()
+        note = 'Reordered stock - PO 5000001 - Sanmar fixture-reference'
+        with mock.patch.object(worker.bypass, '_wait_for_order_goods_page_ready'):
+            self.assertEqual(worker.bypass._save_and_verify_crm_production_note(self.driver, '5000001', note), 'recorded')
+            self.assertEqual(worker.bypass._save_and_verify_crm_production_note(self.driver, '5000001', note), 'already_present')
+        history = self.driver.execute_script("return localStorage.getItem('append_production_notes')")
+        self.assertEqual(history, 'Existing production note\n' + note)
+        self.assertEqual(self.driver.execute_script("return document.querySelector('#sales').value"), 'Existing sales note')
+
+    def test_production_note_verification_rejects_an_unsaved_append_draft(self):
+        fixture = (ROOT / 'tests/fixtures/crm_append_production_note.html').as_uri()
+        self.driver.get(fixture)
+        self.driver.execute_script("const input=document.createElement('textarea');input.value='Unsaved draft only';document.querySelector('#order-notes-production-notes').append(input)")
+        with self.assertRaises(worker.bypass._CrmProductionNotePersistenceError):
+            worker.bypass._verify_crm_production_note(self.driver, '5000001', 'Unsaved draft only', timeout=0)
+
     def test_sxs_inventory_quantities_and_cart_match_the_crm_sizes(self):
         self.driver.execute_script("const count=document.createElement('span');count.id='qtyMiniCart';count.textContent='0';document.body.append(count);document.querySelector('#cart-link').setAttribute('aria-label','Cart: 99 items')")
         inventory = sxs.inventory(self.driver)

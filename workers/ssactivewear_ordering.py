@@ -60,7 +60,7 @@ def select_product(product, candidates):
     """An exact style alone is insufficient: require the CRM brand and description."""
     wanted_style = style_id(product)
     description = str(product.get("product_name") or product.get("stock_line") or "")
-    brands = ("Gildan", "Bayside", "Bella", "Next Level", "Rabbit Skins", "Jerzees", "Hanes", "Comfort Colors", "A4", "Lane Seven", "Independent", "Port Authority", "Port and Company", "Team 365", "Sport Tek", "Fruit of the Loom", "Anvil", "Champion", "Adidas", "Columbia", "Harriton", "Devon", "Augusta")
+    brands = ("Gildan", "Bayside", "Bella", "Next Level", "Rabbit Skins", "Jerzees", "Hanes", "Comfort Colors", "A4", "Lane Seven", "Independent", "Port Authority", "Port and Company", "Team 365", "Sport Tek", "Fruit of the Loom", "Anvil", "Champion", "Adidas", "Columbia", "Harriton", "Devon", "Augusta", "Tultex")
     brand = next((b for b in brands if _words(b) <= _words(description)), None)
     if not brand:
         raise RuntimeError("S&S product brand could not be established from the CRM description; review the match.")
@@ -89,7 +89,10 @@ def select_product(product, candidates):
 
 
 def _wait(driver, fn, timeout=25):
-    return WebDriverWait(driver, timeout, poll_frequency=0.25).until(lambda _driver: fn())
+    def ready(_driver):
+        _raise_site_error(driver)
+        return fn()
+    return WebDriverWait(driver, timeout, poll_frequency=0.25).until(ready)
 
 
 def _click(driver, selector):
@@ -104,14 +107,25 @@ def _require_site(driver):
         raise RuntimeError("Unexpected S&S website origin; credentials and checkout were not submitted.")
 
 
+def _raise_site_error(driver):
+    text = str(driver.execute_script("return document.body ? document.body.innerText : '';") or "")
+    if not re.search(r"looks like we['’]re having some problems", text, re.I):
+        return
+    ray = re.search(r"\bRay ID\s*[-:]\s*([a-f0-9]{16,32})\b", text, re.I)
+    reference = f" (Ray ID: {ray.group(1)})" if ray else ""
+    raise RuntimeError("S&S returned its website error page" + reference + ". Review S&S site access before retrying.")
+
+
 def ensure_login(driver):
     safe_get_with_partial_load(driver, CART_URL, "S&S cart/login")
+    _raise_site_error(driver)
     def authenticated():
         return driver.find_elements(By.CSS_SELECTOR, 'a[href="https://www.ssactivewear.com/myaccount/signout"],a[href="/myaccount/signout"]')
     if authenticated():
         return
     safe_get_with_partial_load(driver, LOGIN_URL, "S&S login")
     _require_site(driver)
+    _raise_site_error(driver)
     from profile_setup_autofill import _first_visible, _USERNAME_SELECTORS, _PASSWORD_SELECTORS, _fill
     credential = read_credential(SSACTIVEWEAR_CREDENTIAL_TARGET)
     username = _wait(driver, lambda: _first_visible(driver, _USERNAME_SELECTORS))

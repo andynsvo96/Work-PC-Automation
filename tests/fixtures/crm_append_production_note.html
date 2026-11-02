@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Offline CRM append-only Production Notes</title>
+<style>body{font:16px Arial;padding:24px}.columns{display:flex;gap:20px}section{width:280px}textarea{width:240px;height:90px}button{margin:10px}</style>
+<body><h1>Order 5000001</h1><button id="edit">Edit Order</button><button id="save" style="display:none">Save Order</button>
+<div class="columns"><section><strong>Sales Notes</strong><textarea id="sales">Existing sales note</textarea></section>
+<section id="order-notes-production-notes"><strong>Production Notes</strong><div id="history"></div></section>
+<section><strong>Art Notes</strong><textarea>Existing art note</textarea></section></div>
+<script>
+const key='append_production_notes';
+document.querySelector('#history').textContent=localStorage.getItem(key)||'Existing production note';
+document.querySelector('#edit').onclick=()=>{
+ document.querySelector('#edit').style.display='none';document.querySelector('#save').style.display='inline-block';
+ setTimeout(()=>{const input=document.createElement('textarea');input.setAttribute('ng-model','order.getResource().addProductionNotes');document.querySelector('#order-notes-production-notes').append(input)},1200);
+};
+document.querySelector('#save').onclick=()=>{
+ const input=document.querySelector('#order-notes-production-notes textarea');
+ const previous=localStorage.getItem(key)||'Existing production note';
+ localStorage.setItem(key,previous+(input?.value?'\n'+input.value:''));
+ document.querySelector('#history').textContent=localStorage.getItem(key);
+ input?.remove();document.querySelector('#edit').style.display='inline-block';document.querySelector('#save').style.display='none';
+};
+</script></body></html>
