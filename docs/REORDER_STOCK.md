@@ -65,6 +65,14 @@ columns stop before any quantity is changed.
 Stock addition and removal invoke only their known page-context controls, then
 verify the cart change. Cleanup compares stock identity fields independently of
 JSON key order and stops if any current or remaining stock differs.
+After addition, cart reads wait for the expected piece count and complete rows.
+Visible "was removed" notices without stock controls are not active stock;
+unreadable product rows stop for review. Checkout may use a reduced header
+without the normal sign-out link, so its authenticated account controls are
+recognized separately and address/payment/PO checks still apply. If navigation
+closes the old page's response channel, the worker reads the destination without
+clicking Checkout again. A new sign-in request requires the operator to sign in
+normally before retrying.
 
 S&S prefers Reading, then one other warehouse that can fill all products/sizes,
 ordered by delivery date. Warehouse splits are a last resort. Every size must be
@@ -82,7 +90,7 @@ order reference, and the exact labelled PO. Receipt parsing covers the observed
 `Order Confirmation: <number>` heading, including combined PO/warehouse labels,
 as well as the older numbered confirmation format. A live S&S checkout and its
 confirmation were verified through an existing logged-in Chrome session.
-S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.4** extension in a
+S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.5** extension in a
 normally opened Chrome profile. The local worker sends stock instructions to
 one dedicated S&S tab without launching WebDriver, activating the tab, or using
 the computer's mouse/keyboard. A successful signed-in background/minimized
@@ -136,7 +144,7 @@ iframe context, using the existing production-date verification recovery.
 
 1. Restart the local Automation app and refresh the dashboard when no task is
    running. Do not start a second server.
-2. Install/reload **CRM Order Assistant 1.7.4** from
+2. Install/reload **CRM Order Assistant 1.7.5** from
    `crm-order-dark-mode-extension` at `chrome://extensions` in the normal Chrome
    profile you want to use. Existing CRM page scripts stay scoped to CRM.
 3. Open the extension popup and select **Connect this browser** under **S&S

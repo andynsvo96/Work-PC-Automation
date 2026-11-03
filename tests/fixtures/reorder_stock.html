@@ -31,11 +31,16 @@ document.querySelector('#aToCDesk').onclick=e=>{
  for(const r of document.querySelectorAll('.gR')) for(const c of r.querySelectorAll('.i')) {
   const q=Number(c.querySelector('input').value);if(!q)continue;total+=q;
   const size=c.querySelector('.sr-only').textContent;const wh=r.querySelector('.warehouse').textContent;
-  rows.push(`<div class="cR"><div class="cDes"><a href="https://www.ssactivewear.com/p/gildan/5000/black-heavy_cotton"><b>5000</b> - Gildan - Unisex Heavy Cotton T-Shirt</a></div><div class="cCol">Black</div><div class="cSiz">${size}</div><div class="cMet">S&amp;S Ship</div><div class="cLoc">${wh}</div><div class="cPie"><input type="number" value="${q}"><a role="button" aria-label="remove item" onclick="this.closest('.cR').remove()">Remove</a></div></div>`);
+  rows.push(`<div class="cR"><div class="cDes"><a href="https://www.ssactivewear.com/p/gildan/5000/black-heavy_cotton"><b>5000</b> - Gildan - Unisex Heavy Cotton T-Shirt</a></div><div class="cCol">Black</div><div class="cSiz">${size}</div><div class="cMet">S&amp;S Ship</div><div class="cLoc">${wh}</div><div class="cPie"><input type="number" value="${q}"><a role="button" aria-label="remove item" onclick="this.closest('.cR').remove();window.updateFixtureCartCount()">Remove</a></div></div>`);
  }
  document.querySelector('#cart-link').setAttribute('aria-label',`Cart: ${total} items`);
  if(document.querySelector('#qtyMiniCart')) document.querySelector('#qtyMiniCart').textContent=String(total);
  document.querySelector('#M_M_zCart').innerHTML=rows.join('');
+};
+window.updateFixtureCartCount=()=>{
+ const total=[...document.querySelectorAll('#M_M_zCart .cPie input')].reduce((sum,i)=>sum+Number(i.value),0);
+ document.querySelector('#cart-link').setAttribute('aria-label',`Cart: ${total} items`);
+ if(document.querySelector('#qtyMiniCart'))document.querySelector('#qtyMiniCart').textContent=String(total);
 };
 window.completeClicks=0;window.confirmClicks=0;
 document.querySelector('#M_M_zCheckoutBTN').onclick=()=>{window.completeClicks++;document.querySelector('#confirm').style.display='block'};

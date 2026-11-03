@@ -57,7 +57,11 @@ export function clickSxsStockControlInMain({ operation, orderId, deadline, quant
     buttons = [...document.querySelectorAll('#aToCDesk, #aToCMob, #ninjaAddToCart')].filter(visible);
   } else if (operation === 'remove') {
     if (location.pathname !== '/checkout/cart' || !Array.isArray(rows) || !rows.length) throw Error('Invalid S&S stock removal.');
-    const current = [...document.querySelectorAll('#M_M_zCart .cR')].filter(visible);
+    const current = [...document.querySelectorAll('#M_M_zCart .cR')].filter(visible).filter(r => {
+      if (r.querySelector('.cPie input, .cDes a[href]')) return true;
+      if (/\bwas removed\b/i.test(norm(r.innerText))) return false;
+      throw Error('S&S cart contains an unreadable stock row.');
+    });
     const actual = current.map(r => ({ id: r.id, style: norm(r.querySelector('.cDes b')?.textContent), url: r.querySelector('.cDes a')?.href || '',
       color: norm(r.querySelector('.cCol')?.innerText), size: norm(r.querySelector('.cSiz')?.innerText).replace(/^Size:\s*/i, ''),
       method: norm(r.querySelector('.cMet')?.innerText), warehouse: norm(r.querySelector('.cLoc')?.innerText), quantity: Number(r.querySelector('.cPie input')?.value || 0) }));

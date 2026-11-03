@@ -1,7 +1,7 @@
 """S&S page operations in an explicitly connected normal Chrome browser."""
 import re
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from ssactivewear_bridge import SxsSession, SxsBridgeError
 import ssactivewear_ordering as sxs
@@ -49,8 +49,9 @@ class SxsExtensionBrowser:
     def inventory(self):
         return self.call('inventory')['inventory']
 
-    def cart_rows(self):
-        return self.call('cart')['rows']
+    def cart_rows(self, expected_quantity=None):
+        payload = {} if expected_quantity is None else {'expected_quantity': expected_quantity}
+        return self.call('cart', **payload)['rows']
 
     def verified_cart_rows(self, lines):
         expected = [{'selected': {'url': x['selected']['url']},
@@ -60,9 +61,10 @@ class SxsExtensionBrowser:
 
     def fill_product(self, lines):
         self.call('fill', allocations=[{'warehouse': x['warehouse'], 'quantities': x['quantities']} for x in lines])
-        self.call('add', quantity=sum(sum(x['quantities'].values()) for x in lines))
+        quantity = sum(sum(x['quantities'].values()) for x in lines)
+        self.call('add', quantity=quantity)
         self.get(sxs.CART_URL)
-        if not self.cart_rows():
+        if not self.cart_rows(expected_quantity=quantity):
             raise RuntimeError('S&S cart did not confirm the stock addition; review before retrying.')
 
     def review_checkout(self, po):
@@ -90,7 +92,24 @@ class SxsExtensionBrowser:
 
     def checkout(self, po, lines):
         sxs.validate_cart(self.verified_cart_rows(lines), lines)
-        self.call('checkout')
+        try:
+            self.call('checkout')
+        except SxsBridgeError as exc:
+            # A full-page navigation can close the old document's response port.
+            # Read its destination; never send the checkout click a second time.
+            if not re.search(r'back/forward cache|(?:message (?:port|channel)|response port).*clos|receiving end does not exist', str(exc), re.I):
+                raise
+        deadline = time.monotonic() + 25
+        while True:
+            state = self.call('health')
+            path = urlsplit(state['url']).path.rstrip('/')
+            if path == '/myaccount/login':
+                raise RuntimeError('S&S requires sign-in again before checkout. Sign in normally in its worker tab, then retry; no purchase was submitted.')
+            if path == '/checkout' and state.get('signed_in') is True and state.get('checkout_ready') is True:
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError('S&S checkout navigation did not verify. Review its tab; the checkout click was not repeated.')
+            time.sleep(0.5)
         result = self.review_checkout(po)
         self.owned_lines = lines
         return result

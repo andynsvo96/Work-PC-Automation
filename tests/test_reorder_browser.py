@@ -1,6 +1,7 @@
 """DOM verification with sanitized offline markup from the supplied archives."""
 
 import os
+import json
 import sys
 import tempfile
 import time
@@ -90,13 +91,15 @@ setTimeout(()=>banner.style.display='block',150);
         self.assertEqual(self.driver.execute_script('return window.focusRedirects'), 2)
         self.assertTrue(self.driver.execute_script("return !!document.querySelector('#M_M_zCart')"))
 
-    def _install_sxs_page_fixture(self):
+    def _install_sxs_page_fixture(self, path=None):
         # Only this isolated file fixture bypasses the production HTTPS check.
         # Controller/transport origin boundaries have their own regression tests.
         source = (ROOT / 'crm-order-dark-mode-extension/sxs-page.js').read_text(encoding='utf-8')
         source = source.replace("location.origin !== 'https://www.ssactivewear.com'", "location.protocol !== 'file:'")
         source = source.replace('parsed.origin !== location.origin', "parsed.origin !== 'https://www.ssactivewear.com'")
         source = source.replace('url.origin === location.origin', "url.origin === 'https://www.ssactivewear.com'")
+        if path is not None:
+            source = source.replace('location.pathname', json.dumps(path))
         self.driver.execute_script("""
 window.chrome=window.chrome||{};
 window.chrome.runtime={id:'fixture-extension',onMessage:{addListener:fn=>window.sxsFixtureMessage=fn}};
@@ -258,11 +261,53 @@ const other=document.createElement('div');other.className='oGrid';other.innerHTM
         self.driver.execute_script("document.querySelector('#M_M_zCart .cPie input').value='2'")
         with self.assertRaisesRegex(Exception, 'cart changed'):
             self._sxs_main_stock_control('remove', rows=rows)
-        self.assertEqual(self._sxs_page_command('cart')['result']['rows'][0]['quantity'], 2)
+        self.assertEqual(self.driver.execute_script("return Number(document.querySelector('#M_M_zCart .cPie input').value)"), 2)
         self.driver.execute_script("document.querySelector('#M_M_zCart .cPie input').value='1'")
+        self.driver.execute_script("document.querySelector('#M_M_zCart').insertAdjacentHTML('afterbegin','<div class=\"cR\"><div class=\"cDes\">Earlier stock was removed</div></div>')")
         self.assertTrue(self._sxs_main_stock_control('remove', rows=rows)['click_issued'])
         self.assertTrue(self._sxs_page_command('remove', {'rows': rows})['success'])
         self.assertEqual(self._sxs_page_command('cart')['result']['rows'], [])
+
+    def test_extension_cart_waits_for_rows_after_the_count_changes(self):
+        self._install_sxs_page_fixture()
+        self._sxs_page_command('fill', {'allocations': [{'warehouse': 'Reading, PA', 'quantities': {'L': 1}}]})
+        self._sxs_main_stock_control('add', quantity=1, before=0)
+        self.driver.execute_script("""
+const cart=document.querySelector('#M_M_zCart'), html=cart.innerHTML;
+cart.innerHTML='';document.querySelector('#cart-link').setAttribute('aria-label','Cart: 0 items');
+setTimeout(()=>document.querySelector('#cart-link').setAttribute('aria-label','Cart: 1 items'),100);
+setTimeout(()=>{cart.innerHTML=html},400);
+""")
+        result = self._sxs_page_command('cart', {'expected_quantity': 1})
+        self.assertTrue(result['success'], result)
+        self.assertEqual([r['quantity'] for r in result['result']['rows']], [1])
+
+    def test_extension_cart_ignores_only_removed_notices_and_rejects_unknown_rows(self):
+        self._install_sxs_page_fixture()
+        self.driver.execute_script("""
+document.querySelector('#M_M_zCart').innerHTML='<div class="cR" id="cartRow_123_-1"><div class="cDes"><b>TT41</b> - Team 365 was removed</div></div>';
+""")
+        self.assertEqual(self._sxs_page_command('cart')['result']['rows'], [])
+        self.driver.execute_script("document.querySelector('#M_M_zCart .cDes').textContent='Unreadable product'")
+        result = self._sxs_page_command('cart')
+        self.assertFalse(result['success'])
+        self.assertIn('unreadable stock row', result['message'])
+
+    def test_extension_checkout_recognizes_reduced_header_but_still_checks_account_details(self):
+        self._install_sxs_page_fixture(path='/checkout/')
+        self.driver.execute_script("document.querySelector('a[href*=signout]').remove()")
+        self.assertTrue(self._sxs_page_command('health')['result']['signed_in'])
+        self.assertTrue(self._sxs_page_command('health')['result']['checkout_ready'])
+        self.assertTrue(self._sxs_page_command('review', {'po': '5000001'})['success'])
+        self.driver.execute_script("document.querySelector('#shipping-address').textContent='Wrong address'")
+        self.assertFalse(self._sxs_page_command('review', {'po': '5000001'})['success'])
+
+    def test_extension_login_path_is_not_authenticated_by_its_cached_header(self):
+        self._install_sxs_page_fixture(path='/myaccount/login')
+        self.assertFalse(self._sxs_page_command('health')['result']['signed_in'])
+        result = self._sxs_page_command('review', {'po': '5000001'})
+        self.assertFalse(result['success'])
+        self.assertIn('login expired', result['message'])
 
     def test_extension_page_refuses_wrong_po_and_expired_or_unowned_mutations(self):
         self._install_sxs_page_fixture()

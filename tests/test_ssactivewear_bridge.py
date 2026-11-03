@@ -131,6 +131,49 @@ class SxsBridgeTests(unittest.TestCase):
 
 
 class SxsExtensionAdapterTests(unittest.TestCase):
+    def test_stock_addition_waits_for_the_expected_cart_quantity_without_readding(self):
+        session = mock.Mock()
+        session.call.return_value = {'url': 'https://www.ssactivewear.com/checkout/cart', 'rows': [{'quantity': 1}]}
+        browser = SxsExtensionBrowser('5000001', session=session)
+        browser.fill_product([{'warehouse': 'Reading, PA', 'quantities': {'L': 1}}])
+        calls = session.call.call_args_list
+        self.assertEqual([c.args[0] for c in calls], ['fill', 'add', 'navigate', 'cart'])
+        self.assertEqual(calls[-1].args[1], {'expected_quantity': 1})
+
+    def test_checkout_navigation_port_loss_reads_the_new_page_without_repeating_click(self):
+        session = mock.Mock()
+        review = {'url': 'https://www.ssactivewear.com/checkout/', 'po': '5000001', 'address': '2727 Commerce Way Philadelphia, PA 19154', 'payment': 'Net 60', 'methods': ['11/04/2026 UPS Ground']}
+        calls = []
+        def call(op, payload):
+            calls.append(op)
+            if op == 'verified_cart': return {'url': 'https://www.ssactivewear.com/checkout/cart', 'rows': []}
+            if op == 'checkout': raise SxsBridgeError('The page keeping the extension port is moved into back/forward cache, so the message channel is closed.')
+            if op == 'health': return {**review, 'signed_in': True, 'checkout_ready': True}
+            if op == 'review': return review
+            self.fail(op)
+        session.call.side_effect = call
+        browser = SxsExtensionBrowser('5000001', session=session)
+        line = {'selected': {'url': 'https://www.ssactivewear.com/p/gildan/5000'}, 'product': {'color': 'Black'}, 'quantities': {'L': 1}, 'warehouse': 'Reading, PA'}
+        with mock.patch('ssactivewear_ordering.validate_cart'):
+            self.assertEqual(browser.checkout('5000001', [line])['po'], '5000001')
+        self.assertEqual(calls, ['verified_cart', 'checkout', 'health', 'review'])
+        self.assertEqual(browser.owned_lines, [line])
+
+    def test_checkout_login_redirect_stops_for_normal_signin_without_retrying_click(self):
+        session = mock.Mock()
+        session.call.side_effect = [
+            {'url': 'https://www.ssactivewear.com/checkout/cart', 'rows': []},
+            {'url': 'https://www.ssactivewear.com/checkout/cart'},
+            {'url': 'https://www.ssactivewear.com/myaccount/login?Next=/checkout', 'signed_in': True},
+        ]
+        browser = SxsExtensionBrowser('5000001', session=session)
+        line = {'selected': {'url': 'https://www.ssactivewear.com/p/gildan/5000'}, 'product': {'color': 'Black'}, 'quantities': {'L': 1}, 'warehouse': 'Reading, PA'}
+        with mock.patch('ssactivewear_ordering.validate_cart'):
+            with self.assertRaisesRegex(RuntimeError, 'sign-in again'):
+                browser.checkout('5000001', [line])
+        self.assertEqual([c.args[0] for c in session.call.call_args_list], ['verified_cart', 'checkout', 'health'])
+        self.assertIsNone(browser.owned_lines)
+
     def test_cart_handoff_excludes_unneeded_crm_and_inventory_data(self):
         from datetime import date
         session = mock.Mock()
