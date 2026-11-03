@@ -744,7 +744,9 @@ button.icon-btn{min-height:34px;padding:7px 12px;border-radius:8px;background:va
 .rough-message{padding:12px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card-alt)}.rough-message strong{font-size:11px}.rough-message p{margin:6px 0 0;font-size:12px}
 .rough-weekly-card,.communications-bottom-grid,.processing-history-card,.processing-tool-health-card,.system-overview-row,.system-activity-card{margin-top:14px}
 .rough-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--rough-border);border-radius:10px;overflow:hidden}.rough-day{min-width:0;padding:8px 10px;border-right:1px solid var(--rough-border);background:transparent}.rough-day:last-child{border-right:0}.rough-day.today{background:var(--rough-blue-soft);box-shadow:inset 0 -2px 0 var(--rough-blue)}.rough-day-name{font-size:10px;font-weight:800}.rough-day-hours{margin-top:3px;color:#4fc1ff;font-size:14px;font-weight:800}.rough-day-state{margin-top:2px;color:var(--rough-muted);font-size:8px}.rough-day-note{margin-top:2px;color:var(--rough-muted);font-size:8px}
-.weekly-calculator{margin-top:12px;padding:12px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card-alt)}.weekly-calculator .work-plan{margin:0;padding:0;border:0}.weekly-calculator .work-plan-header{margin-bottom:8px}.weekly-calculator .work-plan-header h3{font-size:13px}.weekly-calculator .work-plan-summary{font-size:11px}.weekly-calculator .work-plan-days{grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}.weekly-calculator .work-day-toggle{display:grid;grid-template-columns:1fr auto;gap:2px 6px;min-height:58px;padding:7px 8px;border-radius:8px}.weekly-calculator .work-day-name{font-size:9px}.weekly-calculator .work-day-date{font-size:8px}.weekly-calculator .work-day-hours{grid-column:2;grid-row:1 / span 2;align-self:center;font-size:11px;text-align:right}.weekly-calculator .work-day-state{display:none}
+.weekly-calculator{margin-top:12px;padding:12px;border:1px solid var(--rough-border);border-radius:10px;background:var(--rough-card-alt)}.weekly-calculator .work-plan{margin:0;padding:0;border:0}.weekly-calculator .work-plan-header{margin-bottom:8px}.weekly-calculator .work-plan-header h3{font-size:13px}.weekly-calculator .work-plan-summary{font-size:11px}.weekly-calculator .work-plan-days{grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}.weekly-calculator .work-day-toggle{display:grid;grid-template-columns:1fr auto;gap:2px 6px;min-height:58px;padding:7px 8px;border-radius:8px}.weekly-calculator .work-day-name{font-size:9px}.weekly-calculator .work-day-date{font-size:8px}.weekly-calculator .work-day-hours{grid-column:2;grid-row:1 / span 2;align-self:center;font-size:11px;text-align:right}.weekly-calculator .work-day-state{grid-column:1 / -1;font-size:9px;color:var(--rough-muted)}
+:root .weekly-calculator .work-day-toggle.half,:root .weekly-calculator .work-day-toggle.half:hover{background:var(--rough-amber-soft);border-color:var(--rough-amber);color:var(--rough-text)}
+:root .weekly-calculator .work-day-toggle.half .work-day-hours{color:var(--rough-amber)}
 .slack-history{display:grid;gap:7px;margin-top:10px}.slack-history-row{display:grid;grid-template-columns:minmax(90px,.35fr) minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 10px;border:1px solid var(--rough-border);border-radius:8px;background:var(--rough-card-alt)}.slack-history-channel{font-size:10px;font-weight:800}.slack-history-message{font-size:10px;line-height:1.4;overflow-wrap:anywhere}.slack-history-time{color:var(--rough-muted);font-size:9px;white-space:nowrap}
 .rough-history-panel{position:absolute;right:0;top:calc(100% + 8px);z-index:15;width:min(920px,calc(100vw - 84px));max-height:70vh;overflow:auto;padding:15px;border:1px solid var(--rough-border);border-radius:12px;background:var(--rough-card);box-shadow:0 20px 50px rgba(0,0,0,.38)}
 .rough-sync-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.rough-sync-summary>div{padding:9px;border:1px solid var(--rough-border);border-radius:8px;background:var(--rough-card-alt)}.rough-sync-summary span{display:block;color:var(--rough-muted);font-size:9px;text-transform:uppercase}.rough-sync-summary strong{display:block;margin-top:4px;font-size:13px}.rough-planning-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}.rough-planning-row input{width:80px}
@@ -996,7 +998,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
     <div class='rough-week' id='communicationWeekDays'><div class='rough-day'><div class='rough-day-name'>Loading week…</div></div></div>
     <div class='weekly-calculator'>
       <div class='work-plan'>
-        <div class='work-plan-header'><div><h3>Weekly schedule calculator</h3><div class='muted'>Select the days you plan to work; remaining paid hours are split evenly.</div></div><div class='work-plan-summary' id='workPlanSummary'>Loading prediction...</div></div>
+        <div class='work-plan-header'><div><h3>Weekly schedule calculator</h3><div class='muted'>Click a day to cycle On → Half → Off. Half is 4 paid hours without lunch; On days split the remaining hours.</div></div><div class='work-plan-summary' id='workPlanSummary'>Loading prediction...</div></div>
         <div class='work-plan-days' id='workPredictionDays'></div>
         <div class='muted' id='workPlanBreakNote' style='margin-top:7px'></div>
       </div>
@@ -5617,31 +5619,58 @@ function defaultWorkPlanDates(weekStartIso) {
   return new Set(workWeekDates(weekStartIso).filter((day) => day.dateIso >= todayIso).map((day) => day.dateIso));
 }
 
-function loadWorkPlanDates(weekStartIso) {
-  const defaults = defaultWorkPlanDates(weekStartIso);
-  if (Array.isArray(workPlanMemory[weekStartIso])) return new Set(workPlanMemory[weekStartIso]);
+function loadWorkPlan(weekStartIso) {
+  const defaults = { enabledDates: defaultWorkPlanDates(weekStartIso), halfDates: new Set() };
   try {
-    const stored = JSON.parse(localStorage.getItem(workPlanStorageKey(weekStartIso)) || 'null');
+    const stored = workPlanMemory[weekStartIso]
+      || JSON.parse(localStorage.getItem(workPlanStorageKey(weekStartIso)) || 'null');
     if (!stored || !Array.isArray(stored.enabled_dates)) return defaults;
     const validDates = new Set(workWeekDates(weekStartIso).map((day) => day.dateIso));
-    const enabledDates = stored.enabled_dates.map(String).filter((dateIso) => validDates.has(dateIso));
-    workPlanMemory[weekStartIso] = enabledDates;
-    return new Set(enabledDates);
+    const enabledDates = new Set(stored.enabled_dates.map(String).filter((dateIso) => validDates.has(dateIso)));
+    const halfDates = new Set((Array.isArray(stored.half_dates) ? stored.half_dates : [])
+      .map(String).filter((dateIso) => enabledDates.has(dateIso)));
+    workPlanMemory[weekStartIso] = {
+      enabled_dates: Array.from(enabledDates),
+      half_dates: Array.from(halfDates),
+    };
+    return { enabledDates, halfDates };
   } catch (_error) {
     return defaults;
   }
 }
 
-function saveWorkPlanDates(weekStartIso, enabledDates) {
-  workPlanMemory[weekStartIso] = Array.from(enabledDates).sort();
+function saveWorkPlan(weekStartIso, plan) {
+  const stored = {
+    week_start: weekStartIso,
+    enabled_dates: Array.from(plan.enabledDates).sort(),
+    half_dates: Array.from(plan.halfDates).filter((dateIso) => plan.enabledDates.has(dateIso)).sort(),
+  };
+  workPlanMemory[weekStartIso] = stored;
   try {
-    localStorage.setItem(workPlanStorageKey(weekStartIso), JSON.stringify({
-      week_start: weekStartIso,
-      enabled_dates: workPlanMemory[weekStartIso],
-    }));
+    localStorage.setItem(workPlanStorageKey(weekStartIso), JSON.stringify(stored));
   } catch (_error) {
     // Local storage can be unavailable in locked-down browser sessions; the planner still works for this page load.
   }
+}
+
+function workPlanPrediction(snapshot, plan) {
+  const halfRemainingHours = new Map();
+  for (const dateIso of plan.halfDates) {
+    const entry = snapshot.state.days && snapshot.state.days[dateIso] ? snapshot.state.days[dateIso] : {};
+    let paidHours = Math.max(0, Number(entry.paid_hours != null ? entry.paid_hours : entry.paycom_hours) || 0);
+    if (snapshot.isActive && snapshot.active && snapshot.active.date === dateIso) paidHours += snapshot.activePaidHours;
+    halfRemainingHours.set(dateIso, Math.max(0, 4 - paidHours));
+  }
+  const halfHours = Array.from(halfRemainingHours.values()).reduce((total, hours) => total + hours, 0);
+  const onCount = plan.enabledDates.size - plan.halfDates.size;
+  const remainingForOnDays = snapshot.capped ? Math.max(0, snapshot.remainingHours - halfHours) : null;
+  return {
+    onCount,
+    halfRemainingHours,
+    onDayHours: snapshot.capped && onCount > 0 ? remainingForOnDays / onCount : null,
+    unallocatedHours: snapshot.capped && onCount === 0 ? remainingForOnDays : 0,
+    overCapHours: snapshot.capped ? Math.max(0, halfHours - snapshot.remainingHours) : 0,
+  };
 }
 
 function formatWorkTimer(hours) {
@@ -5695,17 +5724,18 @@ function updateCommunicationDashboard(snapshot) {
   const weekStart = snapshot.state && snapshot.state.week_start ? snapshot.state.week_start : '';
   const weekDays = workWeekDates(weekStart);
   if (daysRoot && weekDays.length) {
-    const plannedDates = loadWorkPlanDates(weekStart);
-    const futurePlanned = weekDays.filter((day) => day.dateIso >= todayIso && plannedDates.has(day.dateIso));
-    const plannedPerDay = snapshot.capped && futurePlanned.length ? snapshot.remainingHours / futurePlanned.length : 0;
+    const plan = loadWorkPlan(weekStart);
+    const prediction = workPlanPrediction(snapshot, plan);
     daysRoot.innerHTML = weekDays.map((day) => {
       const entry = snapshot.state.days && snapshot.state.days[day.dateIso] ? snapshot.state.days[day.dateIso] : {};
       let hours = Math.max(0, Number(entry.paid_hours != null ? entry.paid_hours : entry.paycom_hours) || 0);
       if (snapshot.isActive && snapshot.active && snapshot.active.date === day.dateIso) hours += snapshot.activePaidHours;
       const isToday = day.dateIso === todayIso;
-      const planned = day.dateIso >= todayIso && plannedDates.has(day.dateIso);
-      const displayHours = hours > 0 ? hours : (planned ? plannedPerDay : 0);
-      const note = isToday && snapshot.isActive ? 'In progress' : hours > 0 ? 'Recorded' : planned ? 'Planned' : 'Off';
+      const planned = day.dateIso >= todayIso && plan.enabledDates.has(day.dateIso);
+      const half = plan.halfDates.has(day.dateIso);
+      const plannedHours = half ? 4 : prediction.onDayHours;
+      const displayHours = hours > 0 ? hours : (planned ? plannedHours : 0);
+      const note = isToday && snapshot.isActive ? 'In progress' : hours > 0 ? 'Recorded' : planned ? (half ? 'Half' : 'Planned') : 'Off';
       return `<div class='rough-day${isToday ? ' today' : ''}'><div class='rough-day-name'>${esc(day.name.slice(0, 3))}</div><div class='rough-day-hours'>${displayHours > 0 ? esc(formatWorkHoursCompact(displayHours)) : '—'}</div><div class='rough-day-state'>${esc(note)}</div></div>`;
     }).join('');
   }
@@ -5794,7 +5824,7 @@ function ensureWorkPlanDayButtons(payload, force = false) {
     button.className = 'work-day-toggle';
     button.dataset.date = day.dateIso;
     button.setAttribute('aria-pressed', 'false');
-    button.title = `Toggle ${day.name} in the weekly work prediction`;
+    button.title = `Cycle ${day.name}: On → Half → Off`;
     if (day.dateIso === todayIso) button.classList.add('today');
 
     const name = document.createElement('span');
@@ -5808,7 +5838,7 @@ function ensureWorkPlanDayButtons(payload, force = false) {
     hours.textContent = 'Loading';
     const stateText = document.createElement('span');
     stateText.className = 'work-day-state';
-    stateText.textContent = 'Tap to toggle';
+    stateText.textContent = 'Click to cycle';
     button.append(name, date, hours, stateText);
     button.addEventListener('click', () => toggleWorkPlanDay(day.dateIso));
     container.appendChild(button);
@@ -5820,10 +5850,17 @@ function toggleWorkPlanDay(dateIso) {
   const state = payload && payload.state ? payload.state : {};
   const weekStartIso = String(state.week_start || '');
   if (!weekStartIso) return;
-  const enabledDates = loadWorkPlanDates(weekStartIso);
-  if (enabledDates.has(dateIso)) enabledDates.delete(dateIso);
-  else enabledDates.add(dateIso);
-  saveWorkPlanDates(weekStartIso, enabledDates);
+  if (!workWeekDates(weekStartIso).some((day) => day.dateIso === dateIso)) return;
+  const plan = loadWorkPlan(weekStartIso);
+  if (plan.halfDates.has(dateIso)) {
+    plan.halfDates.delete(dateIso);
+    plan.enabledDates.delete(dateIso);
+  } else if (plan.enabledDates.has(dateIso)) {
+    plan.halfDates.add(dateIso);
+  } else {
+    plan.enabledDates.add(dateIso);
+  }
+  saveWorkPlan(weekStartIso, plan);
   updateWorkHoursVisual();
 }
 
@@ -5886,27 +5923,33 @@ function updateWorkPlanVisual(snapshot) {
   }
 
   ensureWorkPlanDayButtons(payload);
-  const enabledDates = loadWorkPlanDates(weekStartIso);
+  const plan = loadWorkPlan(weekStartIso);
+  const enabledDates = plan.enabledDates;
   const enabledCount = enabledDates.size;
-  const perDayHours = snapshot.capped && enabledCount > 0 ? snapshot.remainingHours / enabledCount : null;
+  const prediction = workPlanPrediction(snapshot, plan);
+  const perDayHours = prediction.onDayHours;
   const todayIso = workDateIso(new Date());
   document.querySelectorAll('#workPredictionDays .work-day-toggle').forEach((button) => {
     const dateIso = String(button.dataset.date || '');
     const enabled = enabledDates.has(dateIso);
+    const half = plan.halfDates.has(dateIso);
+    const mode = half ? 'Half' : enabled ? 'On' : 'Off';
     const hours = button.querySelector('.work-day-hours');
     const stateText = button.querySelector('.work-day-state');
     button.classList.toggle('active', enabled);
-    button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    button.classList.toggle('half', half);
+    button.setAttribute('aria-pressed', half ? 'mixed' : enabled ? 'true' : 'false');
     if (hours) {
-      hours.textContent = enabled
+      hours.textContent = half ? formatWorkHoursMinutes(4) : enabled
         ? (snapshot.capped ? formatWorkHoursMinutes(perDayHours) : 'No cap')
-        : 'Off';
+        : '—';
     }
-    if (stateText) {
-      stateText.textContent = enabled
-        ? (dateIso === todayIso && snapshot.isActive ? 'Paid time from now' : 'Remaining paid target')
-        : 'Not planned';
-    }
+    if (stateText) stateText.textContent = mode;
+    const detail = half
+      ? `4 paid hours, no lunch; ${formatWorkHoursMinutes(prediction.halfRemainingHours.get(dateIso))} remaining`
+      : enabled ? (dateIso === todayIso && snapshot.isActive ? 'Paid time from now' : 'Remaining paid target') : 'Not planned';
+    button.title = `${mode}: ${detail}. Click to switch to ${half ? 'Off' : enabled ? 'Half' : 'On'}.`;
+    button.setAttribute('aria-label', `${button.querySelector('.work-day-name').textContent}, ${mode}, ${hours.textContent}. ${detail}`);
   });
 
   if (!snapshot.capped) {
@@ -5919,12 +5962,19 @@ function updateWorkPlanVisual(snapshot) {
     if (summary) summary.textContent = 'Select at least one work day';
     if (breakNote) breakNote.textContent = `${formatWorkHoursMinutes(snapshot.remainingHours)} remains before the weekly cap.`;
   } else {
-    if (summary) summary.textContent = `${enabledCount} day${enabledCount === 1 ? '' : 's'} • ${formatWorkHoursMinutes(perDayHours)} each`;
+    const parts = [];
+    if (prediction.onCount > 0) parts.push(`${prediction.onCount} On • ${formatWorkHoursMinutes(perDayHours)} each`);
+    if (plan.halfDates.size > 0) parts.push(`${plan.halfDates.size} Half • 4h each`);
+    if (summary) summary.textContent = parts.join(' | ');
     if (breakNote) {
-      const breakRule = snapshot.breakMinutes > 0 && perDayHours > snapshot.breakAfterHours
-        ? ` Plan an additional ${snapshot.breakMinutes}m unpaid break on days over ${formatWorkHoursMinutes(snapshot.breakAfterHours)}.`
+      const breakRule = snapshot.breakMinutes > 0 && prediction.onCount > 0 && perDayHours > snapshot.breakAfterHours
+        ? ` Plan an additional ${snapshot.breakMinutes}m unpaid break on On days over ${formatWorkHoursMinutes(snapshot.breakAfterHours)}.`
         : '';
-      breakNote.textContent = `${formatWorkHoursMinutes(snapshot.remainingHours)} paid time remains.${breakRule}`;
+      const halfRule = plan.halfDates.size > 0 ? ' Half days have no lunch added; recorded and live paid time counts toward their 4 hours.' : '';
+      const allocationNote = prediction.overCapHours > 0
+        ? ` Half days exceed the remaining weekly cap by ${formatWorkHoursMinutes(prediction.overCapHours)}.`
+        : prediction.unallocatedHours > 0 ? ` ${formatWorkHoursMinutes(prediction.unallocatedHours)} still needs an On day.` : '';
+      breakNote.textContent = `${formatWorkHoursMinutes(snapshot.remainingHours)} paid time remains.${breakRule}${halfRule}${allocationNote}`;
     }
   }
 }

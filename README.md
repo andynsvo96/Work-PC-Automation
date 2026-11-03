@@ -9,6 +9,7 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - Runs Paycom clock-in and clock-out actions.
 - Syncs weekly Paycom hours and tracks local work-hour state.
 - Calculates auto clock-out timing against a configurable weekly hour cap.
+- **Weekly schedule calculator:** click a day to cycle **On → Half → Off**. Half sets a **4 paid-hour daily target without lunch**; saved and live paid hours for that day count toward the target. On days split the remaining weekly hours after reserving the Half targets. The calculator flags any excess Half hours or hours left without an On day. Selections stay saved in that browser for the week, including existing On/Off plans. Refresh the dashboard to load this change; no app restart or extension reload is needed. These are planning estimates; clock-out schedules continue to use their existing controls.
 - Sends Slack start/end/lunch/custom status messages.
 - Rotates day-specific Slack messages.
 - Runs CRM automation workers for address validation, stock unlocks, rush goods ordering, auto-splitting, shipping bypasses, push-back handling, Sleeve Prints reachouts, and queue-driven issue processing.
@@ -227,6 +228,12 @@ Verify Queue sorting and its interaction with task controls and execution order 
 
 ```powershell
 node --test tests/test_queue_sort.mjs
+```
+
+Verify weekly schedule calculations, Half targets, and saved day selections with:
+
+```powershell
+node --test tests/test_work_plan.mjs
 ```
 
 Verify the NJ/ADD history display with:
