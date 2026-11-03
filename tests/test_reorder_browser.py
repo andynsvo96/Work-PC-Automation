@@ -145,6 +145,46 @@ document.body.append(products);
         self.assertEqual(selected['url'], 'https://www.ssactivewear.com/p/gildan/5000')
         self.assertNotIn('more colors', selected['title'])
 
+    def test_extension_color_handler_waits_for_matching_inventory_and_delivery_dates(self):
+        self.driver.execute_script("""
+document.querySelector('#zcolorname').innerHTML='83 Colors - Selected Color: <strong>White - PMS: 11-0601 TCX</strong>';
+const swatches=document.querySelector('#colorSwatch');swatches.innerHTML='';
+for(const [id,color] of [['16813','White'],['16787','Black']]) {
+ const a=document.createElement('a');a.id='cSwatch'+id;a.textContent=color;
+ a.href=`javascript: iColor('${id}','false','false','True','');`;
+ a.classList.toggle('active',color==='White');swatches.append(a);
+}
+document.querySelectorAll('.gR input').forEach(i=>i.setAttribute('csid','16813'));
+document.querySelectorAll('.shippingRowLabel').forEach(e=>e.textContent='');
+window.colorCalls=0;window.iColor=id=>{window.colorCalls++;setTimeout(()=>{
+ document.querySelector('#zcolorname strong').textContent='Black - PMS: 426';
+ document.querySelectorAll('#colorSwatch a').forEach(a=>a.classList.toggle('active',a.id==='cSwatch'+id));
+ document.querySelectorAll('.gR input').forEach(i=>i.setAttribute('csid',id));
+ setTimeout(()=>document.querySelectorAll('.shippingRowLabel').forEach(e=>e.textContent='Est. Delivery: 11/04/2026'),150);
+},100)};
+""")
+        self._install_sxs_page_fixture()
+        ready = self._sxs_page_command('color_ready', {'color': 'Black'})
+        self.assertTrue(ready['success'], ready)
+        self.assertEqual(ready['result']['anchor_id'], 'cSwatch16787')
+        source = (ROOT / 'crm-order-dark-mode-extension/ssactivewear-worker.mjs').read_text(encoding='utf-8')
+        source = 'function selectSxsColorInMain' + source.split('export function selectSxsColorInMain', 1)[1].split('\nexport function createSxsWorker', 1)[0]
+        # Only the isolated file fixture substitutes the production URL boundary.
+        source = source.replace("location.origin !== 'https://www.ssactivewear.com'", "location.protocol !== 'file:'")
+        source = source.replace(r'!/^\/p\/[^/]+\/[^/]+\/?$/.test(location.pathname)', 'false')
+        args = {'color': 'Black', 'anchorId': 'cSwatch16787', 'orderId': '5000001', 'deadline': time.time() + 40}
+        self.assertTrue(self.driver.execute_script('return (' + source + ')(arguments[0]);', args)['success'])
+        self.assertTrue(self._sxs_page_command('color', {'color': 'Black'})['success'])
+        inventory = self._sxs_page_command('inventory')
+        self.assertTrue(inventory['success'], inventory)
+        self.assertEqual(inventory['result']['inventory'][0]['eta_text'], 'Est. Delivery: 11/04/2026')
+        self.assertEqual(self.driver.execute_script('return window.colorCalls'), 1)
+        self.assertFalse(self.driver.execute_script("return [...document.querySelectorAll('.gR input')].some(i=>i.value)"))
+        self.driver.execute_script("document.querySelector('#cSwatch16787').href='javascript:alert(1)'")
+        with self.assertRaisesRegex(Exception, 'handler is unavailable or changed'):
+            self.driver.execute_script('return (' + source + ')(arguments[0]);', args)
+        self.assertEqual(self.driver.execute_script('return window.colorCalls'), 1)
+
     def test_extension_page_refuses_wrong_po_and_expired_or_unowned_mutations(self):
         self._install_sxs_page_fixture()
         denied = self._sxs_page_command('fill', {'allocations': []}, order_id='')

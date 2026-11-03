@@ -15,6 +15,8 @@
     return true;
   };
   const all = selector => [...document.querySelectorAll(selector)];
+  const selectedColor = () => norm(document.querySelector('#zcolorname')?.textContent)
+    .replace(/^.*?Selected Color:\s*/i, '').replace(/\s*[-\u2013\u2014]\s*PMS:.*$/i, '');
   function guard() {
     if (location.origin !== 'https://www.ssactivewear.com') throw Error('Unexpected S&S website origin.');
     const text = document.body?.innerText || '';
@@ -126,19 +128,32 @@
       };
       return { candidates: await waitFor(read, 'S&S product results did not load.') };
     },
-    color: async ({ color }) => {
-      await waitFor(() => all('#colorSwatch a').length, 'S&S colors did not load.');
+    color_ready: async ({ color }) => {
+      await waitFor(() => all('#colorSwatch a.active').length === 1
+        && /Selected Color:/i.test(norm(document.querySelector('#zcolorname')?.textContent))
+        && all('.gR[id^="wh_"] input[aria-label="quantity"]').length,
+      'S&S initial product selection did not finish loading.', 25000);
       const matches = all('#colorSwatch a').filter(a => colorKey(a.textContent) === colorKey(color));
-      if (matches.length !== 1) throw Error('S&S color is missing or ambiguous.');
-      matches[0].click();
-      await waitFor(() => colorKey(norm(document.querySelector('#zcolorname b')?.textContent).split(' - PMS')[0]) === colorKey(color), 'S&S selected color did not verify.');
-      await waitFor(() => all('.gR[id^="wh_"] input[aria-label="quantity"]').length, 'S&S inventory did not load.');
+      if (matches.length !== 1 || !visible(matches[0]) || !/^cSwatch\d+$/.test(matches[0].id)) throw Error('S&S color is missing or ambiguous.');
+      return { anchor_id: matches[0].id };
+    },
+    color: async ({ color }) => {
+      await waitFor(() => {
+        if (colorKey(selectedColor()) !== colorKey(color)) return false;
+        const active = all('#colorSwatch a.active').filter(a => colorKey(a.textContent) === colorKey(color));
+        if (active.length !== 1 || !/^cSwatch\d+$/.test(active[0].id)) return false;
+        const inputs = all('.gR[id^="wh_"] input[aria-label="quantity"]');
+        return inputs.length && inputs.every(input => input.getAttribute('csid') === active[0].id.slice('cSwatch'.length));
+      }, 'S&S selected color and inventory did not verify.', 25000);
       return {};
     },
-    inventory: async () => ({ inventory: all('.gR[id^="wh_"]').map(r => ({
+    inventory: async () => {
+      await waitFor(() => all('.gR[id^="wh_"] .shippingRowLabel').some(e => /\b\d{1,2}\/\d{1,2}\b/.test(e.textContent)), 'S&S warehouse delivery estimates did not load.', 25000);
+      return { inventory: all('.gR[id^="wh_"]').map(r => ({
       warehouse: norm(r.querySelector('.warehouse')?.textContent), eta_text: norm(r.querySelector('.shippingRowLabel')?.textContent),
       stock: Object.fromEntries([...r.querySelectorAll('.i')].filter(c => c.querySelector('input[aria-label="quantity"]')).map(c => [norm(c.querySelector('.sr-only')?.textContent), norm(c.querySelector('.quantity')?.textContent)]))
-    })).filter(r => r.warehouse) }),
+    })).filter(r => r.warehouse) };
+    },
     cart: async () => { await waitFor(() => document.querySelector('#M_M_zCart'), 'S&S cart did not load.'); return { rows: cartRows() }; },
     verified_cart: async ({ lines }) => {
       if (!Array.isArray(lines) || !lines.length) throw Error('S&S expected allocation is missing.');

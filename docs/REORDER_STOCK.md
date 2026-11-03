@@ -52,6 +52,11 @@ layouts whose main links have no layout box. Separate color-count links are
 excluded. Ambiguous results stop rather than selecting another brand with the
 same style number. Color matching is exact
 after punctuation/case and grey/gray normalization.
+The extension waits for the initial color and inventory to load before selecting
+another color. It invokes only the matched swatch's known S&S color handler from
+the page context and verifies the requested color and every inventory color ID.
+Warehouse estimates must finish loading before allocation. A changed handler or
+missing estimate stops for review before quantities are entered.
 
 S&S prefers Reading, then one other warehouse that can fill all products/sizes,
 ordered by delivery date. Warehouse splits are a last resort. Every size must be
@@ -69,7 +74,7 @@ order reference, and the exact labelled PO. Receipt parsing covers the observed
 `Order Confirmation: <number>` heading, including combined PO/warehouse labels,
 as well as the older numbered confirmation format. A live S&S checkout and its
 confirmation were verified through an existing logged-in Chrome session.
-S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.2** extension in a
+S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.3** extension in a
 normally opened Chrome profile. The local worker sends stock instructions to
 one dedicated S&S tab without launching WebDriver, activating the tab, or using
 the computer's mouse/keyboard. A successful signed-in background/minimized
@@ -118,7 +123,7 @@ iframe context, using the existing production-date verification recovery.
 
 1. Restart the local Automation app and refresh the dashboard when no task is
    running. Do not start a second server.
-2. Install/reload **CRM Order Assistant 1.7.2** from
+2. Install/reload **CRM Order Assistant 1.7.3** from
    `crm-order-dark-mode-extension` at `chrome://extensions` in the normal Chrome
    profile you want to use. Existing CRM page scripts stay scoped to CRM.
 3. Open the extension popup and select **Connect this browser** under **S&S

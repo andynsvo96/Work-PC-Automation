@@ -17,6 +17,27 @@ export function allowedNavigation(value) {
   } catch { return false; }
 }
 
+// Fixed page-context operation for S&S's JavaScript color links. No supplied
+// script, selector, function name, credentials, or checkout action is accepted.
+export function selectSxsColorInMain({ color, anchorId, orderId, deadline }) {
+  if (location.origin !== 'https://www.ssactivewear.com' || !/^\/p\/[^/]+\/[^/]+\/?$/.test(location.pathname)
+      || !/^\d{7}$/.test(orderId || '') || !Number.isFinite(deadline) || Date.now() >= deadline * 1000
+      || !document.querySelector('a[href="/myaccount/signout"],a[href="https://www.ssactivewear.com/myaccount/signout"]')) throw Error('S&S color selection requires the signed-in Reorder product page.');
+  const key = value => String(value || '').toUpperCase().replace(/GREY/g, 'GRAY').replace(/[^A-Z0-9]/g, '');
+  const matches = [...document.querySelectorAll('#colorSwatch a')].filter(a => key(a.textContent) === key(color));
+  if (matches.length !== 1 || matches[0].id !== anchorId || !/^cSwatch\d+$/.test(anchorId || '')) throw Error('S&S color selector changed before selection.');
+  const anchor = matches[0], href = anchor.getAttribute('href') || '';
+  const args = href.match(/^javascript:\s*iColor\(\s*'(\d+)'\s*,\s*'(false|true)'\s*,\s*'(false|true)'\s*,\s*'(false|true)'\s*,\s*'([^']*)'\s*\);?\s*$/i);
+  if (!args || anchorId !== 'cSwatch' + args[1] || typeof globalThis.iColor !== 'function') throw Error('S&S color selector handler is unavailable or changed.');
+  if (args[5]) {
+    const video = new URL(args[5]);
+    if (video.protocol !== 'https:' || !['sportswearcollection-productvideos.s3.us-east-2.amazonaws.com', 'cdn.ssactivewear.com'].includes(video.hostname)
+        || video.username || video.password || args[5].length > 1200) throw Error('Unexpected S&S color video resource.');
+  }
+  globalThis.iColor(...args.slice(1));
+  return { success: true, anchor_id: anchorId };
+}
+
 export function createSxsWorker(api, fetcher = fetch) {
   let pumping = false, probing = false, writes = Promise.resolve();
   const read = async () => {
@@ -129,6 +150,13 @@ export function createSxsWorker(api, fetcher = fetch) {
       await api.tabs.update(tab.id, { url: command.payload.url, autoDiscardable: false });
       const loaded = await waitTab(tab.id);
       return { url: loaded.url };
+    }
+    if (command.operation === 'color') {
+      const ready = await pageCommand(tab.id, { ...command, operation: 'color_ready' });
+      const result = await api.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN',
+        func: selectSxsColorInMain, args: [{ color: command.payload.color, anchorId: ready.anchor_id, orderId: command.order_id, deadline: command.deadline }] });
+      if (result?.length !== 1 || result[0].result?.success !== true || result[0].result.anchor_id !== ready.anchor_id) throw Error('S&S color selector did not confirm its invocation.');
+      return pageCommand(tab.id, command);
     }
     return pageCommand(tab.id, command);
   }
