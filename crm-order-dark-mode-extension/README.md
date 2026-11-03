@@ -44,7 +44,8 @@ are claimed once, never replayed after an extension restart. A lost response
 permits reading supplier confirmation without another click. Uncertain
 submissions require review, and pre-existing cart stock is retained.
 
-The signed-in background browser check and product matching have passed live.
+Signed-in browser checks and product operations have passed live in both
+background tabs and minimized windows on Windows Chrome.
 Search reads cards' style, brand, and title even when accessibility layout gives the
 main product link no layout box; color-count links cannot replace descriptions.
 The check explicitly minimizes only its newly created check window and
@@ -53,8 +54,11 @@ limited to product color and warehouse shipping labels; they contain no credenti
 Color selection waits for product initialization, invokes only the matched
 swatch's known selector in the page context, then verifies color, inventory color
 IDs, and loaded warehouse dates. No arbitrary script or function name is accepted.
-Reload the extension and rerun its check after updating. Minimized behavior and
-extension checkout still need live verification. Offline tests cover page
+The live check matched Gildan 5000, selected Black, read stock and delivery dates
+from 11 warehouses, and returned to the same empty cart. No quantity entry,
+checkout, purchase, or CRM edit ran in that check. Live cart entry and extension
+checkout still need verification with a new eligible order. Reload the extension
+and rerun its check after updating code. Offline tests cover page
 operations, local origin restrictions, duplicate-delivery prevention, and tab
 ownership. See the [Reorder guide](../docs/REORDER_STOCK.md).
 

@@ -80,9 +80,14 @@ S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.3** extension in a
 normally opened Chrome profile. The local worker sends stock instructions to
 one dedicated S&S tab without launching WebDriver, activating the tab, or using
 the computer's mouse/keyboard. A successful signed-in background/minimized
-browser check is required first. The signed-in background check has passed live;
-minimized behavior and live extension ordering remain unverified
-until tested; offline coverage alone does not establish S&S compatibility.
+browser check is required first. Signed-in checks and the product workflow have
+passed live in both background-tab and minimized-window modes on Windows Chrome.
+The local Python worker matched G500 to Gildan 5000, selected Black, read stock
+and delivery dates from 11 warehouses, then returned to the unchanged empty cart.
+Both cart and product pages stayed hidden; the minimized run also verified that
+the window remained minimized. Those diagnostics prohibited quantity entry,
+checkout, purchase, and CRM changes. Live extension cart/checkout ordering remains
+unverified until tested with a new eligible order.
 
 A November 2, 2026 comparison used the installed Chrome 156 and Firefox 159:
 
@@ -192,8 +197,8 @@ loads still requires resolving access; cookie-banner handling does not suppress
 that error.
 
 Restart the app, reload the extension, and refresh CRM pages/dashboard after
-updating. Each Chrome profile opts in separately. Live minimized operation,
-checkout, and macOS behavior remain unverified until checked on that setup.
+updating. Each Chrome profile opts in separately. Live cart/checkout ordering and
+macOS behavior remain unverified until checked on that setup.
 
 ## Receipts and recovery
 
