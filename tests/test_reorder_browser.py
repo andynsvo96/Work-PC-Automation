@@ -102,7 +102,7 @@ setTimeout(()=>banner.style.display='block',150);
             source = source.replace('location.pathname', json.dumps(path))
         self.driver.execute_script("""
 window.chrome=window.chrome||{};
-window.chrome.runtime={id:'fixture-extension',onMessage:{addListener:fn=>window.sxsFixtureMessage=fn}};
+window.chrome.runtime={id:'fixture-extension',getManifest:()=>({version:'1.7.8'}),onMessage:{addListener:fn=>window.sxsFixtureMessage=fn}};
 const signedIn=document.createElement('a');signedIn.href='https://www.ssactivewear.com/myaccount/signout';signedIn.textContent='Sign Out';document.body.append(signedIn);
 """)
         self.driver.execute_script(source)
@@ -358,6 +358,35 @@ wrapper.onclick=()=>window.confirmClicks++;root.append(wrapper);
         self.assertTrue(self._sxs_page_command('review', {'po': '5000001'})['success'])
         self.assertTrue(self._sxs_checkout_command('begin_submit', {'po': '5000001'})['success'])
         self.assertTrue(self._sxs_checkout_command('confirm_submit', {'po': '5000001'})['success'])
+        self.assertEqual(self.driver.execute_script('return window.confirmClicks'), 1)
+
+    def test_extension_confirmation_uses_live_messagebox_while_legacy_popup_stays_hidden(self):
+        self._install_sxs_page_fixture()
+        self.driver.execute_script("""
+document.querySelector('#M_M_zCheckoutBTN').onclick=()=>{
+ window.completeClicks++;
+ const overlay=document.createElement('div');overlay.className='messagebox_overlay';overlay.setAttribute('role','presentation');
+ overlay.innerHTML='<div class="messagebox" role="dialog"><p>Are you sure you want to submit your order?</p><div class="messagebox_buttons"><button id="live-confirm">Confirm</button><button>Cancel</button></div></div>';
+ document.body.append(overlay);overlay.querySelector('#live-confirm').onclick=()=>window.confirmClicks++;
+};
+const unrelated=document.createElement('div');unrelated.className='messagebox_overlay';
+unrelated.innerHTML='<div class="messagebox" role="dialog"><p>Save unrelated preferences?</p><button>Confirm</button></div>';
+unrelated.querySelector('button').onclick=()=>window.confirmClicks+=100;document.body.append(unrelated);
+""")
+        self.assertTrue(self._sxs_page_command('review', {'po': '5000001'})['success'])
+        self.assertTrue(self._sxs_checkout_command('begin_submit', {'po': '5000001'})['success'])
+        state = self._sxs_page_command('health')['result']
+        self.assertEqual(state['extension_version'], '1.7.8')
+        self.assertEqual([c['id'] for c in state['confirmation_controls']], ['live-confirm'])
+        self.assertTrue(self._sxs_checkout_command('confirm_submit', {'po': '5000001'})['success'])
+        self.assertEqual(self.driver.execute_script('return [window.completeClicks,window.confirmClicks]'), [1, 1])
+        self.driver.execute_script("""
+const extra=document.createElement('div');extra.className='messagebox_overlay';
+extra.innerHTML='<div class="messagebox" role="dialog"><p>Are you sure you want to submit your order?</p><button>Confirm</button></div>';document.body.append(extra);
+""")
+        denied = self._sxs_checkout_command('confirm_submit', {'po': '5000001'})
+        self.assertFalse(denied['success'])
+        self.assertIn('ambiguous', denied['message'])
         self.assertEqual(self.driver.execute_script('return window.confirmClicks'), 1)
 
     def test_extension_page_refuses_wrong_po_and_expired_or_unowned_mutations(self):

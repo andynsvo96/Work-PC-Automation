@@ -131,6 +131,21 @@ class SxsBridgeTests(unittest.TestCase):
 
 
 class SxsExtensionAdapterTests(unittest.TestCase):
+    def test_stale_or_unknown_running_extension_stops_before_stock_actions(self):
+        for version in (None, '1.7.7', 'invalid'):
+            with self.subTest(version=version):
+                session = mock.Mock()
+                session.call.return_value = {'url': 'https://www.ssactivewear.com/checkout/cart', 'signed_in': True, 'cart_container': True, 'extension_version': version}
+                browser = SxsExtensionBrowser('5000001', session=session)
+                with self.assertRaisesRegex(RuntimeError, 'Reload CRM Order Assistant 1.7.8'):
+                    browser.ensure_login()
+                self.assertEqual([c.args[0] for c in session.call.call_args_list], ['navigate', 'health'])
+        for version in ('1.7.8', '1.7.9', '1.7.8.1'):
+            with self.subTest(version=version):
+                session = mock.Mock()
+                session.call.return_value = {'url': 'https://www.ssactivewear.com/checkout/cart', 'signed_in': True, 'cart_container': True, 'extension_version': version}
+                SxsExtensionBrowser('5000001', session=session).ensure_login()
+
     def test_stock_addition_waits_for_the_expected_cart_quantity_without_readding(self):
         session = mock.Mock()
         session.call.return_value = {'url': 'https://www.ssactivewear.com/checkout/cart', 'rows': [{'quantity': 1}]}

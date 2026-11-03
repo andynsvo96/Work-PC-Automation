@@ -122,20 +122,19 @@
     }, 'S&S cart quantities did not finish loading. Review the cart before retrying.', 25000);
   }
   function confirmationControls() {
-    const root = document.getElementById('M_M_zConfirmOrderPopup_PW-1')
-      || document.getElementById('M_M_zConfirmOrderPopup_PWC-1');
-    if (!root || !/Are you sure you want to submit your order\?/i.test(norm(root.textContent))) return [];
-    const controls = [...root.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"],.dxbButton')]
+    const roots = all('#M_M_zConfirmOrderPopup_PW-1,#M_M_zConfirmOrderPopup_PWC-1,.messagebox_overlay .messagebox[role="dialog"]')
+      .filter(root => /Are you sure you want to submit your order\?/i.test(norm(root.textContent)));
+    const controls = [...new Set(roots.flatMap(root => [...root.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"],.dxbButton')]))]
       .filter(e => visible(e) && !e.disabled && /^(?:confirm|yes)$/i.test(norm(e.value || e.innerText || e.getAttribute('aria-label'))));
     // DevExpress can expose one button as a wrapper and a nested submit input.
     return controls.filter(e => !controls.some(other => other !== e && other.contains(e)));
   }
   function confirmationDiagnostics() {
-    const root = document.getElementById('M_M_zConfirmOrderPopup_PW-1')
-      || document.getElementById('M_M_zConfirmOrderPopup_PWC-1');
-    return root ? { id: root.id, display: getComputedStyle(root).display, visibility: getComputedStyle(root).visibility,
+    return all('#M_M_zConfirmOrderPopup_PW-1,.messagebox_overlay .messagebox[role="dialog"]').map(root => ({
+      id: root.id, classes: root.className, display: getComputedStyle(root).display, visibility: getComputedStyle(root).visibility,
+      order_confirmation: /Are you sure you want to submit your order\?/i.test(norm(root.textContent)),
       controls: [...root.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"],.dxbButton')].map(e => ({
-        id: e.id, tag: e.tagName, label: norm(e.value || e.innerText || e.getAttribute('aria-label')).slice(0, 80), visible: visible(e), disabled: !!e.disabled })) } : null;
+        id: e.id, tag: e.tagName, label: norm(e.value || e.innerText || e.getAttribute('aria-label')).slice(0, 80), visible: visible(e), disabled: !!e.disabled })) }));
   }
   function checkoutState(po, fill = false) {
     if (!/^\d{7}$/.test(String(po))) throw Error('S&S PO must be the seven-digit CRM order number.');
@@ -152,6 +151,7 @@
   }
   const commands = {
     health: async () => ({
+      extension_version: chrome.runtime.getManifest?.().version || null,
       signed_in: signedIn(),
       cart_container: !!document.querySelector('#M_M_zCart'), hidden: document.hidden,
       cart_count: Number.isInteger(cartCount()) ? cartCount() : null,

@@ -6,6 +6,8 @@ from urllib.parse import quote, urlsplit
 from ssactivewear_bridge import SxsSession, SxsBridgeError
 import ssactivewear_ordering as sxs
 
+MIN_EXTENSION_VERSION = (1, 7, 8)
+
 
 class SxsExtensionBrowser:
     is_sxs_extension = True
@@ -31,6 +33,9 @@ class SxsExtensionBrowser:
     def ensure_login(self):
         self.get(sxs.CART_URL)
         state = self.call('health')
+        version = str(state.get('extension_version') or '')
+        if not re.fullmatch(r'\d+\.\d+\.\d+(?:\.\d+)?', version) or tuple(map(int, version.split('.'))) < MIN_EXTENSION_VERSION:
+            raise RuntimeError('Reload CRM Order Assistant 1.7.8 or newer, then repeat its S&S browser check. The running extension version is ' + (version or 'unknown') + '.')
         if state.get('signed_in') is not True or state.get('cart_container') is not True:
             raise RuntimeError('Sign in to S&S normally in the connected browser, then run the extension browser check. No credentials are sent through the extension.')
 

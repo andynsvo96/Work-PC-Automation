@@ -86,7 +86,8 @@ Philadelphia, PA 19154**, every warehouse uses **UPS Ground**, payment is **Net 
 and PO Number is exactly the CRM order number. It uses Complete Order and the
 final confirmation once (shown as Confirm in the observed live Chrome session and
 Yes in the supplied archive). Selection is restricted to one visible Confirm/Yes
-control in the named order confirmation popup; hidden legacy controls are ignored
+control in the current message-box dialog or older named confirmation popup,
+requiring the exact order-submission prompt; hidden legacy controls are ignored
 and nested button inputs count as one action. Competing controls stop before a
 click. Both Complete Order and Confirm execute once in the page context after
 rechecking the session PO, shipping address, UPS Ground, and Net 60; follow-up
@@ -95,11 +96,14 @@ order reference, and the exact labelled PO. Receipt parsing covers the observed
 `Order Confirmation: <number>` heading, including combined PO/warehouse labels,
 as well as the older numbered confirmation format. A live S&S checkout and its
 confirmation were verified through an existing logged-in Chrome session.
-S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.7** extension in a
+S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.8** extension in a
 normally opened Chrome profile. The local worker sends stock instructions to
 one dedicated S&S tab without launching WebDriver, activating the tab, or using
 the computer's mouse/keyboard. A successful signed-in background/minimized
-browser check is required first. Signed-in checks and the product workflow have
+browser check is required first. The worker also checks the actual running
+extension version (1.7.8 or newer) before entering stock, so a cached older
+background controller requires reloading before checkout can run. Signed-in
+checks and the product workflow have
 passed live in both background-tab and minimized-window modes on Windows Chrome.
 The local Python worker matched G500 to Gildan 5000, selected Black, read stock
 and delivery dates from 11 warehouses, then returned to the unchanged empty cart.
@@ -149,7 +153,7 @@ iframe context, using the existing production-date verification recovery.
 
 1. Restart the local Automation app and refresh the dashboard when no task is
    running. Do not start a second server.
-2. Install/reload **CRM Order Assistant 1.7.7** from
+2. Install/reload **CRM Order Assistant 1.7.8** from
    `crm-order-dark-mode-extension` at `chrome://extensions` in the normal Chrome
    profile you want to use. Existing CRM page scripts stay scoped to CRM.
 3. Open the extension popup and select **Connect this browser** under **S&S

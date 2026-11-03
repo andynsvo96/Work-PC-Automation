@@ -95,9 +95,10 @@ export function clickSxsCheckoutControlInMain({ operation, orderId, deadline, po
   if (operation === 'begin_submit') {
     controls = [...document.querySelectorAll('#M_M_zCheckoutBTN')].filter(e => visible(e) && !e.disabled);
   } else if (operation === 'confirm_submit') {
-    const root = document.getElementById('M_M_zConfirmOrderPopup_PW-1') || document.getElementById('M_M_zConfirmOrderPopup_PWC-1');
-    if (!root || !/Are you sure you want to submit your order\?/i.test(norm(root.textContent))) throw Error('S&S order confirmation popup changed.');
-    controls = [...root.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"],.dxbButton')]
+    const roots = [...document.querySelectorAll('#M_M_zConfirmOrderPopup_PW-1,#M_M_zConfirmOrderPopup_PWC-1,.messagebox_overlay .messagebox[role="dialog"]')]
+      .filter(root => /Are you sure you want to submit your order\?/i.test(norm(root.textContent)));
+    if (!roots.length) throw Error('S&S order confirmation popup changed.');
+    controls = [...new Set(roots.flatMap(root => [...root.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"],.dxbButton')]))]
       .filter(e => visible(e) && !e.disabled && /^(?:confirm|yes)$/i.test(norm(e.value || e.innerText || e.getAttribute('aria-label'))));
     controls = controls.filter(e => !controls.some(other => other !== e && other.contains(e)));
   } else { throw Error('Unsupported S&S checkout control.'); }
