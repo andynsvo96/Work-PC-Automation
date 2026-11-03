@@ -96,6 +96,7 @@ setTimeout(()=>banner.style.display='block',150);
         source = (ROOT / 'crm-order-dark-mode-extension/sxs-page.js').read_text(encoding='utf-8')
         source = source.replace("location.origin !== 'https://www.ssactivewear.com'", "location.protocol !== 'file:'")
         source = source.replace('parsed.origin !== location.origin', "parsed.origin !== 'https://www.ssactivewear.com'")
+        source = source.replace('url.origin === location.origin', "url.origin === 'https://www.ssactivewear.com'")
         self.driver.execute_script("""
 window.chrome=window.chrome||{};
 window.chrome.runtime={id:'fixture-extension',onMessage:{addListener:fn=>window.sxsFixtureMessage=fn}};
@@ -124,6 +125,25 @@ const signedIn=document.createElement('a');signedIn.href='https://www.ssactivewe
         confirmation = self._sxs_page_command('confirmation')['result']['text']
         self.assertEqual(sxs.confirmation_from_text(confirmation, '5000001', 'https://www.ssactivewear.com/checkout/confirmation')['order_number'], '98765432')
         self.assertEqual(self.driver.execute_script('return [window.completeClicks,window.confirmClicks]'), [1, 1])
+
+    def test_extension_search_reads_product_cards_when_links_have_no_layout_box(self):
+        self.driver.execute_script("""
+const products=document.createElement('div');products.id='M_M_zProducts';
+products.innerHTML=`
+<div class="gProduct"><a style="display:contents" href="https://www.ssactivewear.com/p/gildan/5000"><div class="gName">5000</div><ins class="gBrand">Gildan</ins><ins class="gTitle">Unisex Heavy Cotton T-Shirt</ins></a><a href="https://www.ssactivewear.com/p/gildan/5000">+72 more colors</a></div>
+<div class="gProduct"><a style="display:contents" href="https://www.ssactivewear.com/p/bayside/5000"><div class="gName">5000</div><ins class="gBrand">Bayside</ins><ins class="gTitle">Unisex USA-Made Fine Jersey T-Shirt</ins></a></div>
+<div class="gProduct"><a style="display:contents" href="https://www.ssactivewear.com/p/gildan/5000b"><div class="gName">5000B</div><ins class="gBrand">Gildan</ins><ins class="gTitle">Youth Heavy Cotton T-Shirt</ins></a></div>
+<div class="gProduct"><div class="gName">5000</div><a href="https://www.ssactivewear.com/p/gildan/5000">5000</a><a href="https://www.ssactivewear.com/p/bayside/5000">5000</a><ins class="gBrand">Gildan</ins><ins class="gTitle">Heavy Cotton T-Shirt</ins></div>`;
+document.body.append(products);
+""")
+        self._install_sxs_page_fixture()
+        result = self._sxs_page_command('candidates')
+        self.assertTrue(result['success'], result)
+        candidates = result['result']['candidates']
+        self.assertEqual(len(candidates), 3)
+        selected = sxs.select_product({'product_id': 'G500', 'product_name': 'Gildan Heavy Cotton T-Shirt'}, candidates)
+        self.assertEqual(selected['url'], 'https://www.ssactivewear.com/p/gildan/5000')
+        self.assertNotIn('more colors', selected['title'])
 
     def test_extension_page_refuses_wrong_po_and_expired_or_unowned_mutations(self):
         self._install_sxs_page_fixture()

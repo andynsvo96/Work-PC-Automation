@@ -46,8 +46,11 @@ NJ and shipped stock are prepared as separate purchases when a split requires NJ
 
 S&S ordering is used only by Reorder. It searches `https://www.ssactivewear.com/ps/<style>`,
 including supported style conversions such as G500 to 5000, and requires a matching
-brand, style, and sufficiently close description. Ambiguous results stop rather
-than selecting another brand with the same style number. Color matching is exact
+brand, style, and sufficiently close description. Search reads the visible
+product card's labelled style, brand, and description, including accessibility
+layouts whose main links have no layout box. Separate color-count links are
+excluded. Ambiguous results stop rather than selecting another brand with the
+same style number. Color matching is exact
 after punctuation/case and grey/gray normalization.
 
 S&S prefers Reading, then one other warehouse that can fill all products/sizes,
@@ -66,11 +69,12 @@ order reference, and the exact labelled PO. Receipt parsing covers the observed
 `Order Confirmation: <number>` heading, including combined PO/warehouse labels,
 as well as the older numbered confirmation format. A live S&S checkout and its
 confirmation were verified through an existing logged-in Chrome session.
-S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.0** extension in a
+S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.1** extension in a
 normally opened Chrome profile. The local worker sends stock instructions to
 one dedicated S&S tab without launching WebDriver, activating the tab, or using
 the computer's mouse/keyboard. A successful signed-in background/minimized
-browser check is required first. Live extension ordering remains unverified
+browser check is required first. The signed-in background check has passed live;
+minimized behavior and live extension ordering remain unverified
 until tested; offline coverage alone does not establish S&S compatibility.
 
 A November 2, 2026 comparison used the installed Chrome 156 and Firefox 159:
@@ -114,7 +118,7 @@ iframe context, using the existing production-date verification recovery.
 
 1. Restart the local Automation app and refresh the dashboard when no task is
    running. Do not start a second server.
-2. Install/reload **CRM Order Assistant 1.7.0** from
+2. Install/reload **CRM Order Assistant 1.7.1** from
    `crm-order-dark-mode-extension` at `chrome://extensions` in the normal Chrome
    profile you want to use. Existing CRM page scripts stay scoped to CRM.
 3. Open the extension popup and select **Connect this browser** under **S&S
@@ -181,8 +185,8 @@ loads still requires resolving access; cookie-banner handling does not suppress
 that error.
 
 Restart the app, reload the extension, and refresh CRM pages/dashboard after
-updating. Each Chrome profile opts in separately. Live background/minimized
-operation and macOS behavior remain unverified until checked on that setup.
+updating. Each Chrome profile opts in separately. Live minimized operation,
+checkout, and macOS behavior remain unverified until checked on that setup.
 
 ## Receipts and recovery
 

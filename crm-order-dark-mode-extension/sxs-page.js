@@ -94,7 +94,22 @@
     }),
     candidates: async () => {
       const read = () => {
-        const rows = all('a[href*="/p/"]').filter(visible).map(a => ({ url: a.href, title: norm(a.innerText) })).filter(x => x.title);
+        // Product links can use display:contents in S&S's accessibility layout.
+        // Read the visible card's labelled fields rather than the link's box or
+        // its separate "+72 more colors" link.
+        const rows = all('#M_M_zProducts .gProduct').filter(visible).flatMap(card => {
+          const urls = [...new Set([...card.querySelectorAll('a[href*="/p/"]')].map(a => {
+            try {
+              const url = new URL(a.href);
+              return url.origin === location.origin && /^\/p\/[^/]+\/[^/]+\/?$/.test(url.pathname)
+                ? url.origin + url.pathname.replace(/\/$/, '') : '';
+            } catch { return ''; }
+          }).filter(Boolean))];
+          const fields = ['.gName', '.gBrand', '.gTitle'].map(selector => norm(card.querySelector(selector)?.textContent));
+          return urls.length === 1 && fields.every(Boolean) ? [{ url: urls[0], title: fields.join(' ') }] : [];
+        });
+        if (!rows.length) rows.push(...all('a[href*="/p/"]').filter(visible)
+          .filter(a => !a.closest('.gProduct')).map(a => ({ url: a.href, title: norm(a.innerText) })).filter(x => x.title));
         if (/^\/p\/[^/]+\/[^/]+\/?$/.test(location.pathname)) {
           const title = norm(document.querySelector('#productMainContainer')?.innerText);
           if (title) rows.push({ url: location.origin + location.pathname.replace(/\/$/, ''), title });

@@ -15,10 +15,10 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
-## S&S Reorder browser — 1.7.0
+## S&S Reorder browser — 1.7.1
 
 S&S Reorder can use a normally opened Chrome profile through the extension,
-without launching WebDriver. Install/reload version **1.7.0** in that profile,
+without launching WebDriver. Install/reload version **1.7.1** in that profile,
 restart the local Automation app, and refresh CRM pages/dashboard.
 
 1. Open the popup and select **Connect this browser** under **S&S Reorder**.
@@ -44,9 +44,13 @@ are claimed once, never replayed after an extension restart. A lost response
 permits reading supplier confirmation without another click. Uncertain
 submissions require review, and pre-existing cart stock is retained.
 
-S&S access and background/minimized checkout need live verification. Offline
-tests cover page operations, local origin restrictions, duplicate-delivery
-prevention, and tab ownership. See the [Reorder guide](../docs/REORDER_STOCK.md).
+The signed-in background browser check has passed live. Version 1.7.1 reads
+search cards' style, brand, and title even when accessibility layout gives the
+main product link no layout box; color-count links cannot replace descriptions.
+Reload the extension and rerun its check after updating. Minimized behavior and
+extension checkout still need live verification. Offline tests cover page
+operations, local origin restrictions, duplicate-delivery prevention, and tab
+ownership. See the [Reorder guide](../docs/REORDER_STOCK.md).
 
 ## Open Applicable and Select Applicable
 
