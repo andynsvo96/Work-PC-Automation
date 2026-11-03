@@ -85,12 +85,15 @@ S&S checkout verifies the shipping-address section is **2727 Commerce Way,
 Philadelphia, PA 19154**, every warehouse uses **UPS Ground**, payment is **Net 60**,
 and PO Number is exactly the CRM order number. It uses Complete Order and the
 final confirmation once (shown as Confirm in the observed live Chrome session and
-Yes in the supplied archive), then requires a supplier success page, a unique
+Yes in the supplied archive). Selection is restricted to one visible Confirm/Yes
+control in the named order confirmation popup; hidden legacy controls are ignored
+and nested button inputs count as one action. Competing controls stop before a
+click. Confirmation then requires a supplier success page, a unique
 order reference, and the exact labelled PO. Receipt parsing covers the observed
 `Order Confirmation: <number>` heading, including combined PO/warehouse labels,
 as well as the older numbered confirmation format. A live S&S checkout and its
 confirmation were verified through an existing logged-in Chrome session.
-S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.5** extension in a
+S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.6** extension in a
 normally opened Chrome profile. The local worker sends stock instructions to
 one dedicated S&S tab without launching WebDriver, activating the tab, or using
 the computer's mouse/keyboard. A successful signed-in background/minimized
@@ -144,7 +147,7 @@ iframe context, using the existing production-date verification recovery.
 
 1. Restart the local Automation app and refresh the dashboard when no task is
    running. Do not start a second server.
-2. Install/reload **CRM Order Assistant 1.7.5** from
+2. Install/reload **CRM Order Assistant 1.7.6** from
    `crm-order-dark-mode-extension` at `chrome://extensions` in the normal Chrome
    profile you want to use. Existing CRM page scripts stay scoped to CRM.
 3. Open the extension popup and select **Connect this browser** under **S&S

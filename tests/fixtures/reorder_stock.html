@@ -17,7 +17,7 @@
 <select id="M_M_zTermsCB"><option>Credit/Debit Card</option><option selected>Net 60</option><option>eCheck</option></select>
 <label for="M_M_zPONumberTB">PO Number</label><input id="M_M_zPONumberTB" type="text" maxlength="20">
 <input type="button" id="M_M_zCheckoutBTN" value="Complete Order">
-<div id="confirm" style="display:none"><p>Are you sure you want to submit your order?</p><button id="M_M_zConfirmOrderPopup_zCompleteBTN">YES</button></div>
+<div id="M_M_zConfirmOrderPopup_PW-1" style="display:none"><p>Are you sure you want to submit your order?</p><button id="M_M_zConfirmOrderPopup_zCompleteBTN">YES</button></div>
 <script>
 window.angular={element:row=>({scope:()=>({inventoryOrder:{id:'fixture-'+row.rowIndex,assignedToCurrentSubcontractor:row.dataset.assigned==='true'}})})};
 const sizes=['S','M','L','XL','2XL','3XL','4XL','5XL'];
@@ -43,6 +43,6 @@ window.updateFixtureCartCount=()=>{
  if(document.querySelector('#qtyMiniCart'))document.querySelector('#qtyMiniCart').textContent=String(total);
 };
 window.completeClicks=0;window.confirmClicks=0;
-document.querySelector('#M_M_zCheckoutBTN').onclick=()=>{window.completeClicks++;document.querySelector('#confirm').style.display='block'};
-document.querySelector('#M_M_zConfirmOrderPopup_zCompleteBTN').onclick=()=>{window.confirmClicks++;document.querySelector('#confirm').innerHTML=`<h2>Order Confirmation</h2>Thank you for your order! Order Number: 98765432 PO Number: ${document.querySelector('#M_M_zPONumberTB').value}`};
+document.querySelector('#M_M_zCheckoutBTN').onclick=()=>{window.completeClicks++;document.querySelector('#M_M_zConfirmOrderPopup_PW-1').style.display='block'};
+document.querySelector('#M_M_zConfirmOrderPopup_zCompleteBTN').onclick=()=>{window.confirmClicks++;document.querySelector('#M_M_zConfirmOrderPopup_PW-1').innerHTML=`<h2>Order Confirmation</h2>Thank you for your order! Order Number: 98765432 PO Number: ${document.querySelector('#M_M_zPONumberTB').value}`};
 </script></body></html>

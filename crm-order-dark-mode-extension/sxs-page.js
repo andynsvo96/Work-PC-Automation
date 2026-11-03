@@ -121,6 +121,22 @@
       return total === count && (expectedQuantity === undefined || total === expectedQuantity) && rows;
     }, 'S&S cart quantities did not finish loading. Review the cart before retrying.', 25000);
   }
+  function confirmationControls() {
+    const root = document.getElementById('M_M_zConfirmOrderPopup_PW-1')
+      || document.getElementById('M_M_zConfirmOrderPopup_PWC-1');
+    if (!root || !/Are you sure you want to submit your order\?/i.test(norm(root.textContent))) return [];
+    const controls = [...root.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"],.dxbButton')]
+      .filter(e => visible(e) && !e.disabled && /^(?:confirm|yes)$/i.test(norm(e.value || e.innerText || e.getAttribute('aria-label'))));
+    // DevExpress can expose one button as a wrapper and a nested submit input.
+    return controls.filter(e => !controls.some(other => other !== e && other.contains(e)));
+  }
+  function confirmationDiagnostics() {
+    const root = document.getElementById('M_M_zConfirmOrderPopup_PW-1')
+      || document.getElementById('M_M_zConfirmOrderPopup_PWC-1');
+    return root ? { id: root.id, display: getComputedStyle(root).display, visibility: getComputedStyle(root).visibility,
+      controls: [...root.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"],.dxbButton')].map(e => ({
+        id: e.id, tag: e.tagName, label: norm(e.value || e.innerText || e.getAttribute('aria-label')).slice(0, 80), visible: visible(e), disabled: !!e.disabled })) } : null;
+  }
   function checkoutState(po, fill = false) {
     if (!/^\d{7}$/.test(String(po))) throw Error('S&S PO must be the seven-digit CRM order number.');
     const address = norm(document.querySelector('#M_M_zShippingContainer')?.innerText).split(/Shipping\s+(?:Options|Method)/i)[0];
@@ -140,6 +156,8 @@
       cart_container: !!document.querySelector('#M_M_zCart'), hidden: document.hidden,
       cart_count: Number.isInteger(cartCount()) ? cartCount() : null,
       checkout_ready: /^\/checkout\/?$/.test(location.pathname) && signedIn() && visible(document.querySelector('#M_M_zPONumberTB')),
+      confirmation_controls: confirmationControls().map(e => ({ id: e.id, tag: e.tagName, label: norm(e.value || e.innerText || e.getAttribute('aria-label')) })),
+      confirmation_popup: confirmationDiagnostics(),
       visibility: document.visibilityState, title: document.title,
       control_state: all('#aToCDesk, #aToCMob, #ninjaAddToCart, #zCheckoutBTN, #M_M_zCheckoutBTN, #M_M_zConfirmOrderPopup_zCompleteBTN, #M_M_zCart .cR a[aria-label="remove item"]').map(e => ({
         id: e.id, tag: e.tagName, visible: visible(e), handler: ((e.getAttribute('href') || '').match(/^javascript:\s*([A-Za-z_]\w*)\(/) || [])[1] || '' })),
@@ -296,12 +314,14 @@
     begin_submit: async ({ po }) => {
       checkoutState(po);
       unique('#M_M_zCheckoutBTN').click();
-      await waitFor(() => all('#M_M_zConfirmOrderPopup_zCompleteBTN, #M_M_zConfirmOrderPopup_zCompleteBTN_I, #M_M_zConfirmOrderPopup_zConfirmOrderYesBTN').some(visible), 'S&S final confirmation did not open.');
+      await waitFor(() => confirmationControls().length, 'S&S final confirmation did not open.');
       return {};
     },
     confirm_submit: async ({ po }) => {
       checkoutState(po);
-      unique('#M_M_zConfirmOrderPopup_zCompleteBTN, #M_M_zConfirmOrderPopup_zCompleteBTN_I, #M_M_zConfirmOrderPopup_zConfirmOrderYesBTN').click();
+      const controls = confirmationControls();
+      if (controls.length !== 1) throw Error('S&S final confirmation control is missing or ambiguous.');
+      controls[0].click();
       return { click_issued: true };
     },
     confirmation: async () => ({ text: (document.body?.innerText || '').slice(0, 50000) })

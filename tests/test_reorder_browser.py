@@ -309,6 +309,41 @@ document.querySelector('#M_M_zCart').innerHTML='<div class="cR" id="cartRow_123_
         self.assertFalse(result['success'])
         self.assertIn('login expired', result['message'])
 
+    def test_extension_confirmation_uses_the_visible_button_inside_the_order_popup(self):
+        self._install_sxs_page_fixture()
+        self.driver.execute_script("""
+document.querySelector('#M_M_zConfirmOrderPopup_zCompleteBTN').style.display='none';
+const root=document.querySelector('#M_M_zConfirmOrderPopup_PW-1');
+const button=document.createElement('button');button.id='current-sxs-confirm';button.textContent='Confirm';button.onclick=()=>window.confirmClicks++;
+root.append(button);
+const unrelated=document.createElement('button');unrelated.textContent='Confirm';unrelated.onclick=()=>window.confirmClicks+=100;document.body.append(unrelated);
+""")
+        self.assertTrue(self._sxs_page_command('review', {'po': '5000001'})['success'])
+        self.assertTrue(self._sxs_page_command('begin_submit', {'po': '5000001'})['success'])
+        controls = self._sxs_page_command('health')['result']['confirmation_controls']
+        self.assertEqual([c['id'] for c in controls], ['current-sxs-confirm'])
+        self.assertTrue(self._sxs_page_command('confirm_submit', {'po': '5000001'})['success'])
+        self.assertEqual(self.driver.execute_script('return window.confirmClicks'), 1)
+        self.driver.execute_script("const b=document.createElement('button');b.textContent='YES';document.querySelector('#M_M_zConfirmOrderPopup_PW-1').append(b)")
+        result = self._sxs_page_command('confirm_submit', {'po': '5000001'})
+        self.assertFalse(result['success'])
+        self.assertIn('ambiguous', result['message'])
+        self.assertEqual(self.driver.execute_script('return window.confirmClicks'), 1)
+
+    def test_extension_confirmation_treats_nested_devexpress_controls_as_one_button(self):
+        self._install_sxs_page_fixture()
+        self.driver.execute_script("""
+const root=document.querySelector('#M_M_zConfirmOrderPopup_PW-1');
+document.querySelector('#M_M_zConfirmOrderPopup_zCompleteBTN').remove();
+const wrapper=document.createElement('div');wrapper.id='current-sxs-confirm';wrapper.className='dxbButton';
+wrapper.innerHTML='<input type="submit" value="Confirm"><span>Confirm</span>';
+wrapper.onclick=()=>window.confirmClicks++;root.append(wrapper);
+""")
+        self.assertTrue(self._sxs_page_command('review', {'po': '5000001'})['success'])
+        self.assertTrue(self._sxs_page_command('begin_submit', {'po': '5000001'})['success'])
+        self.assertTrue(self._sxs_page_command('confirm_submit', {'po': '5000001'})['success'])
+        self.assertEqual(self.driver.execute_script('return window.confirmClicks'), 1)
+
     def test_extension_page_refuses_wrong_po_and_expired_or_unowned_mutations(self):
         self._install_sxs_page_fixture()
         denied = self._sxs_page_command('fill', {'allocations': []}, order_id='')
