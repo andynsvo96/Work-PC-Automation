@@ -114,13 +114,28 @@ const signedIn=document.createElement('a');signedIn.href='https://www.ssactivewe
 
     def _sxs_main_stock_control(self, operation, **payload):
         source = (ROOT / 'crm-order-dark-mode-extension/ssactivewear-worker.mjs').read_text(encoding='utf-8')
-        source = 'function clickSxsStockControlInMain' + source.split('export function clickSxsStockControlInMain', 1)[1].split('\nexport function createSxsWorker', 1)[0]
+        source = 'function clickSxsStockControlInMain' + source.split('export function clickSxsStockControlInMain', 1)[1].split('\nexport function clickSxsCheckoutControlInMain', 1)[0]
         # File fixtures substitute only the production HTTPS and path guards.
         source = source.replace("location.origin !== 'https://www.ssactivewear.com'", "location.protocol !== 'file:'")
         source = source.replace(r'!/^\/p\/[^/]+\/[^/]+\/?$/.test(location.pathname)', 'false')
         source = source.replace("location.pathname !== '/checkout/cart'", 'false')
         args = {**payload, 'operation': operation, 'orderId': '5000001', 'deadline': time.time() + 40}
         return self.driver.execute_script('return (' + source + ')(arguments[0]);', args)
+
+    def _sxs_main_checkout_control(self, operation, po='5000001', deadline=None):
+        source = (ROOT / 'crm-order-dark-mode-extension/ssactivewear-worker.mjs').read_text(encoding='utf-8')
+        source = 'function clickSxsCheckoutControlInMain' + source.split('export function clickSxsCheckoutControlInMain', 1)[1].split('\nexport function createSxsWorker', 1)[0]
+        source = source.replace("location.origin !== 'https://www.ssactivewear.com'", "location.protocol !== 'file:'")
+        source = source.replace(r'!/^\/checkout\/?$/.test(location.pathname)', 'false')
+        args = {'operation': operation, 'orderId': '5000001', 'po': po, 'deadline': deadline or time.time() + 40}
+        return self.driver.execute_script('return (' + source + ')(arguments[0]);', args)
+
+    def _sxs_checkout_command(self, operation, payload, deadline=None):
+        ready = self._sxs_page_command(operation + '_ready', payload, deadline=deadline)
+        if not ready['success']:
+            return ready
+        self.assertTrue(self._sxs_main_checkout_control(operation, po=payload['po'], deadline=deadline)['click_issued'])
+        return self._sxs_page_command(operation, payload, deadline=deadline)
 
     def test_extension_page_stock_and_checkout_flow_with_exact_confirmation(self):
         self._install_sxs_page_fixture()
@@ -137,7 +152,8 @@ const signedIn=document.createElement('a');signedIn.href='https://www.ssactivewe
         rows = self._sxs_page_command('verified_cart', {'lines': lines})['result']['rows']
         sxs.validate_cart(rows, lines)
         for operation in ('checkout', 'review', 'begin_submit', 'confirm_submit'):
-            result = self._sxs_page_command(operation, {'po': '5000001'})
+            command = self._sxs_checkout_command if operation in ('begin_submit', 'confirm_submit') else self._sxs_page_command
+            result = command(operation, {'po': '5000001'})
             self.assertTrue(result['success'], result)
         confirmation = self._sxs_page_command('confirmation')['result']['text']
         self.assertEqual(sxs.confirmation_from_text(confirmation, '5000001', 'https://www.ssactivewear.com/checkout/confirmation')['order_number'], '98765432')
@@ -319,13 +335,13 @@ root.append(button);
 const unrelated=document.createElement('button');unrelated.textContent='Confirm';unrelated.onclick=()=>window.confirmClicks+=100;document.body.append(unrelated);
 """)
         self.assertTrue(self._sxs_page_command('review', {'po': '5000001'})['success'])
-        self.assertTrue(self._sxs_page_command('begin_submit', {'po': '5000001'})['success'])
+        self.assertTrue(self._sxs_checkout_command('begin_submit', {'po': '5000001'})['success'])
         controls = self._sxs_page_command('health')['result']['confirmation_controls']
         self.assertEqual([c['id'] for c in controls], ['current-sxs-confirm'])
-        self.assertTrue(self._sxs_page_command('confirm_submit', {'po': '5000001'})['success'])
+        self.assertTrue(self._sxs_checkout_command('confirm_submit', {'po': '5000001'})['success'])
         self.assertEqual(self.driver.execute_script('return window.confirmClicks'), 1)
         self.driver.execute_script("const b=document.createElement('button');b.textContent='YES';document.querySelector('#M_M_zConfirmOrderPopup_PW-1').append(b)")
-        result = self._sxs_page_command('confirm_submit', {'po': '5000001'})
+        result = self._sxs_checkout_command('confirm_submit', {'po': '5000001'})
         self.assertFalse(result['success'])
         self.assertIn('ambiguous', result['message'])
         self.assertEqual(self.driver.execute_script('return window.confirmClicks'), 1)
@@ -340,8 +356,8 @@ wrapper.innerHTML='<input type="submit" value="Confirm"><span>Confirm</span>';
 wrapper.onclick=()=>window.confirmClicks++;root.append(wrapper);
 """)
         self.assertTrue(self._sxs_page_command('review', {'po': '5000001'})['success'])
-        self.assertTrue(self._sxs_page_command('begin_submit', {'po': '5000001'})['success'])
-        self.assertTrue(self._sxs_page_command('confirm_submit', {'po': '5000001'})['success'])
+        self.assertTrue(self._sxs_checkout_command('begin_submit', {'po': '5000001'})['success'])
+        self.assertTrue(self._sxs_checkout_command('confirm_submit', {'po': '5000001'})['success'])
         self.assertEqual(self.driver.execute_script('return window.confirmClicks'), 1)
 
     def test_extension_page_refuses_wrong_po_and_expired_or_unowned_mutations(self):
@@ -349,13 +365,29 @@ wrapper.onclick=()=>window.confirmClicks++;root.append(wrapper);
         denied = self._sxs_page_command('fill', {'allocations': []}, order_id='')
         self.assertFalse(denied['success'])
         self.assertIn('active Reorder', denied['message'])
-        self.assertFalse(self._sxs_page_command('begin_submit', {'po': '5000002'})['success'])
-        self.assertFalse(self._sxs_page_command('begin_submit', {'po': '5000001'}, deadline=1)['success'])
+        self.assertFalse(self._sxs_checkout_command('begin_submit', {'po': '5000002'})['success'])
+        self.assertFalse(self._sxs_checkout_command('begin_submit', {'po': '5000001'}, deadline=1)['success'])
         self.assertTrue(self._sxs_page_command('review', {'po': '5000001'})['success'])
-        self.assertTrue(self._sxs_page_command('begin_submit', {'po': '5000001'})['success'])
+        self.assertTrue(self._sxs_checkout_command('begin_submit', {'po': '5000001'})['success'])
         self.driver.execute_script("document.querySelector('#M_M_zPONumberTB').value='5000002'")
-        self.assertFalse(self._sxs_page_command('confirm_submit', {'po': '5000001'})['success'])
+        self.assertFalse(self._sxs_checkout_command('confirm_submit', {'po': '5000001'})['success'])
         self.assertEqual(self.driver.execute_script('return window.confirmClicks'), 0)
+
+    def test_page_context_checkout_rechecks_po_address_shipping_and_payment_before_clicking(self):
+        self._install_sxs_page_fixture()
+        self.assertTrue(self._sxs_page_command('review', {'po': '5000001'})['success'])
+        with self.assertRaisesRegex(Exception, 'active Reorder'):
+            self._sxs_main_checkout_control('begin_submit', po='5000002')
+        for change, restore in (
+            ("document.querySelector('#shipping-address').textContent='Wrong address'", "document.querySelector('#shipping-address').textContent='2727 Commerce Way Philadelphia, PA 19154'"),
+            ("document.querySelector('select[id$=zFreightServiceCB]').selectedIndex=0", "document.querySelector('select[id$=zFreightServiceCB]').selectedIndex=1"),
+            ("document.querySelector('#M_M_zTermsCB').selectedIndex=0", "document.querySelector('#M_M_zTermsCB').selectedIndex=1"),
+        ):
+            self.driver.execute_script(change)
+            with self.assertRaisesRegex(Exception, 'changed before the click'):
+                self._sxs_main_checkout_control('begin_submit')
+            self.driver.execute_script(restore)
+        self.assertEqual(self.driver.execute_script('return [window.completeClicks,window.confirmClicks]'), [0, 0])
 
     def test_production_note_waits_for_append_field_and_retry_keeps_history_unique(self):
         fixture = (ROOT / 'tests/fixtures/crm_append_production_note.html').as_uri()

@@ -74,6 +74,38 @@ export function clickSxsStockControlInMain({ operation, orderId, deadline, quant
   return { click_issued: true };
 }
 
+export function clickSxsCheckoutControlInMain({ operation, orderId, deadline, po }) {
+  if (location.origin !== 'https://www.ssactivewear.com' || !/^\/checkout\/?$/.test(location.pathname)
+      || !/^\d{7}$/.test(orderId || '') || po !== orderId || !Number.isFinite(deadline) || Date.now() >= deadline * 1000) throw Error('S&S checkout action does not match the active Reorder.');
+  const norm = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const visible = e => {
+    if (!e || !e.getBoundingClientRect().width || !e.getBoundingClientRect().height) return false;
+    for (let parent = e; parent; parent = parent.parentElement) {
+      const style = getComputedStyle(parent);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+    }
+    return true;
+  };
+  const address = norm(document.querySelector('#M_M_zShippingContainer')?.innerText).split(/Shipping\s+(?:Options|Method)/i)[0];
+  const methods = [...document.querySelectorAll('select[id$="zFreightServiceCB"]')].map(s => norm(s.selectedOptions[0]?.textContent));
+  if (document.querySelector('#M_M_zPONumberTB')?.value !== po || !/2727\s+Commerce\s+Way/i.test(address)
+      || !/Philadelphia,?\s+PA\s+19154/i.test(address) || norm(document.querySelector('#M_M_zTermsCB')?.selectedOptions[0]?.textContent) !== 'Net 60'
+      || !methods.length || methods.some(m => !/\bUPS Ground\b/i.test(m)) || [...document.querySelectorAll('input[type="password"]')].some(visible)) throw Error('S&S checkout PO, address, shipping, or payment changed before the click.');
+  let controls;
+  if (operation === 'begin_submit') {
+    controls = [...document.querySelectorAll('#M_M_zCheckoutBTN')].filter(e => visible(e) && !e.disabled);
+  } else if (operation === 'confirm_submit') {
+    const root = document.getElementById('M_M_zConfirmOrderPopup_PW-1') || document.getElementById('M_M_zConfirmOrderPopup_PWC-1');
+    if (!root || !/Are you sure you want to submit your order\?/i.test(norm(root.textContent))) throw Error('S&S order confirmation popup changed.');
+    controls = [...root.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"],.dxbButton')]
+      .filter(e => visible(e) && !e.disabled && /^(?:confirm|yes)$/i.test(norm(e.value || e.innerText || e.getAttribute('aria-label'))));
+    controls = controls.filter(e => !controls.some(other => other !== e && other.contains(e)));
+  } else { throw Error('Unsupported S&S checkout control.'); }
+  if (controls.length !== 1) throw Error('S&S checkout control is missing or ambiguous.');
+  controls[0].click();
+  return { click_issued: true };
+}
+
 export function createSxsWorker(api, fetcher = fetch) {
   let pumping = false, probing = false, writes = Promise.resolve();
   const read = async () => {
@@ -201,6 +233,13 @@ export function createSxsWorker(api, fetcher = fetch) {
         func: clickSxsStockControlInMain, args: [{ ...payload, operation: command.operation, orderId: command.order_id, deadline: command.deadline }] });
       if (result?.length !== 1 || result[0].result?.click_issued !== true) throw Error('S&S stock control did not confirm its invocation. Review the cart before retrying.');
       return pageCommand(tab.id, { ...command, payload });
+    }
+    if (['begin_submit', 'confirm_submit'].includes(command.operation)) {
+      await pageCommand(tab.id, { ...command, operation: command.operation + '_ready' });
+      const result = await api.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: clickSxsCheckoutControlInMain,
+        args: [{ operation: command.operation, orderId: command.order_id, deadline: command.deadline, po: command.payload.po }] });
+      if (result?.length !== 1 || result[0].result?.click_issued !== true) throw Error('S&S checkout click was not confirmed. Review the supplier page before retrying.');
+      return pageCommand(tab.id, command);
     }
     return pageCommand(tab.id, command);
   }

@@ -73,9 +73,27 @@ test('foreign, frozen, and unpermitted tabs stop before page input', async () =>
 
 test('a lost final click response is not retried by the controller', async () => {
   const f = fixture(); let sends = 0;
-  f.api.tabs.sendMessage = async () => { sends++; throw Error('message port closed during navigation'); };
+  f.api.tabs.sendMessage = async () => {
+    sends++;
+    if (sends === 1) return { success: true, result: { url: ORIGIN + '/checkout/' } };
+    throw Error('message port closed during navigation');
+  };
   await assert.rejects(createSxsWorker(f.api, f.fetcher).execute(f.command('confirm_submit', { po: '5000001' })), /port closed/);
-  assert.equal(sends, 1);
+  assert.equal(sends, 2);
+  assert.equal(f.calls.filter(c => c[0] === 'inject' && c[1].world === 'MAIN').length, 1);
+});
+
+test('checkout actions run once in page context after their guarded preparation', async () => {
+  for (const operation of ['begin_submit', 'confirm_submit']) {
+    const f = fixture(), command = f.command(operation, { po: '5000001' });
+    await createSxsWorker(f.api, f.fetcher).execute(command);
+    assert.deepEqual(f.calls.filter(c => c[0] === 'send').map(c => c[2].operation), [operation + '_ready', operation]);
+    const calls = f.calls.filter(c => c[0] === 'inject' && c[1].world === 'MAIN');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][1].func.name, 'clickSxsCheckoutControlInMain');
+    assert.deepEqual(calls[0][1].args, [{ operation, orderId: '5000001', po: '5000001', deadline: command.deadline }]);
+    assert.equal(f.calls.filter(c => c[0] === 'window-update').length, 0);
+  }
 });
 
 test('color selection uses one fixed page-context handler and verifies its result', async () => {

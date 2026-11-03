@@ -311,19 +311,23 @@
       return checkoutState(po, true);
     },
     valid: async ({ po }) => checkoutState(po),
+    begin_submit_ready: async ({ po }) => {
+      checkoutState(po);
+      unique('#M_M_zCheckoutBTN');
+      return {};
+    },
     begin_submit: async ({ po }) => {
       checkoutState(po);
-      unique('#M_M_zCheckoutBTN').click();
       await waitFor(() => confirmationControls().length, 'S&S final confirmation did not open.');
       return {};
     },
-    confirm_submit: async ({ po }) => {
+    confirm_submit_ready: async ({ po }) => {
       checkoutState(po);
       const controls = confirmationControls();
       if (controls.length !== 1) throw Error('S&S final confirmation control is missing or ambiguous.');
-      controls[0].click();
-      return { click_issued: true };
+      return {};
     },
+    confirm_submit: async () => ({ click_issued: true }),
     confirmation: async () => ({ text: (document.body?.innerText || '').slice(0, 50000) })
   };
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -332,11 +336,11 @@
     (async () => {
       guard();
       if (!Object.hasOwn(commands, message.operation) || !Number.isFinite(message.deadline) || Date.now() >= message.deadline * 1000) throw Error('Unsupported or expired S&S command.');
-      if (['fill', 'add_ready', 'add', 'remove_ready', 'remove', 'checkout', 'review', 'begin_submit', 'confirm_submit'].includes(message.operation)) {
+      if (['fill', 'add_ready', 'add', 'remove_ready', 'remove', 'checkout', 'review', 'begin_submit_ready', 'begin_submit', 'confirm_submit_ready', 'confirm_submit'].includes(message.operation)) {
         if (!/^\d{7}$/.test(message.orderId || '')) throw Error('S&S changes require an active Reorder.');
         if (!signedIn()) throw Error('S&S login expired. Sign in normally before retrying.');
       }
-      if (['begin_submit', 'confirm_submit'].includes(message.operation) && (!/^\d{7}$/.test(message.orderId || '') || message.payload?.po !== message.orderId)) throw Error('S&S purchase does not match the active Reorder.');
+      if (['begin_submit_ready', 'begin_submit', 'confirm_submit_ready', 'confirm_submit'].includes(message.operation) && (!/^\d{7}$/.test(message.orderId || '') || message.payload?.po !== message.orderId)) throw Error('S&S purchase does not match the active Reorder.');
       await consent();
       return { ...(await commands[message.operation](message.payload || {})), url: location.href };
     })().then(result => sendResponse({ success: true, result }), error => sendResponse({ success: false, message: error.message || 'S&S operation failed.' }));
