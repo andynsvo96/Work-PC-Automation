@@ -57,6 +57,8 @@ another color. It invokes only the matched swatch's known S&S color handler from
 the page context and verifies the requested color and every inventory color ID.
 Warehouse estimates must finish loading before allocation. A changed handler or
 missing estimate stops for review before quantities are entered.
+Both the older delivery-label field and the warehouse shipping-text layout are
+supported; dates are read from the selected product's own warehouse rows.
 
 S&S prefers Reading, then one other warehouse that can fill all products/sizes,
 ordered by delivery date. Warehouse splits are a last resort. Every size must be

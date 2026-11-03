@@ -17,6 +17,8 @@
   const all = selector => [...document.querySelectorAll(selector)];
   const selectedColor = () => norm(document.querySelector('#zcolorname')?.textContent)
     .replace(/^.*?Selected Color:\s*/i, '').replace(/\s*[-\u2013\u2014]\s*PMS:.*$/i, '');
+  const deliveryText = row => norm(row.querySelector('.shippingRowLabel')?.textContent)
+    || norm(row.querySelector('.shipby')?.textContent);
   function guard() {
     if (location.origin !== 'https://www.ssactivewear.com') throw Error('Unexpected S&S website origin.');
     const text = document.body?.innerText || '';
@@ -148,9 +150,9 @@
       return {};
     },
     inventory: async () => {
-      await waitFor(() => all('.gR[id^="wh_"] .shippingRowLabel').some(e => /\b\d{1,2}\/\d{1,2}\b/.test(e.textContent)), 'S&S warehouse delivery estimates did not load.', 25000);
+      await waitFor(() => all('.gR[id^="wh_"]').some(row => /\b\d{1,2}\/\d{1,2}\b/.test(deliveryText(row))), 'S&S warehouse delivery estimates did not load.', 25000);
       return { inventory: all('.gR[id^="wh_"]').map(r => ({
-      warehouse: norm(r.querySelector('.warehouse')?.textContent), eta_text: norm(r.querySelector('.shippingRowLabel')?.textContent),
+      warehouse: norm(r.querySelector('.warehouse')?.textContent), eta_text: deliveryText(r),
       stock: Object.fromEntries([...r.querySelectorAll('.i')].filter(c => c.querySelector('input[aria-label="quantity"]')).map(c => [norm(c.querySelector('.sr-only')?.textContent), norm(c.querySelector('.quantity')?.textContent)]))
     })).filter(r => r.warehouse) };
     },

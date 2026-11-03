@@ -185,6 +185,17 @@ window.colorCalls=0;window.iColor=id=>{window.colorCalls++;setTimeout(()=>{
             self.driver.execute_script('return (' + source + ')(arguments[0]);', args)
         self.assertEqual(self.driver.execute_script('return window.colorCalls'), 1)
 
+    def test_extension_inventory_accepts_the_live_warehouse_shipping_text_layout(self):
+        self.driver.execute_script("""
+document.querySelectorAll('.shipby').forEach(e=>e.innerHTML='<span>Ships next business day</span><span>Est. Delivery: Wed 11/4</span>');
+""")
+        self._install_sxs_page_fixture()
+        result = self._sxs_page_command('inventory')
+        self.assertTrue(result['success'], result)
+        self.assertEqual(len(result['result']['inventory']), 2)
+        from datetime import date
+        self.assertEqual(sxs.parse_eta(result['result']['inventory'][0]['eta_text'], date(2026, 11, 2)), date(2026, 11, 4))
+
     def test_extension_page_refuses_wrong_po_and_expired_or_unowned_mutations(self):
         self._install_sxs_page_fixture()
         denied = self._sxs_page_command('fill', {'allocations': []}, order_id='')
