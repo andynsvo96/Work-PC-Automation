@@ -59,6 +59,9 @@ Warehouse estimates must finish loading before allocation. A changed handler or
 missing estimate stops for review before quantities are entered.
 Both the older delivery-label field and the warehouse shipping-text layout are
 supported; dates are read from the selected product's own warehouse rows.
+Inventory and quantity entry read sizes from cell labels or the containing
+product grid's size header. Missing, duplicate, conflicting, or mismatched
+columns stop before any quantity is changed.
 
 S&S prefers Reading, then one other warehouse that can fill all products/sizes,
 ordered by delivery date. Warehouse splits are a last resort. Every size must be

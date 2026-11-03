@@ -196,6 +196,35 @@ document.querySelectorAll('.shipby').forEach(e=>e.innerHTML='<span>Ships next bu
         from datetime import date
         self.assertEqual(sxs.parse_eta(result['result']['inventory'][0]['eta_text'], date(2026, 11, 2)), date(2026, 11, 4))
 
+    def test_extension_stock_sizes_use_the_own_grid_headers_when_cell_labels_are_absent(self):
+        self.driver.execute_script("""
+const grid=document.querySelector('#inventory');grid.classList.add('oGrid');
+const header=document.createElement('div');header.className='gH';
+header.innerHTML='<span class="color">Color</span>'+['S','M','L','XL','2XL','3XL','4XL','5XL'].map(s=>'<span>'+s+'</span>').join('');grid.prepend(header);
+document.querySelectorAll('.gR .i .sr-only').forEach(e=>e.remove());
+const other=document.createElement('div');other.className='oGrid';other.innerHTML='<div class="gH"><span class="color">Color</span><span>Unrelated</span></div>';document.body.prepend(other);
+""")
+        self._install_sxs_page_fixture()
+        result = self._sxs_page_command('inventory')
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['result']['inventory'][0]['stock']['L'], '120')
+        self.assertNotIn('', result['result']['inventory'][0]['stock'])
+        fill = self._sxs_page_command('fill', {'allocations': [{'warehouse': 'Reading, PA', 'quantities': {'L': 1}}]})
+        self.assertTrue(fill['success'], fill)
+        self.assertEqual(self.driver.execute_script("return document.querySelector('#q_12_L').value"), '1')
+        self.driver.execute_script("document.querySelector('#inventory .gH').lastElementChild.remove()")
+        denied = self._sxs_page_command('fill', {'allocations': [{'warehouse': 'Reading, PA', 'quantities': {'L': 2}}]})
+        self.assertFalse(denied['success'])
+        self.assertIn('do not match', denied['message'])
+        self.assertEqual(self.driver.execute_script("return document.querySelector('#q_12_L').value"), '1')
+
+    def test_extension_refuses_unreadable_stock_sizes_instead_of_returning_an_empty_size_key(self):
+        self.driver.execute_script("document.querySelectorAll('.gR .i .sr-only').forEach(e=>e.remove())")
+        self._install_sxs_page_fixture()
+        result = self._sxs_page_command('inventory')
+        self.assertFalse(result['success'])
+        self.assertIn('size labels are missing', result['message'])
+
     def test_extension_page_refuses_wrong_po_and_expired_or_unowned_mutations(self):
         self._install_sxs_page_fixture()
         denied = self._sxs_page_command('fill', {'allocations': []}, order_id='')

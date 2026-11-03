@@ -19,6 +19,22 @@
     .replace(/^.*?Selected Color:\s*/i, '').replace(/\s*[-\u2013\u2014]\s*PMS:.*$/i, '');
   const deliveryText = row => norm(row.querySelector('.shippingRowLabel')?.textContent)
     || norm(row.querySelector('.shipby')?.textContent);
+  function stockCells(row) {
+    const cells = [...row.children].filter(e => e.classList.contains('i'));
+    const headerRows = [...(row.closest('.oGrid')?.querySelectorAll(':scope > .gH') || [])];
+    if (headerRows.length > 1) throw Error('S&S inventory size headers are ambiguous.');
+    const headers = headerRows.length ? [...headerRows[0].children].filter(e => !e.classList.contains('color')).map(e => sizeKey(e.textContent)) : [];
+    if (headers.length && headers.length !== cells.length) throw Error('S&S inventory size columns do not match their header.');
+    const seen = new Set();
+    return cells.map((cell, index) => {
+      const inline = sizeKey(cell.querySelector('.sr-only')?.textContent), header = headers[index] || '';
+      if (inline && header && inline !== header) throw Error('S&S inventory size labels disagree with their header.');
+      const size = inline || header;
+      if (!size || seen.has(size)) throw Error('S&S inventory size labels are missing or duplicated.');
+      seen.add(size);
+      return { cell, size, input: cell.querySelector('input[aria-label="quantity"]') };
+    });
+  }
   function guard() {
     if (location.origin !== 'https://www.ssactivewear.com') throw Error('Unexpected S&S website origin.');
     const text = document.body?.innerText || '';
@@ -153,7 +169,7 @@
       await waitFor(() => all('.gR[id^="wh_"]').some(row => /\b\d{1,2}\/\d{1,2}\b/.test(deliveryText(row))), 'S&S warehouse delivery estimates did not load.', 25000);
       return { inventory: all('.gR[id^="wh_"]').map(r => ({
       warehouse: norm(r.querySelector('.warehouse')?.textContent), eta_text: deliveryText(r),
-      stock: Object.fromEntries([...r.querySelectorAll('.i')].filter(c => c.querySelector('input[aria-label="quantity"]')).map(c => [norm(c.querySelector('.sr-only')?.textContent), norm(c.querySelector('.quantity')?.textContent)]))
+      stock: Object.fromEntries(stockCells(r).filter(c => c.input).map(c => [c.size, norm(c.cell.querySelector('.quantity')?.textContent)]))
     })).filter(r => r.warehouse) };
     },
     cart: async () => { await waitFor(() => document.querySelector('#M_M_zCart'), 'S&S cart did not load.'); return { rows: cartRows() }; },
@@ -198,10 +214,10 @@
         if (matches.length !== 1) throw Error('S&S warehouse row is ambiguous.');
         for (const [size, quantity] of Object.entries(allocation.quantities)) {
           if (!Number.isInteger(quantity) || quantity <= 0) throw Error('Invalid S&S quantity.');
-          const cells = [...matches[0].querySelectorAll('.i')].filter(c => sizeKey(c.querySelector('.sr-only')?.textContent) === size);
+          const cells = stockCells(matches[0]).filter(c => c.size === sizeKey(size));
           if (cells.length !== 1) throw Error('S&S size cell is ambiguous.');
-          const input = cells[0].querySelector('input[aria-label="quantity"]');
-          const stock = Number(norm(cells[0].querySelector('.quantity')?.textContent).replace(/\D/g, ''));
+          const input = cells[0].input;
+          const stock = Number(norm(cells[0].cell.querySelector('.quantity')?.textContent).replace(/\D/g, ''));
           if (!input || input.disabled || stock < quantity) throw Error('S&S stock is no longer available.');
           fills.push([input, quantity]);
         }
