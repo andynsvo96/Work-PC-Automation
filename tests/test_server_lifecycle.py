@@ -7,6 +7,16 @@ import server
 
 
 class ServerLifecycleTests(unittest.TestCase):
+    def test_sxs_setup_explains_extension_connection_without_opening_webdriver(self):
+        with server.app.test_request_context(json={'profile': 'ssactivewear'}), mock.patch.object(
+            server, 'open_and_prefill_setup_profile'
+        ) as webdriver_setup, mock.patch.object(server, 'open_native_setup_profile') as native:
+            result = server.automation_chrome_profile_setup().get_json()
+        self.assertTrue(result['success'])
+        self.assertEqual(result['browser_mode'], 'extension')
+        webdriver_setup.assert_not_called()
+        native.assert_not_called()
+
     def test_windows_paycom_setup_uses_native_chrome_for_device_verification(self):
         target = {
             "label": "Paycom",

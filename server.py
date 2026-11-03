@@ -71,6 +71,7 @@ from routes.salesforce_template_routes import register_salesforce_template_route
 from routes.system_routes import register_system_routes
 from routes.work_routes import register_work_routes
 from routes.reorder_routes import register_reorder_routes
+from routes.ssactivewear_bridge_routes import register_ssactivewear_bridge_routes
 from safe_sync import publish_repository_update
 from salesforce_templates import default_template_store
 from shipping_bypasser_mappings import (
@@ -14317,6 +14318,9 @@ def enforce_app_access_security():
         "/api/extension/bridge/process-order/status",
         "/api/extension/bridge/process-order/manual",
         "/api/extension/bridge/process-order/manual/copyright-designs",
+        "/api/extension/bridge/ssactivewear/connect",
+        "/api/extension/bridge/ssactivewear/poll",
+        "/api/extension/bridge/ssactivewear/result",
     }
     if request.path in public_paths:
         return None
@@ -15071,6 +15075,14 @@ def automation_chrome_profile_setup():
     if not target:
         return jsonify({"success": False, "message": "Unknown Chrome profile setup target."}), 400
 
+    if profile_key == 'ssactivewear':
+        return jsonify({
+            'success': True,
+            'message': 'S&S Reorder uses your normal Chrome browser. Reload CRM Order Assistant 1.7.0, open its popup, and choose Connect this browser. Allow S&S access, use Open S&S sign-in, then run the read-only background or minimized check. Connect only one browser profile.',
+            'browser_mode': 'extension',
+            'fields_filled': [],
+        })
+
     profile_path = target["profile_path"]
     os.makedirs(profile_path, exist_ok=True)
     try:
@@ -15436,6 +15448,11 @@ def get_work_status_payload():
 register_reorder_routes(
     app, enqueue_automation=enqueue_automation,
     run_reorder=run_crm_reorder_order_queued, get_status=get_crm_reorder_status_payload,
+)
+
+register_ssactivewear_bridge_routes(
+    app, is_local_extension=_extension_bridge_request_is_local_extension,
+    response=_extension_bridge_response,
 )
 
 register_work_routes(

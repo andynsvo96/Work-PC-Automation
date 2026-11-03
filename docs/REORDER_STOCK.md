@@ -65,12 +65,38 @@ Yes in the supplied archive), then requires a supplier success page, a unique
 order reference, and the exact labelled PO. Receipt parsing covers the observed
 `Order Confirmation: <number>` heading, including combined PO/warehouse labels,
 as well as the older numbered confirmation format. A live S&S checkout and its
-confirmation were verified through an existing logged-in Chrome session. The
-dedicated worker browser still receives an S&S website error before login on
-this machine; unattended S&S access and credential login remain unverified.
-A read-only Firefox comparison loaded the homepage and accepted cookie consent,
-but cart access, direct sign-in, and reuse of that profile also encountered the
-S&S error before login. Firefox has not been enabled for production Reorders.
+confirmation were verified through an existing logged-in Chrome session.
+S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.0** extension in a
+normally opened Chrome profile. The local worker sends stock instructions to
+one dedicated S&S tab without launching WebDriver, activating the tab, or using
+the computer's mouse/keyboard. A successful signed-in background/minimized
+browser check is required first. Live extension ordering remains unverified
+until tested; offline coverage alone does not establish S&S compatibility.
+
+A November 2, 2026 comparison used the installed Chrome 156 and Firefox 159:
+
+- A native-first Chrome control loaded the homepage, sign-in form, and empty
+  cart normally. Standard Selenium and the app's unchanged Chrome worker
+  settings then loaded those same pages with HTTP 200 using that exact profile.
+- The original Chrome worker profile still returned HTTP 403 at sign-in/cart.
+  The initially successful control later returned HTTP 403 before credentials
+  were read; reopening it without Selenium also showed the supplier error.
+- Firefox under Selenium loaded the homepage but returned HTTP 403 at
+  sign-in/cart. After reopening that exact profile without Selenium, the
+  operator confirmed both sign-in and cart loaded normally. This supports an
+  automation-session factor in Firefox, though time-dependent server behavior
+  remains a possible confound. Computer Use cannot independently inspect
+  Firefox here, so the native results are operator-confirmed, not HTTP readings.
+- Standard Playwright with installed Chrome also returned HTTP 403 using the
+  already-affected control profile. This did not establish its behavior in an
+  unaffected session and does not prove a framework migration would help.
+
+These earlier WebDriver comparisons rule out a universal Chrome/Firefox incompatibility or an
+unconditional Selenium rejection. They do not reveal the supplier's exact access
+rule or establish a reliable profile-initialization workaround. No production
+browser/profile migration was made during those comparisons. Firefox/Playwright
+are not enabled for Reorder. The comparison did not add cart stock, purchase
+orders, or edit CRM.
 
 All supplier carts and delivery dates are preflighted before the first purchase.
 Existing vendor cart contents stop the run and are retained. Only verified carts
@@ -84,40 +110,79 @@ for review. These Reorder rules load on the next worker run without an app resta
 Due-date verification also reopens the same CRM order when a refresh loses its
 iframe context, using the existing production-date verification recovery.
 
-## Credentials and setup
+## S&S browser connection and setup
 
-On Windows, use **Settings > Connections > S&S Activewear > Set credentials**, or:
+1. Restart the local Automation app and refresh the dashboard when no task is
+   running. Do not start a second server.
+2. Install/reload **CRM Order Assistant 1.7.0** from
+   `crm-order-dark-mode-extension` at `chrome://extensions` in the normal Chrome
+   profile you want to use. Existing CRM page scripts stay scoped to CRM.
+3. Open the extension popup and select **Connect this browser** under **S&S
+   Reorder**. Grant its optional S&S access.
+4. Select **Open S&S sign-in** and sign in normally. Complete any site
+   verification yourself. Credentials and the Automation PIN never pass through
+   the extension or local bridge.
+5. Reopen the popup, select **Background tab** or **Minimized window**, then
+   **Run read-only check**. It reads S&S homepage/login/cart and 5000 product
+   search without submitting login, changing stock, or buying. A successful
+   **signed-in** result is required before Reorder can use that browser.
+6. Queue explicit orders with **Reorder Stock** as before. Keep its dedicated
+   S&S tab open and leave the S&S account cart alone. Other Chrome tabs/windows
+   and applications remain usable.
 
-```powershell
-.\.venv\Scripts\python.exe manage_credentials.py set ssactivewear
-```
+Connect **exactly one** browser profile on the dashboard's host computer.
+Multiple active connections stop selection instead of choosing an account.
+If a browser closed without disconnecting, its connection can remain visible
+for up to 75 seconds. **Disconnect this browser** immediately stops future
+command delivery. Remote dashboard access still runs work on that dashboard's
+host, using its local extension; there is no cross-machine browser execution.
 
-Enter the S&S email/username and password in that local terminal. The password is
-hidden. The Generic Credential target is `WorkAutomation/SSActivewear`; the same
-command uses Keychain on macOS. Credentials are not stored in config or browser
-code and are not returned by HTTP endpoints.
+Normal worker operations do not activate tabs or focus/restore windows. The
+operator's **Open S&S sign-in** button is an explicit exception. The minimized
+check opens its own unfocused minimized window. A frozen/discarded tab, a closed
+or repurposed worker tab, or a browser restart stops for review. After restarting
+Chrome, rerun the check; stored tab IDs never adopt another user tab. Closing
+Chrome or putting the computer to sleep prevents continued operation.
 
-**Open profile setup** opens the dedicated S&S profile and fills saved credentials
-without submitting. Complete login there if needed. The non-secret default is
-`SSACTIVEWEAR_PROFILE_DIR = "chrome_profile_ssactivewear"`.
+The bridge retains the existing loopback/extension-origin restriction. Its
+endpoints register the opted-in browser, deliver worker-created commands, and
+accept results; they cannot create purchases or queue work. Reorder creates a
+leased session bound to one browser and order number. Commands are claimed once
+and never replayed after a service-worker crash. The existing durable receipt
+still reserves submission before a purchase click. If the final-click response
+is lost, the worker may only read confirmation, never click again. Uncertain
+outcomes stop for review.
+
+The old `WorkAutomation/SSActivewear` OS credential and
+`SSACTIVEWEAR_PROFILE_DIR` setting remain for compatibility/diagnostics;
+extension Reorder does not read them. **Settings > Connections > S&S Activewear**
+now explains extension setup instead of launching a Selenium browser.
 
 Reorder selects **Accept All Cookies** on S&S's OneTrust banner when it is visible
 and waits for the banner to close. It checks again while waiting for page controls
 and before login, covering banners that appear after the initial page load. The
-site stores consent in the dedicated browser profile. The handler is restricted
+site stores consent in the connected browser profile. The handler is restricted
 to the S&S HTTPS origin and the banner's own Accept control.
 
+The legacy Selenium helper targets S&S account login fields explicitly, excluding the footer's
+newsletter email field. The site's accessibility widget can redirect initial
+field focus. Login refocuses at most once and checks focus before typing each
+credential, then checks both values before submitting. Missing, ambiguous,
+unfocused, or changed fields stop the login. The behavior is covered by an
+isolated browser fixture; live credential login remains unverified because the
+site returned its error before the corrected login flow could complete.
+
 If S&S shows **Looks like we're having some problems**, Reorder stops with the
-site's Ray ID instead of waiting for missing login or checkout controls. Resolve
-site access in the S&S profile, or with S&S support, before retrying. An error
+site's Ray ID instead of waiting for missing login or checkout controls. Review
+site access in the S&S profile before retrying. An error
 after a purchase click still requires reviewing supplier history and the saved
 receipt before another submission. A server response of HTTP 403 before the site
 loads still requires resolving access; cookie-banner handling does not suppress
 that error.
 
-Restart the local app and refresh the dashboard after updating. No extension reload
-is needed. Windows secure-prompt launch was checked during development; macOS's
-interactive terminal and live S&S login remain unverified on this machine.
+Restart the app, reload the extension, and refresh CRM pages/dashboard after
+updating. Each Chrome profile opts in separately. Live background/minimized
+operation and macOS behavior remain unverified until checked on that setup.
 
 ## Receipts and recovery
 
@@ -149,6 +214,8 @@ These worker changes load on the next run without an app restart.
 ```powershell
 python -m unittest discover -s tests -p test_crm_reorder.py
 node --test tests/test_reorder_ui.mjs
+python -m unittest discover -s tests -p test_ssactivewear_bridge.py
+node --test tests/test_ssactivewear_extension.mjs tests/test_extension_bridge.mjs tests/test_salesforce_tabs.mjs
 ```
 
 `tests/fixtures/reorder_stock.html` contains sanitized markup modeled on the supplied

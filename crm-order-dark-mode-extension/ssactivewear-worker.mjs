@@ -1,0 +1,242 @@
+const BASE = 'https://www.ssactivewear.com';
+const ENDPOINT = 'http://127.0.0.1:5123/api/extension/bridge/ssactivewear';
+const PROTOCOL = 'automation.ssactivewear.extension/v1';
+const STATE = 'sxsReorderBrowser';
+const OWNED = 'sxsReorderOwnedTab';
+const OUTBOX = 'sxsReorderOutbox';
+const ALARM = 'sxs-reorder-connection';
+
+export function isSxsUrl(value) {
+  try { const u = new URL(value); return u.origin === BASE && !u.username && !u.password; } catch { return false; }
+}
+export function allowedNavigation(value) {
+  try {
+    const u = new URL(value);
+    return u.origin === BASE && !u.username && !u.password && !u.search && !u.hash &&
+      (['/', '/myaccount/login', '/checkout/cart'].includes(u.pathname) || /^\/ps\/[A-Za-z0-9_.-]+$/.test(u.pathname) || /^\/p\/[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+$/.test(u.pathname));
+  } catch { return false; }
+}
+
+export function createSxsWorker(api, fetcher = fetch) {
+  let pumping = false, probing = false, writes = Promise.resolve();
+  const read = async () => {
+    const settings = { ...((await api.storage.local.get(STATE))[STATE] || {}) };
+    // Tab IDs survive a service-worker restart, not a browser restart. Never
+    // recover a different user tab from an old numeric ID in local storage.
+    delete settings.tabId; delete settings.boundSession;
+    return { ...settings, ...((await api.storage.session.get(OWNED))[OWNED] || {}) };
+  };
+  const update = patch => {
+    const task = writes.then(async () => {
+      const state = { ...(await read()), ...patch };
+      const settings = { ...state };
+      delete settings.tabId; delete settings.boundSession;
+      await api.storage.local.set({ [STATE]: settings });
+      if (Object.hasOwn(patch, 'tabId') || Object.hasOwn(patch, 'boundSession')) {
+        await api.storage.session.set({ [OWNED]: { tabId: state.tabId, boundSession: state.boundSession } });
+      }
+      return state;
+    });
+    writes = task.catch(() => {});
+    return task;
+  };
+  async function request(path, data, get = false) {
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 23000);
+    try {
+      const url = ENDPOINT + path + (get ? '?' + new URLSearchParams(data) : '');
+      const response = await fetcher(url, { method: get ? 'GET' : 'POST', cache: 'no-store', credentials: 'omit', signal: controller.signal,
+        ...(!get ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : {}) });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.success !== true || payload.protocol !== PROTOCOL) {
+        const error = Error(payload?.message || 'Restart the local Automation app to load the S&S browser connection.');
+        error.status = response.status;
+        throw error;
+      }
+      return payload;
+    } finally { clearTimeout(timeout); }
+  }
+  const identity = state => ({ client_id: state.clientId, extension_id: api.runtime.id });
+  async function requirePermissions() {
+    if (!await api.permissions.contains({ permissions: ['scripting'], origins: [BASE + '/*'] })) throw Error('Click Connect this browser and allow S&S access first.');
+  }
+  async function connect(enabled) {
+    if (enabled) await requirePermissions();
+    const old = await read();
+    const state = await update({ enabled: enabled === true, clientId: old.clientId || crypto.randomUUID().replaceAll('-', '') });
+    if (!enabled) await api.alarms.clear(ALARM);
+    try {
+      await request('/connect', { ...identity(state), enabled: state.enabled });
+      await update({ message: enabled ? 'Connected. Sign in to S&S, then run the read-only check.' : 'S&S browser disconnected.' });
+      if (enabled) {
+        await api.alarms.create(ALARM, { periodInMinutes: 0.5 });
+        void pump();
+      } else { await api.alarms.clear(ALARM); }
+    } catch (error) { await update({ enabled: false, message: error.message }); throw error; }
+    return status();
+  }
+  async function waitTab(tabId) {
+    const deadline = Date.now() + 25000;
+    while (true) {
+      const tab = await api.tabs.get(tabId);
+      if (tab.discarded || tab.frozen) throw Error('S&S tab was suspended. Restore its window and review before retrying.');
+      if (tab.status === 'complete' && isSxsUrl(tab.url)) return tab;
+      if (tab.status === 'complete' && tab.url && !isSxsUrl(tab.url)) throw Error('The S&S worker tab navigated to another website.');
+      if (Date.now() >= deadline) throw Error('S&S tab did not finish loading.');
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  }
+  async function ownedTab(sessionId) {
+    let state = await read();
+    const reorder = /^[a-f0-9]{32}$/.test(sessionId || '');
+    if (state.tabId) {
+      try {
+        const tab = await api.tabs.get(state.tabId);
+        if (!isSxsUrl(tab.url || tab.pendingUrl)) throw Error('The dedicated S&S tab was changed to another website.');
+        if (state.boundSession !== sessionId) await update({ boundSession: sessionId });
+        return tab;
+      } catch (error) {
+        if (reorder || state.boundSession === sessionId || /another website/.test(error.message)) throw Error('S&S worker tab was closed or changed during the run. Review its cart before retrying.');
+      }
+    }
+    if (reorder) throw Error('S&S browser restarted or its checked tab is missing. Review any existing purchase, then run the read-only browser check again.');
+    const tab = await api.tabs.create({ url: BASE + '/checkout/cart', active: false });
+    await api.tabs.update(tab.id, { autoDiscardable: false });
+    await update({ tabId: tab.id, boundSession: sessionId });
+    return tab;
+  }
+  async function pageCommand(tabId, command) {
+    const tab = await waitTab(tabId);
+    if (!isSxsUrl(tab.url)) throw Error('Unexpected S&S tab origin.');
+    await api.scripting.executeScript({ target: { tabId }, files: ['sxs-page.js'] });
+    // Sending an action is attempted once. A lost response never repeats it.
+    const result = await api.tabs.sendMessage(tabId, { type: 'sxs:page-command', commandId: command.id,
+      orderId: command.order_id || '', operation: command.operation, payload: command.payload || {}, deadline: command.deadline });
+    if (!result || result.success !== true || !isSxsUrl(result.result?.url)) throw Error(result?.message || 'S&S did not confirm this operation. Review the tab before retrying.');
+    return result.result;
+  }
+  async function execute(command) {
+    if (!/^[a-f0-9]{32}$/.test(command.id || '') || !/^[a-f0-9]{32}$/.test(command.session_id || '') || !/^\d{7}$/.test(command.order_id || '') || Date.now() >= command.deadline * 1000) throw Error('Invalid or expired S&S Reorder command.');
+    await requirePermissions();
+    const state = await read();
+    if (!state.enabled || probing) throw Error('S&S browser is disconnected or running a browser check.');
+    const tab = await ownedTab(command.session_id);
+    if (command.operation === 'navigate') {
+      if (!allowedNavigation(command.payload?.url)) throw Error('Unexpected S&S navigation URL.');
+      await api.tabs.update(tab.id, { url: command.payload.url, autoDiscardable: false });
+      const loaded = await waitTab(tab.id);
+      return { url: loaded.url };
+    }
+    return pageCommand(tab.id, command);
+  }
+  async function flushOutbox(state) {
+    const values = await api.storage.session.get(OUTBOX);
+    if (!values[OUTBOX]) return;
+    try { await request('/result', { ...identity(state), ...values[OUTBOX] }); }
+    catch (error) { if (error.status !== 409) throw error; }
+    await api.storage.session.remove(OUTBOX);
+  }
+  async function pump() {
+    if (pumping) return;
+    pumping = true;
+    try {
+      let state = await read();
+      if (!state.enabled) return;
+      await requirePermissions();
+      await api.alarms.create(ALARM, { periodInMinutes: 0.5 });
+      await request('/connect', identity(state));
+      while ((state = await read()).enabled) {
+        await flushOutbox(state);
+        const response = await request('/poll', identity(state), true);
+        await api.storage.session.set({ sxsActiveSession: response.active_session });
+        if (!response.command) continue;
+        let result = null, error = null;
+        await update({ message: 'Working on S&S Reorder ' + response.command.order_id + '.' });
+        try { result = await execute(response.command); }
+        catch (failure) { error = failure.message || 'S&S browser operation failed.'; }
+        await api.storage.session.set({ [OUTBOX]: { command_id: response.command.id, result, error } });
+        await flushOutbox(state);
+        if (error) await update({ message: error });
+      }
+    } catch (error) { await update({ message: 'S&S connection paused: ' + error.message }); }
+    finally { pumping = false; }
+  }
+  async function assertIdle() {
+    const active = (await api.storage.session.get('sxsActiveSession')).sxsActiveSession;
+    if (active) throw Error('S&S is handling Reorder ' + active.order_id + '. Wait for it to finish.');
+  }
+  async function open() {
+    await requirePermissions();
+    await assertIdle();
+    const state = await read();
+    if (!state.enabled) throw Error('Connect this browser first.');
+    await request('/connect', { ...identity(state), probe: { success: false, signed_in: false, message: 'Manual S&S sign-in opened.' } });
+    const tab = await ownedTab('manual-sign-in');
+    await api.tabs.update(tab.id, { url: BASE + '/myaccount/login', active: true });
+    const window = await api.windows.get(tab.windowId);
+    await api.windows.update(tab.windowId, { focused: true, ...(window.state === 'minimized' ? { state: 'normal' } : {}) });
+    return { success: true };
+  }
+  async function probe(mode = 'background') {
+    await requirePermissions(); await assertIdle();
+    if (probing || !['background', 'minimized'].includes(mode)) throw Error('A browser check is already running or its mode is invalid.');
+    const state = await read();
+    if (!state.enabled) throw Error('Connect this browser before its read-only check.');
+    probing = true;
+    let started = false;
+    const check = { success: false, signed_in: false, mode, checked_at: new Date().toISOString(), message: '' };
+    try {
+      await request('/connect', { ...identity(state), probe: check });
+      started = true;
+      let tab;
+      if (mode === 'minimized') {
+        const window = await api.windows.create({ url: BASE + '/', state: 'minimized', focused: false });
+        const tabs = window.tabs || await api.tabs.query({ windowId: window.id });
+        if (tabs.length !== 1) throw Error('The minimized S&S check window is ambiguous.');
+        tab = tabs[0];
+      } else { tab = await api.tabs.create({ url: BASE + '/', active: false }); }
+      await api.tabs.update(tab.id, { autoDiscardable: false });
+      await update({ tabId: tab.id, boundSession: null, message: 'Checking S&S in a ' + mode + ' browser.' });
+      const pages = [];
+      for (const path of ['/', '/myaccount/login', '/checkout/cart', '/ps/5000']) {
+        await api.tabs.update(tab.id, { url: BASE + path });
+        await waitTab(tab.id);
+        const result = await pageCommand(tab.id, { id: crypto.randomUUID().replaceAll('-', ''), operation: 'health', deadline: Date.now() / 1000 + 50 });
+        if (!result.hidden) throw Error('The S&S check tab became visible; repeat the background/minimized check.');
+        if (path === '/checkout/cart') check.signed_in = result.signed_in === true && result.cart_container === true;
+        if (path === '/ps/5000') await pageCommand(tab.id, { id: crypto.randomUUID().replaceAll('-', ''), operation: 'candidates', deadline: Date.now() / 1000 + 50 });
+        pages.push({ path, hidden: result.hidden });
+      }
+      if (mode === 'minimized' && (await api.windows.get(tab.windowId)).state !== 'minimized') throw Error('The S&S test window was restored; repeat the minimized check.');
+      check.success = true;
+      check.message = check.signed_in ? 'S&S ' + mode + ' access and signed-in cart verified. Ready for Reorder.' : 'S&S ' + mode + ' access works. Sign in normally, then repeat this check.';
+      check.pages = pages;
+    } catch (error) { check.message = error.message || 'S&S browser check failed.'; }
+    finally {
+      probing = false;
+      if (started) {
+        await request('/connect', { ...identity(await read()), probe: check });
+        await update({ probe: check, message: check.message });
+      }
+      void pump();
+    }
+    return check;
+  }
+  async function status() { const state = await read(); return { success: true, enabled: state.enabled === true, message: state.message || 'S&S browser is not connected.', probe: state.probe || null }; }
+  return { connect, open, probe, status, pump, execute };
+}
+
+export function installSxsWorker(api) {
+  const worker = createSxsWorker(api);
+  api.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (!message?.type?.startsWith('sxs:') || sender.id !== api.runtime.id || sender.tab) return false;
+    const calls = { 'sxs:connect': () => worker.connect(message.enabled === true), 'sxs:open': () => worker.open(),
+      'sxs:probe': () => worker.probe(message.mode), 'sxs:status': () => worker.status() };
+    if (!calls[message.type]) return false;
+    calls[message.type]().then(sendResponse, error => sendResponse({ success: false, message: error.message }));
+    return true;
+  });
+  api.alarms.onAlarm.addListener(alarm => { if (alarm.name === ALARM) void worker.pump(); });
+  api.runtime.onStartup.addListener(() => { void worker.pump(); });
+  api.runtime.onInstalled.addListener(() => { void worker.pump(); });
+  void worker.pump();
+}

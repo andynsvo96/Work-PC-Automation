@@ -14,11 +14,11 @@ from _bootstrap import ensure_project_root_on_path
 
 ensure_project_root_on_path()
 
-import config
 import crm_shipping_bypasser as bypass
 import ssactivewear_ordering as sxs
+from ssactivewear_extension import SxsExtensionBrowser
 from automation_runtime import (
-    build_chrome_driver, configure_console_utf8, resolve_existing_automation_profile_path,
+    configure_console_utf8,
     safe_driver_quit, safe_take_screenshot, write_result_payload, write_status_payload,
 )
 from runtime_paths import state_file
@@ -233,6 +233,8 @@ def prepare_group(driver, group, order):
 def _empty(driver, vendor, owned=False):
     if vendor == "ssactivewear":
         if owned:
+            if getattr(driver, 'is_sxs_extension', False) is True:
+                return driver.empty_owned_cart()
             # Remove only the fully verified cart created by this run, never a pre-existing cart.
             while sxs.cart_rows(driver):
                 before = sxs.cart_rows(driver)
@@ -322,7 +324,10 @@ def process_order(crm, vendors, order_id, dry_run=False):
         state = prepare_group(driver, group, order)
         group["review"] = bypass._json_safe(state)
         if group["vendor"] == "ssactivewear":
-            bypass.safe_get_with_partial_load(driver, sxs.CART_URL, "S&S Reorder preflight cart")
+            if getattr(driver, 'is_sxs_extension', False) is True:
+                driver.get(sxs.CART_URL)
+            else:
+                bypass.safe_get_with_partial_load(driver, sxs.CART_URL, "S&S Reorder preflight cart")
             sxs.validate_cart(sxs.verified_cart_rows(driver, group["lines"]), group["lines"])
         _empty(driver, group["vendor"], owned=True)
     eta = max(_as_date(g["review"]["eta"]) for g in receipt["groups"])
@@ -385,9 +390,13 @@ def run(order_id, dry_run=False, visible=False, result_file=None):
             drivers["crm"] = (crm, bypass.PROFILE_PATH)
             def vendor_driver(vendor):
                 if vendor not in drivers:
-                    profile = bypass.SANMAR_PROFILE_PATH if vendor == "sanmar" else resolve_existing_automation_profile_path(os.path.join(bypass.SCRIPT_DIR, getattr(config, "SSACTIVEWEAR_PROFILE_DIR", "chrome_profile_ssactivewear")))
+                    if vendor == 'ssactivewear':
+                        driver = SxsExtensionBrowser(order_id)
+                        drivers[vendor] = (driver, None)
+                        return driver
+                    profile = bypass.SANMAR_PROFILE_PATH
                     stack.enter_context(bypass._worker_profile_lock(profile))
-                    driver = bypass._build_sanmar_driver(visible=visible) if vendor == "sanmar" else build_chrome_driver(profile, headless_mode=not visible, page_load_timeout=config.CRM_PAGE_LOAD_TIMEOUT)
+                    driver = bypass._build_sanmar_driver(visible=visible)
                     drivers[vendor] = (driver, profile)
                 return drivers[vendor][0]
             write_status_payload(AUTOMATION_NAME, f"Reordering stock for order {order_id}.", stage="reading_red_stock", order_id=order_id, current=1, total=1)
@@ -398,10 +407,17 @@ def run(order_id, dry_run=False, visible=False, result_file=None):
             message = str(exc)
             payload.update(manual_review_required=True, outcome="review_required")
             for vendor, (driver, _profile) in drivers.items():
-                safe_take_screenshot(driver, f"reorder_{order_id}_{vendor}_review")
+                if getattr(driver, 'is_sxs_extension', False) is not True:
+                    safe_take_screenshot(driver, f"reorder_{order_id}_{vendor}_review")
         finally:
             for driver, profile in reversed(list(drivers.values())):
-                safe_driver_quit(driver, profile_path=profile)
+                if getattr(driver, 'is_sxs_extension', False) is True:
+                    try:
+                        driver.close()
+                    except Exception:
+                        payload['browser_release_warning'] = 'S&S connection release was not confirmed; its local lease will expire.'
+                else:
+                    safe_driver_quit(driver, profile_path=profile)
     payload.update(order_id=order_id, customer_po=order_id, dry_run=bool(dry_run), action="reorder_stock")
     write_result_payload(AUTOMATION_NAME, "crm_reorder.py", success, message, payload, result_file=result_file)
     return success

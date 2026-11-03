@@ -1,11 +1,13 @@
 """S&S website ordering helpers used only by the explicit Reorder worker."""
 
 import re
+import sys
 from collections import Counter
 from datetime import date, timedelta
 from urllib.parse import quote, urlsplit
 
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 
 import crm_shipping_bypasser as bypass
@@ -134,7 +136,37 @@ def _raise_site_error(driver):
     raise RuntimeError("S&S returned its website error page" + reference + ". Review S&S site access before retrying.")
 
 
+def _login_control(driver, element_id):
+    matches = [element for element in driver.find_elements(By.ID, element_id)
+               if element.is_displayed() and element.is_enabled()]
+    if len(matches) > 1:
+        raise RuntimeError("The S&S login form is ambiguous; review before entering credentials.")
+    return matches[0] if matches else False
+
+
+def _fill_login_control(driver, element, value):
+    value = str(value or "")
+    if not value:
+        return False
+    for _ in range(2):
+        _require_site(driver)
+        element.click()
+        # The site's accessibility widget can move focus on the first field
+        # focus. Confirm the destination before sending any credential text.
+        if not driver.execute_script("return document.activeElement === arguments[0];", element):
+            continue
+        element.send_keys((Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL) + "a")
+        if not driver.execute_script("return document.activeElement === arguments[0];", element):
+            continue
+        element.send_keys(value)
+        if str(element.get_attribute("value") or "") == value:
+            return True
+    return False
+
+
 def ensure_login(driver):
+    if getattr(driver, 'is_sxs_extension', False) is True:
+        return driver.ensure_login()
     safe_get_with_partial_load(driver, CART_URL, "S&S cart/login")
     _raise_site_error(driver)
     accept_cookie_banner(driver)
@@ -146,17 +178,20 @@ def ensure_login(driver):
     _require_site(driver)
     _raise_site_error(driver)
     accept_cookie_banner(driver)
-    from profile_setup_autofill import _first_visible, _USERNAME_SELECTORS, _PASSWORD_SELECTORS, _fill
-    credential = read_credential(SSACTIVEWEAR_CREDENTIAL_TARGET)
-    username = _wait(driver, lambda: _first_visible(driver, _USERNAME_SELECTORS))
-    password = _wait(driver, lambda: _first_visible(driver, _PASSWORD_SELECTORS))
-    if not _fill(username, credential.username) or not _fill(password, credential.secret):
-        raise RuntimeError("S&S saved credentials could not be filled. Complete S&S profile setup.")
-    buttons = driver.find_elements(By.CSS_SELECTOR, "input[type=submit],button[type=submit],a[role=button]")
-    login = next((x for x in buttons if x.is_displayed() and re.fullmatch(r"log\s*in|sign\s*in", (x.get_attribute("value") or x.text or "").strip(), re.I)), None)
-    if login is None:
+    # The footer newsletter also has name="email"; generic selectors can send
+    # the account identifier to that field instead of the actual login form.
+    username = _wait(driver, lambda: _login_control(driver, "M_M_zEmailTB"))
+    password = _wait(driver, lambda: _login_control(driver, "M_M_zPasswordTB"))
+    login = _wait(driver, lambda: _login_control(driver, "M_M_zPageLoginBTN"))
+    if not re.fullmatch(r"log\s*in|sign\s*in", (login.get_attribute("value") or login.text or "").strip(), re.I):
         raise RuntimeError("S&S login submit control was not found. Complete S&S profile setup.")
+    _require_site(driver)
+    credential = read_credential(SSACTIVEWEAR_CREDENTIAL_TARGET)
+    if not _fill_login_control(driver, username, credential.username) or not _fill_login_control(driver, password, credential.secret):
+        raise RuntimeError("S&S saved credentials could not be filled. Complete S&S profile setup.")
     accept_cookie_banner(driver)
+    if username.get_attribute("value") != credential.username or password.get_attribute("value") != credential.secret:
+        raise RuntimeError("S&S login fields changed before submission; review the login form.")
     bypass._click_with_fallback(driver, login)
     _wait(driver, authenticated)
     safe_get_with_partial_load(driver, CART_URL, "S&S cart")
@@ -164,6 +199,8 @@ def ensure_login(driver):
 
 
 def cart_rows(driver):
+    if getattr(driver, 'is_sxs_extension', False) is True:
+        return driver.cart_rows()
     return driver.execute_script(DOM + r"""
 return [...document.querySelectorAll('#M_M_zCart .cR')].filter(visible).map(r => ({
   id: r.id,
@@ -179,6 +216,8 @@ return [...document.querySelectorAll('#M_M_zCart .cR')].filter(visible).map(r =>
 
 
 def verified_cart_rows(driver, lines):
+    if getattr(driver, 'is_sxs_extension', False) is True:
+        return driver.verified_cart_rows(lines)
     _require_site(driver)
     rows = cart_rows(driver)
     original = [dict(row) for row in rows]
@@ -229,6 +268,8 @@ return [...(root?.querySelectorAll('button,a,[role=button]') || [])].filter(visi
 
 
 def require_empty_cart(driver):
+    if getattr(driver, 'is_sxs_extension', False) is True:
+        return driver.require_empty_cart()
     safe_get_with_partial_load(driver, CART_URL, "S&S cart")
     _wait(driver, lambda: driver.find_elements(By.CSS_SELECTOR, "#M_M_zCart"))
     if cart_rows(driver):
@@ -236,6 +277,8 @@ def require_empty_cart(driver):
 
 
 def open_product(driver, product):
+    if getattr(driver, 'is_sxs_extension', False) is True:
+        return driver.open_product(product)
     safe_get_with_partial_load(driver, BASE_URL + "/ps/" + quote(style_id(product), safe=""), "S&S product search")
     def results():
         candidates = driver.execute_script(DOM + "return [...document.querySelectorAll('a[href*=\"/p/\"]')].filter(visible).map(a => ({url:a.href,title:norm(a.innerText)})).filter(x=>x.title);") or []
@@ -262,6 +305,8 @@ def open_product(driver, product):
 
 
 def inventory(driver):
+    if getattr(driver, 'is_sxs_extension', False) is True:
+        return driver.inventory()
     return driver.execute_script(DOM + r"""
 return [...document.querySelectorAll('.gR[id^="wh_"]')].map(r => ({
  warehouse: norm(r.querySelector('.warehouse')?.textContent),
@@ -319,6 +364,8 @@ def allocate(lines):
 
 
 def fill_product(driver, lines):
+    if getattr(driver, 'is_sxs_extension', False) is True:
+        return driver.fill_product(lines)
     required = [{"warehouse": x["warehouse"], "quantities": x["quantities"]} for x in lines]
     result = driver.execute_script(DOM + r"""
 const allocations = arguments[0];
@@ -397,6 +444,8 @@ def validate_cart(rows, lines):
 
 
 def review_checkout(driver, po):
+    if getattr(driver, 'is_sxs_extension', False) is True:
+        return driver.review_checkout(po)
     _require_site(driver)
     if not re.fullmatch(r"\d{7}", str(po)):
         raise RuntimeError("Reorder customer PO must be the seven-digit CRM order number.")
@@ -424,6 +473,8 @@ return {po:input.value,address,payment,methods};
 
 
 def checkout_still_valid(driver, po):
+    if getattr(driver, 'is_sxs_extension', False) is True:
+        return driver.checkout_still_valid(po)
     _require_site(driver)
     return driver.execute_script(DOM + r"""
 const address=norm(document.querySelector('#M_M_zShippingContainer')?.innerText).split(/Shipping\s+(?:Options|Method)/i)[0];
@@ -436,6 +487,8 @@ return document.querySelector('#M_M_zPONumberTB')?.value===arguments[0]
 
 
 def checkout(driver, po, lines):
+    if getattr(driver, 'is_sxs_extension', False) is True:
+        return driver.checkout(po, lines)
     validate_cart(verified_cart_rows(driver, lines), lines)
     _click(driver, "#zCheckoutBTN")
     _wait(driver, lambda: driver.find_elements(By.ID, "M_M_zPONumberTB"))
@@ -456,6 +509,8 @@ def confirmation_from_text(text, po, url):
 
 
 def submit(driver, po):
+    if getattr(driver, 'is_sxs_extension', False) is True:
+        return driver.submit(po)
     review_checkout(driver, po)
     _click(driver, "#M_M_zCheckoutBTN")
     # This is the one final confirmation shown by the supplied checkout archive.

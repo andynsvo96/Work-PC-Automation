@@ -3,6 +3,7 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -74,6 +75,68 @@ setTimeout(()=>banner.style.display='block',150);
         self.driver.refresh()
         self.assertEqual(self.driver.execute_script("return localStorage.getItem('reorder_fixture_cookie_consent')"), 'accepted')
         self.assertFalse(sxs.accept_cookie_banner(self.driver))
+
+    def test_sxs_login_uses_account_fields_and_recovers_initial_focus_redirect(self):
+        self.driver.get((ROOT / 'tests/fixtures/ssactivewear_login.html').as_uri())
+        credential = mock.Mock(username='account@example.test', secret='fixture-password')
+        with mock.patch.object(sxs, 'safe_get_with_partial_load'), mock.patch.object(
+            sxs, 'read_credential', return_value=credential
+        ) as read:
+            sxs.ensure_login(self.driver)
+        read.assert_called_once_with(sxs.SSACTIVEWEAR_CREDENTIAL_TARGET)
+        self.assertEqual(self.driver.execute_script("return document.querySelector('#newsletter').value"), '')
+        self.assertEqual(self.driver.execute_script("return document.querySelector('#M_M_zEmailTB').value"), 'account@example.test')
+        self.assertEqual(self.driver.execute_script('return window.loginClicks'), 1)
+        self.assertEqual(self.driver.execute_script('return window.focusRedirects'), 2)
+        self.assertTrue(self.driver.execute_script("return !!document.querySelector('#M_M_zCart')"))
+
+    def _install_sxs_page_fixture(self):
+        # Only this isolated file fixture bypasses the production HTTPS check.
+        # Controller/transport origin boundaries have their own regression tests.
+        source = (ROOT / 'crm-order-dark-mode-extension/sxs-page.js').read_text(encoding='utf-8')
+        source = source.replace("location.origin !== 'https://www.ssactivewear.com'", "location.protocol !== 'file:'")
+        source = source.replace('parsed.origin !== location.origin', "parsed.origin !== 'https://www.ssactivewear.com'")
+        self.driver.execute_script("""
+window.chrome=window.chrome||{};
+window.chrome.runtime={id:'fixture-extension',onMessage:{addListener:fn=>window.sxsFixtureMessage=fn}};
+const signedIn=document.createElement('a');signedIn.href='https://www.ssactivewear.com/myaccount/signout';signedIn.textContent='Sign Out';document.body.append(signedIn);
+""")
+        self.driver.execute_script(source)
+
+    def _sxs_page_command(self, operation, payload=None, order_id='5000001', deadline=None):
+        message = {'type': 'sxs:page-command', 'commandId': 'a' * 32, 'operation': operation,
+                   'payload': payload or {}, 'orderId': order_id, 'deadline': deadline or time.time() + 40}
+        return self.driver.execute_async_script("const done=arguments[arguments.length-1];window.sxsFixtureMessage(arguments[0],{id:'fixture-extension'},done);", message)
+
+    def test_extension_page_stock_and_checkout_flow_with_exact_confirmation(self):
+        self._install_sxs_page_fixture()
+        inventory = self._sxs_page_command('inventory')
+        self.assertEqual(inventory['result']['inventory'][0]['warehouse'], 'Reading, PA')
+        quantities = {'L': 1, 'XL': 1, '2XL': 1}
+        lines = [{'product': {'product_id': 'G500', 'color': 'Black'}, 'selected': {'url': 'https://www.ssactivewear.com/p/gildan/5000'}, 'quantities': quantities, 'warehouse': 'Reading, PA'}]
+        self.assertTrue(self._sxs_page_command('fill', {'allocations': [{'warehouse': 'Reading, PA', 'quantities': quantities}]})['success'])
+        self.assertTrue(self._sxs_page_command('add', {'quantity': 3})['success'])
+        rows = self._sxs_page_command('verified_cart', {'lines': lines})['result']['rows']
+        sxs.validate_cart(rows, lines)
+        for operation in ('checkout', 'review', 'begin_submit', 'confirm_submit'):
+            result = self._sxs_page_command(operation, {'po': '5000001'})
+            self.assertTrue(result['success'], result)
+        confirmation = self._sxs_page_command('confirmation')['result']['text']
+        self.assertEqual(sxs.confirmation_from_text(confirmation, '5000001', 'https://www.ssactivewear.com/checkout/confirmation')['order_number'], '98765432')
+        self.assertEqual(self.driver.execute_script('return [window.completeClicks,window.confirmClicks]'), [1, 1])
+
+    def test_extension_page_refuses_wrong_po_and_expired_or_unowned_mutations(self):
+        self._install_sxs_page_fixture()
+        denied = self._sxs_page_command('fill', {'allocations': []}, order_id='')
+        self.assertFalse(denied['success'])
+        self.assertIn('active Reorder', denied['message'])
+        self.assertFalse(self._sxs_page_command('begin_submit', {'po': '5000002'})['success'])
+        self.assertFalse(self._sxs_page_command('begin_submit', {'po': '5000001'}, deadline=1)['success'])
+        self.assertTrue(self._sxs_page_command('review', {'po': '5000001'})['success'])
+        self.assertTrue(self._sxs_page_command('begin_submit', {'po': '5000001'})['success'])
+        self.driver.execute_script("document.querySelector('#M_M_zPONumberTB').value='5000002'")
+        self.assertFalse(self._sxs_page_command('confirm_submit', {'po': '5000001'})['success'])
+        self.assertEqual(self.driver.execute_script('return window.confirmClicks'), 0)
 
     def test_production_note_waits_for_append_field_and_retry_keeps_history_unique(self):
         fixture = (ROOT / 'tests/fixtures/crm_append_production_note.html').as_uri()

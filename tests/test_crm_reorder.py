@@ -116,6 +116,28 @@ class ReorderPlanningTests(unittest.TestCase):
 
 
 class SxsPlanningTests(unittest.TestCase):
+    def test_login_input_does_not_type_when_focus_moves_elsewhere(self):
+        driver = mock.Mock(current_url=sxs.LOGIN_URL)
+        driver.execute_script.return_value = False
+        field = mock.Mock()
+        self.assertFalse(sxs._fill_login_control(driver, field, 'fixture-password'))
+        self.assertEqual(field.click.call_count, 2)
+        field.send_keys.assert_not_called()
+
+    def test_ambiguous_login_fields_stop_before_reading_credentials(self):
+        driver = mock.Mock(current_url=sxs.LOGIN_URL)
+        fields = [mock.Mock(), mock.Mock()]
+        for field in fields:
+            field.is_displayed.return_value = True
+            field.is_enabled.return_value = True
+        driver.find_elements.side_effect = lambda by, value: fields if value == 'M_M_zEmailTB' else []
+        with mock.patch.object(sxs, 'safe_get_with_partial_load'), mock.patch.object(
+            sxs, '_raise_site_error'
+        ), mock.patch.object(sxs, 'accept_cookie_banner'), mock.patch.object(sxs, 'read_credential') as read:
+            with self.assertRaisesRegex(RuntimeError, 'login form is ambiguous'):
+                sxs.ensure_login(driver)
+        read.assert_not_called()
+
     def test_cookie_consent_is_never_clicked_on_another_origin(self):
         driver = mock.Mock(current_url="https://example.com/")
         with mock.patch.object(sxs.bypass, "_click_with_fallback") as click:
