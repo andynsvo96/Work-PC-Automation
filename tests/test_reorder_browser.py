@@ -109,6 +109,16 @@ const signedIn=document.createElement('a');signedIn.href='https://www.ssactivewe
                    'payload': payload or {}, 'orderId': order_id, 'deadline': deadline or time.time() + 40}
         return self.driver.execute_async_script("const done=arguments[arguments.length-1];window.sxsFixtureMessage(arguments[0],{id:'fixture-extension'},done);", message)
 
+    def _sxs_main_stock_control(self, operation, **payload):
+        source = (ROOT / 'crm-order-dark-mode-extension/ssactivewear-worker.mjs').read_text(encoding='utf-8')
+        source = 'function clickSxsStockControlInMain' + source.split('export function clickSxsStockControlInMain', 1)[1].split('\nexport function createSxsWorker', 1)[0]
+        # File fixtures substitute only the production HTTPS and path guards.
+        source = source.replace("location.origin !== 'https://www.ssactivewear.com'", "location.protocol !== 'file:'")
+        source = source.replace(r'!/^\/p\/[^/]+\/[^/]+\/?$/.test(location.pathname)', 'false')
+        source = source.replace("location.pathname !== '/checkout/cart'", 'false')
+        args = {**payload, 'operation': operation, 'orderId': '5000001', 'deadline': time.time() + 40}
+        return self.driver.execute_script('return (' + source + ')(arguments[0]);', args)
+
     def test_extension_page_stock_and_checkout_flow_with_exact_confirmation(self):
         self._install_sxs_page_fixture()
         inventory = self._sxs_page_command('inventory')
@@ -116,7 +126,11 @@ const signedIn=document.createElement('a');signedIn.href='https://www.ssactivewe
         quantities = {'L': 1, 'XL': 1, '2XL': 1}
         lines = [{'product': {'product_id': 'G500', 'color': 'Black'}, 'selected': {'url': 'https://www.ssactivewear.com/p/gildan/5000'}, 'quantities': quantities, 'warehouse': 'Reading, PA'}]
         self.assertTrue(self._sxs_page_command('fill', {'allocations': [{'warehouse': 'Reading, PA', 'quantities': quantities}]})['success'])
-        self.assertTrue(self._sxs_page_command('add', {'quantity': 3})['success'])
+        ready = self._sxs_page_command('add_ready', {'quantity': 3})
+        self.assertTrue(ready['success'], ready)
+        before = ready['result']['before']
+        self.assertTrue(self._sxs_main_stock_control('add', quantity=3, before=before)['click_issued'])
+        self.assertTrue(self._sxs_page_command('add', {'quantity': 3, 'before': before})['success'])
         rows = self._sxs_page_command('verified_cart', {'lines': lines})['result']['rows']
         sxs.validate_cart(rows, lines)
         for operation in ('checkout', 'review', 'begin_submit', 'confirm_submit'):
@@ -168,7 +182,7 @@ window.colorCalls=0;window.iColor=id=>{window.colorCalls++;setTimeout(()=>{
         self.assertTrue(ready['success'], ready)
         self.assertEqual(ready['result']['anchor_id'], 'cSwatch16787')
         source = (ROOT / 'crm-order-dark-mode-extension/ssactivewear-worker.mjs').read_text(encoding='utf-8')
-        source = 'function selectSxsColorInMain' + source.split('export function selectSxsColorInMain', 1)[1].split('\nexport function createSxsWorker', 1)[0]
+        source = 'function selectSxsColorInMain' + source.split('export function selectSxsColorInMain', 1)[1].split('\nexport function clickSxsStockControlInMain', 1)[0]
         # Only the isolated file fixture substitutes the production URL boundary.
         source = source.replace("location.origin !== 'https://www.ssactivewear.com'", "location.protocol !== 'file:'")
         source = source.replace(r'!/^\/p\/[^/]+\/[^/]+\/?$/.test(location.pathname)', 'false')
@@ -224,6 +238,31 @@ const other=document.createElement('div');other.className='oGrid';other.innerHTM
         result = self._sxs_page_command('inventory')
         self.assertFalse(result['success'])
         self.assertIn('size labels are missing', result['message'])
+
+    def test_extension_stock_controls_add_once_and_remove_only_the_exact_unchanged_cart(self):
+        self._install_sxs_page_fixture()
+        fill = self._sxs_page_command('fill', {'allocations': [{'warehouse': 'Reading, PA', 'quantities': {'L': 1}}]})
+        self.assertTrue(fill['success'], fill)
+        ready = self._sxs_page_command('add_ready', {'quantity': 1})
+        self.assertTrue(ready['success'], ready)
+        before = ready['result']['before']
+        with self.assertRaisesRegex(Exception, 'quantities changed'):
+            self._sxs_main_stock_control('add', quantity=2, before=before)
+        self.assertEqual(self._sxs_page_command('cart')['result']['rows'], [])
+        self.assertTrue(self._sxs_main_stock_control('add', quantity=1, before=before)['click_issued'])
+        self.assertTrue(self._sxs_page_command('add', {'quantity': 1, 'before': before})['success'])
+        # Flask sorts JSON object keys; stock identity must ignore key order.
+        rows = [{key: row[key] for key in sorted(row)} for row in self._sxs_page_command('cart')['result']['rows']]
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(self._sxs_page_command('remove_ready', {'rows': rows})['success'])
+        self.driver.execute_script("document.querySelector('#M_M_zCart .cPie input').value='2'")
+        with self.assertRaisesRegex(Exception, 'cart changed'):
+            self._sxs_main_stock_control('remove', rows=rows)
+        self.assertEqual(self._sxs_page_command('cart')['result']['rows'][0]['quantity'], 2)
+        self.driver.execute_script("document.querySelector('#M_M_zCart .cPie input').value='1'")
+        self.assertTrue(self._sxs_main_stock_control('remove', rows=rows)['click_issued'])
+        self.assertTrue(self._sxs_page_command('remove', {'rows': rows})['success'])
+        self.assertEqual(self._sxs_page_command('cart')['result']['rows'], [])
 
     def test_extension_page_refuses_wrong_po_and_expired_or_unowned_mutations(self):
         self._install_sxs_page_fixture()

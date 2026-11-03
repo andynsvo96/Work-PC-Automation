@@ -93,6 +93,12 @@
       quantity: Number(r.querySelector('.cPie input')?.value || 0)
     }));
   }
+  function cartCount() {
+    const live = norm(document.querySelector('#qtyMiniCart')?.textContent).match(/^(\d+)(?:\s+items?)?$/i);
+    const label = document.querySelector('a[aria-label^="Cart:"]')?.getAttribute('aria-label') || '';
+    return live ? Number(live[1]) : Number((label.match(/Cart:\s*(\d+)/i) || [])[1] ?? NaN);
+  }
+  const cartSignature = rows => JSON.stringify(rows.map(r => [r.id, r.style, r.url, r.color, r.size, r.method, r.warehouse, r.quantity]));
   function checkoutState(po, fill = false) {
     if (!/^\d{7}$/.test(String(po))) throw Error('S&S PO must be the seven-digit CRM order number.');
     const address = norm(document.querySelector('#M_M_zShippingContainer')?.innerText).split(/Shipping\s+(?:Options|Method)/i)[0];
@@ -111,6 +117,8 @@
       signed_in: !!document.querySelector('a[href="/myaccount/signout"],a[href="https://www.ssactivewear.com/myaccount/signout"]'),
       cart_container: !!document.querySelector('#M_M_zCart'), hidden: document.hidden,
       visibility: document.visibilityState, title: document.title,
+      control_state: all('#aToCDesk, #aToCMob, #ninjaAddToCart, #zCheckoutBTN, #M_M_zCheckoutBTN, #M_M_zConfirmOrderPopup_zCompleteBTN, #M_M_zCart .cR a[aria-label="remove item"]').map(e => ({
+        id: e.id, tag: e.tagName, visible: visible(e), handler: ((e.getAttribute('href') || '').match(/^javascript:\s*([A-Za-z_]\w*)\(/) || [])[1] || '' })),
       product_state: {
         color_text: norm(document.querySelector('#zcolorname')?.textContent),
         colors: all('#colorSwatch a').slice(0, 150).map(a => ({ id: a.id, color: norm(a.textContent),
@@ -227,27 +235,29 @@
       if (!fills.every(([input, quantity]) => Number(input.value) === quantity)) throw Error('S&S quantities did not remain entered.');
       return {};
     },
-    add: async ({ quantity }) => {
-      const count = () => {
-        const live = norm(document.querySelector('#qtyMiniCart')?.textContent).match(/^(\d+)(?:\s+items?)?$/i);
-        const label = document.querySelector('a[aria-label^="Cart:"]')?.getAttribute('aria-label') || '';
-        return live ? Number(live[1]) : Number((label.match(/Cart:\s*(\d+)/i) || [])[1] ?? NaN);
-      };
-      const before = count();
+    add_ready: async ({ quantity }) => {
+      const before = cartCount();
       if (!Number.isInteger(before) || !Number.isInteger(quantity) || quantity <= 0) throw Error('S&S cart count or added quantity is invalid.');
-      unique('#aToCDesk, #aToCMob, #ninjaAddToCart').click();
-      await waitFor(() => count() === before + quantity, 'S&S did not confirm adding stock. Review the cart before retrying.');
+      unique('#aToCDesk, #aToCMob, #ninjaAddToCart');
+      return { before };
+    },
+    add: async ({ quantity, before }) => {
+      if (!Number.isInteger(before) || !Number.isInteger(quantity) || quantity <= 0) throw Error('S&S stock addition baseline is missing.');
+      await waitFor(() => cartCount() === before + quantity, 'S&S did not confirm adding stock. Review the cart before retrying.');
       return {};
     },
-    remove: async ({ rows }) => {
-      if (!Array.isArray(rows) || !rows.length || JSON.stringify(rows) !== JSON.stringify(cartRows())) throw Error('S&S cart changed before removal.');
+    remove_ready: async ({ rows }) => {
+      if (!Array.isArray(rows) || !rows.length || cartSignature(rows) !== cartSignature(cartRows())) throw Error('S&S cart changed before removal.');
       const first = all('#M_M_zCart .cR').filter(visible)[0];
       const buttons = [...first.querySelectorAll('a[aria-label="remove item"]')].filter(visible);
       if (buttons.length !== 1) throw Error('S&S cart removal control is ambiguous.');
-      buttons[0].click();
+      return {};
+    },
+    remove: async ({ rows }) => {
+      if (!Array.isArray(rows) || !rows.length) throw Error('S&S expected cart removal is missing.');
       await waitFor(() => cartRows().length === rows.length - 1, 'S&S stock removal did not verify.');
       const following = cartRows();
-      if (JSON.stringify(following) !== JSON.stringify(rows.slice(1))) throw Error('Other S&S cart stock changed during removal.');
+      if (cartSignature(following) !== cartSignature(rows.slice(1))) throw Error('Other S&S cart stock changed during removal.');
       return { rows: following };
     },
     checkout: async () => { unique('#zCheckoutBTN').click(); await waitFor(() => visible(document.querySelector('#M_M_zPONumberTB')), 'S&S checkout did not load.'); return {}; },
@@ -272,7 +282,7 @@
     (async () => {
       guard();
       if (!Object.hasOwn(commands, message.operation) || !Number.isFinite(message.deadline) || Date.now() >= message.deadline * 1000) throw Error('Unsupported or expired S&S command.');
-      if (['fill', 'add', 'remove', 'checkout', 'review', 'begin_submit', 'confirm_submit'].includes(message.operation)) {
+      if (['fill', 'add_ready', 'add', 'remove_ready', 'remove', 'checkout', 'review', 'begin_submit', 'confirm_submit'].includes(message.operation)) {
         if (!/^\d{7}$/.test(message.orderId || '')) throw Error('S&S changes require an active Reorder.');
         if (!document.querySelector('a[href="/myaccount/signout"],a[href="https://www.ssactivewear.com/myaccount/signout"]')) throw Error('S&S login expired. Sign in normally before retrying.');
       }

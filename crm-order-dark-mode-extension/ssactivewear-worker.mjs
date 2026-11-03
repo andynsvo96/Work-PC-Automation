@@ -38,6 +38,38 @@ export function selectSxsColorInMain({ color, anchorId, orderId, deadline }) {
   return { success: true, anchor_id: anchorId };
 }
 
+export function clickSxsStockControlInMain({ operation, orderId, deadline, quantity, before, rows }) {
+  if (location.origin !== 'https://www.ssactivewear.com' || !/^\d{7}$/.test(orderId || '')
+      || !Number.isFinite(deadline) || Date.now() >= deadline * 1000
+      || !document.querySelector('a[href="/myaccount/signout"],a[href="https://www.ssactivewear.com/myaccount/signout"]')) throw Error('S&S stock changes require the signed-in Reorder page.');
+  const norm = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const visible = e => e && e.getBoundingClientRect().width > 0 && e.getBoundingClientRect().height > 0
+    && getComputedStyle(e).display !== 'none' && getComputedStyle(e).visibility !== 'hidden';
+  let buttons;
+  if (operation === 'add') {
+    if (!/^\/p\/[^/]+\/[^/]+\/?$/.test(location.pathname) || !Number.isInteger(quantity) || quantity <= 0) throw Error('Invalid S&S stock addition.');
+    const live = norm(document.querySelector('#qtyMiniCart')?.textContent).match(/^(\d+)(?:\s+items?)?$/i);
+    const label = document.querySelector('a[aria-label^="Cart:"]')?.getAttribute('aria-label') || '';
+    const count = live ? Number(live[1]) : Number((label.match(/Cart:\s*(\d+)/i) || [])[1] ?? NaN);
+    const quantities = [...document.querySelectorAll('.gR input[aria-label="quantity"]')].map(i => Number(i.value || 0));
+    if (count !== before || !quantities.length || quantities.some(q => !Number.isInteger(q) || q < 0)
+        || quantities.reduce((sum, q) => sum + q, 0) !== quantity) throw Error('S&S cart count or entered quantities changed before addition.');
+    buttons = [...document.querySelectorAll('#aToCDesk, #aToCMob, #ninjaAddToCart')].filter(visible);
+  } else if (operation === 'remove') {
+    if (location.pathname !== '/checkout/cart' || !Array.isArray(rows) || !rows.length) throw Error('Invalid S&S stock removal.');
+    const current = [...document.querySelectorAll('#M_M_zCart .cR')].filter(visible);
+    const actual = current.map(r => ({ id: r.id, style: norm(r.querySelector('.cDes b')?.textContent), url: r.querySelector('.cDes a')?.href || '',
+      color: norm(r.querySelector('.cCol')?.innerText), size: norm(r.querySelector('.cSiz')?.innerText).replace(/^Size:\s*/i, ''),
+      method: norm(r.querySelector('.cMet')?.innerText), warehouse: norm(r.querySelector('.cLoc')?.innerText), quantity: Number(r.querySelector('.cPie input')?.value || 0) }));
+    const signature = list => JSON.stringify(list.map(r => [r.id, r.style, r.url, r.color, r.size, r.method, r.warehouse, r.quantity]));
+    if (signature(actual) !== signature(rows)) throw Error('S&S cart changed before removal.');
+    buttons = [...current[0].querySelectorAll('a[aria-label="remove item"]')].filter(visible);
+  } else { throw Error('Unsupported S&S stock control.'); }
+  if (buttons.length !== 1 || buttons[0].disabled) throw Error('S&S stock control is missing or ambiguous.');
+  buttons[0].click();
+  return { click_issued: true };
+}
+
 export function createSxsWorker(api, fetcher = fetch) {
   let pumping = false, probing = false, writes = Promise.resolve();
   const read = async () => {
@@ -157,6 +189,14 @@ export function createSxsWorker(api, fetcher = fetch) {
         func: selectSxsColorInMain, args: [{ color: command.payload.color, anchorId: ready.anchor_id, orderId: command.order_id, deadline: command.deadline }] });
       if (result?.length !== 1 || result[0].result?.success !== true || result[0].result.anchor_id !== ready.anchor_id) throw Error('S&S color selector did not confirm its invocation.');
       return pageCommand(tab.id, command);
+    }
+    if (['add', 'remove'].includes(command.operation)) {
+      const ready = await pageCommand(tab.id, { ...command, operation: command.operation + '_ready' });
+      const payload = { ...command.payload, ...(command.operation === 'add' ? { before: ready.before } : {}) };
+      const result = await api.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN',
+        func: clickSxsStockControlInMain, args: [{ ...payload, operation: command.operation, orderId: command.order_id, deadline: command.deadline }] });
+      if (result?.length !== 1 || result[0].result?.click_issued !== true) throw Error('S&S stock control did not confirm its invocation. Review the cart before retrying.');
+      return pageCommand(tab.id, { ...command, payload });
     }
     return pageCommand(tab.id, command);
   }

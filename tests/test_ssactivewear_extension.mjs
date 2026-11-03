@@ -18,9 +18,9 @@ function fixture() {
       get: async id => { if (!tabs.has(id)) throw Error('No tab'); return { ...tabs.get(id) }; },
       update: async (id, patch) => { calls.push(['update', id, patch]); Object.assign(tabs.get(id), patch); return { ...tabs.get(id) }; },
       create: async options => { calls.push(['create', options]); const tab = { id: nextId++, windowId: 3, status: 'complete', ...options }; tabs.set(tab.id, tab); return tab; },
-      sendMessage: async (id, message) => { calls.push(['send', id, message]); return { success: true, result: { url: tabs.get(id).url, hidden: true, signed_in: true, cart_container: true, anchor_id: 'cSwatch16787', candidates: [{ url: ORIGIN + '/p/gildan/5000', title: '5000 Gildan Heavy Cotton T-Shirt' }] } }; }
+      sendMessage: async (id, message) => { calls.push(['send', id, message]); return { success: true, result: { url: tabs.get(id).url, hidden: true, signed_in: true, cart_container: true, before: 0, anchor_id: 'cSwatch16787', candidates: [{ url: ORIGIN + '/p/gildan/5000', title: '5000 Gildan Heavy Cotton T-Shirt' }] } }; }
     },
-    scripting: { executeScript: async args => { calls.push(['inject', args]); return args.world === 'MAIN' ? [{ result: { success: true, anchor_id: 'cSwatch16787' } }] : []; } },
+    scripting: { executeScript: async args => { calls.push(['inject', args]); return args.world === 'MAIN' ? [{ result: { success: true, click_issued: true, anchor_id: 'cSwatch16787' } }] : []; } },
     windows: { get: async () => ({ state: 'minimized' }), update: async (...args) => calls.push(['window-update', ...args]), create: async options => { calls.push(['window', options]); const tab = await api.tabs.create({ url: options.url, active: false }); return { id: 3, tabs: [tab] }; } }
   };
   const fetcher = async (url, options) => {
@@ -87,6 +87,19 @@ test('color selection uses one fixed page-context handler and verifies its resul
   assert.equal(main.length, 1);
   assert.equal(main[0][1].func.name, 'selectSxsColorInMain');
   assert.deepEqual(main[0][1].args, [{ color: 'Black', anchorId: 'cSwatch16787', orderId: '5000001', deadline: command.deadline }]);
+  assert.equal(f.calls.filter(c => c[0] === 'window-update').length, 0);
+});
+
+test('stock addition uses one fixed page-context click and retains its count baseline', async () => {
+  const f = fixture();
+  await createSxsWorker(f.api, f.fetcher).execute(f.command('add', { quantity: 1 }));
+  const messages = f.calls.filter(c => c[0] === 'send').map(c => c[2]);
+  assert.deepEqual(messages.map(c => c.operation), ['add_ready', 'add']);
+  assert.equal(messages[1].payload.before, 0);
+  const main = f.calls.filter(c => c[0] === 'inject' && c[1].world === 'MAIN');
+  assert.equal(main.length, 1);
+  assert.equal(main[0][1].func.name, 'clickSxsStockControlInMain');
+  assert.equal(main[0][1].args[0].quantity, 1);
   assert.equal(f.calls.filter(c => c[0] === 'window-update').length, 0);
 });
 
