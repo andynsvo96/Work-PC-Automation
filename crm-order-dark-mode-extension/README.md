@@ -74,9 +74,10 @@ Reorder checks the running extension version before entering stock, so an old
 background controller stops with an explicit reload instruction.
 The live check matched Gildan 5000, selected Black, read stock and delivery dates
 from 11 warehouses, and returned to the same empty cart. No quantity entry,
-checkout, purchase, or CRM edit ran in that check. Live cart entry and extension
-checkout still need verification with a new eligible order. Reload the extension
-and rerun its check after updating code. Offline tests cover page
+checkout, purchase, or CRM edit ran in that check. A later live Reorder verified
+cart entry, checkout, and a supplier-confirmed purchase while Chrome remained
+minimized. CRM production/due dates and the purchase note were also verified.
+Reload the extension and rerun its check after updating extension code. Offline tests cover page
 operations, local origin restrictions, duplicate-delivery prevention, and tab
 ownership. See the [Reorder guide](../docs/REORDER_STOCK.md).
 

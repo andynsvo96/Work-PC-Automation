@@ -109,8 +109,10 @@ The local Python worker matched G500 to Gildan 5000, selected Black, read stock
 and delivery dates from 11 warehouses, then returned to the unchanged empty cart.
 Both cart and product pages stayed hidden; the minimized run also verified that
 the window remained minimized. Those diagnostics prohibited quantity entry,
-checkout, purchase, and CRM changes. Live extension cart/checkout ordering remains
-unverified until tested with a new eligible order.
+checkout, purchase, and CRM changes. A later live Reorder verified quantity
+entry, exact cart contents, checkout, and supplier purchase confirmation in a
+minimized Windows Chrome window. CRM production/due dates and the purchase note
+were reloaded and verified.
 
 A November 2, 2026 comparison used the installed Chrome 156 and Firefox 159:
 
@@ -136,6 +138,12 @@ rule or establish a reliable profile-initialization workaround. No production
 browser/profile migration was made during those comparisons. Firefox/Playwright
 are not enabled for Reorder. The comparison did not add cart stock, purchase
 orders, or edit CRM.
+
+CRM rejects a reused manual stock PO even if its older row is red. An existing
+numeric order PO on source stock now stops before supplier access or purchase.
+Review the earlier supplier purchase first. Confirmed purchases are preserved
+when a CRM collision needs an operator-approved stock-record suffix; this never
+changes the supplier PO or authorizes another purchase.
 
 All supplier carts and delivery dates are preflighted before the first purchase.
 Existing vendor cart contents stop the run and are retained. Only verified carts
@@ -220,8 +228,8 @@ loads still requires resolving access; cookie-banner handling does not suppress
 that error.
 
 Restart the app, reload the extension, and refresh CRM pages/dashboard after
-updating. Each Chrome profile opts in separately. Live cart/checkout ordering and
-macOS behavior remain unverified until checked on that setup.
+updating. Each Chrome profile opts in separately. macOS behavior remains
+unverified until checked on that setup.
 
 ## Receipts and recovery
 
@@ -240,7 +248,12 @@ resume an unsubmitted saved purchase or repair CRM without repeating confirmed
 purchases. The worker records the numeric PO with the correct supplier through
 Manual Order/Add Box, reloads the same design, and verifies a current-destination
 record. Production notes retain supplier references, warehouse allocations, and
-product/color/size quantities; they must persist after reload.
+product/color/size quantities; they must persist after reload. An explicitly
+approved CRM stock PO alias is bound to the same order number and saved as
+`crm_po` in the local confirmed receipt. Recovery verifies that alias and adds a
+note linking it to the original supplier PO/reference. The supplier customer PO
+and confirmed purchase are retained. These worker-only checks load on the next
+worker run; an already-current 1.7.8 extension does not need another reload.
 
 The production-note writer waits for CRM's append-only Production Notes field in
 its dedicated section. It preserves existing note history and checks that history

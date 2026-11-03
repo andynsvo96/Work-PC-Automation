@@ -124,6 +124,9 @@ def load_receipt(order_id):
         receipt = json.loads(path.read_text(encoding="utf-8"))
         if receipt.get("version") != 1 or receipt.get("order_id") != order_id or receipt.get("customer_po") != order_id or not isinstance(receipt.get("groups"), list):
             raise ValueError("invalid receipt")
+        crm_po = receipt.get("crm_po", order_id)
+        if not isinstance(crm_po, str) or not re.fullmatch(re.escape(order_id) + r"(?:-(?:[2-9]|[1-9]\d+))?", crm_po):
+            raise ValueError("invalid CRM stock PO")
         for group in receipt["groups"]:
             if group.get("state") not in {"planned", "submitting", "uncertain", "confirmed"} or group.get("vendor") not in {"sanmar", "ssactivewear"}:
                 raise ValueError("invalid purchase state")
@@ -252,21 +255,22 @@ def _empty(driver, vendor, owned=False):
             raise RuntimeError("SanMar cart already contains stock; review before Reorder.")
 
 
-def verify_record(driver, tab, order_id):
+def verify_record(driver, tab, po):
     if bypass._activate_stock_tab(driver, tab["tab_index"] - 1) is None:
         raise RuntimeError("CRM replacement design tab could not be selected.")
     rows = _read_rows(driver)["records"]
-    matches = [x for x in rows if x.get("assigned") is True and x.get("po") == order_id and vendor_key(x.get("vendor")) == tab["vendor"]]
+    matches = [x for x in rows if x.get("assigned") is True and x.get("po") == po and vendor_key(x.get("vendor")) == tab["vendor"]]
     return len(matches) == 1
 
 
 def finish_crm(driver, order_id, tabs, receipt):
+    crm_po = receipt.get("crm_po", order_id)
     for tab in tabs:
-        if not verify_record(driver, tab, order_id):
-            bypass._record_crm_manual_order(driver, order_id, order_id, stock_tab_index=tab["tab_index"], vendor_name=vendor_label(tab["vendor"]), add_box=True)
+        if not verify_record(driver, tab, crm_po):
+            bypass._record_crm_manual_order(driver, order_id, crm_po, stock_tab_index=tab["tab_index"], vendor_name=vendor_label(tab["vendor"]), add_box=True)
         bypass._open_target_order(driver, order_id, shipping_filter="all", list_url_override=None)
         bypass._require_crm_order_ready_once_with_refresh(driver, order_id)
-        if not verify_record(driver, tab, order_id):
+        if not verify_record(driver, tab, crm_po):
             raise RuntimeError("The replacement CRM PO did not persist at the current production destination.")
     notes = []
     for group in receipt["groups"]:
@@ -276,6 +280,9 @@ def finish_crm(driver, order_id, tabs, receipt):
         notes.append(f"Reordered stock - PO {order_id} - {vendor_label(group['vendor'])} {reference}: {details}")
     for note in notes:
         bypass._save_and_verify_crm_production_note(driver, order_id, note)
+    if crm_po != order_id:
+        references = ", ".join(f"{vendor_label(g['vendor'])} {g['confirmation'].get('order_number') or g['confirmation'].get('web_reference') or 'confirmed'}" for g in receipt['groups'])
+        bypass._save_and_verify_crm_production_note(driver, order_id, f"CRM stock PO {crm_po} links to {references} (supplier PO {order_id}).")
     receipt["complete"] = True
     save_receipt(receipt)
 
@@ -295,8 +302,12 @@ def process_order(crm, vendors, order_id, dry_run=False):
     if receipt:
         confirmed = all(g.get("state") == "confirmed" for g in receipt["groups"])
         for tab in tabs:
-            if any(not confirmed or r.get("po") != order_id or vendor_key(r.get("vendor")) != tab["vendor"] for r in tab["valid_records"]):
+            if any(not confirmed or r.get("po") != receipt.get("crm_po", order_id) or vendor_key(r.get("vendor")) != tab["vendor"] for r in tab["valid_records"]):
                 raise RuntimeError("Mixed stock records are not accounted for by the confirmed Reorder receipt. Review required.")
+    if (not receipt or any(g.get('state') != 'confirmed' for g in receipt['groups'])) and any(
+        str(record.get('po', '')).strip() == order_id for tab in tabs for record in tab['red_records']
+    ):
+        raise RuntimeError(f"CRM already has purchase order {order_id}. Its Manual Order form rejects duplicate POs; review the existing supplier purchase before reordering.")
     order.update(order_id=order_id, po=order_id, order_type="inhouse")
     required_vendors = sorted({t["vendor"] for t in tabs})
     if not receipt or not all(g.get("state") == "confirmed" for g in receipt["groups"]):
@@ -373,7 +384,7 @@ def process_order(crm, vendors, order_id, dry_run=False):
             save_receipt(receipt)
             raise
     finish_crm(crm, order_id, tabs, receipt)
-    return {"outcome": "reordered", "message": f"Stock reordered and verified in CRM under customer PO {order_id}.", "groups": receipt["groups"]}
+    return {"outcome": "reordered", "message": f"Stock reordered and verified in CRM under customer PO {order_id}.", "crm_po": receipt.get("crm_po", order_id), "groups": receipt["groups"]}
 
 
 def run(order_id, dry_run=False, visible=False, result_file=None):

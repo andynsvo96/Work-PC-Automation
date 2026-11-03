@@ -297,6 +297,41 @@ class ReorderRecoveryTests(unittest.TestCase):
             self.run_order()
         self.vendor.assert_not_called(); self.submit.assert_not_called()
 
+    def test_existing_numeric_source_po_stops_before_another_supplier_purchase(self):
+        self.tabs[0]['red_records'][0]['po'] = '5000001'
+        with self.assertRaisesRegex(RuntimeError, 'Manual Order form rejects duplicate POs'):
+            self.run_order()
+        self.vendor.assert_not_called()
+        self.submit.assert_not_called()
+        self.empty.assert_not_called()
+        self.assertIsNone(worker.load_receipt('5000001'))
+
+    def test_confirmed_purchase_recovers_approved_crm_alias_without_supplier_access(self):
+        self.tabs[0]['red_records'][0]['po'] = '5000001'
+        self.tabs[0]['valid_records'] = [{'assigned': True, 'po': '5000001-2', 'vendor': 'Sanmar'}]
+        receipt = {'version': 1, 'order_id': '5000001', 'customer_po': '5000001', 'crm_po': '5000001-2',
+                   'source_signature': worker.signature(worker.snapshot(self.tabs)),
+                   'groups': [{'vendor': 'sanmar', 'state': 'confirmed', 'lines': [], 'review': {'eta': date.today()},
+                               'confirmation': {'po': '5000001', 'po_confirmed': True, 'web_reference': 'fixture'}}]}
+        worker.save_receipt(receipt)
+        result = self.run_order()
+        self.assertEqual(result['crm_po'], '5000001-2')
+        self.vendor.assert_not_called()
+        self.prepare.assert_not_called()
+        self.submit.assert_not_called()
+        self.finish.assert_called_once()
+
+    def test_invalid_crm_alias_cannot_change_the_supplier_po_or_recovery_order(self):
+        receipt = {'version': 1, 'order_id': '5000001', 'customer_po': '5000001',
+                   'source_signature': worker.signature(worker.snapshot(self.tabs)), 'groups': []}
+        for alias in ('5000002-2', '5000001-0', '5000001-1', 'other'):
+            with self.subTest(alias=alias):
+                worker.save_receipt({**receipt, 'crm_po': alias})
+                with self.assertRaisesRegex(RuntimeError, 'receipt cannot be read'):
+                    self.run_order()
+        self.vendor.assert_not_called()
+        self.submit.assert_not_called()
+
     def test_no_red_stock_does_not_launch_supplier(self):
         self.tabs.clear()
         self.assertEqual(self.run_order()["outcome"], "no_red_stock")
@@ -389,6 +424,27 @@ class ReorderRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "receipt cannot be read"):
             self.run_order()
         self.vendor.assert_not_called()
+
+
+class ReorderCrmRecordingTests(unittest.TestCase):
+    def test_crm_alias_records_and_verifies_the_alias_while_preserving_supplier_po(self):
+        receipt = {'customer_po': '5000001', 'crm_po': '5000001-2', 'groups': [{
+            'vendor': 'sanmar', 'state': 'confirmed', 'confirmation': {'po': '5000001', 'po_confirmed': True, 'web_reference': 'fixture-ref'},
+            'lines': [{'product': product(), 'quantities': {'L': 1}, 'warehouse': 'Robbinsville, NJ'}]}]}
+        driver = mock.Mock()
+        with mock.patch.object(worker, 'verify_record', side_effect=[False, True]) as verify, mock.patch.object(
+            worker.bypass, '_record_crm_manual_order'
+        ) as record, mock.patch.object(worker.bypass, '_open_target_order'), mock.patch.object(
+            worker.bypass, '_require_crm_order_ready_once_with_refresh'
+        ), mock.patch.object(worker.bypass, '_save_and_verify_crm_production_note') as note, mock.patch.object(worker, 'save_receipt'):
+            worker.finish_crm(driver, '5000001', [tab()], receipt)
+        self.assertEqual([c.args[2] for c in verify.call_args_list], ['5000001-2', '5000001-2'])
+        record.assert_called_once_with(driver, '5000001', '5000001-2', stock_tab_index=1, vendor_name='Sanmar', add_box=True)
+        self.assertIn('PO 5000001 - Sanmar fixture-ref', note.call_args_list[0].args[2])
+        self.assertIn('CRM stock PO 5000001-2', note.call_args_list[1].args[2])
+        self.assertIn('supplier PO 5000001', note.call_args_list[1].args[2])
+        self.assertEqual(receipt['customer_po'], '5000001')
+        self.assertTrue(receipt['complete'])
 
 
 class ReorderRouteTests(unittest.TestCase):
