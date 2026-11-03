@@ -112,6 +112,10 @@ export function createSxsWorker(api, fetcher = fetch) {
     const result = await api.tabs.sendMessage(tabId, { type: 'sxs:page-command', commandId: command.id,
       orderId: command.order_id || '', operation: command.operation, payload: command.payload || {}, deadline: command.deadline });
     if (!result || result.success !== true || !isSxsUrl(result.result?.url)) throw Error(result?.message || 'S&S did not confirm this operation. Review the tab before retrying.');
+    if (command.operation === 'health') {
+      const window = await api.windows.get(tab.windowId);
+      return { ...result.result, window_state: window.state, tab_active: tab.active === true };
+    }
     return result.result;
   }
   async function execute(command) {
@@ -190,6 +194,10 @@ export function createSxsWorker(api, fetcher = fetch) {
       let tab;
       if (mode === 'minimized') {
         const window = await api.windows.create({ url: BASE + '/', state: 'minimized', focused: false });
+        // Confirm the created window's requested state before its first read.
+        // Only this newly owned check window is changed.
+        await api.windows.update(window.id, { state: 'minimized', focused: false });
+        if ((await api.windows.get(window.id)).state !== 'minimized') throw Error('The new S&S check window did not minimize.');
         const tabs = window.tabs || await api.tabs.query({ windowId: window.id });
         if (tabs.length !== 1) throw Error('The minimized S&S check window is ambiguous.');
         tab = tabs[0];
@@ -201,7 +209,7 @@ export function createSxsWorker(api, fetcher = fetch) {
         await api.tabs.update(tab.id, { url: BASE + path });
         await waitTab(tab.id);
         const result = await pageCommand(tab.id, { id: crypto.randomUUID().replaceAll('-', ''), operation: 'health', deadline: Date.now() / 1000 + 50 });
-        if (!result.hidden) throw Error('The S&S check tab became visible; repeat the background/minimized check.');
+        if (!result.hidden) throw Error(`S&S ${mode} check became visible at ${path} (window: ${result.window_state}, active tab: ${result.tab_active}). Leave its test tab/window in the background and repeat the check.`);
         if (path === '/checkout/cart') check.signed_in = result.signed_in === true && result.cart_container === true;
         if (path === '/ps/5000') await pageCommand(tab.id, { id: crypto.randomUUID().replaceAll('-', ''), operation: 'candidates', deadline: Date.now() / 1000 + 50 });
         pages.push({ path, hidden: result.hidden });

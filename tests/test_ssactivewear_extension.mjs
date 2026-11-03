@@ -21,7 +21,7 @@ function fixture() {
       sendMessage: async (id, message) => { calls.push(['send', id, message]); return { success: true, result: { url: tabs.get(id).url, hidden: true, signed_in: true, cart_container: true, candidates: [{ url: ORIGIN + '/p/gildan/5000', title: '5000 Gildan Heavy Cotton T-Shirt' }] } }; }
     },
     scripting: { executeScript: async args => { calls.push(['inject', args]); } },
-    windows: { get: async () => ({ state: 'minimized' }), update: async (...args) => calls.push(['focus', ...args]), create: async options => { calls.push(['window', options]); const tab = await api.tabs.create({ url: options.url, active: false }); return { id: 3, tabs: [tab] }; } }
+    windows: { get: async () => ({ state: 'minimized' }), update: async (...args) => calls.push(['window-update', ...args]), create: async options => { calls.push(['window', options]); const tab = await api.tabs.create({ url: options.url, active: false }); return { id: 3, tabs: [tab] }; } }
   };
   const fetcher = async (url, options) => {
     calls.push(['fetch', url, options]);
@@ -41,7 +41,7 @@ test('navigation and page operations do not activate tabs or focus windows', asy
   const f = fixture(), worker = createSxsWorker(f.api, f.fetcher);
   await worker.execute(f.command('navigate', { url: ORIGIN + '/ps/5000' }));
   await worker.execute(f.command('health'));
-  assert.equal(f.calls.filter(c => c[0] === 'focus').length, 0);
+  assert.equal(f.calls.filter(c => c[0] === 'window-update').length, 0);
   assert.ok(f.calls.filter(c => c[0] === 'update').every(c => c[2].active !== true));
   assert.equal(f.calls.find(c => c[0] === 'inject')[1].target.tabId, 7);
 });
@@ -91,7 +91,16 @@ test('minimized read-only check uses an unfocused owned window and never purchas
   const create = f.calls.find(c => c[0] === 'window')[1];
   assert.equal(create.state, 'minimized'); assert.equal(create.focused, false);
   assert.ok(f.calls.filter(c => c[0] === 'send').every(c => ['health', 'candidates'].includes(c[2].operation)));
-  assert.equal(f.calls.filter(c => c[0] === 'focus').length, 0);
+  assert.ok(f.calls.filter(c => c[0] === 'window-update').every(c => c[2].focused === false && c[2].state === 'minimized'));
+});
+
+test('minimized check stops if its newly created window does not minimize', async () => {
+  const f = fixture(); f.api.windows.get = async () => ({ state: 'normal' });
+  f.fetcher = async () => { f.local.sxsReorderBrowser.enabled = false; return { ok: true, status: 200, json: async () => ({ success: true, protocol: 'automation.ssactivewear.extension/v1' }) }; };
+  const result = await createSxsWorker(f.api, f.fetcher).probe('minimized');
+  assert.equal(result.success, false);
+  assert.match(result.message, /did not minimize/);
+  assert.equal(f.calls.filter(c => c[0] === 'send').length, 0);
 });
 
 test('content scripts cannot enable a connection or start a browser check', async () => {

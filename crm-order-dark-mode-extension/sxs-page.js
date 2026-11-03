@@ -90,7 +90,15 @@
     health: async () => ({
       signed_in: !!document.querySelector('a[href="/myaccount/signout"],a[href="https://www.ssactivewear.com/myaccount/signout"]'),
       cart_container: !!document.querySelector('#M_M_zCart'), hidden: document.hidden,
-      visibility: document.visibilityState, title: document.title
+      visibility: document.visibilityState, title: document.title,
+      product_state: {
+        color_text: norm(document.querySelector('#zcolorname')?.textContent),
+        colors: all('#colorSwatch a').slice(0, 150).map(a => ({ id: a.id, color: norm(a.textContent),
+          visible: visible(a), active: a.classList.contains('active'), href: a.getAttribute('href') })),
+        warehouse_headers: all('.gR[id^="wh_"]').slice(0, 30).map(r => ({
+          warehouse: norm(r.querySelector('.warehouse')?.textContent),
+          shipping: norm(r.querySelector('.shipby')?.textContent) }))
+      }
     }),
     candidates: async () => {
       const read = () => {
