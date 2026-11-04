@@ -49,7 +49,8 @@ the open draft and asks you to reload and review the latest version.
 
 The formatted view uses a separate frame. It does not execute template scripts,
 submit forms, navigate links, or fetch application endpoints. Source is preserved
-exactly when you switch views or edit only the name/title. Editing the formatted
+when you switch views or edit only the name/title, except for the metadata
+cleanup described below. Editing the formatted
 body serializes the body markup; browsers can normalize entities and formatting
 tags during those edits. The existing document wrapper is retained.
 
@@ -65,6 +66,25 @@ Keep placeholders such as [ORDER-NUMBER], [ORDER_NUMBER], [DESIGN], [PRINT], [ST
 [REQUEST], [COST], and [INVOICE_LINK]. Existing image URLs and link attributes
 remain in the source. The two captured embroidery-guide anchors without href
 remain unchanged until they are explicitly edited.
+
+Pasted editor metadata such as `data-pm-slice`, `data-start`, and `data-end`
+is removed from HTML tags when a template is created, duplicated, or saved.
+This applies to both formatted editing and HTML source. It prevents the
+Salesforce error **Attribute "data-pm-slice" on element &lt;p&gt; is not allowed**.
+All `data-*` attributes are removed; the remaining markup, inline styles,
+links, images, text, and placeholders are preserved. After saving, the editor
+shows the cleaned HTML and remains saved until you make another edit.
+
+Existing library entries are cleaned together on their next load, retaining
+the previous library in `salesforce_templates.json.bak`. Original captures are
+untouched. Each email worker also cleans its HTML before filling Salesforce,
+including templates supplied by an older or custom library. Recipient checks,
+Activity confirmation, and duplicate-send receipts still apply.
+
+Restart the local app and refresh the dashboard to load the save cleanup and
+editor update. Workers use the cleanup on their next run. No Chrome extension
+reload is needed. This cleanup addresses editor metadata; other unsupported
+HTML still follows the existing sender validation.
 
 ## Local files
 

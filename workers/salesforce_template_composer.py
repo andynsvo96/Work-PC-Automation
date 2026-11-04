@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from selenium.webdriver.support.ui import WebDriverWait
 
 from salesforce_templates import default_template_store, TemplateLibraryError
+from salesforce_email_html import clean_email_html
 
 
 class TemplateComposerError(RuntimeError):
@@ -175,8 +176,9 @@ def fill_template(driver, reference, *, store=None, timeout=15, replacements=Non
         template = (store or default_template_store()).get_template(reference)
     except (TemplateLibraryError, OSError) as exc:
         raise TemplateComposerError(f"Could not load the local Salesforce template: {exc}") from exc
+    # Also protect custom stores and older libraries that have not been opened in Settings.
+    template = {**template, "body_html": clean_email_html(template["body_html"])}
     if replacements:
-        template = dict(template)
         # Replace in one pass so product text can never become another placeholder.
         pattern = re.compile("|".join(re.escape(token) for token in replacements))
         template["subject"] = pattern.sub(lambda match: str(replacements[match[0]]), template["subject"])

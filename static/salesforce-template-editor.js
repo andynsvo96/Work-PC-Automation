@@ -509,6 +509,11 @@
         this.rows = (creating ? [...this.rows, this.current] : this.rows.map((row) => row.id === id ? this.current : row))
           .sort((a, b) => a.name.localeCompare(b.name));
         this.populateOptions(this.current.id);
+        if (this.rawBody !== this.current.body_html) {
+          this.rawBody = this.current.body_html;
+          this.source.value = this.rawBody;
+          this.renderVisual();
+        }
         this.dirty = false;
         this.message(data.message || 'Template saved.', 'saved');
       } catch (error) {

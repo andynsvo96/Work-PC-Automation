@@ -68,6 +68,14 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - **Salesforce template editor and sending:** Settings > **Salesforce Template** edits the local JSON library with **Add**, **Duplicate**, and **Remove** controls, a single HTML/formatted-view toggle, and controls for fonts, sizes, bold, underline, lists, alignment, links, and hosted images. **Automatic** beside the text-color picker resets only selected text color, preserving other formatting and following light/dark mode; manually selected colors stay fixed. New templates use automatic color, and theme changes never save the dashboard's display colors into emails. Refresh the dashboard to load this control; no app restart or extension reload is needed for the color update. Add/Duplicate open a draft for review before **Create template** saves it; Remove confirms deletion and retains a backup. All 18 automated email templates load their saved subject and HTML directly into Salesforce's source editor, without searching its template picker. This includes Sheets Scanner, cancellation/reachout and embroidery emails, Additional Requests/Comp Sleeves, all Stock Issue emails, Stock Swap, and their recovery paths. Existing placeholder checks, recipient/From verification, Activity confirmation, duplicate-send receipts, and queue locks remain in effect. Renaming a template retains its old worker reference; missing or invalid local templates stop for review. New library entries do not create new automation actions. Copy the active JSON library to each computer that runs email workers. Restart the local app and refresh the dashboard after updating; no extension reload is needed for template-editor changes. See [the template editor guide](docs/SALESFORCE_TEMPLATE_EDITOR.md).
 - **Settings and connectivity:** shipping product/color mapping editor, service connection controls, OS credential storage, private tablet access, and authenticated Windows/macOS clipboard transfer.
 
+Salesforce template saves remove pasted `data-*` attributes such as
+`data-pm-slice`, preventing the reported Salesforce HTML attribute error.
+Existing templates are cleaned with a backup on load, and workers clean HTML
+before filling the Salesforce composer. Formatting, links, images, and
+placeholders are retained. Restart the app and refresh the dashboard after
+updating; no extension reload is needed. See the
+[template editor guide](docs/SALESFORCE_TEMPLATE_EDITOR.md).
+
 See the [CRM Order Assistant guide](crm-order-dark-mode-extension/README.md) for installation, workflow details, and reload instructions. The extension is loaded locally through Chrome's **Load unpacked** control.
 
 ## Project Layout

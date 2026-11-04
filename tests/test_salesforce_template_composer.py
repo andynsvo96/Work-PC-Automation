@@ -250,6 +250,22 @@ class LocalTemplateBrowserTests(unittest.TestCase):
         self.assertIn('Latest edit',updated['state']['body'])
         self.assertEqual(self.driver.execute_script('return window.pickerClicks;'),0)
 
+    def test_sender_cleans_metadata_even_for_a_custom_store(self):
+        dirty = '<p data-pm-slice="1 1 []"><strong>[REQUEST]</strong></p>'
+        store = mock.Mock()
+        store.get_template.return_value = {'id': 'dirty', 'name': '[AUTO] Pasted', 'revision': 'test',
+            'subject': 'Order #[ORDER-NUMBER]', 'body_html': dirty}
+        self.open_fixture()
+        result = composer.fill_template(self.driver, '[AUTO] Pasted', store=store,
+            replacements={'[ORDER-NUMBER]': '1234567', '[REQUEST]': 'Soft & Light'})
+        self.assertNotIn('data-pm-slice', result['state']['body_html'])
+        self.assertIn('Soft & Light', result['state']['body'])
+        self.driver.find_element('id', 'send').click()
+        sent = self.driver.find_element('id', 'sentHtml').text
+        self.assertNotIn('data-pm-slice', sent)
+        self.assertIn('<strong>Soft &amp; Light</strong>', sent)
+        self.assertEqual(store.get_template.return_value['body_html'], dirty)
+
     def test_contact_reachout_dry_run_loads_local_json_and_checks_the_completed_draft(self):
         process = shared.COPYRIGHT_REACHOUT_PROCESS
         self.write_library([{'id': 'reachout', 'name': process.salesforce_template,

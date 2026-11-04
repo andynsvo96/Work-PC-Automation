@@ -153,6 +153,43 @@ class SalesforceTemplateEditorBrowserTests(unittest.TestCase):
         self.driver.find_element(By.ID, "sfTemplateSave").click()
         self.wait.until(lambda driver: driver.find_element(By.ID, "sfTemplateStatus").get_attribute("data-state") == "saved")
 
+    def test_html_save_refreshes_the_draft_with_cleaned_markup(self):
+        dirty = '<p data-pm-slice="1 1 []" style="font-size:20px"><strong>[PRODUCT]</strong></p>'
+        clean = '<p style="font-size:20px"><strong>[PRODUCT]</strong></p>'
+        self.mode('html')
+        self.input('sfTemplateBodyHtml', dirty)
+        self.save()
+        self.assertEqual(self.driver.find_element(By.ID, 'sfTemplateBodyHtml').get_attribute('value'), clean)
+        self.assertEqual(self.store.get_template('first')['body_html'], clean)
+        self.assertFalse(self.driver.execute_script('return window.SalesforceTemplateEditor.hasUnsavedChanges();'))
+        self.driver.refresh()
+        self.wait.until(lambda driver: driver.execute_script(
+            "return document.getElementById('sfTemplateBodyFrame').contentDocument.body.textContent==='[PRODUCT]';"))
+        self.mode('html')
+        self.assertEqual(self.driver.find_element(By.ID, 'sfTemplateBodyHtml').get_attribute('value'), clean)
+
+    def test_formatted_paste_is_cleaned_on_save_with_formatting_retained(self):
+        self.select_body_text('Hello')
+        self.driver.execute_script("""
+            const doc=document.getElementById('sfTemplateBodyFrame').contentDocument;
+            const clipboard=new doc.defaultView.DataTransfer();
+            clipboard.setData('text/html', '<p data-pm-slice="1 1 []"><strong>Replacement [PRODUCT]</strong></p>');
+            doc.body.dispatchEvent(new doc.defaultView.ClipboardEvent('paste', {
+                clipboardData:clipboard,bubbles:true,cancelable:true
+            }));
+        """)
+        self.save()
+        self.wait.until(lambda driver: driver.execute_script(
+            "return document.getElementById('sfTemplateBodyFrame').contentDocument.body.contentEditable==='true';"))
+        saved = self.store.get_template('first')['body_html']
+        self.assertNotIn('data-pm-slice', saved)
+        self.assertIn('<strong>Replacement [PRODUCT]</strong>', saved)
+        self.assertIn('/invoice', saved)
+        self.assertIn('https://images.example.test/logo.png', saved)
+        self.mode('html')
+        self.assertEqual(self.driver.find_element(By.ID, 'sfTemplateBodyHtml').get_attribute('value'), saved)
+        self.assertFalse(self.driver.execute_script('return window.SalesforceTemplateEditor.hasUnsavedChanges();'))
+
     def body_text_style(self, text):
         return self.driver.execute_script("""
             const doc=document.getElementById('sfTemplateBodyFrame').contentDocument;

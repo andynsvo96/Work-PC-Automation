@@ -35,6 +35,60 @@ class TemplateFixtures:
         self.store = SalesforceTemplateStore(self.path, self.root / "captures")
 
 class TemplateStoreTests(TemplateFixtures, unittest.TestCase):
+    def test_save_and_create_strip_editor_metadata_without_changing_other_markup(self):
+        first = self.store.list_templates()[0]
+        source = SOURCE.replace('<p>', '<p data-pm-slice="1 1 []" data-start="0">')
+        before = self.path.read_bytes()
+        saved = self.store.save_template(first['id'], {**first, 'body_html': source, 'subject': 'Edited title'})
+        self.assertEqual(saved['body_html'], SOURCE)
+        self.assertEqual(self.path.with_suffix('.json.bak').read_bytes(), before)
+        created = self.store.create_template({**first, 'name': 'Pasted copy', 'body_html': source})
+        self.assertEqual(created['body_html'], SOURCE)
+        with mock.patch.object(self.store, '_write') as write:
+            unchanged = self.store.save_template(saved['id'], {**saved, 'body_html': source})
+        self.assertEqual(unchanged, saved)
+        write.assert_not_called()
+
+    def test_existing_templates_are_cleaned_together_with_one_backup(self):
+        self.store.list_templates()
+        document = json.loads(self.path.read_text(encoding='utf-8'))
+        document['retained_metadata'] = {'keep': True}
+        for row in document['templates']:
+            row['body_html'] = row['body_html'].replace('<p>', '<p data-pm-slice="1 1 []">')
+        document['templates'][0]['previous_names'] = ['Older template name']
+        self.path.write_text(json.dumps(document), encoding='utf-8')
+        before = self.path.read_bytes()
+        capture_before = self.capture.read_bytes()
+        rows = self.store.list_templates()
+        self.assertTrue(all('data-pm-slice' not in row['body_html'] for row in rows))
+        self.assertEqual(rows[0]['body_html'], SOURCE)
+        self.assertEqual(self.path.with_suffix('.json.bak').read_bytes(), before)
+        cleaned_document = json.loads(self.path.read_text(encoding='utf-8'))
+        self.assertEqual(cleaned_document['retained_metadata'], document['retained_metadata'])
+        self.assertEqual(cleaned_document['templates'][0]['previous_names'], ['Older template name'])
+        self.assertEqual(self.capture.read_bytes(), capture_before)
+        with mock.patch.object(self.store, '_write') as write:
+            self.assertEqual(self.store.list_templates(), rows)
+        write.assert_not_called()
+
+    def test_initial_capture_copy_is_cleaned_and_the_capture_is_preserved(self):
+        self.snapshot['[AUTO] First']['body_html'] = SOURCE.replace('<p>', '<p data-pm-slice="1 1 []">')
+        self.capture.write_text(json.dumps(self.snapshot), encoding='utf-8')
+        before = self.capture.read_bytes()
+        self.assertEqual(self.store.get_template('[AUTO] First')['body_html'], SOURCE)
+        self.assertEqual(self.capture.read_bytes(), before)
+
+    def test_cleanup_failure_retains_the_original_library(self):
+        self.store.list_templates()
+        document = json.loads(self.path.read_text(encoding='utf-8'))
+        document['templates'][0]['body_html'] = '<p data-pm-slice="1 1 []">Original</p>'
+        self.path.write_text(json.dumps(document), encoding='utf-8')
+        before = self.path.read_bytes()
+        with mock.patch.object(self.store, '_write', side_effect=OSError('Disk failure')):
+            with self.assertRaises(OSError):
+                self.store.list_templates()
+        self.assertEqual(self.path.read_bytes(), before)
+
     def test_initialize_preserves_source_without_editing_capture(self):
         before = self.capture.read_bytes()
         rows = self.store.list_templates()
@@ -337,6 +391,18 @@ class TemplateApiTests(TemplateFixtures, unittest.TestCase):
         self.assertEqual(response.get_json()["template"]["subject"], "New title")
         response = self.client.post("/api/salesforce-templates/template_a", json={**first, "subject": "Stale"})
         self.assertEqual(response.status_code, 409)
+
+    def test_create_and_save_return_cleaned_html_for_the_editor(self):
+        source = SOURCE.replace('<p>', '<p data-pm-slice="1 1 []">')
+        created = self.client.post('/api/salesforce-templates', json={
+            'name': 'Pasted copy', 'subject': 'Order #[ORDER-NUMBER]', 'body_html': source})
+        self.assertEqual(created.status_code, 201)
+        row = created.get_json()['template']
+        self.assertEqual(row['body_html'], SOURCE)
+        saved = self.client.post('/api/salesforce-templates/' + row['id'], json={**row,
+            'body_html': source.replace('[REQUEST]', '[PRODUCT]')})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.get_json()['template']['body_html'], SOURCE.replace('[REQUEST]', '[PRODUCT]'))
 
     def test_invalid_payload_and_missing_template(self):
         first = self.store.list_templates()[0]

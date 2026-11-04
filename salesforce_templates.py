@@ -11,6 +11,7 @@ import threading
 from uuid import uuid4
 
 from runtime_paths import STATE_DIR
+from salesforce_email_html import clean_email_html
 
 
 MAX_BODY_BYTES = 1_000_000
@@ -100,7 +101,7 @@ def _validate_fields(values):
         raise TemplateLibraryError("Email body contains invalid Unicode.") from exc
     if body_size > MAX_BODY_BYTES:
         raise TemplateLibraryError("Email body must be smaller than 1 MB.")
-    result["body_html"] = body
+    result["body_html"] = clean_email_html(body)
     return result
 
 
@@ -213,6 +214,7 @@ class SalesforceTemplateStore:
         document = (self._validate_document(self._read_json(self.path)) if self.path.exists()
                     else {"schema_version": 1, "templates": []})
         defaults = {"stock_swap": STOCK_SWAP_TEMPLATE} if self.include_stock_swap else {}
+        needs_write = False
         if self.include_order_email_templates:
             defaults.update(ORDER_EMAIL_TEMPLATES)
         if defaults:
@@ -231,8 +233,16 @@ class SalesforceTemplateStore:
                     document["templates"].append(dict(template))
             if pending:
                 document["initialized_workflow_templates"] = [*initialized, *(key for key, _template in pending)]
-                self._validate_document(document)
-                self._write(document, backup=self.path.exists())
+                needs_write = True
+        for template in document["templates"]:
+            cleaned = clean_email_html(template["body_html"])
+            if cleaned != template["body_html"]:
+                template["body_html"] = cleaned
+                template["updated_at"] = datetime.now(timezone.utc).isoformat()
+                needs_write = True
+        if needs_write:
+            self._validate_document(document)
+            self._write(document, backup=self.path.exists())
         return document
 
     @staticmethod
