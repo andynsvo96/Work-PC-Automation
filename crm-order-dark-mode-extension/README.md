@@ -307,7 +307,7 @@ Restart the local Automation app to load this wording update.
 
 ## Unresponsive cancellation and item suggestion emails
 
-Version **1.7.11** provides these email options on the current order:
+Version **1.7.12** provides these email options on the current order:
 
 - **Cancel > Unresponsive** runs the existing unresponsive cancellation/refund
   workflow. Its editable **[AUTO] CANCEL - Unresponsive** starter template
@@ -331,8 +331,8 @@ Version **1.7.11** provides these email options on the current order:
   x-large`, or exactly `in all sizes` when every detected size is selected,
   including an item with only one detected size. `[PRODUCT]` uses your replacement
   text without adding sizes. The worker rechecks saved item IDs, product details, sizes, and
-  quantities before preparing the email. This action sends the suggestion email;
-  save any actual replacement in CRM through your normal editing workflow.
+  quantities before preparing the email. Save any actual replacement in CRM
+  through your normal editing workflow.
 
 Edit placeholder copy in **Settings > Salesforce Template** before using these
 emails. Both starter templates are added once, preserving any existing saved
@@ -345,6 +345,24 @@ receipt under `runtime/state/stock_issue_item_emails/` prevents a title edit fro
 repeating a confirmed email. A changed replacement, stock, recipient, or an
 edited draft after an uncertain attempt stops for Activity review. Use **Retry**
 on the original queue entry to retain its selections and entered replacement.
+
+After Salesforce Activity confirms the email, the worker appends this Production
+Note, using the same stock sizes and corresponding replacement list as the email:
+
+```text
+[STOCK] stock issue
+Suggest [PRODUCT]
+Emailed Txted
+```
+
+Each line is separated by a real newline. The saved note must persist after a
+reload. The worker then sends `[CRM ORDER LINK] - Rush Order stock issue` to the
+same Rush Order Slack channel used by the other stock issue reachouts. It requires
+a confirmed Slack delivery receipt before applying the configured stock issue
+status (normally **Issue - Stock**) and verifying it after a reload. Retrying the
+original queue entry reuses the confirmed email and Slack receipts and skips an
+already saved note. A failed or uncertain follow-up stops the task at that stage
+for recovery; it cannot report completion before all stages succeed.
 
 Previously queued requests retain their original combined replacement text on
 Retry. The worker does not guess individual replacements from that older text.

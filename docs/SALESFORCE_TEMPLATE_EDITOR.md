@@ -200,7 +200,7 @@ receipt prevents a changed template title from sending a confirmed email again.
 `[ORDER-NUMBER]` in the title. Its body is freely editable placeholder copy.
 **Stock Issue > Suggest Different Item** uses **[AUTO] STOCK - Item**, retaining
 `[ORDER-NUMBER]` in the title and `[STOCK]` and `[PRODUCT]` in the body. Stock
-comes from selected, verified CRM order rows. In extension **1.7.11**, each checked
+comes from selected, verified CRM order rows. In extension **1.7.12**, each checked
 item reveals its detected sizes and its own required replacement field underneath it. Multiple stock
 items start unchecked. Product combines those individual replacements in the
 same order as Stock; two items use `and`, and three or more use a comma-separated
@@ -214,8 +214,24 @@ gets the size suffix: `in size medium`, `in sizes medium and x-large`, or
 detected size. Product keeps the entered replacement text without adding sizes.
 The worker verifies the saved size set and retains selections in the queue and
 email receipts. Earlier whole-item requests retain their original scope.
-This workflow suggests the replacement by email. Its per-order receipts also
-block another send after title changes or uncertain attempts with changed inputs.
+After the email is confirmed, this workflow appends the following Production Note
+with real newlines, using the same stock and replacement values as the email:
+
+```text
+[STOCK] stock issue
+Suggest [PRODUCT]
+Emailed Txted
+```
+
+It verifies that the note persisted after reload, sends
+`[CRM ORDER LINK] - Rush Order stock issue` to the same Slack channel as the other
+stock issue reachouts, then applies the configured stock issue status (normally
+`Issue - Stock`) after Slack delivery is confirmed. The status must persist after
+reload. Retry the original queue entry to recover a failed follow-up without
+repeating the confirmed email, saved note, or confirmed Slack message. Its per-order
+email receipts also block another send after title changes or uncertain attempts
+with changed inputs. The workflow leaves actual product replacement to your
+normal CRM editing workflow.
 
 Copy the active JSON library to each computer that runs email workers. Missing
 libraries use captures already present on that computer plus the three built-in
@@ -236,6 +252,11 @@ reload CRM Order Assistant **1.7.10**, and refresh open CRM order pages.
 
 For affected sizes in Suggest Different Item, restart the local app, refresh the
 dashboard, reload CRM Order Assistant **1.7.11**, and refresh CRM order pages.
+
+For Suggest Different Item's production note, Slack message, and stock status,
+restart the local app, refresh the dashboard, reload CRM Order Assistant
+**1.7.12**, and refresh CRM order pages. The updated worker loads on its next
+queued run; the extension reload displays the expanded workflow description.
 
 ## Validation
 

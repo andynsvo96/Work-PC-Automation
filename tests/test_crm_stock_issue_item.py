@@ -507,6 +507,16 @@ class StockIssueItemFollowupTests(unittest.TestCase):
         self.assertTrue(payload['production_note']['confirmed'])
         self.status.assert_not_called()
 
+    def test_note_that_does_not_persist_stops_before_slack_and_status(self):
+        self.save_note.side_effect = None
+        self.save_note.return_value = 'recorded'
+        ok, message, payload = self.run_workflow()
+        self.assertFalse(ok)
+        self.assertIn('did not persist', message)
+        self.assertEqual(payload['failed_stage'], 'production_note')
+        self.slack_sender.assert_not_called()
+        self.status.assert_not_called()
+
     def test_missing_slack_receipt_cannot_be_reported_as_success(self):
         self.slack_sender.side_effect = None
         self.slack_sender.return_value = (True, 'No receipt was written')

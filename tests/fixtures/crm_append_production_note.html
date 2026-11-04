@@ -22,7 +22,8 @@ document.querySelector('#save').onclick=()=>{
 </script>
 <script>
 if (new URLSearchParams(location.search).has('stock-issue')) {
- const resource = {id: 5000001, orderStatusName: localStorage.getItem('fixture_stock_status') || 'Processing'};
+ const resource = {id: 5000001, designs: [{id: 101}],
+   orderStatusName: localStorage.getItem('fixture_stock_status') || 'Processing'};
  const scope = {order: {getResource: () => resource}, orderStatusName: resource.orderStatusName,
    copyOrder: () => {throw Error('Copy is outside this fixture.')}};
  window.angular = {element: () => ({scope: () => scope})};
