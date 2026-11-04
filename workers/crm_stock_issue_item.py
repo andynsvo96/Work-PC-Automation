@@ -17,6 +17,8 @@ ensure_project_root_on_path()
 
 from runtime_paths import STATE_DIR
 from salesforce_templates import STOCK_ISSUE_ITEM_TEMPLATE_NAME, default_template_store
+import slack_delivery_receipts as slack_receipts
+import crm_shipping_bypasser as production_notes
 from workers import crm_stock_swap as stock_reader
 from workers import crm_stock_issue_extension as extension
 from workers import salesforce_activity_confirmation as confirmation
@@ -26,6 +28,8 @@ shared = stock_reader.shared
 AUTOMATION_KEY = "stock_issue_item"
 AUTOMATION_NAME = "crm.stock_issue_item"
 DISPLAY_NAME = "Suggest Different Item"
+CRM_STATUS = extension.CRM_STATUS
+RUSH_ORDER_SLACK_CHANNEL_URL = extension.RUSH_ORDER_SLACK_CHANNEL_URL
 PLACEHOLDER_RE = re.compile(r"\[[A-Z][A-Z0-9_-]*\]")
 
 
@@ -46,12 +50,24 @@ def _normalize_replacement(product):
     return re.sub(r"\s+", " ", product)
 
 
+def _size_key(size):
+    return extension._format_size_name(size).casefold()
+
+
+def _all_sizes_selected(product):
+    selected = product.get("affected_sizes") or []
+    available = product.get("available_sizes") or []
+    return bool(selected and available) and {_size_key(size) for size in selected} == {
+        _size_key(size) for size in available}
+
+
 def normalize_request(product, products):
     try:
         selected = extension.normalize_selected_products(products)
     except extension.StockIssueExtensionError as exc:
         raise StockIssueItemError(str(exc).replace("Extension Required", DISPLAY_NAME)) from exc
     per_product = any("replacement_product" in row for row in products)
+    selects_sizes = any("affected_sizes" in row for row in products)
     if per_product and len(selected) != len(products):
         raise StockIssueItemError("Each scanned product/color must have one replacement; duplicate product rows need review.")
     replacements = [_normalize_replacement(row.get("replacement_product")) for row in products] if per_product else None
@@ -62,9 +78,19 @@ def normalize_request(product, products):
         if not item["design_item_ids"] or item["total_quantity"] is None:
             raise StockIssueItemError("Scan the CRM stock again; each selected item needs its saved ID and quantity.")
         ids.extend(item["design_item_ids"])
-        # This workflow selects entire product/color rows, rather than individual sizes.
-        item.pop("affected_sizes", None)
-        item.pop("available_sizes", None)
+        if selects_sizes:
+            if not item.get("affected_sizes") or not item.get("available_sizes"):
+                raise StockIssueItemError("Select at least one detected order size for every selected product.")
+            available = {_size_key(size): size for size in item["available_sizes"]}
+            affected = list(dict.fromkeys(_size_key(size) for size in item["affected_sizes"]))
+            if any(size not in available for size in affected):
+                raise StockIssueItemError("Each affected size must be one detected on its selected product.")
+            item["available_sizes"] = list(available.values())
+            item["affected_sizes"] = [available[size] for size in affected]
+        else:
+            # Requests queued before size selection keep their original whole-product scope.
+            item.pop("affected_sizes", None)
+            item.pop("available_sizes", None)
         if per_product:
             item["replacement_product"] = replacements[index]
     if len(ids) != len(set(ids)):
@@ -96,20 +122,111 @@ def verify_selected_stock(snapshot, products):
         quantity = sum(sum(match["quantities"].values()) for match in matches)
         if quantity != product["total_quantity"]:
             raise StockIssueItemError("Selected CRM stock quantity changed while queued; scan the order again.")
+        if "affected_sizes" in product:
+            current_sizes = {size for match in matches for size, count in match["quantities"].items() if count}
+            current_keys = {_size_key(size) for size in current_sizes}
+            if (not current_sizes or "" in current_sizes
+                    or current_keys != {_size_key(size) for size in product["available_sizes"]}
+                    or not {_size_key(size) for size in product["affected_sizes"]} <= current_keys):
+                raise StockIssueItemError("Selected CRM stock sizes changed or could not be verified; scan the order again.")
         verified.append({**product, **{key: matches[0][key] for key in ("style", "description", "color")},
                          "tab_numbers": sorted({match["tab_number"] for match in matches}),
                          "total_quantity": quantity})
     return verified
 
 
+def _format_stock_product(product):
+    if _all_sizes_selected(product):
+        return extension._format_stock_product({**product, "affected_sizes": []}) + " in all sizes"
+    return extension._format_stock_product(product, summarize_all_sizes=False)
+
+
 def placeholder_values(order_id, request):
     return {
         "[ORDER-NUMBER]": order_id,
         "[STOCK]": extension._natural_join([
-            extension._format_stock_product(product) for product in request["products"]]),
+            _format_stock_product(product) for product in request["products"]]),
         "[PRODUCT]": (extension._natural_join([row["replacement_product"] for row in request["products"]])
                       if "replacement_product" in request["products"][0] else request["product"]),
     }
+
+
+def format_production_note(order_id, request):
+    values = placeholder_values(order_id, request)
+    return f"{values['[STOCK]']} stock issue\nSuggest {values['[PRODUCT]']}\nEmailed Txted"
+
+
+def format_slack_message(order_id):
+    order_id = shared._normalize_order_id(order_id)
+    return f"{shared.PROCESSOR_ORDER_URL_TEMPLATE.format(order_id=order_id)} - Rush Order stock issue"
+
+
+def _production_note_present(driver, note):
+    state = driver.execute_script(r"""
+        const roots = document.querySelectorAll('#order-notes-production-notes');
+        if (roots.length !== 1) return {error: 'Exactly one Production Notes section is required.'};
+        const saved = roots[0].cloneNode(true);
+        saved.querySelectorAll('textarea,input,button').forEach(node => node.remove());
+        const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+        return {present: normalize(saved.textContent).includes(normalize(arguments[0]))};
+    """, note) or {}
+    if not isinstance(state, dict):
+        raise StockIssueItemError('The saved Production Notes could not be read.')
+    if state.get('error') or not isinstance(state.get('present'), bool):
+        raise StockIssueItemError(state.get('error') or 'The saved Production Notes could not be read.')
+    return state['present']
+
+
+def _append_production_note(driver, order_id, note, *, dry_run=False):
+    shared._activate_crm_context(driver)
+    shared._wait_for_order_scope(driver, order_id=order_id)
+    present = _production_note_present(driver, note)
+    result = {'note': note, 'updated': False, 'already_present': present,
+              'confirmed': present, 'dry_run': bool(dry_run)}
+    if present or dry_run:
+        return result
+    state = production_notes._save_and_verify_crm_production_note(driver, order_id, note)
+    shared._activate_crm_context(driver)
+    shared._wait_for_order_scope(driver, order_id=order_id)
+    if not _production_note_present(driver, note):
+        raise StockIssueItemError('The production note did not persist after reload. Retry the original task to recover it.')
+    return {**result, 'updated': state == 'recorded', 'already_present': state == 'already_present',
+            'confirmed': True, 'save': state}
+
+
+def _send_required_slack(order_id, *, dry_run=False):
+    order_id = shared._normalize_order_id(order_id)
+    message = format_slack_message(order_id)
+    delivery_key = f'{AUTOMATION_KEY}:{order_id}'
+    result = {'message': message, 'channel_url': RUSH_ORDER_SLACK_CHANNEL_URL, 'delivery_key': delivery_key,
+              'sent': False, 'confirmed': False, 'dry_run': bool(dry_run)}
+    if dry_run:
+        return result
+    previous = slack_receipts.load(RUSH_ORDER_SLACK_CHANNEL_URL, delivery_key, message)
+    if previous and previous['status'] == 'confirmed':
+        return {**result, 'sent': True, 'confirmed': True, 'skipped': True, 'message_id': previous['message_id']}
+    ok, response = shared._run_slack_team('custom', custom_message=message,
+        channel_url=RUSH_ORDER_SLACK_CHANNEL_URL, delivery_key=delivery_key)
+    if not ok:
+        raise StockIssueItemError(f'Required stock issue Slack notification failed: {response}')
+    receipt = slack_receipts.load(RUSH_ORDER_SLACK_CHANNEL_URL, delivery_key, message)
+    if not receipt or receipt['status'] != 'confirmed':
+        raise StockIssueItemError('The Slack stock issue notification has no confirmed delivery receipt; review the channel.')
+    return {**result, 'sent': True, 'confirmed': True, 'message_id': receipt['message_id'], 'result': response}
+
+
+def _apply_stock_issue_status(driver, order_id, *, dry_run=False):
+    shared._activate_crm_context(driver)
+    shared._wait_for_order_scope(driver, order_id=order_id)
+    status = shared._apply_order_status(driver, CRM_STATUS, dry_run=dry_run)
+    if dry_run:
+        return status
+    driver.refresh()
+    shared._activate_crm_context(driver)
+    shared._wait_for_order_scope(driver, order_id=order_id)
+    if not shared._order_status_already_applied(driver, CRM_STATUS):
+        raise StockIssueItemError(f'{CRM_STATUS} did not persist after reload; retry the original task to finish the status update.')
+    return {**status, 'confirmed': True, 'persisted': True}
 
 
 def _prepare_email(driver, crm_handle, order_id, customer_email, request, *, login_wait_seconds=0):
@@ -146,6 +263,8 @@ def _send_email(driver, crm_handle, order_id, customer_email, request, *, dry_ru
     identity = [{key: item[key] for key in ("style", "description", "color", "total_quantity")}
                 | {"design_item_ids": sorted(item["design_item_ids"])}
                 | ({"replacement_product": item["replacement_product"]} if "replacement_product" in item else {})
+                | ({key: sorted({_size_key(size) for size in item[key]})
+                    for key in ("affected_sizes", "available_sizes")} if "affected_sizes" in item else {})
                 for item in request["products"]]
     identity.sort(key=lambda item: item["design_item_ids"])
     def fingerprint_for(values):
@@ -155,17 +274,23 @@ def _send_email(driver, crm_handle, order_id, customer_email, request, *, dry_ru
     fingerprint = fingerprint_for([customer_email.casefold(), identity] if per_product else
                                   [customer_email.casefold(), request["product"], identity])
     compatible_fingerprints = {fingerprint}
-    if per_product and len(identity) == 1:
-        # A saved single-item email still has exactly the same stock/replacement pairing.
-        legacy_identity = [{key: value for key, value in identity[0].items() if key != "replacement_product"}]
-        compatible_fingerprints.add(fingerprint_for(
-            [customer_email.casefold(), identity[0]["replacement_product"], legacy_identity]))
+    if not any("affected_sizes" in row for row in identity) or all(_all_sizes_selected(row) for row in identity):
+        # Earlier emails covered the entire stock item. Only the same full scope can reuse those receipts.
+        unsized_identity = [{key: value for key, value in row.items() if key not in {"affected_sizes", "available_sizes"}}
+                            for row in identity]
+        compatible_fingerprints.add(fingerprint_for([customer_email.casefold(), unsized_identity] if per_product else
+                                                    [customer_email.casefold(), request["product"], unsized_identity]))
+        if per_product and len(identity) == 1:
+            legacy_identity = [{key: value for key, value in unsized_identity[0].items() if key != "replacement_product"}]
+            compatible_fingerprints.add(fingerprint_for(
+                [customer_email.casefold(), identity[0]["replacement_product"], legacy_identity]))
     previous = None
     if path.exists():
         try:
             previous = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(previous, dict) or previous.get("fingerprint") not in compatible_fingerprints:
-                raise ValueError("The stock, replacement, or recipient changed.")
+            if (not isinstance(previous, dict) or not isinstance(previous.get("fingerprint"), str)
+                    or previous["fingerprint"] not in compatible_fingerprints):
+                raise ValueError("The stock, affected sizes, replacement, or recipient changed.")
             if previous.get("confirmed") is True:
                 salesforce = previous["salesforce"]
                 if not isinstance(salesforce, dict) or salesforce.get("activity_verified") is not True:
@@ -215,7 +340,10 @@ def process_stock_issue_item_order(order_id, product, products, *, dry_run=False
         shared._login_to_crm_if_needed(driver, order_url, login_wait_seconds=login_wait_seconds)
         snapshot = stock_reader._read_snapshot(driver, order_id)
         request["products"] = verify_selected_stock(snapshot, request["products"])
-        result.update({**request, "placeholders": placeholder_values(order_id, request)})
+        note = format_production_note(order_id, request)
+        result.update({**request, "placeholders": placeholder_values(order_id, request), 'production_note_text': note})
+        # Prove that the correct note section exists before sending the customer email.
+        _production_note_present(driver, note)
         result["stages"].append({"key": stage, "success": True})
         crm_handle = driver.current_window_handle
         contact = shared._wait_for_crm_contact_info(driver, order_id=order_id)
@@ -224,7 +352,35 @@ def process_stock_issue_item_order(order_id, product, products, *, dry_run=False
             progress_callback(stage, "Preparing and verifying the Suggest Different Item email.")
         result["salesforce"] = _send_email(driver, crm_handle, order_id, contact["email"], request,
                                            dry_run=dry_run, login_wait_seconds=login_wait_seconds)
+        if not dry_run and result['salesforce'].get('activity_verified') is not True:
+            raise StockIssueItemError('Salesforce Activity has not confirmed the email; follow-up actions require review.')
         result["stages"].append({"key": stage, "success": True, "details": result["salesforce"]})
+
+        stage = 'production_note'
+        if callable(progress_callback):
+            progress_callback(stage, 'Saving and verifying the stock issue production note.')
+        driver.switch_to.window(crm_handle)
+        shared.safe_get_with_partial_load(driver, order_url, f'CRM order {order_id} production note')
+        shared._login_to_crm_if_needed(driver, order_url, login_wait_seconds=login_wait_seconds)
+        verify_selected_stock(stock_reader._read_snapshot(driver, order_id), request['products'])
+        result['production_note'] = _append_production_note(driver, order_id, note, dry_run=dry_run)
+        if not dry_run and result['production_note'].get('confirmed') is not True:
+            raise StockIssueItemError('The production note was not confirmed after saving; follow-up actions require review.')
+        result['stages'].append({'key': stage, 'success': True, 'details': result['production_note']})
+
+        stage = 'slack'
+        if callable(progress_callback):
+            progress_callback(stage, 'Confirming the required Rush Order stock issue Slack message.')
+        result['slack'] = _send_required_slack(order_id, dry_run=dry_run)
+        if not dry_run and result['slack'].get('confirmed') is not True:
+            raise StockIssueItemError('The Slack stock issue notification is not confirmed; the status was not applied.')
+        result['stages'].append({'key': stage, 'success': True, 'details': result['slack']})
+
+        stage = 'crm_status'
+        if callable(progress_callback):
+            progress_callback(stage, f'Applying and verifying {CRM_STATUS}.')
+        result['crm_status'] = _apply_stock_issue_status(driver, order_id, dry_run=dry_run)
+        result['stages'].append({'key': stage, 'success': True, 'details': result['crm_status']})
         result["success"] = True
         return result
     except Exception as exc:

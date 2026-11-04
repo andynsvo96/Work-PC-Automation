@@ -12171,7 +12171,7 @@ def get_crm_extension_order_status_payload():
     runtime = _crm_extension_order_runtime_snapshot()
     if runtime.get("runKind") == "manual" and runtime.get("currentStep") == "stock_swap":
         runtime = _merge_live_automation_status(runtime, "crm.stock_swap")
-    if runtime.get("runKind") == "manual" and runtime.get("currentStep") == "stock_issue_item":
+    if runtime.get("runKind") == "manual" and runtime.get("currentStep") in {"stock_issue_item", "stock_issue_item_sizes"}:
         runtime = _merge_live_automation_status(runtime, "crm.stock_issue_item")
     return {
         "success": True,
@@ -12890,6 +12890,20 @@ CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["stock_issue_item"] = {
     "runner": lambda order_id, _reason="", request_data=None, progress_callback=None: run_crm_stock_issue_item_queued(
         order_id, (request_data or {}).get("product"), (request_data or {}).get("products"),
         progress_callback=progress_callback),
+}
+
+
+def _normalize_stock_issue_item_sizes_request(data):
+    request = _normalize_stock_issue_item_request(data)
+    if any("affected_sizes" not in row or "replacement_product" not in row for row in request["products"]):
+        raise ValueError("Choose affected sizes and a replacement for every selected item before queueing.")
+    return request
+
+
+# A distinct request key makes older apps reject size selections instead of silently dropping them.
+CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["stock_issue_item_sizes"] = {
+    **CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["stock_issue_item"],
+    "request_validator": _normalize_stock_issue_item_sizes_request,
 }
 
 

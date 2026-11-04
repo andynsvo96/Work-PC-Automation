@@ -181,6 +181,8 @@ class StockIssueBrowserTests(unittest.TestCase):
         self.queue_button().click()
         self.assertNotIn('product', self.queued_data())
         self.assertEqual(self.queued_data()['products'][0]['replacement_product'], "5000 Black, Soft & Light")
+        self.assertEqual(self.queued_data()['products'][0]['affected_sizes'], ['S', 'M', 'L', 'XL'])
+        self.assertEqual(self.driver.execute_script('return window.queued[0].key'), 'stock_issue_item_sizes')
         self.assertEqual([row["color"] for row in self.queued_data()["products"]], ["Navy"])
         self.assertFalse(self.driver.find_elements(By.ID, "crm-stock-issue-dialog"))
 
@@ -240,6 +242,47 @@ class StockIssueBrowserTests(unittest.TestCase):
         self.assertEqual([self.driver.find_element(By.ID, f'crm-stock-issue-product-{index}').get_attribute('value')
                           for index in range(2)], ['First replacement', 'Second replacement'])
         self.assertEqual(len(self.driver.execute_script('return window.queued')), 1)
+
+    def test_item_sizes_start_checked_and_clear_requires_a_new_selection(self):
+        self.show_dialog(workflow='stock_issue_item')
+        self.driver.find_element(By.ID, 'crm-stock-issue-product-0').send_keys('Replacement Tee')
+        self.assertTrue(all(self.size(0, index).is_selected() for index in range(4)))
+        self.assertTrue(self.queue_button().is_enabled())
+        self.driver.find_element(By.CSS_SELECTOR, '[aria-label="Clear sizes for 5040 in Black"]').click()
+        self.assertFalse(self.queue_button().is_enabled())
+        self.assertIn('Select at least one affected size', self.driver.find_element(By.ID, 'crm-stock-issue-validation').text)
+        self.size(0, 1).click()
+        self.size(0, 3).click()
+        self.assertTrue(self.queue_button().is_enabled())
+        self.driver.save_screenshot(str(ROOT / 'runtime/debug/stock_issue_tests/per_item_sizes.png'))
+        self.queue_button().click()
+        self.assertEqual(self.queued_data()['products'][0]['affected_sizes'], ['M', 'XL'])
+        self.assertEqual(self.queued_data()['products'][0]['replacement_product'], 'Replacement Tee')
+
+    def test_item_sizes_keep_separate_selections_and_can_be_selected_all_again(self):
+        self.show_dialog([product(), product(color='Navy', sizes=['M', 'L'])], workflow='stock_issue_item')
+        for index, replacement in enumerate(['First replacement', 'Second replacement']):
+            self.select_product(index)
+            self.driver.find_element(By.ID, f'crm-stock-issue-product-{index}').send_keys(replacement)
+        self.driver.find_element(By.CSS_SELECTOR, '[aria-label="Clear sizes for 5040 in Black"]').click()
+        self.size(0, 1).click()
+        self.size(1, 0).click()
+        self.select_product(0)
+        self.select_product(0)
+        self.assertTrue(self.size(0, 1).is_selected())
+        self.assertFalse(self.size(0, 0).is_selected())
+        self.driver.find_element(By.CSS_SELECTOR, '[aria-label="Select all sizes for 5040 in Black"]').click()
+        self.assertTrue(all(self.size(0, index).is_selected() for index in range(4)))
+        self.queue_button().click()
+        self.assertEqual([(row['color'], row['affected_sizes']) for row in self.queued_data()['products']],
+                         [('Black', ['S', 'M', 'L', 'XL']), ('Navy', ['L'])])
+
+    def test_item_with_unreadable_sizes_cannot_be_queued(self):
+        self.show_dialog([product(sizes=[])], workflow='stock_issue_item')
+        self.driver.find_element(By.ID, 'crm-stock-issue-product-0').send_keys('Replacement Tee')
+        self.assertFalse(self.queue_button().is_enabled())
+        self.assertIn('No order sizes could be detected', self.driver.find_element(By.ID, 'crm-stock-issue-dialog').text)
+        self.assertEqual(self.driver.execute_script('return window.queued'), [])
 
     def test_scanner_detects_ordered_sizes_and_unions_matching_products(self):
         self.driver.get((ROOT / "tests/fixtures/stock_issue_crm.html").as_uri())

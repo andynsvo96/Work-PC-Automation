@@ -34,6 +34,24 @@ test("item suggestions preserve each selected stock item's own replacement", asy
   assert.equal(request.mock.callCount(), 1);
 });
 
+test("item size selections retain their own replacements and use the guarded action", async (t) => {
+  const products = [
+    { style: "DM130", color: "Red", design_item_ids: ["design-item-101"],
+      available_sizes: ["S", "M", "XL"], affected_sizes: ["M"], replacement_product: "Cotton Tee" },
+    { style: "18500", color: "Navy", design_item_ids: ["design-item-102"],
+      available_sizes: ["L", "XL"], affected_sizes: ["L", "XL"], replacement_product: "Zip Hoodie" }
+  ];
+  const request = t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(url, bridge.LOCAL_MANUAL_ORDER_PROCESS_ENDPOINT);
+    assert.deepEqual(JSON.parse(options.body), {
+      order_id: "1234567", automation: "stock_issue_item_sizes", reason: "", products
+    });
+    return { ok: true, json: async () => ({ success: true }) };
+  });
+  await bridge.startLocalManualOrderProcessing("1234567", "stock_issue_item_sizes", "", { products });
+  assert.equal(request.mock.callCount(), 1);
+});
+
 test("copyright queue requests retain the complete scan and selected stable IDs", async (t) => {
   const designs = {
     order_id: "5451301",

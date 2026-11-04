@@ -307,7 +307,7 @@ Restart the local Automation app to load this wording update.
 
 ## Unresponsive cancellation and item suggestion emails
 
-Version **1.7.10** provides these email options on the current order:
+Version **1.7.11** provides these email options on the current order:
 
 - **Cancel > Unresponsive** runs the existing unresponsive cancellation/refund
   workflow. Its editable **[AUTO] CANCEL - Unresponsive** starter template
@@ -316,15 +316,21 @@ Version **1.7.10** provides these email options on the current order:
   Check each affected item. A required **Suggested replacement product** input
   appears directly underneath each checked product/color. A single detected
   product starts checked; multiple products start unchecked so you choose every
-  affected item explicitly. **Queue task** requires a replacement for every
-  checked item. Unchecking hides its input and excludes the item from the request;
+  affected item explicitly. Each checked item also shows its detected order sizes,
+  initially all checked. Use **Clear** to choose particular sizes or **Select all**
+  to restore all sizes for that item. **Queue task** requires at least one size
+  and a replacement for every checked item. Products with unreadable order sizes
+  cannot be queued. Unchecking hides its controls and excludes the item from the request;
   checking it again restores the text entered while this dialog is open.
   The **[AUTO] STOCK - Item** template requires `[ORDER-NUMBER]` in the title
   and `[STOCK]` and `[PRODUCT]` in the body. These placeholders use corresponding
   stock and replacement lists in the same order: one item, two joined with
   `and`, or three or more separated by commas with a final `and`. Commas inside
   a replacement remain part of that item's text. All pairs use one email.
-  The worker rechecks saved item IDs, product details, and
+  Only `[STOCK]` receives size wording: `in size medium`, `in sizes medium and
+  x-large`, or exactly `in all sizes` when every detected size is selected,
+  including an item with only one detected size. `[PRODUCT]` uses your replacement
+  text without adding sizes. The worker rechecks saved item IDs, product details, sizes, and
   quantities before preparing the email. This action sends the suggestion email;
   save any actual replacement in CRM through your normal editing workflow.
 
@@ -344,6 +350,11 @@ Previously queued requests retain their original combined replacement text on
 Retry. The worker does not guess individual replacements from that older text.
 An existing confirmed single-item email is recognized after updating; changed
 or ambiguous older multi-item receipts stop for review before another send.
+Requests queued before size selection retain their original whole-item scope.
+Confirmed emails with the same stock/replacement pairs can be reused when all
+sizes are selected. A changed size selection or an unconfirmed draft whose
+wording changes stops for Activity review instead of starting another send budget.
+Older app versions reject the new requests rather than dropping the sizes.
 
 Restart the local Automation app, refresh the dashboard, reload CRM Order
 Assistant at `chrome://extensions`, and refresh open CRM order pages.

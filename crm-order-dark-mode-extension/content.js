@@ -935,7 +935,8 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
   const isItemSuggestion = automation.key === "stock_issue_item";
   const isSuggestion = isColorSuggestion || isSizeSuggestion || isItemSuggestion;
   const isExtension = automation.key === "stock_issue_extension";
-  const selectsSizes = isSizeSuggestion || isExtension;
+  const allSizesInitiallySelected = isExtension || isItemSuggestion;
+  const selectsSizes = isSizeSuggestion || allSizesInitiallySelected;
   const suggestionLabel = isItemSuggestion ? "item" : isSizeSuggestion ? "size" : "color";
   const dialogName = isSuggestion ? `Suggest Different ${suggestionLabel[0].toUpperCase()}${suggestionLabel.slice(1)}` : "Extension Required";
   const { overlay, dialog } = createStockIssueDialogShell(`Configure Stock Issue ${dialogName}`);
@@ -944,7 +945,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
   Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "6px" });
   const explanation = document.createElement("p");
   explanation.textContent = isItemSuggestion
-    ? "Check each affected CRM item, then enter its suggested replacement in the field underneath it. Every checked item requires its own replacement."
+    ? "Check each affected CRM item, choose its affected sizes, and enter its replacement underneath. All detected sizes start selected; use Clear to choose specific sizes. Every checked item needs at least one size and its own replacement. This emails the customer, saves a production note, notifies Slack, and applies Issue - Stock."
     : isSuggestion
     ? `Select each out-of-stock product/color, then list the available replacement ${suggestionLabel}s separated by commas.`
     : "Select each product/color that needs an extension, then enter the number of days. All order sizes start selected; use Clear to choose specific sizes.";
@@ -1034,7 +1035,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
           const sizeCheckbox = document.createElement("input");
           sizeCheckbox.type = "checkbox";
           sizeCheckbox.value = size;
-          sizeCheckbox.checked = isExtension || (checkbox.checked && sizes.length === 1);
+          sizeCheckbox.checked = allSizesInitiallySelected || (checkbox.checked && sizes.length === 1);
           sizeCheckbox.id = `crm-stock-issue-size-${index}-${sizeIndex}`;
           sizeCheckbox.setAttribute("aria-label", `Select ${size} for ${product.style} in ${product.color}`);
           label.htmlFor = sizeCheckbox.id;
@@ -1043,7 +1044,21 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
           sizeChoices.push(sizeCheckbox);
         });
         sizeCell.append(sizePrompt, choices);
-        if (isExtension) {
+        if (allSizesInitiallySelected) {
+          if (isItemSuggestion) {
+            const selectAll = document.createElement("button");
+            selectAll.type = "button";
+            selectAll.textContent = "Select all";
+            selectAll.setAttribute("aria-label", `Select all sizes for ${product.style} in ${product.color}`);
+            Object.assign(selectAll.style, { marginTop: "8px", marginRight: "8px", padding: "4px 9px", cursor: "pointer" });
+            selectAll.addEventListener("click", () => {
+              if (submitting) return;
+              sizeChoices.forEach((choice) => { choice.checked = true; });
+              refreshAfterEdit();
+            });
+            sizeCell.append(selectAll);
+            clearSizeButtons.push(selectAll);
+          }
           const clear = document.createElement("button");
           clear.type = "button";
           clear.textContent = "Clear";
@@ -1064,7 +1079,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
         sizeCell.append(sizePrompt, unavailable);
       }
       sizeRow.append(sizeCell);
-      body.append(sizeRow);
+      body.insertBefore(sizeRow, replacementInputsByProduct.get(checkbox)?.row || null);
       sizeCheckboxesByProduct.set(checkbox, sizeChoices);
       checkbox.addEventListener("change", () => {
         sizeRow.hidden = !checkbox.checked;
@@ -1173,7 +1188,9 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
       input.setAttribute("aria-invalid", String(checkbox.checked && !validateStockIssueSuggestedProduct(input.value).valid));
     });
     checkboxes.forEach((checkbox) => { checkbox.disabled = submitting; });
-    sizeCheckboxesByProduct.forEach((choices) => choices.forEach((choice) => { choice.disabled = submitting; }));
+    sizeCheckboxesByProduct.forEach((choices, checkbox) => choices.forEach((choice) => {
+      choice.disabled = submitting || (isItemSuggestion && !checkbox.checked);
+    }));
     clearSizeButtons.forEach((button) => { button.disabled = submitting; });
     back.disabled = submitting;
     queue.disabled = !enabled;
@@ -1200,6 +1217,8 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
         const product = products[Number(checkbox.value)];
         if (isItemSuggestion) return {
           ...product,
+          affected_sizes: (sizeCheckboxesByProduct.get(checkbox) || [])
+            .filter((choice) => choice.checked).map((choice) => choice.value),
           replacement_product: validateStockIssueSuggestedProduct(replacementInputsByProduct.get(checkbox).input.value).product
         };
         if (!selectsSizes) return product;
@@ -1227,7 +1246,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
     submitting = true;
     refresh();
     queueManualOrderAutomation(
-      automation,
+      isItemSuggestion ? { ...automation, key: "stock_issue_item_sizes" } : automation,
       triggerButton,
       statusButton,
       "",

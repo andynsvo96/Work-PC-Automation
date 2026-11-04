@@ -200,13 +200,20 @@ receipt prevents a changed template title from sending a confirmed email again.
 `[ORDER-NUMBER]` in the title. Its body is freely editable placeholder copy.
 **Stock Issue > Suggest Different Item** uses **[AUTO] STOCK - Item**, retaining
 `[ORDER-NUMBER]` in the title and `[STOCK]` and `[PRODUCT]` in the body. Stock
-comes from selected, verified CRM order rows. In extension **1.7.10**, each checked
-item reveals its own required replacement field underneath it. Multiple stock
+comes from selected, verified CRM order rows. In extension **1.7.11**, each checked
+item reveals its detected sizes and its own required replacement field underneath it. Multiple stock
 items start unchecked. Product combines those individual replacements in the
 same order as Stock; two items use `and`, and three or more use a comma-separated
 list with a final `and`. All selected pairs use one email. Queue task requires
 every checked item's replacement, and Retry retains those pairings. Keep each
 placeholder intact when formatting it.
+All detected sizes start checked, with **Clear** and **Select all** controls for
+each item. Select at least one affected size for every checked item. Only Stock
+gets the size suffix: `in size medium`, `in sizes medium and x-large`, or
+`in all sizes` when every detected size is checked. This includes items with one
+detected size. Product keeps the entered replacement text without adding sizes.
+The worker verifies the saved size set and retains selections in the queue and
+email receipts. Earlier whole-item requests retain their original scope.
 This workflow suggests the replacement by email. Its per-order receipts also
 block another send after title changes or uncertain attempts with changed inputs.
 
@@ -226,6 +233,9 @@ refresh open CRM order pages.
 
 For individual replacement fields, restart the local app, refresh the dashboard,
 reload CRM Order Assistant **1.7.10**, and refresh open CRM order pages.
+
+For affected sizes in Suggest Different Item, restart the local app, refresh the
+dashboard, reload CRM Order Assistant **1.7.11**, and refresh CRM order pages.
 
 ## Validation
 

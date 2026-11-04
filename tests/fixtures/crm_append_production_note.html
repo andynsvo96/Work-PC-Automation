@@ -19,4 +19,23 @@ document.querySelector('#save').onclick=()=>{
  document.querySelector('#history').textContent=localStorage.getItem(key);
  input?.remove();document.querySelector('#edit').style.display='inline-block';document.querySelector('#save').style.display='none';
 };
+</script>
+<script>
+if (new URLSearchParams(location.search).has('stock-issue')) {
+ const resource = {id: 5000001, orderStatusName: localStorage.getItem('fixture_stock_status') || 'Processing'};
+ const scope = {order: {getResource: () => resource}, orderStatusName: resource.orderStatusName,
+   copyOrder: () => {throw Error('Copy is outside this fixture.')}};
+ window.angular = {element: () => ({scope: () => scope})};
+ const panel = document.createElement('section');
+ panel.innerHTML = '<label>Status: <input id="order-status" ng-model="orderStatusName"></label>'
+   + '<ul><li>Issue - Stock</li></ul><button id="apply-status" ng-click="updateOrderStatus();">Apply</button>';
+ document.body.prepend(panel);
+ panel.querySelector('input').value = resource.orderStatusName;
+ document.getElementById('apply-status').onclick = () => {
+   resource.orderStatusName = panel.querySelector('input').value;
+   scope.orderStatusName = resource.orderStatusName;
+   localStorage.setItem('fixture_stock_status', resource.orderStatusName);
+   localStorage.setItem('fixture_stock_apply_count', String(Number(localStorage.getItem('fixture_stock_apply_count') || 0) + 1));
+ };
+}
 </script></body></html>

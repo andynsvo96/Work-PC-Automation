@@ -103,6 +103,10 @@ class LocalTemplateBrowserTests(unittest.TestCase):
         def stock_crm():
             return Response((ROOT/'tests/fixtures/stock_swap_crm.html').read_text(encoding='utf-8'),mimetype='text/html')
 
+        @app.get('/stock-notes')
+        def stock_notes():
+            return Response((ROOT/'tests/fixtures/crm_append_production_note.html').read_text(encoding='utf-8'),mimetype='text/html')
+
         cls.http=make_server('127.0.0.1',0,app,threaded=True)
         cls.addClassCleanup(cls.http.server_close)
         cls.addClassCleanup(cls.http.shutdown)
@@ -130,6 +134,48 @@ class LocalTemplateBrowserTests(unittest.TestCase):
 
     def write_library(self, records):
         self.store.path.write_text(json.dumps({'schema_version':1,'templates':records}),encoding='utf-8')
+
+    def test_item_production_note_preserves_other_notes_and_persists_three_lines_once(self):
+        self.driver.get(self.url + '/stock-notes?stock-issue=1')
+        self.driver.execute_script("localStorage.removeItem('append_production_notes');")
+        self.driver.refresh()
+        note = 'DM130 red District Tee in size medium stock issue\nSuggest Soft & Light Tee\nEmailed Txted'
+        with mock.patch.object(stock_item.production_notes, '_wait_for_order_goods_page_ready', return_value=True):
+            result = stock_item._append_production_note(self.driver, '5000001', note)
+            retry = stock_item._append_production_note(self.driver, '5000001', note)
+        self.assertTrue(result['confirmed'])
+        self.assertTrue(retry['already_present'])
+        saved = self.driver.execute_script("return localStorage.getItem('append_production_notes');")
+        self.assertEqual(saved, 'Existing production note\n' + note)
+        self.assertEqual(self.driver.find_element('id', 'sales').get_attribute('value'), 'Existing sales note')
+        self.assertEqual(self.driver.execute_script("return document.querySelector('.columns section:last-child textarea').value"),
+                         'Existing art note')
+        self.driver.refresh()
+        self.assertTrue(stock_item._production_note_present(self.driver, note))
+
+    def test_item_dry_run_does_not_save_a_production_note_or_apply_stock_status(self):
+        self.driver.get(self.url + '/stock-notes?stock-issue=1')
+        self.driver.execute_script("localStorage.removeItem('append_production_notes'); localStorage.removeItem('fixture_stock_status'); localStorage.removeItem('fixture_stock_apply_count');")
+        self.driver.refresh()
+        with mock.patch.object(stock_item, 'CRM_STATUS', 'Issue - Stock'):
+            note = stock_item._append_production_note(self.driver, '5000001', 'Preview\nSuggest Tee\nEmailed Txted', dry_run=True)
+            status = stock_item._apply_stock_issue_status(self.driver, '5000001', dry_run=True)
+        self.assertTrue(note['dry_run'])
+        self.assertTrue(status['dry_run'])
+        self.assertIsNone(self.driver.execute_script("return localStorage.getItem('append_production_notes');"))
+        self.assertIsNone(self.driver.execute_script("return localStorage.getItem('fixture_stock_apply_count');"))
+
+    def test_item_stock_issue_status_persists_after_reload_and_retry_does_not_apply_again(self):
+        self.driver.get(self.url + '/stock-notes?stock-issue=1')
+        self.driver.execute_script("localStorage.removeItem('fixture_stock_status'); localStorage.removeItem('fixture_stock_apply_count');")
+        self.driver.refresh()
+        with mock.patch.object(stock_item, 'CRM_STATUS', 'Issue - Stock'):
+            first = stock_item._apply_stock_issue_status(self.driver, '5000001')
+            retry = stock_item._apply_stock_issue_status(self.driver, '5000001')
+        self.assertTrue(first['persisted'])
+        self.assertTrue(retry['already_applied'])
+        self.assertEqual(self.driver.execute_script("return localStorage.getItem('fixture_stock_status');"), 'Issue - Stock')
+        self.assertEqual(self.driver.execute_script("return localStorage.getItem('fixture_stock_apply_count');"), '1')
 
     def test_stock_swap_reads_original_quote_and_current_style_sub_without_edits(self):
         self.driver.get(self.url + '/stock-crm#/quotes/7654321')
@@ -211,19 +257,22 @@ class LocalTemplateBrowserTests(unittest.TestCase):
         self.write_library([{'id': 'stock_item', 'name': stock_item.STOCK_ISSUE_ITEM_TEMPLATE_NAME,
             'subject': 'Order #[ORDER-NUMBER]',
             'body_html': '<p>Unavailable: <strong>[STOCK]</strong>.</p>'
-                         '<p>We can offer <span style="font-size:20px">[PRODUCT]</span> instead.</p>'}])
+                         '<p>We can offer <span id="replacement-items" style="font-size:20px">[PRODUCT]</span> instead.</p>'}])
         rows = [
             {'style': 'P1', 'description': 'First Tee', 'color': 'Black', 'design_item_ids': ['design-item-101'],
-             'total_quantity': 4, 'replacement_product': 'Soft & Light Tee'},
+             'total_quantity': 4, 'replacement_product': 'Soft & Light Tee',
+             'available_sizes': ['S', 'M', 'L'], 'affected_sizes': ['M']},
             {'style': 'P2', 'description': 'Second Hoodie', 'color': 'Navy', 'design_item_ids': ['design-item-102'],
-             'total_quantity': 3, 'replacement_product': 'Zip Hoodie'},
+             'total_quantity': 3, 'replacement_product': 'Zip Hoodie',
+             'available_sizes': ['M', 'L'], 'affected_sizes': ['M', 'L']},
             {'style': 'P3', 'description': 'Third Cap', 'color': 'White', 'design_item_ids': ['design-item-103'],
-             'total_quantity': 2, 'replacement_product': 'Trucker Cap'},
+             'total_quantity': 2, 'replacement_product': 'Trucker Cap',
+             'available_sizes': ['S', 'M', 'L', 'XL'], 'affected_sizes': ['L', 'XL']},
         ]
         expected = [
-            ('P1 black First Tee', 'Soft & Light Tee'),
-            ('P1 black First Tee and P2 navy Second Hoodie', 'Soft & Light Tee and Zip Hoodie'),
-            ('P1 black First Tee, P2 navy Second Hoodie, and P3 white Third Cap',
+            ('P1 black First Tee in size medium', 'Soft & Light Tee'),
+            ('P1 black First Tee in size medium and P2 navy Second Hoodie in all sizes', 'Soft & Light Tee and Zip Hoodie'),
+            ('P1 black First Tee in size medium, P2 navy Second Hoodie in all sizes, and P3 white Third Cap in sizes large and x-large',
              'Soft & Light Tee, Zip Hoodie, and Trucker Cap'),
         ]
         for count, (stock_text, replacement_text) in enumerate(expected, 1):
@@ -239,6 +288,10 @@ class LocalTemplateBrowserTests(unittest.TestCase):
                 self.assertIn(stock_text, result['body'])
                 self.assertIn(replacement_text, result['body'])
                 self.assertNotIn('[PRODUCT]', result['body'])
+                self.assertEqual(self.driver.execute_script("""
+                    return document.getElementById('shadowEditor').shadowRoot.querySelector('iframe')
+                      .contentWindow.CKEDITOR.instances.editor.document.$.getElementById('replacement-items').textContent;
+                """), replacement_text)
                 send.assert_not_called()
                 self.driver.find_element('id', 'send').click()
                 saved = self.driver.find_element('id', 'sentHtml').text
