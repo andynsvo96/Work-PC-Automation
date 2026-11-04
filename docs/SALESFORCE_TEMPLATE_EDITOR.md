@@ -83,13 +83,20 @@ names start with [AUTO] from the latest local capture:
 
 The captured files remain a source backup. A malformed active library is reported
 as an error and is never silently replaced from the capture. On a computer with
-no active library or captures, the editor starts with the Stock Swap template.
+no active library or captures, the editor starts with the Stock Swap,
+Unresponsive cancellation, and Suggest Different Item starter templates.
 
 The Stock Swap update adds **[AUTO] Stock Swap** once to the active library,
 retaining a backup when the library already exists. An existing template with
 that name (including a retained previous name) is preserved. The initialization
 is recorded in `initialized_workflow_templates`, so later edits, renames, and
 deliberate removal survive reloads.
+
+The order-email update also adds **[AUTO] CANCEL - Unresponsive** and
+**[AUTO] STOCK - Item** once, using the same preservation and backup rules.
+Their initial copy is placeholder text for you to edit. Existing matching
+templates, including their saved previous names, are adopted without replacing
+their content.
 
 The active file uses this structure:
 
@@ -123,11 +130,11 @@ the original Salesforce templates or send email.
 
 ## Automated emails
 
-All 17 automation templates now load from this same JSON library: full and
+All 18 automation templates now load from this same JSON library: full and
 partial Copyright Cancel, Content Violation, Existing T-shirt, Outside Limit,
 Unresponsive, Copyright Reachout and Removal, both Complicated Embroidery routes,
 Oversize Embroidery, Additional Requests, Comp Sleeves, and Stock Extension,
-Color, Size, and Stock Swap. Sleeve, side, reverse-print, and extra embroidery requests share
+Color, Size, Item, and Stock Swap. Sleeve, side, reverse-print, and extra embroidery requests share
 the Additional Requests sender. Sheets Scanner, queue actions, direct single-order
 actions, and email recovery use the same sender paths.
 
@@ -169,15 +176,28 @@ text is escaped as text while retaining surrounding template HTML formatting.
 Keep each placeholder intact when formatting it. Its additional per-order
 receipt prevents a changed template title from sending a confirmed email again.
 
+**Cancel > Unresponsive** uses **[AUTO] CANCEL - Unresponsive**, retaining
+`[ORDER-NUMBER]` in the title. Its body is freely editable placeholder copy.
+**Stock Issue > Suggest Different Item** uses **[AUTO] STOCK - Item**, retaining
+`[ORDER-NUMBER]` in the title and `[STOCK]` and `[PRODUCT]` in the body. Stock
+comes from selected, verified CRM order rows; Product is the required replacement
+text entered in the extension. Keep each placeholder intact when formatting it.
+This workflow suggests the replacement by email. Its per-order receipts also
+block another send after title changes or uncertain attempts with changed inputs.
+
 Copy the active JSON library to each computer that runs email workers. Missing
-libraries use captures already present on that computer plus the built-in
-Stock Swap starter template; there is no implicit cross-machine lookup or execution.
+libraries use captures already present on that computer plus the three built-in
+starter templates; each computer uses its own local library and queue.
 
 Restart the local app and refresh the dashboard after installing this change.
 No Chrome extension reload is required.
 
 For the Stock Swap addition, restart the local app, refresh the dashboard,
 reload CRM Order Assistant **1.6.7**, and refresh open CRM order pages.
+
+For the Unresponsive starter and Suggest Different Item option, restart the
+local app, refresh the dashboard, reload CRM Order Assistant **1.7.9**, and
+refresh open CRM order pages.
 
 ## Validation
 

@@ -160,6 +160,33 @@ class StockIssueBrowserTests(unittest.TestCase):
         self.show_dialog(workflow="stock_issue_color")
         self.assertFalse(self.driver.find_elements(By.CSS_SELECTOR, '[id^="crm-stock-issue-size-"]'))
 
+    def test_item_suggestion_requires_replacement_and_selected_crm_stock(self):
+        self.show_dialog([product(), product(color="Navy")], workflow="stock_issue_item")
+        self.assertFalse(self.queue_button().is_enabled())
+        replacement = self.driver.find_element(By.ID, "crm-stock-issue-product")
+        replacement.send_keys("5000 Black, Soft & Light")
+        self.assertFalse(self.queue_button().is_enabled())
+        self.select_product(1)
+        self.assertTrue(self.queue_button().is_enabled())
+        replacement.clear()
+        replacement.send_keys(" ")
+        self.assertFalse(self.queue_button().is_enabled())
+        replacement.clear()
+        replacement.send_keys("5000 Black, Soft & Light")
+        self.queue_button().click()
+        self.assertEqual(self.queued_data()["product"], "5000 Black, Soft & Light")
+        self.assertEqual([row["color"] for row in self.queued_data()["products"]], ["Navy"])
+        self.assertFalse(self.driver.find_elements(By.ID, "crm-stock-issue-dialog"))
+
+    def test_item_suggestion_rejects_html_and_unfilled_template_tokens(self):
+        self.show_dialog(workflow="stock_issue_item")
+        replacement = self.driver.find_element(By.ID, "crm-stock-issue-product")
+        for value in ("<b>Tee</b>", "[PRODUCT]"):
+            replacement.clear()
+            replacement.send_keys(value)
+            self.assertFalse(self.queue_button().is_enabled())
+        self.assertEqual(self.driver.execute_script("return window.queued"), [])
+
     def test_scanner_detects_ordered_sizes_and_unions_matching_products(self):
         self.driver.get((ROOT / "tests/fixtures/stock_issue_crm.html").as_uri())
         scanned = self.driver.execute_script(self.functions + "return scanCurrentStockIssueDesignTab(1);")

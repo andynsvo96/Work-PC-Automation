@@ -63,7 +63,7 @@ const CANCEL_ORDER_AUTOMATIONS = [
   { key: "content_violation_cancel", label: "Content Violation - Cancel", requiresReason: true },
   { key: "existing_designs_cancel", label: "CANCEL - Existing Designs" },
   { key: "outside_limit_cancel", label: "CANCEL - Outside Limit" },
-  { key: "unresponsive_cancel", label: "CANCEL - Unresponsive" }
+  { key: "unresponsive_cancel", label: "Unresponsive" }
 ];
 
 const REACHOUT_ORDER_AUTOMATIONS = [
@@ -77,7 +77,8 @@ const REACHOUT_ORDER_AUTOMATIONS = [
 const STOCK_ISSUE_AUTOMATIONS = [
   { key: "stock_issue_extension", label: "Extension Required" },
   { key: "stock_issue_color", label: "Suggest Different Color" },
-  { key: "stock_issue_size", label: "Suggest Different Size" }
+  { key: "stock_issue_size", label: "Suggest Different Size" },
+  { key: "stock_issue_item", label: "Suggest Different Item" }
 ];
 
 function currentOrderId() {
@@ -919,20 +920,32 @@ function validateStockIssueSuggestedSizes(value) {
   return { ...result, sizes: result.values };
 }
 
+function validateStockIssueSuggestedProduct(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return { valid: false, product: "", message: "Enter a suggested replacement product." };
+  if (text.length > 500 || /[<>\x00-\x1f\x7f]|\[[A-Z][A-Z0-9_-]*\]/.test(text)) {
+    return { valid: false, product: "", message: "The replacement product must be plain text, at most 500 characters, without template placeholders." };
+  }
+  return { valid: true, product: stockIssueCleanText(text), message: "" };
+}
+
 function showStockIssueProductDialog(products, automation, triggerButton, statusButton) {
   const isColorSuggestion = automation.key === "stock_issue_color";
   const isSizeSuggestion = automation.key === "stock_issue_size";
-  const isSuggestion = isColorSuggestion || isSizeSuggestion;
+  const isItemSuggestion = automation.key === "stock_issue_item";
+  const isSuggestion = isColorSuggestion || isSizeSuggestion || isItemSuggestion;
   const isExtension = automation.key === "stock_issue_extension";
   const selectsSizes = isSizeSuggestion || isExtension;
-  const suggestionLabel = isSizeSuggestion ? "size" : "color";
+  const suggestionLabel = isItemSuggestion ? "item" : isSizeSuggestion ? "size" : "color";
   const dialogName = isSuggestion ? `Suggest Different ${suggestionLabel[0].toUpperCase()}${suggestionLabel.slice(1)}` : "Extension Required";
   const { overlay, dialog } = createStockIssueDialogShell(`Configure Stock Issue ${dialogName}`);
   const title = document.createElement("div");
   title.textContent = dialogName;
   Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "6px" });
   const explanation = document.createElement("p");
-  explanation.textContent = isSuggestion
+  explanation.textContent = isItemSuggestion
+    ? "Select the affected CRM stock, then enter the replacement product to suggest in the email."
+    : isSuggestion
     ? `Select each out-of-stock product/color, then list the available replacement ${suggestionLabel}s separated by commas.`
     : "Select each product/color that needs an extension, then enter the number of days. All order sizes start selected; use Clear to choose specific sizes.";
   Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
@@ -1040,14 +1053,15 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
   dialog.append(table);
 
   const inputLabel = document.createElement("label");
-  inputLabel.textContent = isSuggestion ? `Suggested ${suggestionLabel}s (required)` : "Extension days (required)";
-  inputLabel.htmlFor = isSuggestion ? `crm-stock-issue-${suggestionLabel}s` : "crm-stock-issue-days";
+  inputLabel.textContent = isItemSuggestion ? "Suggested replacement product (required)" : isSuggestion ? `Suggested ${suggestionLabel}s (required)` : "Extension days (required)";
+  inputLabel.htmlFor = isItemSuggestion ? "crm-stock-issue-product" : isSuggestion ? `crm-stock-issue-${suggestionLabel}s` : "crm-stock-issue-days";
   Object.assign(inputLabel.style, { display: "block", marginBottom: "5px", fontWeight: "700" });
   const detailInput = document.createElement("input");
   detailInput.id = inputLabel.htmlFor;
   detailInput.type = isSuggestion ? "text" : "number";
   if (isSuggestion) {
-    detailInput.placeholder = isSizeSuggestion ? "Example: Small, Medium, Large" : "Example: Navy, Black, White";
+    detailInput.placeholder = isItemSuggestion ? "Example: 5000 black Gildan Heavy Cotton T-Shirt" : isSizeSuggestion ? "Example: Small, Medium, Large" : "Example: Navy, Black, White";
+    if (isItemSuggestion) detailInput.maxLength = 500;
     detailInput.autocomplete = "off";
   } else {
     detailInput.min = "1";
@@ -1085,7 +1099,9 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
   const refresh = () => {
     const selectedCheckboxes = checkboxes.filter((checkbox) => checkbox.checked);
     const selected = selectedCheckboxes.length;
-    const inputValidation = isColorSuggestion
+    const inputValidation = isItemSuggestion
+      ? validateStockIssueSuggestedProduct(detailInput.value)
+      : isColorSuggestion
       ? validateStockIssueSuggestedColors(detailInput.value)
       : isSizeSuggestion
       ? validateStockIssueSuggestedSizes(detailInput.value)
@@ -1138,7 +1154,9 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
             .map((choice) => choice.value)
         };
       });
-    const inputValidation = isColorSuggestion
+    const inputValidation = isItemSuggestion
+      ? validateStockIssueSuggestedProduct(detailInput.value)
+      : isColorSuggestion
       ? validateStockIssueSuggestedColors(detailInput.value)
       : isSizeSuggestion
       ? validateStockIssueSuggestedSizes(detailInput.value)
@@ -1148,7 +1166,9 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
       refresh();
       return;
     }
-    const structuredData = isColorSuggestion
+    const structuredData = isItemSuggestion
+      ? { product: inputValidation.product, products: selectedProducts }
+      : isColorSuggestion
       ? { colors: inputValidation.colors, products: selectedProducts }
       : isSizeSuggestion
       ? { sizes: inputValidation.sizes, products: selectedProducts }

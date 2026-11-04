@@ -31,12 +31,12 @@ def swaps():
 class StockSwapComparisonTests(unittest.TestCase):
     def test_original_is_stock_and_current_is_product(self):
         values = stock.placeholder_values("1234567", swaps())
-        self.assertEqual(values, {"[ORDER-NUMBER]": "1234567", "[STOCK]": "5000 Black Cotton Tees (M: 3)",
-                                  "[PRODUCT]": "PC54 Black Cotton Tees (M: 3)"})
+        self.assertEqual(values, {"[ORDER-NUMBER]": "1234567", "[STOCK]": "5000 Black Cotton Tees in size medium",
+                                  "[PRODUCT]": "PC54 Black Cotton Tees in size medium"})
 
     def test_sales_note_uses_original_replacement_and_a_real_newline(self):
         self.assertEqual(stock.format_sales_note("1234567", swaps()),
-                         "Swapped 5000 Black Cotton Tees (M: 3) to PC54 Black Cotton Tees (M: 3)\nEmailed")
+                         "Swapped 5000 Black Cotton Tees in size medium to PC54 Black Cotton Tees in size medium\nEmailed")
 
     def test_only_changed_sizes_are_included_in_partial_swap(self):
         before = snapshot(design(item(quantity=7, sizes={"M": 5, "L": 2})))
@@ -44,6 +44,60 @@ class StockSwapComparisonTests(unittest.TestCase):
         result = stock.find_swaps(before, after)
         self.assertEqual(result[0]["stock"]["quantities"], {"M": 3})
         self.assertEqual(result[0]["product"]["quantities"], {"M": 3})
+        self.assertTrue(stock.placeholder_values("1234567", result)["[STOCK]"].endswith(" in size medium"))
+
+    def test_all_ordered_sizes_are_summarized_in_email_and_sales_note(self):
+        original = snapshot(design(item(quantity=6, sizes={"M": 2, "L": 3, "XL": 1})))
+        current = snapshot(design(item("PC54", quantity=6, sizes={"M": 2, "L": 3, "XL": 1})))
+        result = stock.find_swaps(original, current)
+        values = stock.placeholder_values("1234567", result)
+        self.assertEqual(values["[STOCK]"], "5000 Black Cotton Tees in all sizes")
+        self.assertEqual(values["[PRODUCT]"], "PC54 Black Cotton Tees in all sizes")
+        self.assertEqual(stock.format_sales_note("1234567", result),
+                         "Swapped 5000 Black Cotton Tees in all sizes to PC54 Black Cotton Tees in all sizes\nEmailed")
+        self.assertEqual(result[0]["stock"]["quantities"], {"M": 2, "L": 3, "XL": 1})
+
+    def test_partial_original_sizes_and_complete_replacement_sizes_are_independent(self):
+        original = snapshot(design(item(quantity=6, sizes={"M": 2, "L": 3, "XL": 1})))
+        current = snapshot(design(item(quantity=2, sizes={"M": 2}),
+                                  item("PC54", quantity=4, sizes={"L": 3, "XL": 1})))
+        values = stock.placeholder_values("1234567", stock.find_swaps(original, current))
+        self.assertEqual(values["[STOCK]"], "5000 Black Cotton Tees in sizes large and x-large")
+        self.assertEqual(values["[PRODUCT]"], "PC54 Black Cotton Tees in all sizes")
+
+    def test_unchanged_sizes_on_other_designs_prevent_an_all_sizes_claim(self):
+        untouched = design(item(quantity=1, sizes={"XL": 1}), identity="tab-2", artwork="art-2", name="Other Logo")
+        original = snapshot(design(item(quantity=5, sizes={"M": 3, "L": 2})), untouched)
+        current = snapshot(design(item("PC54", quantity=5, sizes={"M": 3, "L": 2})), deepcopy(untouched))
+        values = stock.placeholder_values("1234567", stock.find_swaps(original, current))
+        self.assertTrue(values["[STOCK]"].endswith(" in sizes medium and large"))
+        self.assertTrue(values["[PRODUCT]"].endswith(" in all sizes"))
+
+    def test_saved_item_pairing_uses_all_ordered_sizes_for_the_product_color(self):
+        changed = {**item(quantity=5, sizes={"M": 3, "L": 2}), "id": "item-1"}
+        untouched = {**item(quantity=1, sizes={"XL": 1}), "id": "item-2"}
+        replacement = {**item("PC54", quantity=5, sizes={"M": 3, "L": 2}), "id": "item-1"}
+        result = stock.find_swaps(snapshot(design(changed, untouched)),
+                                  snapshot(design(replacement, deepcopy(untouched))))
+        values = stock.placeholder_values("1234567", result)
+        self.assertTrue(values["[STOCK]"].endswith(" in sizes medium and large"))
+        self.assertTrue(values["[PRODUCT]"].endswith(" in all sizes"))
+
+    def test_missing_complete_size_list_names_specific_sizes_without_guessing(self):
+        selected = swaps()
+        for side in ("stock", "product"):
+            selected[0][side].pop("ordered_sizes")
+            selected[0][side]["quantities"] = {"M": 2, "L": 1}
+        values = stock.placeholder_values("1234567", selected)
+        self.assertTrue(values["[STOCK]"].endswith(" in sizes medium and large"))
+        self.assertTrue(values["[PRODUCT]"].endswith(" in sizes medium and large"))
+
+    def test_unsized_products_have_no_size_claim(self):
+        original = snapshot(design({**item(), "split": False, "sizes": []}))
+        current = snapshot(design({**item("PC54"), "split": False, "sizes": []}))
+        values = stock.placeholder_values("1234567", stock.find_swaps(original, current))
+        self.assertEqual(values["[STOCK]"], "5000 Black Cotton Tees")
+        self.assertEqual(values["[PRODUCT]"], "PC54 Black Cotton Tees")
 
     def test_replacements_can_differ_by_size_or_split_one_original_quantity(self):
         before = snapshot(design(item(quantity=5, sizes={"M": 3, "L": 2})))
@@ -51,6 +105,11 @@ class StockSwapComparisonTests(unittest.TestCase):
         result = stock.find_swaps(before, after)
         self.assertEqual([(p["product"]["style"], p["stock"]["quantities"]) for p in result],
                          [("PC54", {"M": 3}), ("PC61", {"L": 2})])
+        values = stock.placeholder_values("1234567", result)
+        self.assertEqual(values["[STOCK]"],
+                         "1. 5000 Black Cotton Tees in size medium; 2. 5000 Black Cotton Tees in size large")
+        self.assertEqual(values["[PRODUCT]"],
+                         "1. PC54 Black Cotton Tees in size medium; 2. PC61 Black Cotton Tees in size large")
         after = snapshot(design(item("PC54", quantity=2), item("PC61", quantity=3)))
         result = stock.find_swaps(snapshot(design(item(quantity=5))), after)
         self.assertEqual([p["stock"]["quantities"] for p in result], [{"M": 2}, {"M": 3}])
@@ -69,8 +128,8 @@ class StockSwapComparisonTests(unittest.TestCase):
         self.assertEqual(result[0]["stock"]["quantities"], {"3T": 1})
         self.assertEqual(result[0]["product"]["quantities"], {"L": 1})
         values = stock.placeholder_values("1234567", result)
-        self.assertIn("(3T: 1)", values["[STOCK]"])
-        self.assertIn("(L: 1)", values["[PRODUCT]"])
+        self.assertTrue(values["[STOCK]"].endswith(" in size 3T"))
+        self.assertTrue(values["[PRODUCT]"].endswith(" in size large"))
 
     def test_reassigned_item_ids_do_not_create_swaps_when_products_are_unchanged(self):
         before = snapshot(design({**item(), "id": "item-1"}, {**item("DM130"), "id": "item-2"}))
@@ -169,6 +228,44 @@ class StockSwapReceiptTests(unittest.TestCase):
         self.assertEqual(self.click.call_count, 2)
         self.prepare.assert_not_called()
 
+    def test_confirmed_legacy_receipt_survives_added_size_display_metadata(self):
+        legacy = swaps()
+        for side in ("stock", "product"):
+            legacy[0][side].pop("ordered_sizes")
+        self.confirmed_after_second_attempt()
+        stock._send_email(self.driver, "crm", "1234567", "customer@example.test", legacy)
+        self.prepare.reset_mock()
+        self.prepare.return_value = {**self.draft, "body": "Updated size wording"}
+        self.assertTrue(self.send()["skipped"])
+        self.prepare.assert_not_called()
+        self.assertEqual(self.click.call_count, 2)
+
+    def test_unconfirmed_legacy_receipt_stops_when_size_wording_changes(self):
+        legacy = swaps()
+        for side in ("stock", "product"):
+            legacy[0][side].pop("ordered_sizes")
+        self.driver.execute_script.return_value = []
+        with self.assertRaises(stock.confirmation.UnconfirmedEmailError):
+            stock._send_email(self.driver, "crm", "1234567", "customer@example.test", legacy)
+        self.prepare.return_value = {**self.draft, "body": "Updated size wording"}
+        with self.assertRaisesRegex(stock.StockSwapError, "draft changed"):
+            self.send()
+        self.assertEqual(self.click.call_count, 2)
+
+    def test_summarized_size_wording_keeps_exact_quantities_in_receipt_identity(self):
+        original = snapshot(design(item(quantity=5, sizes={"M": 3, "L": 2})))
+        current = snapshot(design(item("PC54", quantity=5, sizes={"M": 3, "L": 2})))
+        selected = stock.find_swaps(original, current)
+        self.confirmed_after_second_attempt()
+        stock._send_email(self.driver, "crm", "1234567", "customer@example.test", selected)
+        changed = deepcopy(selected)
+        for side in ("stock", "product"):
+            changed[0][side]["quantities"]["M"] += 1
+        self.assertEqual(stock.placeholder_values("1234567", changed), stock.placeholder_values("1234567", selected))
+        with self.assertRaisesRegex(stock.StockSwapError, "receipt cannot be reused"):
+            stock._send_email(self.driver, "crm", "1234567", "customer@example.test", changed)
+        self.assertEqual(self.click.call_count, 2)
+
     def test_unconfirmed_send_blocks_future_attempts(self):
         self.driver.execute_script.return_value = []
         with self.assertRaises(stock.confirmation.UnconfirmedEmailError):
@@ -248,6 +345,44 @@ class StockSwapReceiptTests(unittest.TestCase):
         self.assertEqual(self.click.call_count, 2)
 
 
+class StockSwapSalesNoteTests(unittest.TestCase):
+    def test_existing_legacy_note_is_reused_without_editing(self):
+        note = stock.format_sales_note("1234567", swaps())
+        legacy = "Swapped 5000 Black Cotton Tees (M: 3) to PC54 Black Cotton Tees (M: 3)\nEmailed"
+        self.assertEqual(stock.format_sales_note("1234567", swaps(), legacy=True), legacy)
+        driver = mock.Mock()
+        with mock.patch.object(stock.shared, "_activate_crm_context"), \
+                mock.patch.object(stock.shared, "_wait_for_order_scope"), \
+                mock.patch.object(stock.shared, "_order_scope", return_value="Earlier note\n" + legacy), \
+                mock.patch.object(stock.shared._product_separator, "_enter_edit_mode") as edit:
+            result = stock._append_sales_note(driver, "1234567", note, legacy_note=legacy)
+        self.assertTrue(result["already_present"])
+        self.assertEqual(result["note"], legacy)
+        edit.assert_not_called()
+        driver.refresh.assert_not_called()
+
+    def test_saved_note_requires_persistence_after_reload(self):
+        note = stock.format_sales_note("1234567", swaps())
+        legacy = stock.format_sales_note("1234567", swaps(), legacy=True)
+        for saved in (note, legacy, ""):
+            with self.subTest(saved=saved), ExitStack() as stack:
+                driver = mock.Mock()
+                stack.enter_context(mock.patch.object(stock.shared, "_activate_crm_context"))
+                stack.enter_context(mock.patch.object(stock.shared, "_wait_for_order_scope"))
+                stack.enter_context(mock.patch.object(stock.shared, "_order_scope", side_effect=["", "draft", True, saved]))
+                stack.enter_context(mock.patch.object(stock.shared._product_separator, "_enter_edit_mode"))
+                save = stack.enter_context(mock.patch.object(stock.shared, "_save_order_and_wait"))
+                if saved:
+                    result = stock._append_sales_note(driver, "1234567", note, legacy_note=legacy)
+                    self.assertTrue(result["confirmed"])
+                    self.assertEqual(result["note"], saved)
+                else:
+                    with self.assertRaisesRegex(stock.StockSwapError, "did not persist"):
+                        stock._append_sales_note(driver, "1234567", note, legacy_note=legacy)
+                save.assert_called_once_with(driver)
+                driver.refresh.assert_called_once()
+
+
 class StockSwapExecutionTests(unittest.TestCase):
     def test_one_email_uses_every_swap_then_the_note_is_saved(self):
         before = snapshot(design(item()))
@@ -278,7 +413,8 @@ class StockSwapExecutionTests(unittest.TestCase):
         self.assertEqual(send.call_count, 1)
         self.assertEqual(send.call_args.args[-1], swaps())
         self.assertEqual(sequence, ["email", "note"])
-        note.assert_called_once_with(driver, "1234567", stock.format_sales_note("1234567", swaps()), dry_run=False)
+        note.assert_called_once_with(driver, "1234567", stock.format_sales_note("1234567", swaps()), dry_run=False,
+                                     legacy_note=stock.format_sales_note("1234567", swaps(), legacy=True))
         self.assertTrue(result["sales_note"]["confirmed"])
         self.assertEqual(driver.execute_script.call_count, 0)
         quit_browser.assert_called_once()

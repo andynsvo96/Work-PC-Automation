@@ -24,6 +24,7 @@ from workers import crm_stock_issue_extension as extension
 from workers import crm_stock_issue_color as color
 from workers import crm_stock_issue_size as size
 from workers import crm_stock_swap as stock_swap
+from workers import crm_stock_issue_item as stock_item
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -153,7 +154,8 @@ class LocalTemplateBrowserTests(unittest.TestCase):
             'subject': 'Custom update for #[ORDER-NUMBER]',
             'body_html': '<p>Original: <strong>[STOCK]</strong></p><p>Replaced with <span style="font-size:20px">[PRODUCT]</span>.</p>'
                          '<p>Again: [PRODUCT]</p><a href="https://example.test/guide">Guide</a>'}])
-        swaps = [{'stock': {'style': '5000', 'color': 'Black', 'description': 'Soft & Light <Tees>', 'quantities': {'M': 3}},
+        swaps = [{'stock': {'style': '5000', 'color': 'Black', 'description': 'Soft & Light <Tees>',
+                            'quantities': {'M': 3, 'L': 2}, 'ordered_sizes': ['M', 'L']},
                   'product': {'style': 'PC54', 'color': 'Navy', 'description': 'Core Cotton', 'quantities': {'M': 3}}}]
         self.open_fixture()
         with ExitStack() as stack:
@@ -164,16 +166,45 @@ class LocalTemplateBrowserTests(unittest.TestCase):
             send = stack.enter_context(mock.patch.object(stock_swap.shared, '_click_salesforce_send_button'))
             result = stock_swap._prepare_email(self.driver, 'crm', '1234567', 'customer@example.test', swaps)
         self.assertEqual(result['subject'], 'Custom update for #1234567')
-        self.assertIn('5000 Black Soft & Light <Tees> (M: 3)', result['body'])
-        self.assertEqual(result['body'].count('PC54 Navy Core Cotton (M: 3)'), 2)
+        self.assertIn('5000 Black Soft & Light <Tees> in all sizes', result['body'])
+        self.assertEqual(result['body'].count('PC54 Navy Core Cotton in size medium'), 2)
         self.assertEqual(result['recipients']['to'], ['customer@example.test'])
         self.assertEqual(self.driver.execute_script('return window.pickerClicks'), 0)
         self.assertEqual(self.driver.find_element('id', 'sentHtml').text, '')
         send.assert_not_called()
         self.driver.find_element('id', 'send').click()
         saved = self.driver.find_element('id', 'sentHtml').text
-        self.assertIn('<strong>5000 Black Soft &amp; Light &lt;Tees&gt; (M: 3)</strong>', saved)
+        self.assertIn('<strong>5000 Black Soft &amp; Light &lt;Tees&gt; in all sizes</strong>', saved)
         self.assertIn('font-size:20px', saved)
+        self.assertIn('href="https://example.test/guide"', saved)
+
+    def test_item_suggestion_fills_saved_template_with_literal_user_input(self):
+        self.write_library([{'id': 'stock_item', 'name': stock_item.STOCK_ISSUE_ITEM_TEMPLATE_NAME,
+            'subject': 'My stock update #[ORDER-NUMBER]',
+            'body_html': '<p>Stock: <strong>[STOCK]</strong></p><p>Try [PRODUCT]</p>'
+                         '<p>Again: [PRODUCT]</p><a href="https://example.test/guide">Guide</a>'}])
+        request = stock_item.normalize_request('5000 Black, Soft & Light "Tee"', [{
+            'style': 'DM130', 'description': 'District Perfect Tri Tee', 'color': 'Red',
+            'design_item_ids': ['design-item-101'], 'total_quantity': 4}])
+        self.open_fixture()
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(stock_item, 'default_template_store', return_value=self.store))
+            for name in ('_open_salesforce_account', '_verify_salesforce_email', '_click_salesforce_email',
+                         '_wait_for_email_composer', '_set_salesforce_from_orders'):
+                stack.enter_context(mock.patch.object(stock_item.shared, name))
+            send = stack.enter_context(mock.patch.object(stock_item.shared, '_click_salesforce_send_button'))
+            result = stock_item._prepare_email(self.driver, 'crm', '1234567', 'customer@example.test', request)
+        self.assertEqual(result['subject'], 'My stock update #1234567')
+        self.assertIn('DM130 red District Perfect Tri Tee', result['body'])
+        self.assertEqual(result['body'].count(request['product']), 2)
+        self.assertEqual(result['recipients']['to'], ['customer@example.test'])
+        self.assertEqual(self.driver.execute_script('return window.pickerClicks'), 0)
+        self.assertEqual(self.driver.find_element('id', 'sentHtml').text, '')
+        send.assert_not_called()
+        self.driver.find_element('id', 'send').click()
+        saved = self.driver.find_element('id', 'sentHtml').text
+        self.assertIn('Soft &amp; Light', saved)
+        self.assertIn('<strong>DM130 red District Perfect Tri Tee</strong>', saved)
         self.assertIn('href="https://example.test/guide"', saved)
 
     def test_stock_swap_refuses_extra_recipients_and_unknown_placeholders(self):

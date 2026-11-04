@@ -28,6 +28,25 @@ STOCK_SWAP_TEMPLATE = {
         "<p>Thank you for your understanding.</p>"
     ),
 }
+UNRESPONSIVE_CANCEL_TEMPLATE_NAME = "[AUTO] CANCEL - Unresponsive"
+STOCK_ISSUE_ITEM_TEMPLATE_NAME = "[AUTO] STOCK - Item"
+ORDER_EMAIL_TEMPLATES = {
+    "unresponsive_cancel": {
+        "id": "builtin_unresponsive_cancel",
+        "name": UNRESPONSIVE_CANCEL_TEMPLATE_NAME,
+        "subject": "Order #[ORDER-NUMBER] - Unresponsive",
+        "body_html": "<p>Placeholder: add your unresponsive cancellation email copy here.</p>",
+    },
+    "stock_issue_item": {
+        "id": "builtin_stock_issue_item",
+        "name": STOCK_ISSUE_ITEM_TEMPLATE_NAME,
+        "subject": "Order #[ORDER-NUMBER] - Stock Issue",
+        "body_html": (
+            "<p>Placeholder introduction.</p><p>Current item: [STOCK]</p>"
+            "<p>Suggested replacement: [PRODUCT]</p><p>Placeholder closing.</p>"
+        ),
+    },
+}
 
 
 def default_template_store():
@@ -36,6 +55,7 @@ def default_template_store():
         Path(STATE_DIR) / "salesforce_templates.json",
         Path(STATE_DIR) / "salesforce_email_templates_capture",
         include_stock_swap=True,
+        include_order_email_templates=True,
     )
 
 
@@ -85,11 +105,12 @@ def _validate_fields(values):
 
 
 class SalesforceTemplateStore:
-    def __init__(self, path, capture_root=None, *, include_stock_swap=False):
+    def __init__(self, path, capture_root=None, *, include_stock_swap=False, include_order_email_templates=False):
         self.path = Path(path)
         self.capture_root = Path(capture_root) if capture_root is not None else None
-        self._lock = _WORKFLOW_TEMPLATE_LOCK if include_stock_swap else threading.RLock()
+        self._lock = _WORKFLOW_TEMPLATE_LOCK if include_stock_swap or include_order_email_templates else threading.RLock()
         self.include_stock_swap = include_stock_swap
+        self.include_order_email_templates = include_order_email_templates
 
     @staticmethod
     def _read_json(path):
@@ -191,20 +212,25 @@ class SalesforceTemplateStore:
         self._initialize()
         document = (self._validate_document(self._read_json(self.path)) if self.path.exists()
                     else {"schema_version": 1, "templates": []})
-        if self.include_stock_swap:
+        defaults = {"stock_swap": STOCK_SWAP_TEMPLATE} if self.include_stock_swap else {}
+        if self.include_order_email_templates:
+            defaults.update(ORDER_EMAIL_TEMPLATES)
+        if defaults:
             initialized = document.get("initialized_workflow_templates", [])
             if not isinstance(initialized, list) or any(not isinstance(key, str) for key in initialized):
                 raise TemplateLibraryError("The template initialization history is invalid.")
-            if "stock_swap" not in initialized:
+            pending = [(key, template) for key, template in defaults.items() if key not in initialized]
+            for key, template in pending:
                 # Seed once. Edits, renames, and deliberate removal survive reloads.
                 if not any(
-                    item["id"] == STOCK_SWAP_TEMPLATE["id"] or STOCK_SWAP_TEMPLATE_NAME.casefold() in {
+                    item["id"] == template["id"] or template["name"].casefold() in {
                         item["name"].strip().casefold(),
                         *(name.strip().casefold() for name in item.get("previous_names", [])),
                     } for item in document["templates"]
                 ):
-                    document["templates"].append(dict(STOCK_SWAP_TEMPLATE))
-                document["initialized_workflow_templates"] = [*initialized, "stock_swap"]
+                    document["templates"].append(dict(template))
+            if pending:
+                document["initialized_workflow_templates"] = [*initialized, *(key for key, _template in pending)]
                 self._validate_document(document)
                 self._write(document, backup=self.path.exists())
         return document

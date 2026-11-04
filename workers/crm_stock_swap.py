@@ -21,6 +21,7 @@ import crm_copyright_cancel as shared
 from runtime_paths import STATE_DIR
 from salesforce_templates import STOCK_SWAP_TEMPLATE_NAME, default_template_store
 from workers.crm_auto_splitter import _quote_scope
+from workers.crm_stock_issue_extension import _extension_size_text
 from workers import salesforce_activity_confirmation as confirmation
 from workers import salesforce_template_composer as composer
 
@@ -222,6 +223,20 @@ def find_swaps(original, current):
         swaps.extend(pairs.values())
     if not swaps:
         raise StockSwapError("No saved stock swaps were found between the original quote and current order.")
+    # Compare each affected product/color with its complete ordered size list,
+    # including unchanged quantities and other design tabs.
+    for side, snapshot in (("stock", original), ("product", current)):
+        ordered_sizes = {}
+        for design in snapshot.get("designs", []):
+            for key, product in _inventory(design).items():
+                sizes = ordered_sizes.setdefault(key, [])
+                for size in product["quantities"]:
+                    if size and size not in sizes:
+                        sizes.append(size)
+        for swap in swaps:
+            product = swap[side]
+            key = (product["style"].casefold(), product["color"].casefold())
+            product["ordered_sizes"] = ordered_sizes[key]
     return swaps
 
 
@@ -249,11 +264,17 @@ def _swaps_by_item_id(before, after):
     return swaps
 
 
-def placeholder_values(order_id, swaps):
+def placeholder_values(order_id, swaps, *, legacy=False):
     def label(product):
-        sizes = ", ".join(f"{size}: {count}" for size, count in product["quantities"].items() if size)
         text = f"{product['style']} {product['color']} {product['description']}"
-        return f"{text} ({sizes})" if sizes else text
+        if legacy:
+            sizes = ", ".join(f"{size}: {count}" for size, count in product["quantities"].items() if size)
+            return f"{text} ({sizes})" if sizes else text
+        sizes = _extension_size_text({
+            "affected_sizes": [size for size, count in product["quantities"].items() if size and count > 0],
+            "available_sizes": product.get("ordered_sizes"),
+        }).replace(" in all ordered sizes", " in all sizes")
+        return text + sizes
 
     def listing(key):
         return "; ".join((f"{index}. " if len(swaps) > 1 else "") + label(swap[key])
@@ -262,12 +283,12 @@ def placeholder_values(order_id, swaps):
     return {"[ORDER-NUMBER]": order_id, "[STOCK]": listing("stock"), "[PRODUCT]": listing("product")}
 
 
-def format_sales_note(order_id, swaps):
-    values = placeholder_values(order_id, swaps)
+def format_sales_note(order_id, swaps, *, legacy=False):
+    values = placeholder_values(order_id, swaps, legacy=legacy)
     return f"Swapped {values['[STOCK]']} to {values['[PRODUCT]']}\nEmailed"
 
 
-def _append_sales_note(driver, order_id, note, *, dry_run=False):
+def _append_sales_note(driver, order_id, note, *, dry_run=False, legacy_note=None):
     """Append once, preserving drafts, and require the saved note after reload."""
     shared._activate_crm_context(driver)
     shared._wait_for_order_scope(driver, order_id=order_id)
@@ -275,10 +296,12 @@ def _append_sales_note(driver, order_id, note, *, dry_run=False):
     def saved_note_present():
         saved = shared._order_scope(driver, "return String(r.salesNotes || r.filteredSalesNotes || '');")
         normalize = lambda value: str(value or "").replace("\r\n", "\n").replace("\r", "\n").casefold()
-        return normalize(note) in normalize(saved)
+        return next((candidate for candidate in (note, legacy_note)
+                     if candidate and normalize(candidate) in normalize(saved)), None)
 
-    if saved_note_present():
-        return {"note": note, "updated": False, "already_present": True,
+    existing_note = saved_note_present()
+    if existing_note:
+        return {"note": existing_note, "updated": False, "already_present": True,
                 "confirmed": True, "dry_run": bool(dry_run)}
     if dry_run:
         return {"note": note, "updated": False, "already_present": False, "dry_run": True}
@@ -290,23 +313,26 @@ def _append_sales_note(driver, order_id, note, *, dry_run=False):
         const draft = String(r.addSalesNotes || '').trim();
         const normalize = text => String(text).replace(/\r\n?/g, '\n').toLowerCase();
         const previous = String(arguments[1] || '').trim();
+        const acceptedNotes = [note, String(arguments[2] || '').trim()].filter(Boolean);
         const merged = normalize(draft).includes(normalize(previous)) ? draft
           : normalize(previous).includes(normalize(draft)) ? previous : [previous, draft].filter(Boolean).join('\n');
-        const after = normalize(merged).includes(normalize(note)) ? merged : [merged, note].filter(Boolean).join('\n');
+        const after = acceptedNotes.some(candidate => normalize(merged).includes(normalize(candidate)))
+          ? merged : [merged, note].filter(Boolean).join('\n');
         runInAngular(s, () => {
           r.addSalesNotes = after;
           if (s.order.setAddSalesNotes) s.order.setAddSalesNotes(after);
         });
         return true;
-    """, note, previous_draft)
+    """, note, previous_draft, legacy_note)
     save = shared._save_order_and_wait(driver)
     driver.refresh()
     shared._activate_crm_context(driver)
     shared._wait_for_order_scope(driver, order_id=order_id)
-    if not saved_note_present():
+    saved_note = saved_note_present()
+    if not saved_note:
         raise StockSwapError("The Stock Swap Sales Note did not persist after reload. "
                              "Retry the original task to recover the note without resending the confirmed email.")
-    return {"note": note, "updated": True, "already_present": False,
+    return {"note": saved_note, "updated": True, "already_present": False,
             "confirmed": True, "dry_run": False, "save": save}
 
 
@@ -342,7 +368,15 @@ def _send_email(driver, crm_handle, order_id, customer_email, swaps, *, dry_run=
     # A per-order receipt survives subject edits. Never repeat a completed Stock
     # Swap email, or start a fresh resend budget after an uncertain submission.
     path = Path(STATE_DIR) / "stock_swap_emails" / f"{order_id}.json"
-    fingerprint = hashlib.sha256(json.dumps([customer_email.casefold(), swaps], sort_keys=True).encode()).hexdigest()
+    # Display metadata must not invalidate receipts created before size wording
+    # changed. Actual affected sizes and quantities retain their original identity.
+    receipt_swaps = []
+    for swap in swaps:
+        record = dict(swap)
+        for side in ("stock", "product"):
+            record[side] = {key: value for key, value in swap[side].items() if key != "ordered_sizes"}
+        receipt_swaps.append(record)
+    fingerprint = hashlib.sha256(json.dumps([customer_email.casefold(), receipt_swaps], sort_keys=True).encode()).hexdigest()
     previous = None
     if path.exists():
         try:
@@ -423,7 +457,8 @@ def process_stock_swap_order(order_id, *, dry_run=False, visible=False, progress
         begin("sales_note", "Saving and verifying the Stock Swap Sales Note.")
         driver.switch_to.window(crm_handle)
         shared.safe_get_with_partial_load(driver, order_url, f"CRM order {order_id} Sales Note")
-        result["sales_note"] = _append_sales_note(driver, order_id, note, dry_run=dry_run)
+        result["sales_note"] = _append_sales_note(
+            driver, order_id, note, dry_run=dry_run, legacy_note=format_sales_note(order_id, swaps, legacy=True))
         result["stages"].append({"key": "sales_note", "success": True, "details": result["sales_note"]})
         result["success"] = True
         return result

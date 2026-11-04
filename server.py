@@ -144,6 +144,7 @@ CRM_STOCK_ISSUE_EXTENSION_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_ex
 CRM_STOCK_ISSUE_COLOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_color.py")
 CRM_STOCK_ISSUE_SIZE_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_size.py")
 CRM_STOCK_SWAP_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_swap.py")
+CRM_STOCK_ISSUE_ITEM_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_item.py")
 CRM_SLEEVE_PRINTS_SCRIPT = os.path.join(WORKERS_DIR, "crm_sleeve_prints.py")
 SLACK_SCRIPT_TIMEOUT_SECONDS = 150
 BROWSER_WORKER_FILENAMES = frozenset(
@@ -164,6 +165,7 @@ BROWSER_WORKER_FILENAMES = frozenset(
         os.path.basename(CRM_STOCK_ISSUE_COLOR_SCRIPT),
         os.path.basename(CRM_STOCK_ISSUE_SIZE_SCRIPT),
         os.path.basename(CRM_STOCK_SWAP_SCRIPT),
+        os.path.basename(CRM_STOCK_ISSUE_ITEM_SCRIPT),
         os.path.basename(CRM_SLEEVE_PRINTS_SCRIPT),
     }
 )
@@ -2510,6 +2512,7 @@ _RETRYABLE_SINGLE_ORDER_TASK_TYPES = frozenset(
         "crm.stock_issue_color",
         "crm.stock_issue_extension",
         "crm.stock_issue_size",
+        "crm.stock_issue_item",
         "crm.stock_swap",
     }
 )
@@ -12168,6 +12171,8 @@ def get_crm_extension_order_status_payload():
     runtime = _crm_extension_order_runtime_snapshot()
     if runtime.get("runKind") == "manual" and runtime.get("currentStep") == "stock_swap":
         runtime = _merge_live_automation_status(runtime, "crm.stock_swap")
+    if runtime.get("runKind") == "manual" and runtime.get("currentStep") == "stock_issue_item":
+        runtime = _merge_live_automation_status(runtime, "crm.stock_issue_item")
     return {
         "success": True,
         "queued": bool(runtime.get("queued")),
@@ -12842,6 +12847,49 @@ CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["stock_swap"] = {
     "task_arguments": lambda order_id, _reason="", request_data=None: {"order_id": order_id, "dry_run": False},
     "runner": lambda order_id, _reason="", request_data=None, progress_callback=None: run_crm_stock_swap_queued(
         order_id, progress_callback=progress_callback),
+}
+
+
+def _normalize_stock_issue_item_request(data):
+    from workers.crm_stock_issue_item import normalize_request
+
+    payload = data if isinstance(data, dict) else {}
+    return normalize_request(payload.get("product"), payload.get("products"))
+
+
+def run_crm_stock_issue_item_queued(order_id, product, products, progress_callback=None):
+    normalized_order_id = _normalize_crm_single_order_id(order_id)
+    if not normalized_order_id:
+        return False, "Open a CRM order with a valid 7-digit order number first.", {}
+    request = _normalize_stock_issue_item_request({"product": product, "products": products})
+    if not crm_lock.acquire(blocking=False):
+        return False, "A CRM automation run is already in progress.", {}
+    try:
+        if callable(progress_callback):
+            progress_callback("stock_issue_item", f"Verifying the selected stock for order {normalized_order_id}.")
+        return _report_salesforce_email_result(*_run_script(
+            CRM_STOCK_ISSUE_ITEM_SCRIPT,
+            ["--order-id", normalized_order_id, "--request-json", json.dumps(request), "--real"],
+            "Stock Issue - Suggest Different Item", timeout=900, require_result=True))
+    finally:
+        crm_lock.release()
+
+
+CRM_EXTENSION_MANUAL_ORDER_AUTOMATIONS["stock_issue_item"] = {
+    "label": "Stock Issue - Suggest Different Item",
+    "task_type": "crm.stock_issue_item",
+    "status_fn": get_crm_extension_order_status_payload,
+    "structured_request": True,
+    "request_validator": _normalize_stock_issue_item_request,
+    "task_arguments": lambda order_id, _reason="", request_data=None: {
+        "order_id": order_id,
+        "product": (request_data or {}).get("product"),
+        "products": (request_data or {}).get("products"),
+        "dry_run": False,
+    },
+    "runner": lambda order_id, _reason="", request_data=None, progress_callback=None: run_crm_stock_issue_item_queued(
+        order_id, (request_data or {}).get("product"), (request_data or {}).get("products"),
+        progress_callback=progress_callback),
 }
 
 

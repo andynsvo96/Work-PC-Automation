@@ -305,6 +305,38 @@ This works for both one product and multiple products without choosing `is` or
 
 Restart the local Automation app to load this wording update.
 
+## Unresponsive cancellation and item suggestion emails
+
+Version **1.7.9** provides these email options on the current order:
+
+- **Cancel > Unresponsive** runs the existing unresponsive cancellation/refund
+  workflow. Its editable **[AUTO] CANCEL - Unresponsive** starter template
+  requires `[ORDER-NUMBER]` in the title and contains placeholder body copy.
+- **Stock Issue > Suggest Different Item** scans the CRM order's products/colors.
+  Select the affected stock and enter the required **Suggested replacement
+  product**. The **[AUTO] STOCK - Item** template requires `[ORDER-NUMBER]` in
+  the title and `[STOCK]` and `[PRODUCT]` in the body. `[STOCK]` names the
+  selected CRM items; `[PRODUCT]` uses your entered text, including any commas.
+  A single detected product starts selected; choose explicitly when there are
+  multiple products. The worker rechecks saved item IDs, product details, and
+  quantities before preparing the email. This action sends the suggestion email;
+  save any actual replacement in CRM through your normal editing workflow.
+
+Edit placeholder copy in **Settings > Salesforce Template** before using these
+emails. Both starter templates are added once, preserving any existing saved
+content, renames, or deliberate removals. Missing required placeholders stop
+the email for review.
+
+Suggest Different Item uses the local queue, recipient/Orders sender checks,
+Salesforce Activity confirmation, and bounded resend policy. Its per-order
+receipt under `runtime/state/stock_issue_item_emails/` prevents a title edit from
+repeating a confirmed email. A changed replacement, stock, recipient, or an
+edited draft after an uncertain attempt stops for Activity review. Use **Retry**
+on the original queue entry to retain its selections and entered replacement.
+
+Restart the local Automation app, refresh the dashboard, reload CRM Order
+Assistant at `chrome://extensions`, and refresh open CRM order pages.
+
 ## Salesforce tab reuse
 
 Clicking a Salesforce link in CRM navigates an existing Salesforce tab instead of opening a duplicate. The search includes every normal Chrome window in the current browser profile; if the reused tab is in another window, that window and tab are focused. If no Salesforce tab is open, the link opens normally in a new tab.
@@ -356,8 +388,20 @@ The initial title is `Order #[ORDER-NUMBER] - Stock Swap`; the body contains
 placeholder copy for you to edit. Keep `[ORDER-NUMBER]` in the title,
 `[STOCK]` for the original item(s), and `[PRODUCT]` for the replacement item(s)
 in the body. Each item includes its style, color, description, and affected
-size quantities. Multiple swaps use corresponding numbered lists in both
+sizes. Multiple swaps use corresponding numbered lists in both
 placeholders. Unchanged products and unaffected quantities are excluded.
+
+The email and Sales Note name one affected size as `in size medium` and a
+partial selection as `in sizes medium and large`. When the affected sizes cover
+every ordered size for that product/color and there is more than one size,
+they use `in all sizes`. A product with only one ordered size still names that
+size. Original and replacement products are checked independently against their
+own complete ordered sizes, including other design tabs. Stock Swap detects
+these sizes automatically from the saved quote and order.
+Size quantities remain part of the comparison and retry checks. Existing
+confirmed email receipts and earlier Sales Notes are retained; a changed draft
+after an unconfirmed attempt still stops for review. This wording update loads
+with the next queued worker; no app restart or extension reload is needed.
 
 The scanner matches design tabs by unique saved IDs, artwork/name, or name,
 then compares style/color and quantities by size. Saved product IDs distinguish

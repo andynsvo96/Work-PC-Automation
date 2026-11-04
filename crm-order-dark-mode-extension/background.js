@@ -123,6 +123,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         days: message.days,
         colors: message.colors,
         sizes: message.sizes,
+        product: message.product,
         products: message.products,
         designs: message.designs,
         sleeves: message.sleeves,

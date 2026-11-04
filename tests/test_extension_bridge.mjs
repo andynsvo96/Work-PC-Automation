@@ -5,6 +5,19 @@ import test from "node:test";
 const source = await readFile(new URL("../crm-order-dark-mode-extension/bridge.js", import.meta.url), "utf8");
 const bridge = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 
+test("item suggestions retain CRM stock and the literal required replacement product", async (t) => {
+  const products = [{ style: "DM130", description: "District Tee", color: "Red", design_item_ids: ["design-item-101"], total_quantity: 4 }];
+  const request = t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(url, bridge.LOCAL_MANUAL_ORDER_PROCESS_ENDPOINT);
+    assert.deepEqual(JSON.parse(options.body), {
+      order_id: "1234567", automation: "stock_issue_item", reason: "", product: "5000 Black, Soft & Light", products
+    });
+    return { ok: true, json: async () => ({ success: true }) };
+  });
+  await bridge.startLocalManualOrderProcessing("1234567", "stock_issue_item", "", { product: "5000 Black, Soft & Light", products });
+  assert.equal(request.mock.callCount(), 1);
+});
+
 test("copyright queue requests retain the complete scan and selected stable IDs", async (t) => {
   const designs = {
     order_id: "5451301",

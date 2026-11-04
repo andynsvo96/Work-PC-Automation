@@ -12,6 +12,7 @@ from routes.salesforce_template_routes import register_salesforce_template_route
 from salesforce_templates import (
     SalesforceTemplateStore, TemplateConflict, TemplateLibraryError, TemplateNotFound,
     STOCK_SWAP_TEMPLATE_NAME,
+    ORDER_EMAIL_TEMPLATES, STOCK_ISSUE_ITEM_TEMPLATE_NAME, UNRESPONSIVE_CANCEL_TEMPLATE_NAME,
 )
 
 
@@ -274,6 +275,51 @@ class StockSwapTemplateInitializationTests(TemplateFixtures, unittest.TestCase):
         with self.assertRaises(TemplateLibraryError):
             self.enabled_store().list_templates()
         self.assertEqual(self.path.read_text(), "{invalid")
+
+
+class OrderEmailTemplateInitializationTests(TemplateFixtures, unittest.TestCase):
+    def enabled_store(self):
+        return SalesforceTemplateStore(self.path, self.root / "captures", include_order_email_templates=True)
+
+    def test_adds_both_templates_once_and_preserves_the_previous_library(self):
+        original = self.store.list_templates()
+        before = self.path.read_bytes()
+        store = self.enabled_store()
+        rows = store.list_templates()
+        self.assertEqual(len(rows), len(original) + 2)
+        self.assertTrue(all(row in rows for row in original))
+        self.assertEqual(self.path.with_suffix(".json.bak").read_bytes(), before)
+        for name in (STOCK_ISSUE_ITEM_TEMPLATE_NAME, UNRESPONSIVE_CANCEL_TEMPLATE_NAME):
+            self.assertIn("[ORDER-NUMBER]", store.get_template(name)["subject"])
+        body = store.get_template(STOCK_ISSUE_ITEM_TEMPLATE_NAME)["body_html"]
+        self.assertIn("[STOCK]", body)
+        self.assertIn("[PRODUCT]", body)
+        with mock.patch.object(store, "_write") as write:
+            self.assertEqual(store.list_templates(), rows)
+        write.assert_not_called()
+
+    def test_adopts_existing_edited_and_renamed_unresponsive_template(self):
+        original = self.store.create_template({"name": UNRESPONSIVE_CANCEL_TEMPLATE_NAME,
+            "subject": "My cancellation [ORDER-NUMBER]", "body_html": SOURCE})
+        saved = self.store.save_template(original["id"], {**original, "name": "Custom cancellation"})
+        self.assertEqual(self.enabled_store().get_template(UNRESPONSIVE_CANCEL_TEMPLATE_NAME), saved)
+
+    def test_edits_renames_and_deletion_survive_reload(self):
+        store = self.enabled_store()
+        for name in (STOCK_ISSUE_ITEM_TEMPLATE_NAME, UNRESPONSIVE_CANCEL_TEMPLATE_NAME):
+            original = store.get_template(name)
+            saved = store.save_template(original["id"], {**original, "subject": "Edited [ORDER-NUMBER]", "name": "My " + name})
+            self.assertEqual(self.enabled_store().get_template(name), saved)
+            store.delete_template(saved["id"], saved)
+            with self.assertRaises(TemplateNotFound):
+                self.enabled_store().get_template(name)
+
+    def test_default_store_enables_both_new_templates_on_a_new_computer(self):
+        import salesforce_templates
+        with mock.patch.object(salesforce_templates, "STATE_DIR", self.root):
+            store = salesforce_templates.default_template_store()
+            names = {row["name"] for row in store.list_templates()}
+        self.assertTrue({template["name"] for template in ORDER_EMAIL_TEMPLATES.values()} <= names)
 
 
 class TemplateApiTests(TemplateFixtures, unittest.TestCase):
