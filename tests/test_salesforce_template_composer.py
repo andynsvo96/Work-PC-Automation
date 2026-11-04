@@ -207,6 +207,45 @@ class LocalTemplateBrowserTests(unittest.TestCase):
         self.assertIn('<strong>DM130 red District Perfect Tri Tee</strong>', saved)
         self.assertIn('href="https://example.test/guide"', saved)
 
+    def test_item_suggestion_joins_one_two_or_three_replacements_in_the_stock_order(self):
+        self.write_library([{'id': 'stock_item', 'name': stock_item.STOCK_ISSUE_ITEM_TEMPLATE_NAME,
+            'subject': 'Order #[ORDER-NUMBER]',
+            'body_html': '<p>Unavailable: <strong>[STOCK]</strong>.</p>'
+                         '<p>We can offer <span style="font-size:20px">[PRODUCT]</span> instead.</p>'}])
+        rows = [
+            {'style': 'P1', 'description': 'First Tee', 'color': 'Black', 'design_item_ids': ['design-item-101'],
+             'total_quantity': 4, 'replacement_product': 'Soft & Light Tee'},
+            {'style': 'P2', 'description': 'Second Hoodie', 'color': 'Navy', 'design_item_ids': ['design-item-102'],
+             'total_quantity': 3, 'replacement_product': 'Zip Hoodie'},
+            {'style': 'P3', 'description': 'Third Cap', 'color': 'White', 'design_item_ids': ['design-item-103'],
+             'total_quantity': 2, 'replacement_product': 'Trucker Cap'},
+        ]
+        expected = [
+            ('P1 black First Tee', 'Soft & Light Tee'),
+            ('P1 black First Tee and P2 navy Second Hoodie', 'Soft & Light Tee and Zip Hoodie'),
+            ('P1 black First Tee, P2 navy Second Hoodie, and P3 white Third Cap',
+             'Soft & Light Tee, Zip Hoodie, and Trucker Cap'),
+        ]
+        for count, (stock_text, replacement_text) in enumerate(expected, 1):
+            self.open_fixture()
+            request = stock_item.normalize_request(None, rows[:count])
+            with self.subTest(count=count), ExitStack() as stack:
+                stack.enter_context(mock.patch.object(stock_item, 'default_template_store', return_value=self.store))
+                for name in ('_open_salesforce_account', '_verify_salesforce_email', '_click_salesforce_email',
+                             '_wait_for_email_composer', '_set_salesforce_from_orders'):
+                    stack.enter_context(mock.patch.object(stock_item.shared, name))
+                send = stack.enter_context(mock.patch.object(stock_item.shared, '_click_salesforce_send_button'))
+                result = stock_item._prepare_email(self.driver, 'crm', '1234567', 'customer@example.test', request)
+                self.assertIn(stock_text, result['body'])
+                self.assertIn(replacement_text, result['body'])
+                self.assertNotIn('[PRODUCT]', result['body'])
+                send.assert_not_called()
+                self.driver.find_element('id', 'send').click()
+                saved = self.driver.find_element('id', 'sentHtml').text
+                self.assertIn('Soft &amp; Light Tee', saved)
+                self.assertIn('<strong>' + stock_text + '</strong>', saved)
+                self.assertIn('font-size:20px', saved)
+
     def test_stock_swap_refuses_extra_recipients_and_unknown_placeholders(self):
         self.write_library([{'id': 'stock_swap', 'name': stock_swap.STOCK_SWAP_TEMPLATE_NAME,
             'subject': 'Order #[ORDER-NUMBER]', 'body_html': '<p>[STOCK] replaced with [PRODUCT]</p>'}])

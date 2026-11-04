@@ -944,7 +944,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
   Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "6px" });
   const explanation = document.createElement("p");
   explanation.textContent = isItemSuggestion
-    ? "Select the affected CRM stock, then enter the replacement product to suggest in the email."
+    ? "Check each affected CRM item, then enter its suggested replacement in the field underneath it. Every checked item requires its own replacement."
     : isSuggestion
     ? `Select each out-of-stock product/color, then list the available replacement ${suggestionLabel}s separated by commas.`
     : "Select each product/color that needs an extension, then enter the number of days. All order sizes start selected; use Clear to choose specific sizes.";
@@ -966,6 +966,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
   const body = document.createElement("tbody");
   const checkboxes = [];
   const sizeCheckboxesByProduct = new Map();
+  const replacementInputsByProduct = new Map();
   const clearSizeButtons = [];
   products.forEach((product, index) => {
     const row = document.createElement("tr");
@@ -989,6 +990,31 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
     row.append(checkCell, styleCell, descriptionCell, colorCell);
     body.append(row);
     checkboxes.push(checkbox);
+    if (isItemSuggestion) {
+      const replacementRow = document.createElement("tr");
+      replacementRow.id = `crm-stock-issue-replacement-row-${index}`;
+      const cell = document.createElement("td");
+      cell.colSpan = 4;
+      Object.assign(cell.style, { padding: "7px 7px 11px 38px", borderBottom: "1px solid #e2e8f0" });
+      const label = document.createElement("label");
+      label.textContent = "Suggested replacement product (required)";
+      label.htmlFor = `crm-stock-issue-product-${index}`;
+      Object.assign(label.style, { display: "block", marginBottom: "5px", fontWeight: "700" });
+      const input = document.createElement("input");
+      input.id = label.htmlFor;
+      input.type = "text";
+      input.maxLength = 500;
+      input.autocomplete = "off";
+      input.placeholder = "Example: 5000 black Gildan Heavy Cotton T-Shirt";
+      input.setAttribute("aria-label", `Replacement for ${product.style} in ${product.color}`);
+      input.setAttribute("aria-describedby", "crm-stock-issue-validation");
+      Object.assign(input.style, { width: "min(100%, 420px)", boxSizing: "border-box", padding: "8px",
+        border: "1px solid #64748b", borderRadius: "3px" });
+      cell.append(label, input);
+      replacementRow.append(cell);
+      body.append(replacementRow);
+      replacementInputsByProduct.set(checkbox, { input, row: replacementRow, product });
+    }
     if (selectsSizes) {
       const sizeRow = document.createElement("tr");
       sizeRow.hidden = !checkbox.checked;
@@ -1052,35 +1078,37 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
   table.append(body);
   dialog.append(table);
 
-  const inputLabel = document.createElement("label");
-  inputLabel.textContent = isItemSuggestion ? "Suggested replacement product (required)" : isSuggestion ? `Suggested ${suggestionLabel}s (required)` : "Extension days (required)";
-  inputLabel.htmlFor = isItemSuggestion ? "crm-stock-issue-product" : isSuggestion ? `crm-stock-issue-${suggestionLabel}s` : "crm-stock-issue-days";
-  Object.assign(inputLabel.style, { display: "block", marginBottom: "5px", fontWeight: "700" });
-  const detailInput = document.createElement("input");
-  detailInput.id = inputLabel.htmlFor;
-  detailInput.type = isSuggestion ? "text" : "number";
-  if (isSuggestion) {
-    detailInput.placeholder = isItemSuggestion ? "Example: 5000 black Gildan Heavy Cotton T-Shirt" : isSizeSuggestion ? "Example: Small, Medium, Large" : "Example: Navy, Black, White";
-    if (isItemSuggestion) detailInput.maxLength = 500;
-    detailInput.autocomplete = "off";
-  } else {
-    detailInput.min = "1";
-    detailInput.max = "365";
-    detailInput.step = "1";
-    detailInput.inputMode = "numeric";
+  let detailInput = null;
+  if (!isItemSuggestion) {
+    const inputLabel = document.createElement("label");
+    inputLabel.textContent = isSuggestion ? `Suggested ${suggestionLabel}s (required)` : "Extension days (required)";
+    inputLabel.htmlFor = isSuggestion ? `crm-stock-issue-${suggestionLabel}s` : "crm-stock-issue-days";
+    Object.assign(inputLabel.style, { display: "block", marginBottom: "5px", fontWeight: "700" });
+    detailInput = document.createElement("input");
+    detailInput.id = inputLabel.htmlFor;
+    detailInput.type = isSuggestion ? "text" : "number";
+    if (isSuggestion) {
+      detailInput.placeholder = isSizeSuggestion ? "Example: Small, Medium, Large" : "Example: Navy, Black, White";
+      detailInput.autocomplete = "off";
+    } else {
+      detailInput.min = "1";
+      detailInput.max = "365";
+      detailInput.step = "1";
+      detailInput.inputMode = "numeric";
+    }
+    detailInput.required = true;
+    Object.assign(detailInput.style, {
+      width: isSuggestion ? "min(100%, 420px)" : "120px",
+      boxSizing: "border-box", padding: "8px", border: "1px solid #64748b", borderRadius: "3px"
+    });
+    dialog.append(inputLabel, detailInput);
   }
-  detailInput.required = true;
-  Object.assign(detailInput.style, {
-    width: isSuggestion ? "min(100%, 420px)" : "120px",
-    boxSizing: "border-box", padding: "8px", border: "1px solid #64748b", borderRadius: "3px"
-  });
-  dialog.append(inputLabel, detailInput);
 
   const validation = document.createElement("div");
   validation.id = "crm-stock-issue-validation";
   validation.setAttribute("role", "status");
   validation.setAttribute("aria-live", "polite");
-  detailInput.setAttribute("aria-describedby", validation.id);
+  detailInput?.setAttribute("aria-describedby", validation.id);
   Object.assign(validation.style, { minHeight: "18px", marginTop: "8px", color: "#b91c1c", fontWeight: "600" });
   dialog.append(validation);
   const actions = document.createElement("div");
@@ -1096,16 +1124,31 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
   let submitting = false;
   let submissionError = "";
 
+  const validateDetails = () => {
+    if (isItemSuggestion) {
+      for (const [checkbox, entry] of replacementInputsByProduct) {
+        if (!checkbox.checked) continue;
+        const result = validateStockIssueSuggestedProduct(entry.input.value);
+        if (!result.valid) return { ...result, message: `${entry.product.style} in ${entry.product.color}: ${result.message}` };
+      }
+      return { valid: true, message: "" };
+    }
+    return isColorSuggestion ? validateStockIssueSuggestedColors(detailInput.value)
+      : isSizeSuggestion ? validateStockIssueSuggestedSizes(detailInput.value)
+      : validateStockIssueExtensionDays(detailInput.value);
+  };
+  const focusDetails = () => {
+    if (detailInput) return detailInput.focus();
+    const selected = Array.from(replacementInputsByProduct).filter(([checkbox]) => checkbox.checked);
+    const incomplete = selected.find(([, entry]) => !validateStockIssueSuggestedProduct(entry.input.value).valid);
+    const target = incomplete || selected[0];
+    (target ? target[1].input : checkboxes[0])?.focus();
+  };
+
   const refresh = () => {
     const selectedCheckboxes = checkboxes.filter((checkbox) => checkbox.checked);
     const selected = selectedCheckboxes.length;
-    const inputValidation = isItemSuggestion
-      ? validateStockIssueSuggestedProduct(detailInput.value)
-      : isColorSuggestion
-      ? validateStockIssueSuggestedColors(detailInput.value)
-      : isSizeSuggestion
-      ? validateStockIssueSuggestedSizes(detailInput.value)
-      : validateStockIssueExtensionDays(detailInput.value);
+    const inputValidation = validateDetails();
     const errors = [];
     if (!selected) errors.push("Select at least one product.");
     const productsMissingSizes = selectsSizes && selectedCheckboxes.some(
@@ -1119,8 +1162,16 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
     validation.style.color = submitting
       ? "var(--crm-stock-progress-color, #334155)"
       : "var(--crm-stock-error-color, #b91c1c)";
-    detailInput.setAttribute("aria-invalid", String(!inputValidation.valid));
-    detailInput.disabled = submitting;
+    if (detailInput) {
+      detailInput.setAttribute("aria-invalid", String(!inputValidation.valid));
+      detailInput.disabled = submitting;
+    }
+    replacementInputsByProduct.forEach(({ input, row }, checkbox) => {
+      row.hidden = !checkbox.checked;
+      input.required = checkbox.checked;
+      input.disabled = submitting || !checkbox.checked;
+      input.setAttribute("aria-invalid", String(checkbox.checked && !validateStockIssueSuggestedProduct(input.value).valid));
+    });
     checkboxes.forEach((checkbox) => { checkbox.disabled = submitting; });
     sizeCheckboxesByProduct.forEach((choices) => choices.forEach((choice) => { choice.disabled = submitting; }));
     clearSizeButtons.forEach((button) => { button.disabled = submitting; });
@@ -1138,7 +1189,8 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
   };
   checkboxes.forEach((checkbox) => checkbox.addEventListener("change", refreshAfterEdit));
   sizeCheckboxesByProduct.forEach((choices) => choices.forEach((choice) => choice.addEventListener("change", refreshAfterEdit)));
-  detailInput.addEventListener("input", refreshAfterEdit);
+  detailInput?.addEventListener("input", refreshAfterEdit);
+  replacementInputsByProduct.forEach(({ input }) => input.addEventListener("input", refreshAfterEdit));
   back.addEventListener("click", () => { if (!submitting) overlay.remove(); });
   queue.addEventListener("click", () => {
     if (submitting) return;
@@ -1146,6 +1198,10 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
       .filter((checkbox) => checkbox.checked)
       .map((checkbox) => {
         const product = products[Number(checkbox.value)];
+        if (isItemSuggestion) return {
+          ...product,
+          replacement_product: validateStockIssueSuggestedProduct(replacementInputsByProduct.get(checkbox).input.value).product
+        };
         if (!selectsSizes) return product;
         return {
           ...product,
@@ -1154,20 +1210,14 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
             .map((choice) => choice.value)
         };
       });
-    const inputValidation = isItemSuggestion
-      ? validateStockIssueSuggestedProduct(detailInput.value)
-      : isColorSuggestion
-      ? validateStockIssueSuggestedColors(detailInput.value)
-      : isSizeSuggestion
-      ? validateStockIssueSuggestedSizes(detailInput.value)
-      : validateStockIssueExtensionDays(detailInput.value);
+    const inputValidation = validateDetails();
     const missingSelectedSizes = selectsSizes && selectedProducts.some((product) => !product.affected_sizes.length);
     if (!selectedProducts.length || missingSelectedSizes || !inputValidation.valid) {
       refresh();
       return;
     }
     const structuredData = isItemSuggestion
-      ? { product: inputValidation.product, products: selectedProducts }
+      ? { products: selectedProducts }
       : isColorSuggestion
       ? { colors: inputValidation.colors, products: selectedProducts }
       : isSizeSuggestion
@@ -1191,7 +1241,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
       submitting = false;
       submissionError = (response && response.message) || "Could not queue the selected automation.";
       refresh();
-      detailInput.focus();
+      focusDetails();
     });
   });
   // This dialog is intentionally non-dismissible via the backdrop or Escape.
@@ -1199,7 +1249,7 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
   actions.append(back, queue);
   dialog.append(actions);
   refresh();
-  detailInput.focus();
+  focusDetails();
 }
 
 async function startStockIssueExtensionSelection(automation, triggerButton, statusButton) {

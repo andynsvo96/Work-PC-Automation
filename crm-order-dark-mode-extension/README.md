@@ -307,18 +307,24 @@ Restart the local Automation app to load this wording update.
 
 ## Unresponsive cancellation and item suggestion emails
 
-Version **1.7.9** provides these email options on the current order:
+Version **1.7.10** provides these email options on the current order:
 
 - **Cancel > Unresponsive** runs the existing unresponsive cancellation/refund
   workflow. Its editable **[AUTO] CANCEL - Unresponsive** starter template
   requires `[ORDER-NUMBER]` in the title and contains placeholder body copy.
 - **Stock Issue > Suggest Different Item** scans the CRM order's products/colors.
-  Select the affected stock and enter the required **Suggested replacement
-  product**. The **[AUTO] STOCK - Item** template requires `[ORDER-NUMBER]` in
-  the title and `[STOCK]` and `[PRODUCT]` in the body. `[STOCK]` names the
-  selected CRM items; `[PRODUCT]` uses your entered text, including any commas.
-  A single detected product starts selected; choose explicitly when there are
-  multiple products. The worker rechecks saved item IDs, product details, and
+  Check each affected item. A required **Suggested replacement product** input
+  appears directly underneath each checked product/color. A single detected
+  product starts checked; multiple products start unchecked so you choose every
+  affected item explicitly. **Queue task** requires a replacement for every
+  checked item. Unchecking hides its input and excludes the item from the request;
+  checking it again restores the text entered while this dialog is open.
+  The **[AUTO] STOCK - Item** template requires `[ORDER-NUMBER]` in the title
+  and `[STOCK]` and `[PRODUCT]` in the body. These placeholders use corresponding
+  stock and replacement lists in the same order: one item, two joined with
+  `and`, or three or more separated by commas with a final `and`. Commas inside
+  a replacement remain part of that item's text. All pairs use one email.
+  The worker rechecks saved item IDs, product details, and
   quantities before preparing the email. This action sends the suggestion email;
   save any actual replacement in CRM through your normal editing workflow.
 
@@ -333,6 +339,11 @@ receipt under `runtime/state/stock_issue_item_emails/` prevents a title edit fro
 repeating a confirmed email. A changed replacement, stock, recipient, or an
 edited draft after an uncertain attempt stops for Activity review. Use **Retry**
 on the original queue entry to retain its selections and entered replacement.
+
+Previously queued requests retain their original combined replacement text on
+Retry. The worker does not guess individual replacements from that older text.
+An existing confirmed single-item email is recognized after updating; changed
+or ambiguous older multi-item receipts stop for review before another send.
 
 Restart the local Automation app, refresh the dashboard, reload CRM Order
 Assistant at `chrome://extensions`, and refresh open CRM order pages.

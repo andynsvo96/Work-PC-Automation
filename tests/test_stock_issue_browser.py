@@ -163,10 +163,15 @@ class StockIssueBrowserTests(unittest.TestCase):
     def test_item_suggestion_requires_replacement_and_selected_crm_stock(self):
         self.show_dialog([product(), product(color="Navy")], workflow="stock_issue_item")
         self.assertFalse(self.queue_button().is_enabled())
-        replacement = self.driver.find_element(By.ID, "crm-stock-issue-product")
-        replacement.send_keys("5000 Black, Soft & Light")
-        self.assertFalse(self.queue_button().is_enabled())
+        first = self.driver.find_element(By.ID, 'crm-stock-issue-product-0')
+        replacement = self.driver.find_element(By.ID, 'crm-stock-issue-product-1')
+        self.assertFalse(first.is_displayed())
+        self.assertFalse(replacement.is_displayed())
+        self.assertFalse(self.driver.find_elements(By.ID, 'crm-stock-issue-product'))
         self.select_product(1)
+        self.assertTrue(replacement.is_displayed())
+        self.assertFalse(self.queue_button().is_enabled())
+        replacement.send_keys("5000 Black, Soft & Light")
         self.assertTrue(self.queue_button().is_enabled())
         replacement.clear()
         replacement.send_keys(" ")
@@ -174,18 +179,67 @@ class StockIssueBrowserTests(unittest.TestCase):
         replacement.clear()
         replacement.send_keys("5000 Black, Soft & Light")
         self.queue_button().click()
-        self.assertEqual(self.queued_data()["product"], "5000 Black, Soft & Light")
+        self.assertNotIn('product', self.queued_data())
+        self.assertEqual(self.queued_data()['products'][0]['replacement_product'], "5000 Black, Soft & Light")
         self.assertEqual([row["color"] for row in self.queued_data()["products"]], ["Navy"])
         self.assertFalse(self.driver.find_elements(By.ID, "crm-stock-issue-dialog"))
 
     def test_item_suggestion_rejects_html_and_unfilled_template_tokens(self):
         self.show_dialog(workflow="stock_issue_item")
-        replacement = self.driver.find_element(By.ID, "crm-stock-issue-product")
+        replacement = self.driver.find_element(By.ID, "crm-stock-issue-product-0")
         for value in ("<b>Tee</b>", "[PRODUCT]"):
             replacement.clear()
             replacement.send_keys(value)
             self.assertFalse(self.queue_button().is_enabled())
         self.assertEqual(self.driver.execute_script("return window.queued"), [])
+
+    def test_item_suggestion_requires_all_three_checked_rows_to_have_replacements(self):
+        self.show_dialog([product(), product(color='Navy'), product(color='White')], workflow='stock_issue_item')
+        replacements = ['Performance Tee', 'Zip Hoodie', 'Trucker Cap']
+        for index in range(3):
+            self.select_product(index)
+            field = self.driver.find_element(By.ID, f'crm-stock-issue-product-{index}')
+            self.assertTrue(field.is_displayed())
+            self.assertEqual(field.get_attribute('required'), 'true')
+            self.assertFalse(self.queue_button().is_enabled())
+            field.send_keys(replacements[index])
+            self.assertTrue(self.queue_button().is_enabled())
+        self.driver.save_screenshot(str(ROOT / 'runtime/debug/stock_issue_tests/per_item_replacements.png'))
+        self.queue_button().click()
+        self.assertEqual([(row['color'], row['replacement_product']) for row in self.queued_data()['products']],
+                         [('Black', 'Performance Tee'), ('Navy', 'Zip Hoodie'), ('White', 'Trucker Cap')])
+
+    def test_unchecking_hides_its_input_preserves_text_and_excludes_the_item(self):
+        self.show_dialog([product(), product(color='Navy')], workflow='stock_issue_item')
+        for index, replacement in enumerate(['First replacement', 'Second replacement']):
+            self.select_product(index)
+            self.driver.find_element(By.ID, f'crm-stock-issue-product-{index}').send_keys(replacement)
+        second = self.driver.find_element(By.ID, 'crm-stock-issue-product-1')
+        self.select_product(1)
+        self.assertFalse(second.is_displayed())
+        self.assertFalse(second.is_enabled())
+        self.assertTrue(self.queue_button().is_enabled())
+        self.select_product(1)
+        self.assertTrue(second.is_displayed())
+        self.assertEqual(second.get_attribute('value'), 'Second replacement')
+        self.select_product(1)
+        self.queue_button().click()
+        self.assertEqual([(row['color'], row['replacement_product']) for row in self.queued_data()['products']],
+                         [('Black', 'First replacement')])
+
+    def test_item_pairings_are_frozen_while_queuing_and_retained_on_failure(self):
+        self.show_dialog([product(), product(color='Navy')], workflow='stock_issue_item', pending=True)
+        for index, replacement in enumerate(['First replacement', 'Second replacement']):
+            self.select_product(index)
+            self.driver.find_element(By.ID, f'crm-stock-issue-product-{index}').send_keys(replacement)
+        self.queue_button().click()
+        self.assertTrue(all(not field.is_enabled() for field in self.driver.find_elements(By.TAG_NAME, 'input')))
+        self.driver.execute_script("window.finishQueue({success: false, message: 'Fixture queue error'});")
+        WebDriverWait(self.driver, 5).until(lambda _: self.queue_button().is_enabled())
+        self.assertIn('Fixture queue error', self.driver.find_element(By.ID, 'crm-stock-issue-validation').text)
+        self.assertEqual([self.driver.find_element(By.ID, f'crm-stock-issue-product-{index}').get_attribute('value')
+                          for index in range(2)], ['First replacement', 'Second replacement'])
+        self.assertEqual(len(self.driver.execute_script('return window.queued')), 1)
 
     def test_scanner_detects_ordered_sizes_and_unions_matching_products(self):
         self.driver.get((ROOT / "tests/fixtures/stock_issue_crm.html").as_uri())

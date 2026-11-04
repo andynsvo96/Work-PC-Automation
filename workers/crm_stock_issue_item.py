@@ -35,7 +35,7 @@ class StockIssueItemError(RuntimeError):
         self.result = result or {}
 
 
-def normalize_request(product, products):
+def _normalize_replacement(product):
     if not isinstance(product, str) or not product.strip():
         raise StockIssueItemError("Enter a suggested replacement product.")
     product = product.strip()
@@ -43,21 +43,33 @@ def normalize_request(product, products):
             or "<" in product or ">" in product or PLACEHOLDER_RE.search(product)):
         raise StockIssueItemError(
             "The replacement product must be plain text, at most 500 characters, without template placeholders.")
+    return re.sub(r"\s+", " ", product)
+
+
+def normalize_request(product, products):
     try:
         selected = extension.normalize_selected_products(products)
     except extension.StockIssueExtensionError as exc:
         raise StockIssueItemError(str(exc).replace("Extension Required", DISPLAY_NAME)) from exc
+    per_product = any("replacement_product" in row for row in products)
+    if per_product and len(selected) != len(products):
+        raise StockIssueItemError("Each scanned product/color must have one replacement; duplicate product rows need review.")
+    replacements = [_normalize_replacement(row.get("replacement_product")) for row in products] if per_product else None
+    # Preserve the original request format for queued tasks created before per-item inputs.
+    legacy_product = None if per_product else _normalize_replacement(product)
     ids = []
-    for item in selected:
+    for index, item in enumerate(selected):
         if not item["design_item_ids"] or item["total_quantity"] is None:
             raise StockIssueItemError("Scan the CRM stock again; each selected item needs its saved ID and quantity.")
         ids.extend(item["design_item_ids"])
         # This workflow selects entire product/color rows, rather than individual sizes.
         item.pop("affected_sizes", None)
         item.pop("available_sizes", None)
+        if per_product:
+            item["replacement_product"] = replacements[index]
     if len(ids) != len(set(ids)):
         raise StockIssueItemError("The selected CRM stock contains duplicate product IDs; scan it again.")
-    return {"product": re.sub(r"\s+", " ", product), "products": selected}
+    return {"products": selected} if per_product else {"product": legacy_product, "products": selected}
 
 
 def verify_selected_stock(snapshot, products):
@@ -95,7 +107,8 @@ def placeholder_values(order_id, request):
         "[ORDER-NUMBER]": order_id,
         "[STOCK]": extension._natural_join([
             extension._format_stock_product(product) for product in request["products"]]),
-        "[PRODUCT]": request["product"],
+        "[PRODUCT]": (extension._natural_join([row["replacement_product"] for row in request["products"]])
+                      if "replacement_product" in request["products"][0] else request["product"]),
     }
 
 
@@ -131,15 +144,27 @@ def _send_email(driver, crm_handle, order_id, customer_email, request, *, dry_ru
     # Keep the request receipt independent of the editable title, including after an uncertain send.
     path = Path(STATE_DIR) / "stock_issue_item_emails" / f"{order_id}.json"
     identity = [{key: item[key] for key in ("style", "description", "color", "total_quantity")}
-                | {"design_item_ids": sorted(item["design_item_ids"])} for item in request["products"]]
+                | {"design_item_ids": sorted(item["design_item_ids"])}
+                | ({"replacement_product": item["replacement_product"]} if "replacement_product" in item else {})
+                for item in request["products"]]
     identity.sort(key=lambda item: item["design_item_ids"])
-    fingerprint = hashlib.sha256(json.dumps(
-        [customer_email.casefold(), request["product"], identity], sort_keys=True).encode()).hexdigest()
+    def fingerprint_for(values):
+        return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
+
+    per_product = "replacement_product" in identity[0]
+    fingerprint = fingerprint_for([customer_email.casefold(), identity] if per_product else
+                                  [customer_email.casefold(), request["product"], identity])
+    compatible_fingerprints = {fingerprint}
+    if per_product and len(identity) == 1:
+        # A saved single-item email still has exactly the same stock/replacement pairing.
+        legacy_identity = [{key: value for key, value in identity[0].items() if key != "replacement_product"}]
+        compatible_fingerprints.add(fingerprint_for(
+            [customer_email.casefold(), identity[0]["replacement_product"], legacy_identity]))
     previous = None
     if path.exists():
         try:
             previous = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(previous, dict) or previous.get("fingerprint") != fingerprint:
+            if not isinstance(previous, dict) or previous.get("fingerprint") not in compatible_fingerprints:
                 raise ValueError("The stock, replacement, or recipient changed.")
             if previous.get("confirmed") is True:
                 salesforce = previous["salesforce"]

@@ -18,6 +18,22 @@ test("item suggestions retain CRM stock and the literal required replacement pro
   assert.equal(request.mock.callCount(), 1);
 });
 
+test("item suggestions preserve each selected stock item's own replacement", async (t) => {
+  const products = [
+    { style: "DM130", color: "Red", design_item_ids: ["design-item-101"], replacement_product: "5000 Black, Soft & Light" },
+    { style: "18500", color: "Navy", design_item_ids: ["design-item-102"], replacement_product: "Zip Hoodie" }
+  ];
+  const request = t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(url, bridge.LOCAL_MANUAL_ORDER_PROCESS_ENDPOINT);
+    assert.deepEqual(JSON.parse(options.body), {
+      order_id: "1234567", automation: "stock_issue_item", reason: "", products
+    });
+    return { ok: true, json: async () => ({ success: true }) };
+  });
+  await bridge.startLocalManualOrderProcessing("1234567", "stock_issue_item", "", { products });
+  assert.equal(request.mock.callCount(), 1);
+});
+
 test("copyright queue requests retain the complete scan and selected stable IDs", async (t) => {
   const designs = {
     order_id: "5451301",

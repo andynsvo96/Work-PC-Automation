@@ -39,6 +39,58 @@ class StockIssueItemTests(unittest.TestCase):
         request = item.normalize_request("  Soft & Light,  Navy  ", [product()])
         self.assertEqual(request["product"], "Soft & Light, Navy")
 
+    def test_every_selected_row_requires_its_own_replacement(self):
+        first = product(replacement_product=' Soft & Light,  Navy ')
+        second = product(style='5000', description='Cotton Tee', color='Black',
+                         design_item_ids=['design-item-102'], total_quantity=3, replacement_product='Performance Tee')
+        request = item.normalize_request(None, [first, second])
+        self.assertNotIn('product', request)
+        self.assertEqual([row['replacement_product'] for row in request['products']],
+                         ['Soft & Light, Navy', 'Performance Tee'])
+        for missing in (None, '', ' ', '<b>Tee</b>', '[PRODUCT]'):
+            with self.subTest(missing=missing), self.assertRaises(item.StockIssueItemError):
+                item.normalize_request('A global fallback must not fill a missing row',
+                                       [first, {**second, 'replacement_product': missing}])
+        with self.assertRaises(item.StockIssueItemError):
+            item.normalize_request('Global fallback', [first, product()])
+        with self.assertRaisesRegex(item.StockIssueItemError, 'duplicate product rows'):
+            item.normalize_request(None, [first, {**first, 'design_item_ids': ['design-item-201']}])
+
+    def test_one_two_and_three_items_keep_corresponding_email_list_order(self):
+        rows = [
+            product(style='P1', description='First Tee', color='Black', replacement_product='Performance Tee'),
+            product(style='P2', description='Second Hoodie', color='Navy',
+                    design_item_ids=['design-item-102'], replacement_product='Zip Hoodie'),
+            product(style='P3', description='Third Cap', color='White',
+                    design_item_ids=['design-item-103'], replacement_product='Trucker Cap'),
+        ]
+        expected = [
+            ('P1 black First Tee', 'Performance Tee'),
+            ('P1 black First Tee and P2 navy Second Hoodie', 'Performance Tee and Zip Hoodie'),
+            ('P1 black First Tee, P2 navy Second Hoodie, and P3 white Third Cap',
+             'Performance Tee, Zip Hoodie, and Trucker Cap'),
+        ]
+        for count, (stock, replacement) in enumerate(expected, 1):
+            with self.subTest(count=count):
+                request = item.normalize_request(None, rows[:count])
+                self.assertEqual(item.placeholder_values('1234567', request), {
+                    '[ORDER-NUMBER]': '1234567', '[STOCK]': stock, '[PRODUCT]': replacement})
+
+    def test_stock_verification_retains_replacements_with_their_items(self):
+        request = item.normalize_request(None, [product(replacement_product='Replacement Tee'), product(
+            style='5000', description='Cotton Tee', color='Black', total_quantity=3,
+            design_item_ids=['design-item-102'], replacement_product='Different Tee')])
+        verified = item.verify_selected_stock(snapshot(), request['products'])
+        self.assertEqual([(row['style'], row['replacement_product']) for row in verified],
+                         [('DM130', 'Replacement Tee'), ('5000', 'Different Tee')])
+
+    def test_existing_multi_item_requests_retain_their_original_global_text(self):
+        request = item.normalize_request('Original combined replacement text', [product(), product(
+            style='5000', description='Cotton Tee', color='Black', total_quantity=3,
+            design_item_ids=['design-item-102'])])
+        self.assertEqual(item.placeholder_values('1234567', request)['[PRODUCT]'], 'Original combined replacement text')
+        self.assertTrue(all('replacement_product' not in row for row in request['products']))
+
     def test_stock_comes_from_saved_selected_items_and_excludes_other_stock(self):
         products = item.verify_selected_stock(snapshot(), self.request()["products"])
         values = item.placeholder_values("1234567", {**self.request(), "products": products})
@@ -128,6 +180,56 @@ class StockIssueItemReceiptTests(unittest.TestCase):
         self.assertEqual(send.call_args.kwargs["receipt_scope"], item.AUTOMATION_KEY)
         self.assertTrue(callable(send.call_args.kwargs["prepare_retry"]))
 
+    def test_receipt_binds_replacements_to_stock_and_allows_reordered_matching_pairs(self):
+        self.request = item.normalize_request(None, [product(replacement_product='Replacement Tee'), product(
+            style='5000', description='Cotton Tee', color='Black', total_quantity=3,
+            design_item_ids=['design-item-102'], replacement_product='Different Tee')])
+        with mock.patch.object(item, '_prepare_email', return_value=self.draft) as prepare, \
+                mock.patch.object(item.confirmation, 'send_and_confirm', return_value={'activity_verified': True}) as send:
+            self.send()
+            self.request['products'].reverse()
+            self.assertTrue(self.send()['skipped'])
+            rows = self.request['products']
+            rows[0]['replacement_product'], rows[1]['replacement_product'] = rows[1]['replacement_product'], rows[0]['replacement_product']
+            with self.assertRaisesRegex(item.StockIssueItemError, 'receipt cannot be reused'):
+                self.send()
+        self.assertEqual(prepare.call_count, 1)
+        self.assertEqual(send.call_count, 1)
+
+    def test_per_item_request_recognizes_a_confirmed_legacy_single_item_email(self):
+        with mock.patch.object(item, '_prepare_email', return_value=self.draft) as prepare, \
+                mock.patch.object(item.confirmation, 'send_and_confirm', return_value={'activity_verified': True}) as send:
+            self.send()
+            self.request = item.normalize_request(None, [product(replacement_product='Replacement Tee')])
+            self.assertTrue(self.send()['skipped'])
+        self.assertEqual(prepare.call_count, 1)
+        self.assertEqual(send.call_count, 1)
+
+    def test_old_multi_item_receipt_is_not_reinterpreted_as_new_individual_pairings(self):
+        second = product(style='5000', description='Cotton Tee', color='Black', total_quantity=3,
+                         design_item_ids=['design-item-102'])
+        self.request = item.normalize_request('Replacement Tee and Different Tee', [product(), second])
+        with mock.patch.object(item, '_prepare_email', return_value=self.draft) as prepare, \
+                mock.patch.object(item.confirmation, 'send_and_confirm', return_value={'activity_verified': True}) as send:
+            self.send()
+            self.request = item.normalize_request(None, [product(replacement_product='Replacement Tee'),
+                                                        {**second, 'replacement_product': 'Different Tee'}])
+            with self.assertRaisesRegex(item.StockIssueItemError, 'receipt cannot be reused'):
+                self.send()
+        self.assertEqual(prepare.call_count, 1)
+        self.assertEqual(send.call_count, 1)
+
+    def test_per_item_request_cannot_restart_a_legacy_uncertain_send_with_changed_copy(self):
+        with mock.patch.object(item, '_prepare_email', return_value=self.draft) as prepare, \
+                mock.patch.object(item.confirmation, 'send_and_confirm', side_effect=RuntimeError('Unconfirmed')) as send:
+            with self.assertRaisesRegex(RuntimeError, 'Unconfirmed'):
+                self.send()
+            self.request = item.normalize_request(None, [product(replacement_product='Replacement Tee')])
+            prepare.return_value = {**self.draft, 'subject': 'Edited title'}
+            with self.assertRaisesRegex(item.StockIssueItemError, 'draft changed'):
+                self.send()
+        self.assertEqual(send.call_count, 1)
+
     def test_uncertain_send_cannot_restart_with_changed_draft_or_replacement(self):
         with mock.patch.object(item, "_prepare_email", return_value=self.draft) as prepare, \
                 mock.patch.object(item.confirmation, "send_and_confirm", side_effect=RuntimeError("Unconfirmed")) as send:
@@ -181,6 +283,43 @@ class StockIssueItemQueueTests(unittest.TestCase):
         runner, _ = server._restore_automation_queue_callables(arguments)
         self.assertEqual(runner.keywords["request_data"]["product"], "Replacement, Navy")
         self.assertEqual(runner.keywords["request_data"]["products"][0]["design_item_ids"], ["design-item-101"])
+
+    def test_bridge_preserves_individual_replacements_for_queue_restore_and_worker(self):
+        server.app.config.update(TESTING=True)
+        client = server.app.test_client()
+        products = [product(replacement_product='Replacement Tee'), product(
+            style='5000', description='Cotton Tee', color='Black', total_quantity=3,
+            design_item_ids=['design-item-102'], replacement_product=' Different Tee ')]
+        payload = {'order_id': '1234567', 'automation': 'stock_issue_item', 'products': products}
+        with mock.patch.object(server, 'enqueue_automation', return_value=(True, 'Queued', {'id': 'item-pairs'})) as enqueue:
+            response = client.post('/api/extension/bridge/process-order/manual', json=payload,
+                headers={'Origin': self.ORIGIN}, environ_overrides={'REMOTE_ADDR': '127.0.0.1'})
+        self.assertEqual(response.status_code, 202)
+        arguments = enqueue.call_args.kwargs
+        self.assertIsNone(arguments['task_arguments']['product'])
+        runner, _ = server._restore_automation_queue_callables(arguments)
+        saved_products = runner.keywords['request_data']['products']
+        self.assertEqual([(row['style'], row['replacement_product']) for row in saved_products],
+                         [('DM130', 'Replacement Tee'), ('5000', 'Different Tee')])
+        with mock.patch.object(server, 'crm_lock') as lock, \
+                mock.patch.object(server, '_run_script', return_value=(True, 'Sent', {})) as run:
+            lock.acquire.return_value = True
+            server.run_crm_stock_issue_item_queued('1234567', None, saved_products)
+        worker_request = json.loads(run.call_args.args[1][3])
+        self.assertNotIn('product', worker_request)
+        self.assertEqual(worker_request['products'], saved_products)
+
+    def test_bridge_rejects_partial_pairings_even_with_a_global_fallback(self):
+        server.app.config.update(TESTING=True)
+        client = server.app.test_client()
+        with mock.patch.object(server, 'enqueue_automation') as enqueue:
+            response = client.post('/api/extension/bridge/process-order/manual', json={
+                'order_id': '1234567', 'automation': 'stock_issue_item', 'product': 'Do not use globally',
+                'products': [product(replacement_product='Valid'), product(style='5000',
+                    design_item_ids=['design-item-102'])]}, headers={'Origin': self.ORIGIN},
+                environ_overrides={'REMOTE_ADDR': '127.0.0.1'})
+        self.assertEqual(response.status_code, 409)
+        enqueue.assert_not_called()
 
     def test_worker_runs_as_a_single_order_subprocess_under_the_crm_lock(self):
         with mock.patch.object(server, "crm_lock") as lock, \
