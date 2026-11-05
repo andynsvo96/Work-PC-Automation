@@ -67,7 +67,14 @@ NJ and shipped stock are prepared as separate purchases when a split requires NJ
 
 S&S ordering is used only by Reorder. It searches `https://www.ssactivewear.com/ps/<style>`,
 including supported style conversions such as G500 to 5000, and requires a matching
-brand, style, and sufficiently close description. CORE365 is recognized, including
+brand, style, and sufficiently close description. When CRM identifies the brand as
+Comfort Colors, both its `C1717` prefix format and numeric `1467CC` suffix format
+map to S&S's `1717` and `1467` styles. The numeric `CC` suffix conversion requires
+the Comfort Colors brand; the supplier's exact style, brand, and description must
+still match. CRM product IDs and receipt source signatures retain their original
+values. This worker fix loads on the next queued run without an app restart or
+extension reload. Use **Retry** on the failed Reorder entry.
+CORE365 is recognized, including
 **CE10 Unisex Capital Performance T-Shirt**; exact style and description checks
 still reject another brand or CE10L. Search reads the visible product card's
 labelled style, brand, and description, including accessibility layouts whose

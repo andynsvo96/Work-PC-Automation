@@ -47,6 +47,12 @@ def style_id(product):
     if bypass._is_gildan_product(product):
         return bypass._gildan_sanmar_style_id(raw) or raw
     name = str(product.get("product_name", "")).lower()
+    # CRM uses both C1717 and numeric CC-suffixed Comfort Colors IDs.
+    # S&S labels the style without that brand suffix (e.g. 1467CC -> 1467).
+    if {"comfort", "colors"} <= _words(name):
+        suffixed = re.fullmatch(r"([0-9]+)CC", raw)
+        if suffixed:
+            return suffixed.group(1)
     for prefix, brand in (("BC", "bella"), ("NL", "next level"), ("RS", "rabbit skins"), ("C", "comfort colors")):
         if brand in name and raw.startswith(prefix):
             return raw[len(prefix):]

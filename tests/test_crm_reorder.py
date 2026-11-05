@@ -315,6 +315,35 @@ class SxsPlanningTests(unittest.TestCase):
         candidates = [{"url": "https://www.ssactivewear.com/p/comfort_colors/1717", "title": "1717 Comfort Colors Garment-Dyed Heavyweight T-Shirt"}]
         self.assertEqual(sxs.select_product(p, candidates), candidates[0])
 
+    def test_comfort_colors_cc_suffix_matches_the_labelled_supplier_style(self):
+        p = product(product_id="1467CC", product_name="Comfort Colors Lightweight Hooded Sweatshirt")
+        original = copy.deepcopy(p)
+        correct = {"url": "https://www.ssactivewear.com/p/comfort_colors/1467",
+                   "title": "1467 Comfort Colors Unisex Garment-Dyed Lightweight Hooded Sweatshirt",
+                   "style": "1467", "brand": "Comfort Colors",
+                   "description": "Unisex Garment-Dyed Lightweight Hooded Sweatshirt"}
+        self.assertEqual(sxs.style_id(p), "1467")
+        self.assertEqual(sxs.select_product(p, [correct]), correct)
+        self.assertEqual(p, original)
+        for change in ({"url": "https://www.ssactivewear.com/p/comfort_colors/1566", "style": "1566"},
+                       {"url": "https://www.ssactivewear.com/p/comfort_colors/1467y", "style": "1467Y"},
+                       {"url": "https://www.ssactivewear.com/p/other_brand/1467", "brand": "Other Brand"},
+                       {"title": "1467 Comfort Colors Youth Lightweight Hooded Sweatshirt"},
+                       {"title": "1467 Comfort Colors Heavyweight T-Shirt"}):
+            with self.subTest(change=change), self.assertRaises(RuntimeError):
+                sxs.select_product(p, [{**correct, **change}])
+
+    def test_comfort_colors_cc_suffix_conversion_requires_the_brand_and_numeric_style(self):
+        for raw in ("1467CC", "1717CC", "1467cc"):
+            with self.subTest(raw=raw):
+                self.assertEqual(sxs.style_id(product(product_id=raw, product_name="Comfort Colors Hooded Sweatshirt")), raw[:-2])
+        for raw, name in (("1467CC", "Hanes Hooded Sweatshirt"), ("1467CC", "Hooded Sweatshirt"),
+                          ("1467YCC", "Comfort Colors Youth Hooded Sweatshirt"),
+                          ("1467CCX", "Comfort Colors Hooded Sweatshirt"),
+                          ("1467", "Comfort Colors Hooded Sweatshirt")):
+            with self.subTest(raw=raw, name=name):
+                self.assertEqual(sxs.style_id(product(product_id=raw, product_name=name)), raw)
+
     def test_tultex_fine_jersey_matches_its_brand_and_style(self):
         p = product(product_id="202", product_name="Tultex Unisex Fine Jersey T-Shirt")
         candidate = {"url": "https://www.ssactivewear.com/p/tultex/202", "title": "202 Tultex Unisex Fine Jersey T-Shirt"}
