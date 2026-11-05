@@ -349,6 +349,57 @@ setTimeout(()=>{cart.innerHTML=html},400);
         self.assertTrue(result['success'], result)
         self.assertEqual([r['quantity'] for r in result['result']['rows']], [1])
 
+    def _sxs_live_remove_fixture(self):
+        self._install_sxs_page_fixture()
+        self._sxs_page_command('fill', {'allocations': [{'warehouse': 'Reading, PA', 'quantities': {'L': 1, 'XL': 1}}]})
+        self._sxs_main_stock_control('add', quantity=2, before=0)
+        self.driver.execute_script("""
+window.removeCalls=[];
+window.removeCartItem=(undo,id,warehouse)=>{
+ window.removeCalls.push([id,warehouse]);document.getElementById(`cartRow_${id}_${warehouse}`).remove();window.updateFixtureCartCount();
+};
+document.querySelectorAll('#M_M_zCart .cR').forEach((row,index)=>{
+ const id=423089+index;row.id=`cartRow_${id}_-1`;
+ const link=row.querySelector('a[aria-label="remove item"]');link.removeAttribute('aria-label');link.removeAttribute('role');
+ link.innerHTML='<svg width="16" height="16"><path d="M0 0L16 16"/></svg>';
+ link.setAttribute('href',`javascript: removeCartItem(function(){updateCartDataOnChange(1, '/p/gildan/5000/black-heavy_cotton', 4505158,1,12,${id},false,false,false,35222,53856,0,-1,false,0)},${id},-1);`);
+});
+document.querySelector('#M_M_zCart').insertAdjacentHTML('afterbegin','<div class="cR">Previous stock was removed</div>');
+""")
+        return self._sxs_page_command('cart')['result']['rows']
+
+    def test_extension_removes_the_live_unlabelled_cart_control_and_preserves_other_stock(self):
+        rows = self._sxs_live_remove_fixture()
+        self.assertTrue(self._sxs_page_command('remove_ready', {'rows': rows})['success'])
+        self.assertTrue(self._sxs_main_stock_control('remove', rows=rows)['click_issued'])
+        result = self._sxs_page_command('remove', {'rows': rows})
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['result']['rows'], rows[1:])
+        self.assertEqual(self.driver.execute_script('return window.removeCalls'), [[423089, -1]])
+
+    def test_extension_refuses_live_removal_controls_for_other_rows_or_unknown_handlers(self):
+        for href in (
+            'javascript: removeCartItem(function(){},423090,-1);',
+            'javascript: unknownCartAction(423089,-1);',
+        ):
+            with self.subTest(href=href):
+                self.driver.get(self.fixture)
+                rows = self._sxs_live_remove_fixture()
+                self.driver.execute_script("const a=document.querySelector('#cartRow_423089_-1 .cPie a');a.href=arguments[0];a.setAttribute('aria-label','remove item')", href)
+                self.assertFalse(self._sxs_page_command('remove_ready', {'rows': rows})['success'])
+                with self.assertRaisesRegex(Exception, 'missing or ambiguous'):
+                    self._sxs_main_stock_control('remove', rows=rows)
+                self.assertEqual(self.driver.execute_script('return window.removeCalls'), [])
+                self.assertEqual(self._sxs_page_command('cart')['result']['rows'], rows)
+
+    def test_extension_refuses_competing_live_cart_removal_controls(self):
+        rows = self._sxs_live_remove_fixture()
+        self.driver.execute_script("const a=document.querySelector('#cartRow_423089_-1 .cPie a');a.after(a.cloneNode(true))")
+        self.assertFalse(self._sxs_page_command('remove_ready', {'rows': rows})['success'])
+        with self.assertRaisesRegex(Exception, 'missing or ambiguous'):
+            self._sxs_main_stock_control('remove', rows=rows)
+        self.assertEqual(self.driver.execute_script('return window.removeCalls'), [])
+
     def test_extension_cart_ignores_only_removed_notices_and_rejects_unknown_rows(self):
         self._install_sxs_page_fixture()
         self.driver.execute_script("""
@@ -439,6 +490,26 @@ extra.innerHTML='<div class="messagebox" role="dialog"><p>Are you sure you want 
         self.assertFalse(denied['success'])
         self.assertIn('ambiguous', denied['message'])
         self.assertEqual(self.driver.execute_script('return window.confirmClicks'), 1)
+
+    def test_extension_confirmation_accepts_the_messagebox_without_an_aria_role(self):
+        self._install_sxs_page_fixture()
+        self.driver.execute_script("""
+document.querySelector('#M_M_zCheckoutBTN').onclick=()=>{
+ window.completeClicks++;
+ const overlay=document.createElement('div');overlay.className='messagebox_overlay';
+ overlay.innerHTML='<div class="messagebox"><p>Are you sure you want to submit your order?</p><button id="unlabelled-dialog-confirm">Confirm</button><button>Cancel</button></div>';
+ document.body.append(overlay);overlay.querySelector('button').onclick=()=>window.confirmClicks++;
+};
+const other=document.createElement('div');other.className='messagebox_overlay';
+other.innerHTML='<div class="messagebox"><p>Confirm some unrelated action?</p><button>Confirm</button></div>';
+other.querySelector('button').onclick=()=>window.confirmClicks+=100;document.body.append(other);
+""")
+        self.assertTrue(self._sxs_page_command('review', {'po': '5000001'})['success'])
+        self.assertTrue(self._sxs_checkout_command('begin_submit', {'po': '5000001'})['success'])
+        state = self._sxs_page_command('health')['result']
+        self.assertEqual([c['id'] for c in state['confirmation_controls']], ['unlabelled-dialog-confirm'])
+        self.assertTrue(self._sxs_checkout_command('confirm_submit', {'po': '5000001'})['success'])
+        self.assertEqual(self.driver.execute_script('return [window.completeClicks,window.confirmClicks]'), [1, 1])
 
     def test_extension_page_refuses_wrong_po_and_expired_or_unowned_mutations(self):
         self._install_sxs_page_fixture()

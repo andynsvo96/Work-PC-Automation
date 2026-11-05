@@ -88,6 +88,12 @@ columns stop before any quantity is changed.
 Stock addition and removal invoke only their known page-context controls, then
 verify the cart change. Cleanup compares stock identity fields independently of
 JSON key order and stops if any current or remaining stock differs.
+Version 1.7.14 also recognizes S&S's unlabelled `removeCartItem` link, verifies
+its product/warehouse identifiers against the exact cart row, and ignores
+removed-item notices when selecting the next row. Competing or changed controls
+still stop before cleanup. Reload the extension before retrying an earlier
+"cart removal control is ambiguous" failure; its retained cart needs ownership
+review before removal, because normal Reorder preserves pre-existing stock.
 After addition, cart reads wait for the expected piece count and complete rows.
 Visible "was removed" notices without stock controls are not active stock;
 unreadable product rows stop for review. Checkout may use a reduced header
@@ -110,7 +116,8 @@ and PO Number is exactly the CRM order number. It uses Complete Order and the
 final confirmation once (shown as Confirm in the observed live Chrome session and
 Yes in the supplied archive). Selection is restricted to one visible Confirm/Yes
 control in the current message-box dialog or older named confirmation popup,
-requiring the exact order-submission prompt; hidden legacy controls are ignored
+including message boxes without an ARIA role, requiring the exact
+order-submission prompt; hidden legacy controls are ignored
 and nested button inputs count as one action. Competing controls stop before a
 click. Both Complete Order and Confirm execute once in the page context after
 rechecking the session PO, shipping address, UPS Ground, and Net 60; follow-up
@@ -119,13 +126,13 @@ order reference, and the exact labelled PO. Receipt parsing covers the observed
 `Order Confirmation: <number>` heading, including combined PO/warehouse labels,
 as well as the older numbered confirmation format. A live S&S checkout and its
 confirmation were verified through an existing logged-in Chrome session.
-S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.13** extension in a
+S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.14** extension in a
 normally opened Chrome profile. The local worker sends stock instructions to
 one dedicated S&S tab without launching WebDriver, activating the tab, or using
 the computer's mouse/keyboard. At the start of each order, it automatically opens
 or reuses its own unfocused minimized window and checks the signed-in cart before
 entering stock. The manual read-only browser check is optional. The worker also
-checks the actual running extension version (1.7.13 or newer), so a cached older
+checks the actual running extension version (1.7.14 or newer), so a cached older
 background controller requires reloading before checkout can run. Earlier signed-in
 checks and the product workflow have
 passed live in both background-tab and minimized-window modes on Windows Chrome.
@@ -137,6 +144,10 @@ checkout, purchase, and CRM changes. A later live Reorder verified quantity
 entry, exact cart contents, checkout, and supplier purchase confirmation in a
 minimized Windows Chrome window. CRM production/due dates and the purchase note
 were reloaded and verified.
+Version 1.7.14 was also verified live on Windows with automatic minimized setup,
+cleanup of a multi-size preflight cart, and exactly one Complete Order/Confirm
+sequence followed by the matching supplier order confirmation. macOS remains
+unverified.
 
 A November 2, 2026 comparison used the installed Chrome 156 and Firefox 159:
 
@@ -185,7 +196,7 @@ iframe context, using the existing production-date verification recovery.
 
 1. Restart the local Automation app and refresh the dashboard when no task is
    running. Do not start a second server.
-2. Install/reload **CRM Order Assistant 1.7.13** from
+2. Install/reload **CRM Order Assistant 1.7.14** from
    `crm-order-dark-mode-extension` at `chrome://extensions` in the normal Chrome
    profile you want to use. Existing CRM page scripts stay scoped to CRM.
 3. Open the extension popup and select **Connect this browser** under **S&S
@@ -285,7 +296,7 @@ approved CRM stock PO alias is bound to the same order number and saved as
 `crm_po` in the local confirmed receipt. Recovery verifies that alias and adds a
 note linking it to the original supplier PO/reference. The supplier customer PO
 and confirmed purchase are retained. These worker-only checks load on the next
-worker run. Automatic minimized setup requires reloading extension 1.7.13.
+worker run. Automatic minimized setup requires reloading extension 1.7.14.
 
 The production-note writer waits for CRM's append-only Production Notes field in
 its dedicated section. It preserves existing note history and checks that history

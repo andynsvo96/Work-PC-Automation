@@ -67,7 +67,15 @@ export function clickSxsStockControlInMain({ operation, orderId, deadline, quant
       method: norm(r.querySelector('.cMet')?.innerText), warehouse: norm(r.querySelector('.cLoc')?.innerText), quantity: Number(r.querySelector('.cPie input')?.value || 0) }));
     const signature = list => JSON.stringify(list.map(r => [r.id, r.style, r.url, r.color, r.size, r.method, r.warehouse, r.quantity]));
     if (signature(actual) !== signature(rows)) throw Error('S&S cart changed before removal.');
-    buttons = [...current[0].querySelectorAll('a[aria-label="remove item"]')].filter(visible);
+    buttons = [...current[0].querySelectorAll('a[aria-label],a[href]')].filter(e => {
+      if (!visible(e) || e.disabled) return false;
+      const href = e.getAttribute('href') || '';
+      if (/^javascript:\s*removeCartItem\(/i.test(href)) {
+        const ids = href.match(/,\s*(\d+)\s*,\s*(-?\d+)\s*\)\s*;?\s*$/);
+        return !!ids && current[0].id === `cartRow_${ids[1]}_${ids[2]}`;
+      }
+      return /^remove item$/i.test(norm(e.getAttribute('aria-label'))) && !/^javascript:/i.test(href);
+    });
   } else { throw Error('Unsupported S&S stock control.'); }
   if (buttons.length !== 1 || buttons[0].disabled) throw Error('S&S stock control is missing or ambiguous.');
   buttons[0].click();
@@ -95,7 +103,7 @@ export function clickSxsCheckoutControlInMain({ operation, orderId, deadline, po
   if (operation === 'begin_submit') {
     controls = [...document.querySelectorAll('#M_M_zCheckoutBTN')].filter(e => visible(e) && !e.disabled);
   } else if (operation === 'confirm_submit') {
-    const roots = [...document.querySelectorAll('#M_M_zConfirmOrderPopup_PW-1,#M_M_zConfirmOrderPopup_PWC-1,.messagebox_overlay .messagebox[role="dialog"]')]
+    const roots = [...document.querySelectorAll('#M_M_zConfirmOrderPopup_PW-1,#M_M_zConfirmOrderPopup_PWC-1,.messagebox_overlay .messagebox,[role="dialog"],[role="alertdialog"]')]
       .filter(root => /Are you sure you want to submit your order\?/i.test(norm(root.textContent)));
     if (!roots.length) throw Error('S&S order confirmation popup changed.');
     controls = [...new Set(roots.flatMap(root => [...root.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"],.dxbButton')]))]

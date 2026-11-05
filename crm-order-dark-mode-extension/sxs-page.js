@@ -111,6 +111,17 @@
     return live ? Number(live[1]) : Number((label.match(/Cart:\s*(\d+)/i) || [])[1] ?? NaN);
   }
   const cartSignature = rows => JSON.stringify(rows.map(r => [r.id, r.style, r.url, r.color, r.size, r.method, r.warehouse, r.quantity]));
+  function removeControls(row) {
+    return [...row.querySelectorAll('a[aria-label],a[href]')].filter(e => {
+      if (!visible(e) || e.disabled) return false;
+      const href = e.getAttribute('href') || '';
+      if (/^javascript:\s*removeCartItem\(/i.test(href)) {
+        const ids = href.match(/,\s*(\d+)\s*,\s*(-?\d+)\s*\)\s*;?\s*$/);
+        return !!ids && row.id === `cartRow_${ids[1]}_${ids[2]}`;
+      }
+      return /^remove item$/i.test(norm(e.getAttribute('aria-label'))) && !/^javascript:/i.test(href);
+    });
+  }
   async function loadedCart(expectedQuantity) {
     if (expectedQuantity !== undefined && (!Number.isInteger(expectedQuantity) || expectedQuantity < 0)) throw Error('Invalid S&S expected cart quantity.');
     return waitFor(() => {
@@ -122,7 +133,7 @@
     }, 'S&S cart quantities did not finish loading. Review the cart before retrying.', 25000);
   }
   function confirmationControls() {
-    const roots = all('#M_M_zConfirmOrderPopup_PW-1,#M_M_zConfirmOrderPopup_PWC-1,.messagebox_overlay .messagebox[role="dialog"]')
+    const roots = all('#M_M_zConfirmOrderPopup_PW-1,#M_M_zConfirmOrderPopup_PWC-1,.messagebox_overlay .messagebox,[role="dialog"],[role="alertdialog"]')
       .filter(root => /Are you sure you want to submit your order\?/i.test(norm(root.textContent)));
     const controls = [...new Set(roots.flatMap(root => [...root.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"],.dxbButton')]))]
       .filter(e => visible(e) && !e.disabled && /^(?:confirm|yes)$/i.test(norm(e.value || e.innerText || e.getAttribute('aria-label'))));
@@ -130,7 +141,7 @@
     return controls.filter(e => !controls.some(other => other !== e && other.contains(e)));
   }
   function confirmationDiagnostics() {
-    return all('#M_M_zConfirmOrderPopup_PW-1,.messagebox_overlay .messagebox[role="dialog"]').map(root => ({
+    return all('#M_M_zConfirmOrderPopup_PW-1,.messagebox_overlay .messagebox,[role="dialog"],[role="alertdialog"]').map(root => ({
       id: root.id, classes: root.className, display: getComputedStyle(root).display, visibility: getComputedStyle(root).visibility,
       order_confirmation: /Are you sure you want to submit your order\?/i.test(norm(root.textContent)),
       controls: [...root.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"],.dxbButton')].map(e => ({
@@ -161,6 +172,14 @@
       visibility: document.visibilityState, title: document.title,
       control_state: all('#aToCDesk, #aToCMob, #ninjaAddToCart, #zCheckoutBTN, #M_M_zCheckoutBTN, #M_M_zConfirmOrderPopup_zCompleteBTN, #M_M_zCart .cR a[aria-label="remove item"]').map(e => ({
         id: e.id, tag: e.tagName, visible: visible(e), handler: ((e.getAttribute('href') || '').match(/^javascript:\s*([A-Za-z_]\w*)\(/) || [])[1] || '' })),
+      cart_controls: all('#M_M_zCart .cR').filter(visible).slice(0, 100).map(row => ({
+        row_id: row.id,
+        controls: [...row.querySelectorAll('a,button,[role="button"]')].slice(0, 20).map(e => ({
+          id: e.id, tag: e.tagName, label: norm(e.getAttribute('aria-label')), title: norm(e.getAttribute('title')),
+          text: norm(e.textContent).slice(0, 80), visible: visible(e), display: getComputedStyle(e).display,
+          handler: ((e.getAttribute('href') || '').match(/^javascript:\s*([A-Za-z_]\w*)\(/) || [])[1] || ''
+        }))
+      })),
       product_state: {
         color_text: norm(document.querySelector('#zcolorname')?.textContent),
         colors: all('#colorSwatch a').slice(0, 150).map(a => ({ id: a.id, color: norm(a.textContent),
@@ -290,8 +309,8 @@
     },
     remove_ready: async ({ rows }) => {
       if (!Array.isArray(rows) || !rows.length || cartSignature(rows) !== cartSignature(cartRows())) throw Error('S&S cart changed before removal.');
-      const first = all('#M_M_zCart .cR').filter(visible)[0];
-      const buttons = [...first.querySelectorAll('a[aria-label="remove item"]')].filter(visible);
+      const first = all('#M_M_zCart .cR').filter(visible).find(row => row.querySelector('.cPie input, .cDes a[href]'));
+      const buttons = first ? removeControls(first) : [];
       if (buttons.length !== 1) throw Error('S&S cart removal control is ambiguous.');
       return {};
     },

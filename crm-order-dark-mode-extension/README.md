@@ -15,10 +15,10 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
-## S&S Reorder browser — 1.7.13
+## S&S Reorder browser — 1.7.14
 
 S&S Reorder can use a normally opened Chrome profile through the extension,
-without launching WebDriver. Install/reload version **1.7.13** in that profile,
+without launching WebDriver. Install/reload version **1.7.14** in that profile,
 restart the local Automation app, and refresh CRM pages/dashboard.
 
 1. Open the popup and select **Connect this browser** under **S&S Reorder**.
@@ -65,6 +65,10 @@ IDs, and loaded warehouse dates. No arbitrary script or function name is accepte
 Stock addition and removal use fixed page-context controls. Addition verifies
 the entered quantity and cart-count change; cleanup requires the same exact cart
 before the click and verifies every remaining row afterward.
+Version 1.7.14 supports the live unlabelled Remove link by checking its known
+handler and exact cart-row identifiers. It also supports the order confirmation
+message box when S&S omits its ARIA role. Reload the extension to load these fixes;
+the next queued worker loads the Python changes without an app restart.
 Cart reads wait for the piece count and loaded rows to agree. Removed-item
 notices are excluded; unreadable stock rows still stop the run. Checkout's
 authenticated reduced header is recognized by its account checkout fields.
@@ -84,9 +88,10 @@ from 11 warehouses, and returned to the same empty cart. No quantity entry,
 checkout, purchase, or CRM edit ran in that check. A later live Reorder verified
 cart entry, checkout, and a supplier-confirmed purchase while Chrome remained
 minimized. CRM production/due dates and the purchase note were also verified.
-Reload the extension after updating extension code. The automatic setup has offline
-coverage; the earlier manual minimized-window checkout was verified live on Windows.
-The new setup still needs a live Windows/macOS check. Offline tests cover page
+Reload the extension after updating extension code. Version 1.7.14 passed live
+Windows verification of automatic minimized setup, unlabelled cart cleanup, and
+one Complete Order/Confirm sequence with the exact supplier PO confirmed.
+macOS remains unverified. Offline tests cover page
 operations, local origin restrictions, duplicate-delivery prevention, and tab
 ownership. See the [Reorder guide](../docs/REORDER_STOCK.md).
 
