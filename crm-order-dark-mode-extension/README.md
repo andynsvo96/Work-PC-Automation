@@ -15,10 +15,10 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
-## S&S Reorder browser — 1.7.14
+## S&S Reorder browser — 1.7.15
 
 S&S Reorder can use a normally opened Chrome profile through the extension,
-without launching WebDriver. Install/reload version **1.7.14** in that profile,
+without launching WebDriver. Install/reload version **1.7.15** in that profile,
 restart the local Automation app, and refresh CRM pages/dashboard.
 
 1. Open the popup and select **Connect this browser** under **S&S Reorder**.
@@ -55,6 +55,14 @@ Signed-in browser checks and product operations have passed live in both
 background tabs and minimized windows on Windows Chrome.
 Search reads cards' style, brand, and title even when accessibility layout gives the
 main product link no layout box; color-count links cannot replace descriptions.
+Version 1.7.15 also returns each card's labelled brand, style, and description.
+The worker checks those fields against CRM and the supplier URL before accepting
+brands outside its legacy list, including Richardson 112. Missing or conflicting
+brand evidence and youth/adult or style mismatches still stop for review.
+The worker also maps the approved Richardson 112 color labels and its standard
+one-size fit to S&S's M/L label, retaining the original CRM data in the purchase
+plan. Stock shortages report the exact item, size, and quantity; all required
+stock must be available before purchasing.
 The check explicitly minimizes only its newly created check window and
 reports the window state when a visibility check fails. Health diagnostics are
 limited to product colors, warehouse shipping labels, and known control identities;

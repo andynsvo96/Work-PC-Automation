@@ -6,7 +6,7 @@ from urllib.parse import quote, urlsplit
 from ssactivewear_bridge import SxsSession, SxsBridgeError
 import ssactivewear_ordering as sxs
 
-MIN_EXTENSION_VERSION = (1, 7, 14)
+MIN_EXTENSION_VERSION = (1, 7, 15)
 
 
 class SxsExtensionBrowser:
@@ -42,7 +42,7 @@ class SxsExtensionBrowser:
             state = self.call('health')
         version = str(state.get('extension_version') or '')
         if not re.fullmatch(r'\d+\.\d+\.\d+(?:\.\d+)?', version) or tuple(map(int, version.split('.'))) < MIN_EXTENSION_VERSION:
-            raise RuntimeError('Reload CRM Order Assistant 1.7.14 or newer for S&S cart cleanup and checkout. The running extension version is ' + (version or 'unknown') + '.')
+            raise RuntimeError('Reload CRM Order Assistant 1.7.15 or newer for S&S labelled product matching. The running extension version is ' + (version or 'unknown') + '.')
         if state.get('signed_in') is not True or state.get('cart_container') is not True:
             raise RuntimeError('S&S sign-in expired or is missing. Use Open S&S sign-in in CRM Order Assistant, sign in normally, then Retry this batch. No new purchase was submitted.')
 

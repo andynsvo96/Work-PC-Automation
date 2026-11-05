@@ -207,10 +207,14 @@ def sanmar_groups(driver, products):
 
 def sxs_group(driver, products):
     lines = []
-    for product in products:
+    for source_product in products:
+        product = sxs.supplier_product(source_product)
         selected = sxs.open_product(driver, product)
         quantities = {sxs.size_key(s): q for s, q in product["quantities"].items()}
-        lines.append({"product": product, "selected": selected, "quantities": quantities, "inventory": sxs.inventory(driver)})
+        line = {"product": product, "selected": selected, "quantities": quantities, "inventory": sxs.inventory(driver)}
+        if product != source_product:
+            line["source_product"] = source_product
+        lines.append(line)
     return {"vendor": "ssactivewear", "lines": sxs.allocate(lines), "state": "planned"}
 
 

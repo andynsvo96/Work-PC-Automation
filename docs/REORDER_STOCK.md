@@ -73,7 +73,22 @@ still reject another brand or CE10L. Search reads the visible product card's
 labelled style, brand, and description, including accessibility layouts whose
 main links have no layout box. Separate color-count links are
 excluded. Ambiguous results stop rather than selecting another brand with the
-same style number. Color matching is exact
+same style number.
+Version 1.7.15 returns the search card's labelled brand, style, and description.
+For brands outside the legacy alias list, such as Richardson, the labelled brand
+must appear in CRM's description and the supplier title, match the URL's brand,
+and have the exact requested style in both the card and URL. Description and
+youth/adult checks still apply; multiple possible brands stop for review. A bare
+style number or an unlabelled title alone cannot establish a new brand.
+Richardson **112 only** uses the approved exact color aliases
+`Khaki/ Khaki/ Navy` → `Khaki/ Navy CMB` and `Caramel/ Black` → `Carmel/ Black`.
+Its CRM one-size/OSFM label maps to the supplier's standard `M/L` fit; `XL` stays
+distinct. S&S documents this size-label equivalence on its
+[112 product page](https://www.ssactivewear.com/p/richardson/112).
+The saved plan retains the original CRM product alongside supplier labels; the
+CRM source signature stays unchanged. Color aliases are not inferred by dropping
+repeated color names or `CMB`, and do not apply to another brand or style.
+Color matching is exact
 after punctuation/case and grey/gray normalization.
 The extension waits for the initial color and inventory to load before selecting
 another color. It invokes only the matched swatch's known S&S color handler from
@@ -107,6 +122,9 @@ S&S prefers Reading, then one other warehouse that can fill all products/sizes,
 ordered by delivery date. Warehouse splits are a last resort. Every size must be
 available; partial quantities and product substitutions are not purchased. The
 cart must match product identity, color, size, piece count, and warehouse allocation.
+If stock cannot cover the order, the error identifies the product, color, size,
+required quantity, and available quantity across warehouses with verified
+delivery dates. A successful brand/color match cannot override a stock shortage.
 Grouped warehouse quantities are read from the warehouse-breakdown popup and
 checked without applying changes. Unreadable allocations require review.
 
@@ -126,13 +144,13 @@ order reference, and the exact labelled PO. Receipt parsing covers the observed
 `Order Confirmation: <number>` heading, including combined PO/warehouse labels,
 as well as the older numbered confirmation format. A live S&S checkout and its
 confirmation were verified through an existing logged-in Chrome session.
-S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.14** extension in a
+S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.15** extension in a
 normally opened Chrome profile. The local worker sends stock instructions to
 one dedicated S&S tab without launching WebDriver, activating the tab, or using
 the computer's mouse/keyboard. At the start of each order, it automatically opens
 or reuses its own unfocused minimized window and checks the signed-in cart before
 entering stock. The manual read-only browser check is optional. The worker also
-checks the actual running extension version (1.7.14 or newer), so a cached older
+checks the actual running extension version (1.7.15 or newer), so a cached older
 background controller requires reloading before checkout can run. Earlier signed-in
 checks and the product workflow have
 passed live in both background-tab and minimized-window modes on Windows Chrome.
@@ -196,7 +214,7 @@ iframe context, using the existing production-date verification recovery.
 
 1. Restart the local Automation app and refresh the dashboard when no task is
    running. Do not start a second server.
-2. Install/reload **CRM Order Assistant 1.7.14** from
+2. Install/reload **CRM Order Assistant 1.7.15** from
    `crm-order-dark-mode-extension` at `chrome://extensions` in the normal Chrome
    profile you want to use. Existing CRM page scripts stay scoped to CRM.
 3. Open the extension popup and select **Connect this browser** under **S&S
@@ -296,7 +314,7 @@ approved CRM stock PO alias is bound to the same order number and saved as
 `crm_po` in the local confirmed receipt. Recovery verifies that alias and adds a
 note linking it to the original supplier PO/reference. The supplier customer PO
 and confirmed purchase are retained. These worker-only checks load on the next
-worker run. Automatic minimized setup requires reloading extension 1.7.14.
+worker run. Automatic minimized setup requires reloading extension 1.7.15.
 
 The production-note writer waits for CRM's append-only Production Notes field in
 its dedicated section. It preserves existing note history and checks that history

@@ -227,7 +227,24 @@ document.body.append(products);
         self.assertEqual(len(candidates), 3)
         selected = sxs.select_product({'product_id': 'G500', 'product_name': 'Gildan Heavy Cotton T-Shirt'}, candidates)
         self.assertEqual(selected['url'], 'https://www.ssactivewear.com/p/gildan/5000')
+        self.assertEqual({key: selected[key] for key in ('style', 'brand', 'description')},
+                         {'style': '5000', 'brand': 'Gildan', 'description': 'Unisex Heavy Cotton T-Shirt'})
         self.assertNotIn('more colors', selected['title'])
+
+    def test_extension_search_supplies_labelled_richardson_fields_for_new_brand_matching(self):
+        self.driver.execute_script("""
+const products=document.createElement('div');products.id='M_M_zProducts';
+products.innerHTML=`
+<div class="gProduct"><a style="display:contents" href="https://www.ssactivewear.com/p/richardson/112"><div class="gName">112</div><ins class="gBrand">Richardson</ins><ins class="gTitle">Snapback Trucker Cap</ins></a><a href="https://www.ssactivewear.com/p/richardson/112">+90 more colors</a></div>
+<div class="gProduct"><a href="https://www.ssactivewear.com/p/richardson/112y"><div class="gName">112Y</div><ins class="gBrand">Richardson</ins><ins class="gTitle">Youth Trucker Snapback Cap</ins></a></div>`;
+document.body.append(products);
+""")
+        self._install_sxs_page_fixture()
+        result = self._sxs_page_command('candidates')
+        self.assertTrue(result['success'], result)
+        selected = sxs.select_product({'product_id': '112', 'product_name': 'Richardson - Adjustable Snapback Trucker Cap'}, result['result']['candidates'])
+        self.assertEqual(selected['url'], 'https://www.ssactivewear.com/p/richardson/112')
+        self.assertEqual(selected['brand'], 'Richardson')
 
     def test_extension_color_handler_waits_for_matching_inventory_and_delivery_dates(self):
         self.driver.execute_script("""

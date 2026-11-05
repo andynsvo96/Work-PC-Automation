@@ -164,6 +164,81 @@ class ReorderStockScanTests(unittest.TestCase):
 
 
 class SxsPlanningTests(unittest.TestCase):
+    def test_richardson_supplier_labels_preserve_source_and_do_not_map_other_styles_or_fits(self):
+        for source, target in (("Khaki/ Khaki/ Navy", "Khaki/ Navy CMB"), ("Caramel/ Black", "Carmel/ Black"),
+                               ("Cream/ Grey Brown/ Brown", "Cream/ Grey Brown/ Brown")):
+            p = product(product_id="112", product_name="Richardson Adjustable Snapback Trucker Cap", color=source,
+                        quantities={"ONESIZE": 1, "XL": 2}, is_gildan=False)
+            mapped = sxs.supplier_product(p)
+            self.assertEqual(mapped["color"], target)
+            self.assertEqual(mapped["quantities"], {"M/L": 1, "XL": 2})
+            self.assertEqual(p["color"], source)
+            self.assertEqual(p["quantities"], {"ONESIZE": 1, "XL": 2})
+            for other in ({**p, "product_id": "112Y"}, {**p, "product_name": "Other Brand Trucker Cap"}):
+                self.assertEqual(sxs.supplier_product(other), other)
+
+    def test_richardson_size_alias_collisions_require_quantity_review(self):
+        p = product(product_id="112", product_name="Richardson Snapback Trucker Cap", quantities={"ONESIZE": 1, "M/L": 1})
+        with self.assertRaisesRegex(RuntimeError, 'multiple CRM size labels'):
+            sxs.supplier_product(p)
+
+    def test_richardson_planning_allocates_supplier_labels_and_retains_the_crm_source(self):
+        p = product(product_id="112", product_name="Richardson Snapback Trucker Cap", color="Khaki/ Khaki/ Navy", quantities={"ONESIZE": 1})
+        with mock.patch.object(sxs, 'open_product', return_value={"url": "https://www.ssactivewear.com/p/richardson/112"}) as opened, mock.patch.object(
+            sxs, 'inventory', return_value=[{"warehouse": "Reading, PA", "eta_text": "Est. Delivery: 11/06/2026", "stock": {"M/L": 1}}]
+        ):
+            group = worker.sxs_group(mock.Mock(), [p])
+        self.assertEqual(opened.call_args.args[1]["color"], "Khaki/ Navy CMB")
+        self.assertEqual(group["lines"][0]["source_product"], p)
+        self.assertEqual(group["lines"][0]["quantities"], {"M/L": 1})
+        self.assertEqual(p["quantities"], {"ONESIZE": 1})
+
+    def test_stock_shortage_identifies_the_exact_product_color_size_and_required_quantity(self):
+        p = product(product_id="112", product_name="Richardson Snapback Trucker Cap", color="Cream/ Grey Brown/ Brown", quantities={"M/L": 1})
+        line = {"product": p, "quantities": p["quantities"], "inventory": [
+            {"warehouse": "Reading, PA", "eta_text": "Est. Delivery: 11/06/2026", "stock": {"M/L": 0}},
+            {"warehouse": "Middleboro, MA", "eta_text": "Est. Delivery: 11/06/2026", "stock": {"M/L": 0}}]}
+        with self.assertRaisesRegex(RuntimeError, r'112 Cream/ Grey Brown/ Brown; M/L needs 1, available 0.*No partial purchase'):
+            sxs.allocate([line])
+
+    def test_richardson_112_uses_labelled_brand_style_and_description(self):
+        p = product(product_id="112", product_name="Richardson - Adjustable Snapback Trucker Cap", quantities={"ONESIZE": 1})
+        correct = {"url": "https://www.ssactivewear.com/p/richardson/112", "title": "112 Richardson Snapback Trucker Cap",
+                   "style": "112", "brand": "Richardson", "description": "Snapback Trucker Cap"}
+        variants = [{**correct, "url": "https://www.ssactivewear.com/p/richardson/" + style.lower(), "style": style}
+                    for style in ("112Y", "112P", "112FP")]
+        other = {**correct, "url": "https://www.ssactivewear.com/p/other_brand/112", "brand": "Other Brand", "title": "112 Other Brand Snapback Trucker Cap"}
+        self.assertEqual(sxs.select_product(p, [*variants, other, correct]), correct)
+
+    def test_labelled_supplier_brands_do_not_require_individual_allowlist_entries(self):
+        p = product(product_id="6006", product_name="Yupoong Classic Trucker Cap")
+        candidate = {"url": "https://www.ssactivewear.com/p/yupoong/6006", "title": "6006 Yupoong Classic Trucker Cap",
+                     "style": "6006", "brand": "Yupoong", "description": "Classic Trucker Cap"}
+        self.assertEqual(sxs.select_product(p, [candidate]), candidate)
+
+    def test_labelled_brand_still_requires_crm_evidence_consistent_url_and_exact_style(self):
+        p = product(product_id="112", product_name="Richardson Adjustable Snapback Trucker Cap")
+        candidate = {"url": "https://www.ssactivewear.com/p/richardson/112", "title": "112 Richardson Snapback Trucker Cap",
+                     "style": "112", "brand": "Richardson", "description": "Snapback Trucker Cap"}
+        for change in ({"brand": ""}, {"style": "112Y"}, {"style": ""},
+                       {"url": "https://www.ssactivewear.com/p/other_brand/112"},
+                       {"url": "http://www.ssactivewear.com/p/richardson/112"},
+                       {"url": "https://user@www.ssactivewear.com/p/richardson/112"},
+                       {"title": "112 Richardson Youth Snapback Trucker Cap"},
+                       {"title": "112 Richardson Fleece Hooded Sweatshirt"}):
+            with self.subTest(change=change), self.assertRaises(RuntimeError):
+                sxs.select_product(p, [{**candidate, **change}])
+        with self.assertRaises(RuntimeError):
+            sxs.select_product({**p, "product_name": "Adjustable Snapback Trucker Cap"}, [candidate])
+
+    def test_two_brands_in_the_crm_description_require_review_even_with_different_scores(self):
+        p = product(product_id="112", product_name="Richardson Yupoong Adjustable Snapback Trucker Cap")
+        candidates = [{"url": f"https://www.ssactivewear.com/p/{brand.lower()}/112", "brand": brand, "style": "112",
+                       "title": f"112 {brand} " + description, "description": description}
+                      for brand, description in (("Richardson", "Adjustable Snapback Trucker Cap"), ("Yupoong", "Snapback Trucker Cap"))]
+        with self.assertRaisesRegex(RuntimeError, 'unambiguous'):
+            sxs.select_product(p, candidates)
+
     def test_core365_ce10_matches_the_exact_supplier_brand_style_and_description(self):
         p = product(product_id="CE10", product_name="Core365 Unisex Capital Performance T-Shirt", color="True Royal", quantities={"M": 1})
         correct = {"url": "https://www.ssactivewear.com/p/core365/ce10", "title": "CE10 CORE365 Unisex Capital Performance T-Shirt"}

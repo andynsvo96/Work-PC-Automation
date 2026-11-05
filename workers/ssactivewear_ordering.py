@@ -58,36 +58,84 @@ def _words(text):
     return set(re.findall(r"[a-z0-9]+", text)) - {"unisex", "a", "the", "alpha", "stock", "tm"}
 
 
+def _brand_key(text):
+    return re.sub(r"[^a-z0-9]", "", str(text).lower())
+
+
 def select_product(product, candidates):
     """An exact style alone is insufficient: require the CRM brand and description."""
     wanted_style = style_id(product)
     description = str(product.get("product_name") or product.get("stock_line") or "")
     brands = ("Gildan", "Bayside", "Bella", "Next Level", "Rabbit Skins", "Jerzees", "Hanes", "Comfort Colors", "A4", "Lane Seven", "Independent", "Port Authority", "Port and Company", "Team 365", "Sport Tek", "Fruit of the Loom", "Anvil", "Champion", "Adidas", "Columbia", "Harriton", "Devon", "Augusta", "Tultex", "Core365")
-    brand = next((b for b in brands if _words(b) <= _words(description)), None)
-    if not brand:
-        raise RuntimeError("S&S product brand could not be established from the CRM description; review the match.")
-    wanted = _words(description) - _words(brand) - _words(product["product_id"]) - _words(wanted_style)
-    wanted -= {"cotton100", "100", "mens", "men"}
+    # Legacy/archived links have only a combined title. Current search cards
+    # expose a labelled brand, so new brands need no growing allowlist.
+    legacy_brand = next((b for b in brands if _words(b) <= _words(description)), None)
+    description_words = _words(description)
     matches = {}
+    verified_brands = set()
     for candidate in candidates:
         url = str(candidate.get("url", ""))
         parsed = urlsplit(url)
         parts = parsed.path.rstrip("/").split("/")
         title = candidate.get("title", "")
-        if parsed.hostname != "www.ssactivewear.com" or len(parts) != 4 or parts[1] != "p" or parts[-1].upper() != wanted_style:
+        if (parsed.scheme != "https" or parsed.netloc != "www.ssactivewear.com" or parsed.query or parsed.fragment
+                or len(parts) != 4 or parts[1] != "p" or parts[-1].upper() != wanted_style):
             continue
         words = _words(title)
-        if not _words(brand) <= words:
+        card_brand = str(candidate.get("brand") or "").strip()
+        if card_brand:
+            brand_words = _words(card_brand)
+            if (not brand_words or not brand_words <= description_words or not brand_words <= words
+                    or _brand_key(card_brand) != _brand_key(parts[2])
+                    or str(candidate.get("style") or "").strip().upper() != wanted_style):
+                continue
+        elif legacy_brand:
+            brand_words = _words(legacy_brand)
+            if not brand_words <= words:
+                continue
+        else:
             continue
-        if any((token in _words(description)) != (token in words) for token in ("youth", "toddler", "infant", "women", "womens", "tall")):
+        verified_brands.add(_brand_key(parts[2]))
+        if any((token in description_words) != (token in words) for token in ("youth", "toddler", "infant", "women", "womens", "tall")):
             continue
+        wanted = description_words - brand_words - _words(product["product_id"]) - _words(wanted_style)
+        wanted -= {"cotton100", "100", "mens", "men"}
         score = len(wanted & words) / max(1, len(wanted))
         if wanted and score >= 0.55:
-            matches[url] = (score, candidate)
+            matches[BASE_URL + parsed.path.rstrip("/")] = (score, candidate)
+    if not verified_brands and not legacy_brand:
+        raise RuntimeError(f"S&S product brand could not be verified for {product['product_id']} from CRM and the supplier's labelled product details; review the match.")
     ranked = sorted(matches.values(), key=lambda x: x[0], reverse=True)
-    if not ranked or (len(ranked) > 1 and ranked[0][0] - ranked[1][0] < 0.2):
+    if len(verified_brands) != 1 or not ranked or (len(ranked) > 1 and ranked[0][0] - ranked[1][0] < 0.2):
         raise RuntimeError(f"No unambiguous S&S brand/style/description match for {product['product_id']}.")
     return ranked[0][1]
+
+
+def supplier_product(product):
+    """Keep CRM source data intact while applying verified supplier-specific labels."""
+    mapped = {**product, "quantities": dict(product["quantities"])}
+    description = product.get("product_name") or product.get("stock_line") or ""
+    if style_id(product) != "112" or "richardson" not in _words(description):
+        return mapped
+    # Exact Richardson 112 color mappings approved by the operator. Never drop
+    # repeated colors or CMB, or apply these spelling aliases to another style.
+    colors = {
+        color_key("Khaki/ Khaki/ Navy"): "Khaki/ Navy CMB",
+        color_key("Caramel/ Black"): "Carmel/ Black",
+    }
+    mapped["color"] = colors.get(color_key(product["color"]), product["color"])
+    quantities = {}
+    for size, quantity in product["quantities"].items():
+        target = size_key(size)
+        # S&S's 112 page explicitly equates its standard M/L (MD-LG) with
+        # former OSFM. Preserve XL and every other distinct fit.
+        if target in {"ONESIZE", "OSFM", "MD-LG", "MD/LG"}:
+            target = "M/L"
+        if target in quantities:
+            raise RuntimeError("Richardson 112 has multiple CRM size labels for the same supplier fit; review quantities.")
+        quantities[target] = quantity
+    mapped["quantities"] = quantities
+    return mapped
 
 
 def _wait(driver, fn, timeout=25):
@@ -359,7 +407,12 @@ def allocate(lines):
                 for s, q in quantities.items():
                     remaining[s] -= q
         if any(remaining.values()):
-            raise RuntimeError("S&S cannot fill every required size; no partial purchase is allowed.")
+            product = line["product"]
+            shortage = "; ".join(
+                f"{size} needs {line['quantities'][size]}, available {sum(stock.get(size, 0) for stock in rows.values())}"
+                for size, quantity in remaining.items() if quantity
+            )
+            raise RuntimeError(f"S&S cannot fill every required size: {product['product_id']} {product['color']}; {shortage}. No partial purchase is allowed.")
     return allocation
 
 

@@ -146,15 +146,15 @@ class SxsBridgeTests(unittest.TestCase):
 
 class SxsExtensionAdapterTests(unittest.TestCase):
     def test_stale_or_unknown_running_extension_stops_before_stock_actions(self):
-        for version in (None, '1.7.7', '1.7.12', '1.7.13', '1.7.13.1', 'invalid'):
+        for version in (None, '1.7.7', '1.7.12', '1.7.13', '1.7.14', '1.7.14.1', 'invalid'):
             with self.subTest(version=version):
                 session = mock.Mock()
                 session.call.return_value = {'url': 'https://www.ssactivewear.com/checkout/cart', 'signed_in': True, 'cart_container': True, 'extension_version': version}
                 browser = SxsExtensionBrowser('5000001', session=session)
-                with self.assertRaisesRegex(RuntimeError, 'Reload CRM Order Assistant 1.7.14'):
+                with self.assertRaisesRegex(RuntimeError, 'Reload CRM Order Assistant 1.7.15'):
                     browser.ensure_login()
                 self.assertEqual([c.args[0] for c in session.call.call_args_list], ['prepare'])
-        for version in ('1.7.14', '1.7.15', '1.7.14.1'):
+        for version in ('1.7.15', '1.7.16', '1.7.15.1'):
             with self.subTest(version=version):
                 session = mock.Mock()
                 session.call.return_value = {'url': 'https://www.ssactivewear.com/checkout/cart', 'signed_in': True, 'cart_container': True, 'extension_version': version}
@@ -162,7 +162,7 @@ class SxsExtensionAdapterTests(unittest.TestCase):
 
     def test_automatic_setup_checks_signin_before_any_stock_operation(self):
         session = mock.Mock()
-        session.call.return_value = {'url': 'https://www.ssactivewear.com/myaccount/login', 'signed_in': False, 'extension_version': '1.7.14'}
+        session.call.return_value = {'url': 'https://www.ssactivewear.com/myaccount/login', 'signed_in': False, 'extension_version': '1.7.15'}
         browser = SxsExtensionBrowser('5000001', session=session)
         with self.assertRaisesRegex(RuntimeError, 'sign-in expired or is missing'):
             browser.ensure_login()
@@ -170,7 +170,7 @@ class SxsExtensionAdapterTests(unittest.TestCase):
 
     def test_repeated_login_checks_do_not_repeat_window_setup(self):
         session = mock.Mock()
-        session.call.return_value = {'url': 'https://www.ssactivewear.com/checkout/cart', 'signed_in': True, 'cart_container': True, 'extension_version': '1.7.14'}
+        session.call.return_value = {'url': 'https://www.ssactivewear.com/checkout/cart', 'signed_in': True, 'cart_container': True, 'extension_version': '1.7.15'}
         browser = SxsExtensionBrowser('5000001', session=session)
         browser.ensure_login()
         browser.ensure_login()

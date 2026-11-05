@@ -203,7 +203,8 @@
             } catch { return ''; }
           }).filter(Boolean))];
           const fields = ['.gName', '.gBrand', '.gTitle'].map(selector => norm(card.querySelector(selector)?.textContent));
-          return urls.length === 1 && fields.every(Boolean) ? [{ url: urls[0], title: fields.join(' ') }] : [];
+          return urls.length === 1 && fields.every(Boolean)
+            ? [{ url: urls[0], title: fields.join(' '), style: fields[0], brand: fields[1], description: fields[2] }] : [];
         });
         if (!rows.length) rows.push(...all('a[href*="/p/"]').filter(visible)
           .filter(a => !a.closest('.gProduct')).map(a => ({ url: a.href, title: norm(a.innerText) })).filter(x => x.title));
