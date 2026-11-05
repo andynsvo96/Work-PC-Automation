@@ -149,6 +149,8 @@ class CustomCrmProcessingTests(unittest.TestCase):
                         self.assertNotIn("shippingCharges", call.kwargs["list_url"])
                     else:
                         self.assertIsNone(call.kwargs["list_url"])
+                    if step == "shipping_bypasser":
+                        self.assertFalse(call.kwargs.get("allow_nj_only_pickup", False))
 
     def test_order_preferences_and_queue_snapshot_keep_both_inputs_independent(self):
         with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:

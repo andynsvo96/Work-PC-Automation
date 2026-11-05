@@ -9124,6 +9124,7 @@ def _execute_crm_shipping_bypasser_worker(
     show_terminal=None,
     order_id=None,
     allow_low_stock_buffer=False,
+    allow_nj_only_pickup=False,
 ):
     normalized_order_id = _normalize_crm_single_order_id(order_id)
     if _crm_address_value_supplied(order_id) and not normalized_order_id:
@@ -9156,6 +9157,8 @@ def _execute_crm_shipping_bypasser_worker(
         args.append("--dry-run")
     if normalized_order_id and allow_low_stock_buffer:
         args.append("--allow-low-stock-buffer")
+    if normalized_order_id and allow_nj_only_pickup:
+        args.append("--allow-nj-only-pickup")
     ok, message, payload = _run_script(
         CRM_SHIPPING_BYPASSER_SCRIPT,
         args,
@@ -9171,6 +9174,7 @@ def _execute_crm_shipping_bypasser_worker(
     payload.setdefault("batch_size", normalized_batch_size)
     payload.setdefault("parallel_workers", 1)
     payload.setdefault("stock_buffer_override", bool(normalized_order_id and allow_low_stock_buffer))
+    payload.setdefault("nj_only_pickup_allowed", bool(normalized_order_id and allow_nj_only_pickup))
     if normalized_order_id:
         payload.setdefault("target_order_id", normalized_order_id)
         payload.setdefault("order_ids", [normalized_order_id])
@@ -9362,6 +9366,8 @@ def _crm_shipping_bypasser_run_thread(dry_run=False, batch_size=None, list_url=N
             list_url=list_url,
             order_id=normalized_order_id,
             allow_low_stock_buffer=allow_low_stock_buffer,
+            # Standalone single-order tasks are manually queued; Processing steps call the worker directly.
+            allow_nj_only_pickup=bool(normalized_order_id),
         )
     except Exception as e:
         logger.exception("CRM Shipping Bypasser background run failed unexpectedly")

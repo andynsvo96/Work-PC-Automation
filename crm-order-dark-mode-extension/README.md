@@ -426,6 +426,8 @@ The **Manual Process** menu beside **Send Invoice** lets you choose one automati
 
 Selecting **Shipping Bypasser** from **Manual Process** is an explicit approval to use SanMar stock without the normal 10-piece per-size safety buffer. It still stops when SanMar has fewer units than the order requires. List-driven Shipping Bypasser runs retain the 10-piece buffer.
 
+Manually queued single-order Shipping Bypasser tasks also support in-house NJ-only stock: the worker verifies **Pick Up at warehouse > Robbinsville**, uses the original customer PO, and records one CRM Manual Order without an ADD PO or Add box. Retry retains this behavior and the existing purchase receipts. Automatic Processing and list-driven runs keep the NJ-only review stop. Restart the local Automation app to enable this change; no extension reload or page refresh is needed.
+
 The worker prefers one warehouse, but checks a closer split before stopping when that complete shipment would arrive too late. The split retains the selected buffer setting and must pass cart validation and the delivery-date check for every warehouse. It uses one customer PO and the usual production note describing the boxes and quantities from each warehouse. This worker update loads on the next queued run; no app restart, extension reload, or page refresh is required.
 
 ## Stock Swap reachout

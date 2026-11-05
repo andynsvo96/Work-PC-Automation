@@ -12563,11 +12563,12 @@ class CrmAddressServerTests(unittest.TestCase):
              mock.patch.object(crm_shipping_bypasser, "_find_stock_tabs", return_value=tabs), \
              mock.patch.object(crm_shipping_bypasser, "_activate_stock_tab", side_effect=tabs), \
              mock.patch.object(crm_shipping_bypasser, "_process_open_order", side_effect=process_tab) as mock_process:
-            results = crm_shipping_bypasser._run_order_with_drivers(crm_driver, sanmar_driver, "4636204", dry_run=True)
+            results = crm_shipping_bypasser._run_order_with_drivers(crm_driver, sanmar_driver, "4636204", dry_run=True, allow_nj_only_pickup=True)
 
         self.assertEqual(mock_open.call_count, 2)
         self.assertEqual(mock_ready.call_count, 2)
         self.assertEqual(mock_process.call_count, 2)
+        self.assertTrue(all(call.kwargs["allow_nj_only_pickup"] for call in mock_process.call_args_list))
         self.assertEqual([item["stock_tab_index"] for item in results], [1, 2])
         self.assertEqual([item["stock_tab_count"] for item in results], [2, 2])
         self.assertIn("H-TabTwo", results[1]["stock_tab_label"])

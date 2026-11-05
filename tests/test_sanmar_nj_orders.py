@@ -253,12 +253,65 @@ class NjStockOrderTests(unittest.TestCase):
 
     def test_inhouse_complete_nj_order_stops_for_normal_crm_ordering(self):
         self.inventory = [{"warehouse": NJ, "stock": {size: 50 for size in self.product["quantities"]}}]
-        result = self.run_order()
-        self.assertFalse(result["success"])
-        self.assertEqual(result["outcome"], "nj_only_crm_ordering_required")
+        for override in (False, True):
+            with self.subTest(buffer_override=override):
+                result = self.run_order(allow_low_stock_buffer=override)
+                self.assertFalse(result["success"])
+                self.assertEqual(result["outcome"], "nj_only_crm_ordering_required")
         self.assertEqual(self.purchases(), [])
         self.mocks["_fill_sanmar_quantities"].assert_not_called()
         self.mocks["_select_ups_eta_for_shipping_plan"].assert_not_called()
+
+    def test_manual_single_nj_only_order_uses_original_po_pickup_and_retry_does_not_rebuy(self):
+        self.inventory = [{"warehouse": NJ, "stock": {size: 50 for size in self.product["quantities"]}}]
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(worker, "_build_crm_session_driver", return_value=self.crm))
+            stack.enter_context(mock.patch.object(worker, "_build_sanmar_driver", return_value=self.sanmar))
+            stack.enter_context(mock.patch.object(worker, "_open_target_order"))
+            stack.enter_context(mock.patch.object(worker, "_find_stock_tabs", return_value=[{"label": self.order["po"]}]))
+            stack.enter_context(mock.patch.object(worker, "_visible_design_tab_number_hints", return_value=[]))
+            stack.enter_context(mock.patch.object(worker, "safe_driver_quit"))
+            result = worker._run_single(self.order["order_id"], visible=True, allow_nj_only_pickup=True)
+            retried = worker._run_single(self.order["order_id"], visible=True, allow_nj_only_pickup=True)
+
+        self.assertTrue(result["success"], result["message"])
+        self.assertTrue(result["nj_only_pickup_allowed"])
+        self.assertFalse(result["stock_buffer_override"])
+        report = result["report"][0]
+        self.assertEqual(report["warehouses"], [NJ])
+        self.assertEqual([(event[1], event[2]) for event in self.purchases()], [(self.order["po"], "pickup")])
+        self.assertEqual({row["size"]: row["quantity"] for row in self.purchases()[0][3]}, self.product["quantities"])
+        self.assertEqual([event for event in self.events if event[0] == "record"], [("record", self.order["po"], False)])
+        self.assertEqual(report["sanmar_confirmation"]["po"], self.order["po"])
+        self.assertIsNone(report["production_note"])
+        self.assertTrue(retried["success"])
+        self.assertEqual(retried["report"][0]["outcome"], "already_stock_ordered")
+        self.mocks["_remember_pending_shipping_bypass_submission"].assert_called_once()
+        for name in ("_select_ups_eta_for_shipping_plan", "_change_crm_production_date", "_change_crm_due_date", "_append_crm_production_note"):
+            self.mocks[name].assert_not_called()
+
+    def test_manual_nj_only_confirmation_recovers_crm_record_without_second_purchase(self):
+        self.inventory = [{"warehouse": NJ, "stock": {size: 50 for size in self.product["quantities"]}}]
+        self.fail_record = self.order["po"]
+        first = self.run_order(allow_nj_only_pickup=True)
+        self.assertFalse(first["success"])
+        self.assertEqual(first["outcome"], "sanmar_submitted_crm_record_failed")
+        self.mocks["_pending_shipping_bypass_submission"].return_value = {"sanmar_confirmation": first["sanmar_confirmation"], "vendor": "Sanmar"}
+        second = self.run_order(allow_nj_only_pickup=True)
+        self.assertTrue(second["success"], second["message"])
+        self.assertEqual(second["sanmar_submit_state"], "previously_submitted")
+        self.assertEqual(len(self.purchases()), 1)
+        self.assertEqual(self.rows, {self.order["po"]})
+
+    def test_manual_nj_only_stock_still_requires_confirmed_pickup(self):
+        self.inventory = [{"warehouse": NJ, "stock": {size: 50 for size in self.product["quantities"]}}]
+        self.mocks["_select_shipping_destination"].side_effect = None
+        self.mocks["_select_shipping_destination"].return_value = {"ship_mode": "ship"}
+        result = self.run_order(allow_nj_only_pickup=True)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["outcome"], "nj_pickup_required")
+        self.assertEqual(self.purchases(), [])
+        self.mocks["_record_crm_manual_order"].assert_not_called()
 
     def test_shortage_in_add_stock_prevents_nj_purchase(self):
         self.inventory = self.inventory[:2]

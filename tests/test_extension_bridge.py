@@ -1,4 +1,5 @@
 import unittest
+from contextlib import ExitStack
 from unittest import mock
 
 import server
@@ -333,6 +334,28 @@ class ChromeExtensionBridgeTests(unittest.TestCase):
 
         self.assertNotIn("--allow-low-stock-buffer", standard_args)
         self.assertIn("--allow-low-stock-buffer", manual_args)
+        self.assertNotIn("--allow-nj-only-pickup", manual_args)
+
+    def test_nj_only_pickup_requires_explicit_single_order_worker_option(self):
+        with mock.patch("server._run_script", return_value=(True, "Completed", {"success": True})) as run_script:
+            server._execute_crm_shipping_bypasser_worker(order_id="4917538", allow_nj_only_pickup=True)
+            single_args = run_script.call_args.args[1]
+            server._execute_crm_shipping_bypasser_worker(allow_nj_only_pickup=True)
+            batch_args = run_script.call_args.args[1]
+        self.assertIn("--allow-nj-only-pickup", single_args)
+        self.assertNotIn("--allow-low-stock-buffer", single_args)
+        self.assertNotIn("--allow-nj-only-pickup", batch_args)
+
+    def test_standalone_single_order_and_retry_allow_nj_pickup_without_lowering_stock_buffer(self):
+        for order_id in ("4917538", None):
+            with self.subTest(order_id=order_id), ExitStack() as stack:
+                for name in ("log_automation_event", "_audit_result", "_notify_shipping_bypasser_problem_orders", "_finish_crm_shipping_bypasser_runtime"):
+                    stack.enter_context(mock.patch.object(server, name))
+                stack.enter_context(mock.patch.object(server, "_persist_crm_shipping_bypasser_run_result", return_value={}))
+                execute = stack.enter_context(mock.patch.object(server, "_execute_crm_shipping_bypasser_worker", return_value=(True, "Completed", {"success": True})))
+                server._crm_shipping_bypasser_run_thread(order_id=order_id)
+                self.assertEqual(execute.call_args.kwargs["allow_nj_only_pickup"], bool(order_id))
+                self.assertFalse(execute.call_args.kwargs["allow_low_stock_buffer"])
 
     def test_manual_order_control_rejects_unknown_automation(self):
         response = self.client.post(

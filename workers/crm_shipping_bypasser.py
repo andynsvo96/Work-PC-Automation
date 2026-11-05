@@ -5859,7 +5859,7 @@ def _prepare_sanmar_shipping_plan(sanmar_driver, order_id, order, product_lines,
     if order["order_type"] == "inhouse" and warehouse == NJ_WAREHOUSE and not nj_pickup_order:
         return _result(
             order_id, False, "nj_only_crm_ordering_required",
-            "In-house NJ-only stock belongs to normal CRM ordering. Shipping Bypasser pickup is reserved for NJ plus other warehouses. Review CRM stock ordering; no SanMar stock was ordered.",
+            "In-house NJ-only stock belongs to normal CRM ordering for automatic runs. Queue this order manually in Shipping Bypasser to use Robbinsville pickup; no SanMar stock was ordered.",
             order=order, warehouses=selected_warehouses, retryable=False,
         )
 
@@ -6279,6 +6279,7 @@ def _process_open_order(
     stock_tab_label=None,
     stock_tab_context=None,
     allow_low_stock_buffer=False,
+    allow_nj_only_pickup=False,
 ):
     _require_crm_order_ready_once_with_refresh(crm_driver, order_id)
     stock_tab_label = _stock_tab_summary_label(stock_tab_label)
@@ -6551,7 +6552,8 @@ def _process_open_order(
 
     for plan_attempt in range(2):
         shipping_state = _prepare_sanmar_shipping_plan(
-            sanmar_driver, order_id, order, product_lines, warehouse_plan
+            sanmar_driver, order_id, order, product_lines, warehouse_plan,
+            nj_pickup_order=allow_nj_only_pickup,
         )
         if not shipping_state.get("success"):
             return done(shipping_state)
@@ -6793,7 +6795,7 @@ def _process_open_order(
     ))
 
 
-def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False, allow_low_stock_buffer=False):
+def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False, allow_low_stock_buffer=False, allow_nj_only_pickup=False):
     normalized_order_id = _normalize_target_order_id(order_id)
     if not normalized_order_id:
         raise RuntimeError("Order ID must be a 7-digit value or CRM order URL.")
@@ -6851,6 +6853,7 @@ def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False, 
             stock_tab_label=tab_label,
             stock_tab_context=tabs[0] if tabs else None,
             allow_low_stock_buffer=allow_low_stock_buffer,
+            allow_nj_only_pickup=allow_nj_only_pickup,
         )
         if dry_run and result.get("success") and str(result.get("outcome") or "") == "shipping_bypass_ready":
             result["sanmar_cart_cleanup"] = _clear_sanmar_cart(sanmar_driver, order_id=normalized_order_id)
@@ -6928,6 +6931,7 @@ def _run_order_with_drivers(crm_driver, sanmar_driver, order_id, dry_run=False, 
                         stock_tab_label=tab_label,
                         stock_tab_context=tab,
                         allow_low_stock_buffer=allow_low_stock_buffer,
+                        allow_nj_only_pickup=allow_nj_only_pickup,
                     )
                     result["stock_tab_preflight_reason"] = "needs_shipping_bypass"
         except Exception as exc:
@@ -7186,6 +7190,7 @@ def _run_single_with_mode(
     profile_path=None,
     sanmar_visible=False,
     allow_low_stock_buffer=False,
+    allow_nj_only_pickup=False,
 ):
     started_at = time.monotonic()
     normalized_order_id = _normalize_target_order_id(order_id)
@@ -7227,6 +7232,7 @@ def _run_single_with_mode(
                 normalized_order_id,
                 dry_run=dry_run,
                 allow_low_stock_buffer=allow_low_stock_buffer,
+                allow_nj_only_pickup=allow_nj_only_pickup,
             )
             if _post_submit_crm_record_recovery_needed(report_items):
                 safe_driver_quit(crm_driver, profile_path=resolved_profile_path)
@@ -7271,6 +7277,7 @@ def _run_single_with_mode(
         "headless": bool(headless_mode),
         "shipping_filter": RUSH_FILTER,
         "stock_buffer_override": bool(allow_low_stock_buffer),
+        "nj_only_pickup_allowed": bool(allow_nj_only_pickup),
         "batch_size": 1,
         "parallel_workers": 1,
         "refresh_passes": 1,
@@ -7280,7 +7287,7 @@ def _run_single_with_mode(
     }
 
 
-def _run_single(order_id, dry_run=False, profile_path=None, visible=False, allow_low_stock_buffer=False):
+def _run_single(order_id, dry_run=False, profile_path=None, visible=False, allow_low_stock_buffer=False, allow_nj_only_pickup=False):
     started_at = time.monotonic()
     normalized_order_id = _normalize_target_order_id(order_id)
     if not normalized_order_id:
@@ -7309,6 +7316,7 @@ def _run_single(order_id, dry_run=False, profile_path=None, visible=False, allow
                 profile_path=profile_path,
                 sanmar_visible=visible,
                 allow_low_stock_buffer=allow_low_stock_buffer,
+                allow_nj_only_pickup=allow_nj_only_pickup,
             )
             payload["headless"] = bool(headless_mode)
             return payload
@@ -7572,7 +7580,7 @@ def _run_batch(dry_run=False, batch_size=None, profile_path=None, list_url=None,
     return last_payload
 
 
-def run(action="shipping_bypass_batch", dry_run=False, batch_size=None, profile_path=None, result_file=None, list_url=None, visible=False, order_id=None, allow_low_stock_buffer=False):
+def run(action="shipping_bypass_batch", dry_run=False, batch_size=None, profile_path=None, result_file=None, list_url=None, visible=False, order_id=None, allow_low_stock_buffer=False, allow_nj_only_pickup=False):
     if action not in {"shipping_bypass_batch", "shipping_bypass_single"}:
         raise RuntimeError("Unsupported CRM Shipping Bypasser action.")
     if action == "shipping_bypass_single" or order_id:
@@ -7582,6 +7590,7 @@ def run(action="shipping_bypass_batch", dry_run=False, batch_size=None, profile_
             profile_path=profile_path,
             visible=visible,
             allow_low_stock_buffer=allow_low_stock_buffer,
+            allow_nj_only_pickup=allow_nj_only_pickup,
         )
     else:
         payload = _run_batch(dry_run=dry_run, batch_size=batch_size, profile_path=profile_path, list_url=list_url, visible=visible)
@@ -7611,6 +7620,11 @@ def parse_args(argv=None):
         help="Allow a manually approved single order to use SanMar stock without the 10-piece safety buffer.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Stop before SanMar submit and CRM Manual Order save.")
+    parser.add_argument(
+        "--allow-nj-only-pickup",
+        action="store_true",
+        help="Allow a manually queued single order to use Robbinsville pickup for NJ-only in-house stock.",
+    )
     return parser.parse_args(argv)
 
 
@@ -7627,5 +7641,6 @@ if __name__ == "__main__":
             visible=bool(options.visible),
             order_id=options.order_id,
             allow_low_stock_buffer=bool(options.allow_low_stock_buffer),
+            allow_nj_only_pickup=bool(options.allow_nj_only_pickup),
         )
     )

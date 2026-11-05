@@ -573,6 +573,21 @@ class ShippingBypassSingleCleanupTests(unittest.TestCase):
         self.assertEqual(payload["report"][0]["outcome"], "worker_exception")
         cleanup.assert_called_once_with(sanmar_driver, "5039567", payload["report"])
 
+    def test_nj_only_pickup_option_is_limited_to_single_order_dispatch(self):
+        options = crm_shipping_bypasser.parse_args(["--order-id", "5000001", "--allow-nj-only-pickup", "--dry-run"])
+        with (
+            mock.patch.object(crm_shipping_bypasser, "_run_single", return_value={"success": True}) as single,
+            mock.patch.object(crm_shipping_bypasser, "_run_batch", return_value={"success": True}) as batch,
+            mock.patch.object(crm_shipping_bypasser, "write_result_payload"),
+        ):
+            self.assertEqual(crm_shipping_bypasser.run(order_id=options.order_id, dry_run=options.dry_run, allow_nj_only_pickup=options.allow_nj_only_pickup), 0)
+            single.assert_called_once()
+            self.assertTrue(single.call_args.kwargs["allow_nj_only_pickup"])
+            self.assertFalse(single.call_args.kwargs["allow_low_stock_buffer"])
+            self.assertEqual(crm_shipping_bypasser.run(allow_nj_only_pickup=True, dry_run=True), 0)
+            batch.assert_called_once()
+            self.assertNotIn("allow_nj_only_pickup", batch.call_args.kwargs)
+
 
 class ShippingBypassStockBufferTests(unittest.TestCase):
     def _product_lines(self, available, needed=1):
@@ -680,6 +695,7 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
         eta_states=None,
         inventory=None,
         allow_low_stock_buffer=False,
+        allow_nj_only_pickup=False,
         cleanup_success=True,
         split_cart_mismatch=False,
         shipping_class="rush",
@@ -798,6 +814,7 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
                 stock_tab_index=1,
                 stock_tab_count=1,
                 allow_low_stock_buffer=allow_low_stock_buffer,
+                allow_nj_only_pickup=allow_nj_only_pickup,
             )
         return result, mocks, cart
 
@@ -822,6 +839,22 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
         mocks["_fill_sanmar_quantities"].assert_not_called()
         self._assert_no_purchase(mocks)
 
+    def test_manual_nj_only_dry_run_reaches_pickup_review_without_purchase(self):
+        result, mocks, cart = self._run_order(
+            inventory=[{"warehouse": "Robbinsville, NJ", "stock": {"3XL": 17, "4XL": 11}}],
+            allow_nj_only_pickup=True,
+            dry_run=True,
+        )
+        self.assertTrue(result["success"], result["message"])
+        self.assertEqual(result["outcome"], "shipping_bypass_ready")
+        self.assertEqual(result["shipping"]["ship_mode"], "pickup")
+        self.assertEqual(result["warehouses"], ["Robbinsville, NJ"])
+        self.assertEqual(sum(row["quantity"] for row in cart), 2)
+        self.assertTrue(mocks["_fill_review_and_submit"].call_args.kwargs["dry_run"])
+        self.assertTrue(mocks["_record_crm_manual_order"].call_args.kwargs["dry_run"])
+        for name in ("_capture_sanmar_confirmation", "_remember_pending_shipping_bypass_submission", "_select_ups_eta_for_shipping_plan", "_change_crm_production_date", "_change_crm_due_date", "_append_crm_production_note"):
+            mocks[name].assert_not_called()
+
     def test_nj_stock_shortage_is_skipped_before_adding_partial_stock(self):
         for override in (False, True):
             with self.subTest(buffer_override=override):
@@ -831,6 +864,7 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
                         {"warehouse": "Richmond, VA", "stock": {"3XL": 0, "4XL": 0}},
                     ],
                     allow_low_stock_buffer=override,
+                    allow_nj_only_pickup=True,
                 )
 
                 self.assertFalse(result["success"])
