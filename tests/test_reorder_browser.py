@@ -58,7 +58,58 @@ class ReorderBrowserTests(unittest.TestCase):
         self.driver.execute_script("delete window.angular")
         self.assertEqual([x["assigned"] for x in worker._read_rows(self.driver)["records"]], [False, True])
         self.driver.execute_script("document.querySelector('tr[ng-repeat]').style.backgroundColor='green'")
-        self.assertIsNone(worker._read_rows(self.driver)["records"][0]["assigned"])
+        with self.assertRaisesRegex(RuntimeError, "could not be verified"):
+            worker._read_rows(self.driver, timeout=0)
+
+    def test_delayed_red_stock_waits_for_the_inventory_table_instead_of_skipping_the_order(self):
+        self.driver.execute_script("""
+const table=document.querySelector('table.goods-ordered');
+const original=window.angular.element;
+const rows=[...table.querySelectorAll('tbody tr')];
+rows.forEach(row=>row.remove());table.style.display='none';
+let inventory=[];
+window.angular.element=node=>node===table ? {scope:()=>({inventoryOrders:inventory})} : original(node);
+setTimeout(()=>{inventory=[{},{}];table.tBodies[0].append(...rows);table.style.display='';},1200);
+""")
+        with mock.patch.object(worker.bypass, '_open_target_order'), mock.patch.object(
+            worker.bypass, '_require_crm_order_ready_once_with_refresh'
+        ), mock.patch.object(worker.bypass, '_find_stock_tabs', return_value=[{'label':'H-Fixture 1 - QTY: 1 View Proofs'}]), mock.patch.object(
+            worker.bypass, '_activate_stock_tab', return_value={}
+        ), mock.patch.object(worker.bypass, '_extract_order_data', return_value={'products':[{'product_id':'CE10','color':'True Royal','quantities':{'M':1}}]}):
+            _order,tabs=worker.scan_order(self.driver,'5000001')
+        self.assertEqual(len(tabs),1)
+        self.assertEqual(tabs[0]['vendor'],'ssactivewear')
+        self.assertEqual(tabs[0]['red_records'][0]['po'],'H-Fixture-OLD')
+
+    def test_stock_waits_for_all_model_rows_to_render_before_accepting_a_yellow_only_table(self):
+        self.driver.execute_script("""
+const table=document.querySelector('table.goods-ordered'), original=window.angular.element;
+const red=table.querySelector('tbody tr');red.remove();
+window.angular.element=node=>node===table ? {scope:()=>({inventoryOrders:[{},{}]})} : original(node);
+setTimeout(()=>table.tBodies[0].prepend(red),900);
+""")
+        self.assertEqual([row['assigned'] for row in worker._read_rows(self.driver)['records']],[False,True])
+
+    def test_a_table_that_never_loads_requires_review(self):
+        self.driver.execute_script("document.querySelector('table.goods-ordered').remove()")
+        with self.assertRaisesRegex(RuntimeError,'Reorder requires review'):
+            worker._read_rows(self.driver,timeout=0)
+
+    def test_angular_inventory_must_be_initialized_before_rows_are_accepted(self):
+        self.driver.execute_script("""
+const table=document.querySelector('table.goods-ordered'), original=window.angular.element;
+window.angular.element=node=>node===table ? {scope:()=>({inventoryOrders:undefined})} : original(node);
+""")
+        with self.assertRaisesRegex(RuntimeError,'Reorder requires review'):
+            worker._read_rows(self.driver,timeout=0)
+
+    def test_hidden_designs_cannot_supply_the_visible_designs_stock_rows(self):
+        self.driver.execute_script("""
+const table=document.querySelector('table.goods-ordered'), red=table.querySelector('tbody tr');
+const pane=document.createElement('div');pane.className='tab-pane';pane.style.display='none';
+pane.append(table.cloneNode(true));document.body.append(pane);red.remove();
+""")
+        self.assertEqual([row['assigned'] for row in worker._read_rows(self.driver)['records']],[True])
 
     def test_delayed_cookie_banner_is_accepted_before_clicking_the_page(self):
         self.driver.execute_script(r"""

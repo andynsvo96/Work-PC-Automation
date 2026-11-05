@@ -115,7 +115,65 @@ class ReorderPlanningTests(unittest.TestCase):
         self.assertTrue(review.call_args.kwargs["dry_run"])
 
 
+class ReorderStockScanTests(unittest.TestCase):
+    def setUp(self):
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        for name in ("_open_target_order", "_require_crm_order_ready_once_with_refresh", "_activate_stock_tab"):
+            self.stack.enter_context(mock.patch.object(worker.bypass, name))
+        self.stack.enter_context(mock.patch.object(worker.bypass, "_find_stock_tabs", return_value=[{"label": "H-Fixture 1 - QTY: 1 View Proofs"}]))
+        self.stack.enter_context(mock.patch.object(worker.bypass, "_extract_order_data", return_value={"products": [product()]}))
+        self.stack.enter_context(mock.patch.object(worker.time, "sleep"))
+
+    @staticmethod
+    def state(assigned=False, *, ready=True):
+        return {"ready": ready, "design_tab_id": "design-fixture", "records": [
+            {"id": "old-stock", "vendor": "S&S Activewear", "po": "H-Fixture-OLD", "assigned": assigned},
+        ]}
+
+    def test_late_inventory_rows_cannot_be_reported_as_no_reorder_needed(self):
+        driver = mock.Mock()
+        driver.execute_script.side_effect = [
+            {"ready": False, "design_tab_id": "design-fixture", "records": []},
+            self.state(ready=False), self.state(), self.state(),
+        ]
+        _order, tabs = worker.scan_order(driver, "5000001")
+        self.assertEqual(len(tabs), 1)
+        self.assertEqual(tabs[0]["vendor"], "ssactivewear")
+        self.assertEqual(tabs[0]["red_records"][0]["po"], "H-Fixture-OLD")
+
+    def test_empty_or_unreadable_inventory_stops_for_review_instead_of_success(self):
+        for state in ({"ready": False, "records": []}, self.state(assigned=None, ready=False)):
+            driver = mock.Mock()
+            driver.execute_script.return_value = state
+            with self.subTest(state=state), self.assertRaisesRegex(RuntimeError, "Reorder requires review"):
+                worker._read_rows(driver, timeout=0)
+
+    def test_destination_must_finish_changing_before_the_scan_is_accepted(self):
+        driver = mock.Mock()
+        driver.execute_script.side_effect = [self.state(assigned=True), self.state(), self.state()]
+        _order, tabs = worker.scan_order(driver, "5000001")
+        self.assertEqual(len(tabs), 1)
+        self.assertFalse(tabs[0]["red_records"][0]["assigned"])
+
+    def test_verified_current_destination_stock_still_needs_no_reorder(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = self.state(assigned=True)
+        _order, tabs = worker.scan_order(driver, "5000001")
+        self.assertEqual(tabs, [])
+
+
 class SxsPlanningTests(unittest.TestCase):
+    def test_core365_ce10_matches_the_exact_supplier_brand_style_and_description(self):
+        p = product(product_id="CE10", product_name="Core365 Unisex Capital Performance T-Shirt", color="True Royal", quantities={"M": 1})
+        correct = {"url": "https://www.ssactivewear.com/p/core365/ce10", "title": "CE10 CORE365 Unisex Capital Performance T-Shirt"}
+        other_brand = {"url": "https://www.ssactivewear.com/p/other_brand/ce10", "title": "CE10 Other Brand Unisex Capital Performance T-Shirt"}
+        long_sleeve = {"url": "https://www.ssactivewear.com/p/core365/ce10l", "title": "CE10L CORE365 Capital Long Sleeve Performance T-Shirt"}
+        self.assertEqual(sxs.select_product(p, [other_brand, long_sleeve, correct]), correct)
+        for candidate in (other_brand, long_sleeve):
+            with self.subTest(candidate=candidate), self.assertRaises(RuntimeError):
+                sxs.select_product(p, [candidate])
+
     def test_login_input_does_not_type_when_focus_moves_elsewhere(self):
         driver = mock.Mock(current_url=sxs.LOGIN_URL)
         driver.execute_script.return_value = False

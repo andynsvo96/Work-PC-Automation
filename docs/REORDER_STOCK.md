@@ -28,6 +28,16 @@ The worker inspects the stock records on each design, using CRM's
 red/yellow style is a fallback for legacy views. Computed colors, including dark
 mode overrides, are not used as the source of truth.
 
+The worker waits up to 20 seconds for the selected design's vendor PO table and
+requires two stable reads. Live Angular inventory must be initialized and its
+record count must match the rendered rows. Hidden designs cannot supply another
+design's stock. Missing, empty, partially rendered, or unreadable stock stops for
+review instead of reporting **No red vendor POs require reordering**. A verified
+table containing only current-destination records still needs no Reorder.
+This worker fix loads on the next queued run; no app restart or extension reload
+is needed. Queue an order again if an earlier completed entry falsely reported
+that no Reorder was needed.
+
 - Red means the purchase was assigned to the former subcontractor. Ordered status
   flags alone do not mean stock is available at the current production destination.
 - The exact **M6 Print and Ship to Philly (PA)** banner, and its assignment-panel
@@ -57,9 +67,11 @@ NJ and shipped stock are prepared as separate purchases when a split requires NJ
 
 S&S ordering is used only by Reorder. It searches `https://www.ssactivewear.com/ps/<style>`,
 including supported style conversions such as G500 to 5000, and requires a matching
-brand, style, and sufficiently close description. Search reads the visible
-product card's labelled style, brand, and description, including accessibility
-layouts whose main links have no layout box. Separate color-count links are
+brand, style, and sufficiently close description. CORE365 is recognized, including
+**CE10 Unisex Capital Performance T-Shirt**; exact style and description checks
+still reject another brand or CE10L. Search reads the visible product card's
+labelled style, brand, and description, including accessibility layouts whose
+main links have no layout box. Separate color-count links are
 excluded. Ambiguous results stop rather than selecting another brand with the
 same style number. Color matching is exact
 after punctuation/case and grey/gray normalization.

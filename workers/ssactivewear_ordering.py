@@ -62,7 +62,7 @@ def select_product(product, candidates):
     """An exact style alone is insufficient: require the CRM brand and description."""
     wanted_style = style_id(product)
     description = str(product.get("product_name") or product.get("stock_line") or "")
-    brands = ("Gildan", "Bayside", "Bella", "Next Level", "Rabbit Skins", "Jerzees", "Hanes", "Comfort Colors", "A4", "Lane Seven", "Independent", "Port Authority", "Port and Company", "Team 365", "Sport Tek", "Fruit of the Loom", "Anvil", "Champion", "Adidas", "Columbia", "Harriton", "Devon", "Augusta", "Tultex")
+    brands = ("Gildan", "Bayside", "Bella", "Next Level", "Rabbit Skins", "Jerzees", "Hanes", "Comfort Colors", "A4", "Lane Seven", "Independent", "Port Authority", "Port and Company", "Team 365", "Sport Tek", "Fruit of the Loom", "Anvil", "Champion", "Adidas", "Columbia", "Harriton", "Devon", "Augusta", "Tultex", "Core365")
     brand = next((b for b in brands if _words(b) <= _words(description)), None)
     if not brand:
         raise RuntimeError("S&S product brand could not be established from the CRM description; review the match.")

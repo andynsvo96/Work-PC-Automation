@@ -19,7 +19,9 @@
 <input type="button" id="M_M_zCheckoutBTN" value="Complete Order">
 <div id="M_M_zConfirmOrderPopup_PW-1" style="display:none"><p>Are you sure you want to submit your order?</p><button id="M_M_zConfirmOrderPopup_zCompleteBTN">YES</button></div>
 <script>
-window.angular={element:row=>({scope:()=>({inventoryOrder:{id:'fixture-'+row.rowIndex,assignedToCurrentSubcontractor:row.dataset.assigned==='true'}})})};
+window.angular={element:row=>({scope:()=>row.tagName==='TABLE'
+ ? {inventoryOrders:[...row.querySelectorAll('tbody tr')].map(node=>({id:'fixture-'+node.rowIndex,assignedToCurrentSubcontractor:node.dataset.assigned==='true'}))}
+ : {inventoryOrder:{id:'fixture-'+row.rowIndex,assignedToCurrentSubcontractor:row.dataset.assigned==='true'}}})};
 const sizes=['S','M','L','XL','2XL','3XL','4XL','5XL'];
 for(const [id,name] of [[12,'Reading, PA'],[18,'Middleboro, MA']]) {
  const r=document.createElement('div');r.className='gR';r.id=`wh_1_${id}_1_16787`;

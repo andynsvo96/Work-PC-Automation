@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from collections import defaultdict
 from contextlib import ExitStack
 from datetime import date, datetime
@@ -28,7 +29,23 @@ RECEIPT_DIR = state_file("stock_reorders")
 PHILLY_SUBCONTRACTOR = re.compile(r"^M6 Print and Ship to Philly(?:\s*\(PA\))?$", re.I)
 
 STOCK_ROWS_SCRIPT = sxs.DOM + r"""
-const rows = [...document.querySelectorAll('table.goods-ordered tbody tr[ng-repeat*="inventoryOrder"]')].filter(visible);
+const activeTabs = [...document.querySelectorAll('#order-design-details li.order-form-design-tab.active')].filter(visible);
+const active = activeTabs.length === 1 ? activeTabs[0] : null;
+// The inventory request and ngRepeat render can finish after the design itself
+// becomes visible. An empty/hidden table is not proof that no red stock exists.
+const tables = [...document.querySelectorAll('table.goods-ordered')].filter(table => {
+ const pane = table.closest('.tab-pane');
+ return pane ? pane.classList.contains('active') && visible(pane) : visible(table.parentElement);
+});
+const rows = tables.flatMap(table => [...table.querySelectorAll('tbody tr[ng-repeat*="inventoryOrder"]')]).filter(visible);
+let modelCount = null;
+let modelReady = !window.angular;
+if (tables.length === 1) {
+ try {
+  const inventory = window.angular?.element(tables[0]).scope()?.inventoryOrders;
+  if (Array.isArray(inventory)) { modelCount = inventory.length; modelReady = true; }
+ } catch (_) {}
+}
 const records = rows.map(row => {
  let model = null;
  try { model = window.angular?.element(row).scope()?.inventoryOrder; } catch (_) {}
@@ -44,8 +61,10 @@ const records = rows.map(row => {
  const cells=[...row.children].map(c=>norm(c.innerText));
  return {id:String(model?.id || ''),vendor:cells[0]||'',po:cells[1]||'',vendor_order_number:cells[2]||'',shipped_to:cells[5]||'',assigned};
 });
-const active=document.querySelector('#order-design-details li.order-form-design-tab.active');
-return {records,design_tab_id:active?.id||''};
+return {records,design_tab_id:active?.id||'',
+ ready:activeTabs.length === 1 && tables.length === 1 && modelReady && records.length > 0
+       && (modelCount === null || modelCount === records.length)
+       && records.every(record => typeof record.assigned === 'boolean')};
 """
 
 
@@ -62,11 +81,20 @@ def vendor_label(key):
     return "Sanmar" if key == "sanmar" else "S&S Activewear"
 
 
-def _read_rows(driver):
-    state = driver.execute_script(STOCK_ROWS_SCRIPT)
-    if not isinstance(state, dict) or not isinstance(state.get("records"), list):
-        raise RuntimeError("CRM stock records could not be inspected.")
-    return state
+def _read_rows(driver, timeout=20):
+    deadline = time.monotonic() + timeout
+    previous = None
+    while True:
+        state = driver.execute_script(STOCK_ROWS_SCRIPT)
+        if not isinstance(state, dict) or not isinstance(state.get("records"), list):
+            raise RuntimeError("CRM stock records could not be inspected.")
+        current = {"records": state["records"], "design_tab_id": state.get("design_tab_id")}
+        if state.get("ready") is True and current == previous:
+            return state
+        previous = current if state.get("ready") is True else None
+        if time.monotonic() >= deadline:
+            raise RuntimeError("CRM vendor PO rows could not be verified for the selected design. The inventory may still be loading or its destination is unclear; Reorder requires review. No new purchase was submitted.")
+        time.sleep(0.25)
 
 
 def scan_order(driver, order_id):
@@ -80,11 +108,11 @@ def scan_order(driver, order_id):
     for index, tab in enumerate(tabs, 1):
         if bypass._activate_stock_tab(driver, index - 1) is None:
             raise RuntimeError("A CRM design tab could not be selected.")
+        state = _read_rows(driver)
         data = bypass._extract_order_data(driver, order_id, tab_context=tab)
         if data.get("subcontractor_banner_present") and not PHILLY_SUBCONTRACTOR.fullmatch(data.get("subcontractor", "")):
             raise RuntimeError("Reorder requires in-house production or M6 Print and Ship to Philly (PA).")
         order = order or data
-        state = _read_rows(driver)
         records = state["records"]
         if any(x.get("assigned") is None for x in records):
             raise RuntimeError("A stock record's destination is unclear; review before reordering.")
