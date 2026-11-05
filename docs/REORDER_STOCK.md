@@ -74,6 +74,9 @@ the Comfort Colors brand; the supplier's exact style, brand, and description mus
 still match. CRM product IDs and receipt source signatures retain their original
 values. This worker fix loads on the next queued run without an app restart or
 extension reload. Use **Retry** on the failed Reorder entry.
+Description matching also normalizes CRM's known `Lighweight` spelling to
+`Lightweight`, as used for Comfort Colors 1467CC. This does not change CRM data
+or relax the exact supplier style, brand, and age/fit checks.
 CORE365 is recognized, including
 **CE10 Unisex Capital Performance T-Shirt**; exact style and description checks
 still reject another brand or CE10L. Search reads the visible product card's

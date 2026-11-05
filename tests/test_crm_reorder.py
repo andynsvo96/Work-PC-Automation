@@ -316,7 +316,8 @@ class SxsPlanningTests(unittest.TestCase):
         self.assertEqual(sxs.select_product(p, candidates), candidates[0])
 
     def test_comfort_colors_cc_suffix_matches_the_labelled_supplier_style(self):
-        p = product(product_id="1467CC", product_name="Comfort Colors Lightweight Hooded Sweatshirt")
+        # Live CRM catalogue spelling on order 5473493; preserve its source text.
+        p = product(product_id="1467CC", product_name="Comfort Colors Unisex Lighweight Cotton Hooded Sweatshirt")
         original = copy.deepcopy(p)
         correct = {"url": "https://www.ssactivewear.com/p/comfort_colors/1467",
                    "title": "1467 Comfort Colors Unisex Garment-Dyed Lightweight Hooded Sweatshirt",

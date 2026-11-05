@@ -61,6 +61,9 @@ def style_id(product):
 
 def _words(text):
     text = re.sub(r"t[ -]?shirts?|tees?\b", "shirt", str(text).lower())
+    # CRM's 1467CC catalogue description misspells this garment descriptor.
+    # Correct only the known spelling; brand/style and fit checks stay exact.
+    text = re.sub(r"\blighweight\b", "lightweight", text)
     return set(re.findall(r"[a-z0-9]+", text)) - {"unisex", "a", "the", "alpha", "stock", "tm"}
 
 
