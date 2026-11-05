@@ -27,6 +27,11 @@ import crm_copyright_cancel as shared
 from runtime_paths import STATE_DIR
 
 
+REVERSE_PRINT_NAME = "REVERSEPRINT"
+REVERSE_PRINT_NAMES = {"reverseprint", "reverse-print"}
+REWRITTEN_REVERSE_PRINT_NAME = "h-print"
+
+
 class ReversePrintError(RuntimeError):
     pass
 
@@ -201,8 +206,10 @@ def _quantities(item):
 
 
 def _validate_source(source):
-    if _key(source["name"]) == "reverse-print":
-        raise ReversePrintError("Select the original product tab, not an existing REVERSE-PRINT tab.")
+    if _key(source["name"]) in REVERSE_PRINT_NAMES or (
+        _key(source["name"]) == REWRITTEN_REVERSE_PRINT_NAME and any(item["is_style_sub"] for item in source["items"])
+    ):
+        raise ReversePrintError("Select the original product tab, not an existing reverse-print tab.")
     if not source["items"]:
         raise ReversePrintError("The selected source tab has no products.")
     for item in source["items"]:
@@ -215,6 +222,24 @@ def _validate_source(source):
             raise ReversePrintError("Source product must have whole-number quantities.")
 
 
+def _matches_rewritten_clone(source, clone):
+    """H-PRINT is not a unique marker: require the saved reverse product data."""
+    if not source["design_id"] or source["design_id"] != clone["design_id"]:
+        return False
+    if clone["areas"] != source["areas"] or len(clone["items"]) != len(source["items"]):
+        return False
+    for original, actual in zip(source["items"], clone["items"]):
+        if not actual["is_style_sub"] or _key(actual["catalog_style"]) not in {"stylesub", "style_sub"}:
+            return False
+        for field in ("vendor", "style", "color", "description"):
+            expected = reverse_color(original[field]) if field == "color" else original[field]
+            if _key(actual[field]) != _key(expected):
+                return False
+        if _quantities(actual) != _quantities(original):
+            return False
+    return True
+
+
 def find_clone(source, designs, used=()):
     """Match completed or partial clones without relying on duplicate tab names.
 
@@ -223,7 +248,17 @@ def find_clone(source, designs, used=()):
     """
     candidates = []
     for design in designs:
-        if design["index"] in used or _key(design["name"]) != "reverse-print":
+        if design["index"] in used or design["index"] == source["index"]:
+            continue
+        name = _key(design["name"])
+        if name == REWRITTEN_REVERSE_PRINT_NAME:
+            if source["design_id"] and design["design_id"] and source["design_id"] != design["design_id"]:
+                continue
+            if not _matches_rewritten_clone(source, design):
+                raise ReversePrintError("An H-PRINT tab may be a saved reverse-print clone but its products cannot be verified; review it before retrying.")
+            candidates.append(design)
+            continue
+        if name not in REVERSE_PRINT_NAMES:
             continue
         if len(design["items"]) != len(source["items"]):
             continue
@@ -241,13 +276,13 @@ def find_clone(source, designs, used=()):
         if len(color_matches) == 1:
             candidates = color_matches
         else:
-            raise ReversePrintError(f"Multiple REVERSE-PRINT clones match tab {source['index'] + 1}; manual review is needed.")
+            raise ReversePrintError(f"Multiple reverse-print clones match tab {source['index'] + 1}; manual review is needed.")
     if candidates:
         return candidates[0]
     # A damaged clone with the same design identity needs review, not another clone.
-    if source["design_id"] and any(_key(d["name"]) == "reverse-print" and d["design_id"] == source["design_id"] and
+    if source["design_id"] and any(_key(d["name"]) in REVERSE_PRINT_NAMES and d["design_id"] == source["design_id"] and
                                   d["index"] not in used for d in designs):
-        raise ReversePrintError("An existing REVERSE-PRINT clone has incompatible products; review it before retrying.")
+        raise ReversePrintError("An existing reverse-print clone has incompatible products; review it before retrying.")
     return None
 
 
@@ -375,8 +410,10 @@ def _restore_sizes(driver, index, item_index, expected, unit_price):
 
 
 def _assert_clone(source, clone, unit_price):
-    if clone["name"] != "REVERSE-PRINT" or len(clone["items"]) != len(source["items"]):
-        raise ReversePrintError("Reverse-print clone name or product count is incorrect.")
+    if clone["name"] != REVERSE_PRINT_NAME:
+        raise ReversePrintError(f"Reverse-print clone tab {clone['index'] + 1} is named {clone['name']!r}; expected {REVERSE_PRINT_NAME!r}.")
+    if len(clone["items"]) != len(source["items"]):
+        raise ReversePrintError(f"Reverse-print clone has {len(clone['items'])} product(s); expected {len(source['items'])}.")
     if clone["areas"] != source["areas"]:
         raise ReversePrintError("Reverse-print clone does not retain the source print areas and methods.")
     for original, actual in zip(source["items"], clone["items"]):
@@ -418,18 +455,30 @@ def apply_reverse_prints(driver, selections):
         source = job["source"]
         if job["clone_index"] is None:
             job["clone_index"] = shared._order_scope(driver, r"""
-              const source = Number(arguments[0]), count = r.designs.length;
+              const source = Number(arguments[0]), name = arguments[1], count = r.designs.length;
               runInAngular(s, () => {
                 s.duplicateDesign(source);
                 if (r.designs.length !== count + 1) throw new Error('CRM did not create exactly one clone.');
                 const clone = r.designs[count];
-                clone.PO = 'REVERSE-PRINT';
+                clone.PO = name;
                 if (typeof s.watchDesignChanges === 'function') s.watchDesignChanges(clone, count);
               });
               return count;
-            """, source["index"])
+            """, source["index"], REVERSE_PRINT_NAME)
         index = job["clone_index"]
         _select_tab(driver, index)
+        # Use a name without a hyphen: CRM saved REVERSE-PRINT as H-PRINT.
+        # Rename verified legacy clones too, before the usual save/reload check.
+        shared._order_scope(driver, r"""
+          const clone = r.designs[Number(arguments[0])], name = arguments[1];
+          runInAngular(s, () => {
+            if (clone.PO !== name) {
+              clone.PO = name;
+              if (clone.crudAction !== 'c') clone.crudAction = 'u';
+            }
+          });
+          return true;
+        """, index, REVERSE_PRINT_NAME)
         for ordinal, item in enumerate(source["items"]):
             _convert_product(driver, index, ordinal, item, job["unit_price"])
         _assert_clone(source, read_designs(driver)[index], job["unit_price"])

@@ -32,8 +32,22 @@ const scope = {
     copy.designItems.forEach((item,i)=>item.id=copy.id+'item'+i);
     resource.designs.push(copy);events.push('clone');
   },
+  saveOrder(){
+    // Observed CRM save result for the old automation's hyphenated name.
+    for (const design of resource.designs) {
+      if (design.PO==='REVERSE-PRINT') design.PO='H-PRINT';
+    }
+    window.savedDesigns=JSON.parse(JSON.stringify(resource.designs));
+    this.editMode=false;
+  },
   watchDesignChanges(){},watchItemQuantityChanges(){},watchItemChanges(){},watchSizeQuantityChanges(){},watchSizeChanges(){}
 };
+function reloadSavedDesigns() {
+  resource.designs=JSON.parse(JSON.stringify(window.savedDesigns));
+  scope.editMode=false;
+  activeIndex=0;
+  render();
+}
 window.angular={element:el=>({scope:()=>el._scope||scope,isolateScope:()=>null})};
 function field(block, model, placeholder, value, update, picker=false) {
   const input=document.createElement(placeholder==='Description'?'textarea':'input');

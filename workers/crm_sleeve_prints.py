@@ -1124,9 +1124,9 @@ def process_sleeve_prints_order(
             if emb_mutation_path is not None:
                 _record_emb_mutation(emb_mutation_path, mutation)
             save = shared._save_order_and_wait(driver)
-            if comp_sleeves:
-                # Re-read persisted areas and unchanged prices before preparing the email.
-                shared.safe_get_with_partial_load(driver, order_url, f"Verify saved sleeve areas for CRM order {order_id}")
+            if comp_sleeves or reverse_mutation is not None:
+                # Read persisted tab names, areas and prices before preparing the email.
+                shared.safe_get_with_partial_load(driver, order_url, f"Verify saved Extra Print Areas for CRM order {order_id}")
                 shared._login_to_crm_if_needed(driver, order_url, login_wait_seconds=login_wait_seconds)
                 shared._switch_to_crm_app_frame(driver)
                 shared._wait_for_order_scope(driver, order_id=order_id)

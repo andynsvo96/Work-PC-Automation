@@ -48,8 +48,11 @@ class ReversePrintBrowserTests(unittest.TestCase):
         selections = [{"tab_number": 1, "reverse_unit_price": "14.00"}]
         mutation = reverse.apply_reverse_prints(driver, selections)
         self.assertTrue(reverse.verify_reverse_prints(driver, mutation))
+        driver.execute_script("scope.saveOrder();reloadSavedDesigns();")
+        self.assertTrue(reverse.verify_reverse_prints(driver, mutation))
         self.assertEqual(driver.execute_script("return events"), ["clone", "pick:Style Sub", "apply", "pick:Sanmar", "pick:Style Sub", "apply", "pick:Sanmar"])
         clone = reverse.read_designs(driver)[1]
+        self.assertEqual(clone["name"], "REVERSEPRINT")
         self.assertEqual([x["color"] for x in clone["items"]], ["Deep Red/ Black", "White"])
         # Simulate a previously saved, partially completed clone and retry.
         driver.execute_script("resource.designs[1].designItems[0].sizes[2].quantity=4;resource.designs[1].designItems[1].sizes[2].pricePerPiece='33.09';events=[]")
@@ -62,6 +65,25 @@ class ReversePrintBrowserTests(unittest.TestCase):
         incomplete = reverse.apply_reverse_prints(driver, selections)
         self.assertTrue(reverse.verify_reverse_prints(driver, incomplete))
         self.assertEqual(driver.execute_script("return events"), ["pick:Sanmar"])
+
+    def test_retry_recovers_saved_h_print_without_cloning_or_changing_source(self):
+        driver = self.driver
+        driver.get((ROOT / "tests/fixtures/reverse_print_crm.html").as_uri())
+        selections = [{"tab_number": 1, "reverse_unit_price": "14.00"}]
+        mutation = reverse.apply_reverse_prints(driver, selections)
+        driver.execute_script("resource.designs[1].PO='REVERSE-PRINT';scope.saveOrder();reloadSavedDesigns();events=[];")
+        before = reverse.read_designs(driver)
+        self.assertEqual(before[1]["name"], "H-PRINT")
+        retry = reverse.apply_reverse_prints(driver, selections)
+        self.assertFalse(retry["jobs"][0]["created"])
+        driver.execute_script("scope.saveOrder();reloadSavedDesigns();")
+        self.assertTrue(reverse.verify_reverse_prints(driver, retry))
+        after = reverse.read_designs(driver)
+        self.assertEqual(len(after), 2)
+        self.assertEqual(after[0], before[0])
+        self.assertEqual(after[1]["id"], before[1]["id"])
+        self.assertEqual(after[1]["name"], "REVERSEPRINT")
+        self.assertEqual(driver.execute_script("return events"), [])
 
     def test_popup_exclusive_categories_and_shared_reverse_price(self):
         driver = self.driver

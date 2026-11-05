@@ -25,7 +25,7 @@ def source_design(index=0):
 
 def clone_design(source, index=1, price="8.00"):
     clone = copy.deepcopy(source)
-    clone.update(index=index, id=str(index + 10), name="REVERSE-PRINT")
+    clone.update(index=index, id=str(index + 10), name="REVERSEPRINT")
     for item in clone["items"]:
         item.update(is_style_sub=True, catalog_style="Style Sub", color=reverse.reverse_color(item["color"]))
         for size in item["sizes"]:
@@ -102,6 +102,70 @@ process.stdout.write(JSON.stringify(sleevePrintSelectionSummary(selected,tabs,{v
 
 
 class ReverseCloneTests(unittest.TestCase):
+    def test_canonical_and_legacy_names_find_the_same_clone(self):
+        source = source_design()
+        for name in ("REVERSEPRINT", "REVERSE-PRINT", "H-PRINT"):
+            with self.subTest(name=name):
+                clone = clone_design(source)
+                clone["name"] = name
+                self.assertIs(reverse.find_clone(source, [source, clone]), clone)
+
+    def test_h_print_recovery_requires_verified_artwork_and_reverse_products(self):
+        source = source_design()
+        original_clone = clone_design(source)
+        original_clone["name"] = "H-PRINT"
+        alterations = (
+            lambda clone: clone.update(design_id=""),
+            lambda clone: clone.update(areas=[]),
+            lambda clone: clone.update(items=[]),
+            lambda clone: clone["items"][0].update(is_style_sub=False),
+            lambda clone: clone["items"][0].update(catalog_style="ST5000"),
+            lambda clone: clone["items"][0].update(style="Other style"),
+            lambda clone: clone["items"][0].update(color="Black/ Deep Red"),
+            lambda clone: clone["items"][0].update(vendor="Other vendor"),
+            lambda clone: clone["items"][0].update(description="Other product"),
+            lambda clone: clone["items"][0]["sizes"][0].update(quantity=1),
+        )
+        for alter in alterations:
+            with self.subTest(alteration=alter):
+                clone = copy.deepcopy(original_clone)
+                alter(clone)
+                with self.assertRaisesRegex(reverse.ReversePrintError, "review it before retrying"):
+                    reverse.find_clone(source, [source, clone])
+        without_artwork = copy.deepcopy(source)
+        without_artwork["design_id"] = ""
+        with self.assertRaisesRegex(reverse.ReversePrintError, "review it before retrying"):
+            reverse.find_clone(without_artwork, [without_artwork, original_clone])
+        unrelated = copy.deepcopy(original_clone)
+        unrelated["design_id"] = "other-artwork"
+        self.assertIsNone(reverse.find_clone(source, [source, unrelated]))
+
+    def test_legacy_and_canonical_clones_together_require_review(self):
+        source = source_design()
+        canonical = clone_design(source)
+        legacy = clone_design(source, index=2)
+        legacy["name"] = "H-PRINT"
+        with self.assertRaisesRegex(reverse.ReversePrintError, "Multiple reverse-print clones"):
+            reverse.find_clone(source, [source, canonical, legacy])
+
+    def test_existing_reverse_tabs_cannot_be_selected_as_originals(self):
+        for name in ("REVERSEPRINT", "REVERSE-PRINT", "H-PRINT"):
+            clone = clone_design(source_design())
+            clone["name"] = name
+            with self.subTest(name=name), self.assertRaisesRegex(reverse.ReversePrintError, "Select the original product tab"):
+                reverse._validate_source(clone)
+
+    def test_verification_reports_actual_name_or_product_count(self):
+        source = source_design()
+        clone = clone_design(source)
+        clone["name"] = "H-PRINT"
+        with self.assertRaisesRegex(reverse.ReversePrintError, "named 'H-PRINT'; expected 'REVERSEPRINT'"):
+            reverse._assert_clone(source, clone, "8")
+        clone["name"] = "REVERSEPRINT"
+        clone["items"] = []
+        with self.assertRaisesRegex(reverse.ReversePrintError, r"has 0 product\(s\); expected 1"):
+            reverse._assert_clone(source, clone, "8")
+
     def test_source_waits_for_inventory_vendor_before_validation(self):
         source = source_design()
         pending = copy.deepcopy(source)
@@ -226,6 +290,34 @@ class ReverseWorkflowTests(unittest.TestCase):
                 extra.process_sleeve_prints_order("5209138", [{"tab_number": 1, "quantity": 8, "reverse": "ink"}])
             send.assert_not_called()
             self.assertEqual(list(Path(directory).rglob("*.json")), [])
+
+    def test_saved_clone_is_reloaded_before_verification_and_email(self):
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+            apply, verify, send = self._pipeline(stack, directory)
+            saved = False
+            reloaded = False
+
+            def save_order(driver):
+                nonlocal saved
+                saved = True
+
+            def navigate(driver, url, label):
+                nonlocal reloaded
+                if saved:
+                    reloaded = True
+
+            def verify_persisted(driver, mutation):
+                self.assertTrue(saved)
+                self.assertTrue(reloaded)
+                send.assert_not_called()
+                return True
+
+            extra.shared._save_order_and_wait.side_effect = save_order
+            extra.shared.safe_get_with_partial_load.side_effect = navigate
+            verify.side_effect = verify_persisted
+            result = extra.process_sleeve_prints_order("5209138", [{"tab_number": 1, "quantity": 8, "reverse": "ink"}])
+            self.assertTrue(result["success"])
+            send.assert_called_once()
 
 
 if __name__ == "__main__":
