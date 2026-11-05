@@ -60,6 +60,78 @@ test('a browser restart never adopts a stale local tab ID', async () => {
   assert.equal(f.calls.filter(c => ['create', 'send', 'inject'].includes(c[0])).length, 0);
 });
 
+test('automatic setup after a browser restart creates a minimized window without adopting a stale ID', async () => {
+  const f = fixture(); delete f.session.sxsReorderOwnedTab;
+  Object.assign(f.local.sxsReorderBrowser, { tabId: 7, boundSession: '2'.repeat(32), minimizedWindowId: 3 });
+  const worker = createSxsWorker(f.api, f.fetcher);
+  const result = await worker.execute(f.command('prepare'));
+  assert.equal(result.signed_in, true);
+  assert.equal(f.calls.filter(c => c[0] === 'window').length, 1);
+  assert.deepEqual(f.calls.find(c => c[0] === 'window')[1], { url: ORIGIN + '/checkout/cart', state: 'minimized', focused: false });
+  assert.ok(f.calls.filter(c => c[0] === 'send').every(c => c[1] !== 7 && c[2].operation === 'health'));
+  assert.ok(f.calls.filter(c => c[0] === 'update').every(c => c[1] !== 7 && c[2].active !== true));
+  assert.equal(f.session.sxsReorderOwnedTab.minimizedWindowId, 3);
+  assert.equal(f.local.sxsReorderBrowser.enabled, true);
+});
+
+test('a batch reuses the owned minimized window across order sessions and keeps the connection enabled', async () => {
+  const f = fixture(); delete f.session.sxsReorderOwnedTab;
+  const worker = createSxsWorker(f.api, f.fetcher);
+  await worker.execute(f.command('prepare'));
+  await worker.execute({ ...f.command('prepare'), session_id: '4'.repeat(32), order_id: '5000002' });
+  assert.equal(f.calls.filter(c => c[0] === 'window').length, 1);
+  assert.equal(new Set(f.calls.filter(c => c[0] === 'send').map(c => c[1])).size, 1);
+  assert.equal(f.local.sxsReorderBrowser.enabled, true);
+  assert.ok(f.calls.filter(c => c[0] === 'window-update').every(c => c[2].focused === false && c[2].state === 'minimized'));
+});
+
+test('a background check tab never causes the user window to be minimized', async () => {
+  const f = fixture(); f.tabs.get(7).windowId = 99;
+  const command = { ...f.command('prepare'), session_id: '4'.repeat(32) };
+  await createSxsWorker(f.api, f.fetcher).execute(command);
+  assert.equal(f.calls.filter(c => c[0] === 'window').length, 1);
+  assert.ok(f.calls.filter(c => c[0] === 'window-update').every(c => c[1] !== 99));
+});
+
+test('closing the worker between orders is recoverable but losing it during an order is not', async () => {
+  const f = fixture(); f.session.sxsReorderOwnedTab.minimizedWindowId = 3; f.tabs.delete(7);
+  const worker = createSxsWorker(f.api, f.fetcher);
+  await assert.rejects(worker.execute(f.command('prepare')), /already attempted/);
+  assert.equal(f.calls.filter(c => c[0] === 'window').length, 0);
+  const next = { ...f.command('prepare'), session_id: '4'.repeat(32), order_id: '5000002' };
+  await worker.execute(next);
+  assert.equal(f.calls.filter(c => c[0] === 'window').length, 1);
+  await assert.rejects(worker.execute(next), /already attempted/);
+  assert.equal(f.calls.filter(c => c[0] === 'window').length, 1);
+});
+
+test('automatic setup refuses a changed or frozen owned tab without opening another window', async () => {
+  for (const mode of ['foreign', 'frozen']) {
+    const f = fixture(); f.session.sxsReorderOwnedTab.minimizedWindowId = 3;
+    if (mode === 'foreign') f.tabs.get(7).url = 'https://example.test/';
+    else f.tabs.get(7).frozen = true;
+    await assert.rejects(createSxsWorker(f.api, f.fetcher).execute({ ...f.command('prepare'), session_id: '4'.repeat(32) }), /changed|suspended/);
+    assert.equal(f.calls.filter(c => ['send', 'window'].includes(c[0])).length, 0);
+  }
+});
+
+test('setup verifies minimization and cannot create a second window after failure', async () => {
+  const f = fixture(); delete f.session.sxsReorderOwnedTab;
+  f.api.windows.get = async () => ({ state: 'normal' });
+  const worker = createSxsWorker(f.api, f.fetcher);
+  await assert.rejects(worker.execute(f.command('prepare')), /did not minimize/);
+  await assert.rejects(worker.execute(f.command('prepare')), /already attempted/);
+  assert.equal(f.calls.filter(c => c[0] === 'window').length, 1);
+  assert.equal(f.calls.filter(c => c[0] === 'send').length, 0);
+});
+
+test('a temporarily unavailable local app does not disable an opted-in connection', async () => {
+  const f = fixture(); f.fetcher = async () => { throw Error('App unavailable'); };
+  await assert.rejects(createSxsWorker(f.api, f.fetcher).connect(true), /App unavailable/);
+  assert.equal(f.local.sxsReorderBrowser.enabled, true);
+  assert.match(f.local.sxsReorderBrowser.message, /retry automatically/);
+});
+
 test('foreign, frozen, and unpermitted tabs stop before page input', async () => {
   for (const mode of ['foreign', 'frozen', 'permission']) {
     const f = fixture();

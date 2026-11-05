@@ -113,17 +113,17 @@ export function createSxsWorker(api, fetcher = fetch) {
     const settings = { ...((await api.storage.local.get(STATE))[STATE] || {}) };
     // Tab IDs survive a service-worker restart, not a browser restart. Never
     // recover a different user tab from an old numeric ID in local storage.
-    delete settings.tabId; delete settings.boundSession;
+    delete settings.tabId; delete settings.boundSession; delete settings.minimizedWindowId;
     return { ...settings, ...((await api.storage.session.get(OWNED))[OWNED] || {}) };
   };
   const update = patch => {
     const task = writes.then(async () => {
       const state = { ...(await read()), ...patch };
       const settings = { ...state };
-      delete settings.tabId; delete settings.boundSession;
+      delete settings.tabId; delete settings.boundSession; delete settings.minimizedWindowId;
       await api.storage.local.set({ [STATE]: settings });
       if (Object.hasOwn(patch, 'tabId') || Object.hasOwn(patch, 'boundSession')) {
-        await api.storage.session.set({ [OWNED]: { tabId: state.tabId, boundSession: state.boundSession } });
+        await api.storage.session.set({ [OWNED]: { tabId: state.tabId, boundSession: state.boundSession, minimizedWindowId: state.minimizedWindowId } });
       }
       return state;
     });
@@ -154,14 +154,15 @@ export function createSxsWorker(api, fetcher = fetch) {
     const old = await read();
     const state = await update({ enabled: enabled === true, clientId: old.clientId || crypto.randomUUID().replaceAll('-', '') });
     if (!enabled) await api.alarms.clear(ALARM);
+    else await api.alarms.create(ALARM, { periodInMinutes: 0.5 });
     try {
       await request('/connect', { ...identity(state), enabled: state.enabled });
-      await update({ message: enabled ? 'Connected. Sign in to S&S, then run the read-only check.' : 'S&S browser disconnected.' });
+      await update({ message: enabled ? 'Connected. Reorder opens and checks a minimized S&S window automatically. Sign in once if needed.' : 'S&S browser disconnected.' });
       if (enabled) {
         await api.alarms.create(ALARM, { periodInMinutes: 0.5 });
         void pump();
       } else { await api.alarms.clear(ALARM); }
-    } catch (error) { await update({ enabled: false, message: error.message }); throw error; }
+    } catch (error) { await update({ message: enabled ? 'S&S connection will retry automatically: ' + error.message : 'S&S browser disconnected. ' + error.message }); throw error; }
     return status();
   }
   async function waitTab(tabId) {
@@ -188,10 +189,37 @@ export function createSxsWorker(api, fetcher = fetch) {
         if (reorder || state.boundSession === sessionId || /another website/.test(error.message)) throw Error('S&S worker tab was closed or changed during the run. Review its cart before retrying.');
       }
     }
-    if (reorder) throw Error('S&S browser restarted or its checked tab is missing. Review any existing purchase, then run the read-only browser check again.');
+    if (reorder) throw Error('S&S browser restarted during this order or its worker tab is missing. Review its cart and any existing purchase before Retry; setup cannot repeat during an active order.');
     const tab = await api.tabs.create({ url: BASE + '/checkout/cart', active: false });
     await api.tabs.update(tab.id, { autoDiscardable: false });
     await update({ tabId: tab.id, boundSession: sessionId });
+    return tab;
+  }
+  async function prepareTab(sessionId) {
+    const state = await read();
+    // Never recover an interrupted order by opening a different tab. This
+    // operation is also restricted to the first command by the local broker.
+    if (state.boundSession === sessionId) throw Error('S&S setup was already attempted for this order. Review its tab before retrying.');
+    let tab = null;
+    if (state.tabId && state.minimizedWindowId) {
+      try { tab = await api.tabs.get(state.tabId); } catch { /* Closed between orders: create our own window below. */ }
+      if (tab && (!isSxsUrl(tab.url || tab.pendingUrl) || tab.windowId !== state.minimizedWindowId)) {
+        throw Error('The dedicated S&S tab was changed. Review its cart before retrying.');
+      }
+      if (tab?.discarded || tab?.frozen) throw Error('S&S tab was suspended. Review its cart before retrying.');
+    }
+    await update({ boundSession: sessionId });
+    if (!tab) {
+      const window = await api.windows.create({ url: BASE + '/checkout/cart', state: 'minimized', focused: false });
+      const tabs = window.tabs || await api.tabs.query({ windowId: window.id });
+      if (tabs.length !== 1) throw Error('The minimized S&S worker window is ambiguous.');
+      tab = tabs[0];
+      await update({ tabId: tab.id, boundSession: sessionId, minimizedWindowId: window.id });
+    }
+    // This window belongs to the worker; never minimize the user's main window.
+    await api.windows.update(tab.windowId, { state: 'minimized', focused: false });
+    if ((await api.windows.get(tab.windowId)).state !== 'minimized') throw Error('The S&S worker window did not minimize.');
+    await api.tabs.update(tab.id, { url: BASE + '/checkout/cart', autoDiscardable: false });
     return tab;
   }
   async function pageCommand(tabId, command) {
@@ -213,6 +241,13 @@ export function createSxsWorker(api, fetcher = fetch) {
     await requirePermissions();
     const state = await read();
     if (!state.enabled || probing) throw Error('S&S browser is disconnected or running a browser check.');
+    if (command.operation === 'prepare') {
+      const tab = await prepareTab(command.session_id);
+      const result = await pageCommand(tab.id, { ...command, operation: 'health' });
+      if (!result.hidden || result.window_state !== 'minimized') throw Error('The S&S worker window became visible during setup. Review before retrying.');
+      await update({ message: result.signed_in && result.cart_container ? 'Minimized S&S browser ready for Reorder.' : 'S&S needs sign-in. Use Open S&S sign-in, then Retry the batch.' });
+      return result;
+    }
     const tab = await ownedTab(command.session_id);
     if (command.operation === 'navigate') {
       if (!allowedNavigation(command.payload?.url)) throw Error('Unexpected S&S navigation URL.');
@@ -315,7 +350,7 @@ export function createSxsWorker(api, fetcher = fetch) {
         tab = tabs[0];
       } else { tab = await api.tabs.create({ url: BASE + '/', active: false }); }
       await api.tabs.update(tab.id, { autoDiscardable: false });
-      await update({ tabId: tab.id, boundSession: null, message: 'Checking S&S in a ' + mode + ' browser.' });
+      await update({ tabId: tab.id, boundSession: null, minimizedWindowId: mode === 'minimized' ? tab.windowId : null, message: 'Checking S&S in a ' + mode + ' browser.' });
       const pages = [];
       for (const path of ['/', '/myaccount/login', '/checkout/cart', '/ps/5000']) {
         await api.tabs.update(tab.id, { url: BASE + path });

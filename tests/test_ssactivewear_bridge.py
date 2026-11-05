@@ -56,16 +56,30 @@ class SxsBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(SxsBridgeError, 'exactly one'):
             self.store.open_session('5000002')
 
-    def test_signed_in_probe_required_and_cannot_replace_active_run(self):
+    def test_manual_probe_is_optional_but_cannot_replace_an_active_run(self):
         sid = self.store.open_session('5000001')
         with self.assertRaisesRegex(SxsBridgeError, 'active'):
             self.store.register(CLIENT, ORIGIN, probe={'success': False})
         self.store.close(sid)
         self.store.register(CLIENT, ORIGIN, probe={'success': True, 'signed_in': False})
-        with self.assertRaisesRegex(SxsBridgeError, 'signed-in check'):
-            self.store.open_session('5000001')
+        sid = self.store.open_session('5000001')
+        self.assertEqual(self.store.poll(CLIENT, ORIGIN), None)
+        self.store.close(sid)
         self.store.register(CLIENT, ORIGIN, probe={'success': False, 'signed_in': True})
         self.assertFalse(self.store.status()['ready'])
+
+    def test_prepare_can_only_be_the_first_command_and_is_never_redelivered(self):
+        sid = self.store.open_session('5000001')
+        cid = self.store.enqueue(sid, 'prepare')
+        self.assertEqual(self.store.poll(CLIENT, ORIGIN)['id'], cid)
+        self.assertIsNone(self.store.poll(CLIENT, ORIGIN))
+        with self.assertRaisesRegex(SxsBridgeError, 'only once'):
+            self.store.enqueue(sid, 'prepare')
+        self.store.close(sid)
+        sid = self.store.open_session('5000002')
+        self.store.enqueue(sid, 'navigate', {'url': 'https://www.ssactivewear.com/checkout/cart'})
+        with self.assertRaisesRegex(SxsBridgeError, 'only once'):
+            self.store.enqueue(sid, 'prepare')
 
     def test_origin_and_purchase_po_boundaries(self):
         sid = self.store.open_session('5000001')
@@ -132,19 +146,35 @@ class SxsBridgeTests(unittest.TestCase):
 
 class SxsExtensionAdapterTests(unittest.TestCase):
     def test_stale_or_unknown_running_extension_stops_before_stock_actions(self):
-        for version in (None, '1.7.7', 'invalid'):
+        for version in (None, '1.7.7', '1.7.12', 'invalid'):
             with self.subTest(version=version):
                 session = mock.Mock()
                 session.call.return_value = {'url': 'https://www.ssactivewear.com/checkout/cart', 'signed_in': True, 'cart_container': True, 'extension_version': version}
                 browser = SxsExtensionBrowser('5000001', session=session)
-                with self.assertRaisesRegex(RuntimeError, 'Reload CRM Order Assistant 1.7.8'):
+                with self.assertRaisesRegex(RuntimeError, 'Reload CRM Order Assistant 1.7.13'):
                     browser.ensure_login()
-                self.assertEqual([c.args[0] for c in session.call.call_args_list], ['navigate', 'health'])
-        for version in ('1.7.8', '1.7.9', '1.7.8.1'):
+                self.assertEqual([c.args[0] for c in session.call.call_args_list], ['prepare'])
+        for version in ('1.7.13', '1.7.14', '1.7.13.1'):
             with self.subTest(version=version):
                 session = mock.Mock()
                 session.call.return_value = {'url': 'https://www.ssactivewear.com/checkout/cart', 'signed_in': True, 'cart_container': True, 'extension_version': version}
                 SxsExtensionBrowser('5000001', session=session).ensure_login()
+
+    def test_automatic_setup_checks_signin_before_any_stock_operation(self):
+        session = mock.Mock()
+        session.call.return_value = {'url': 'https://www.ssactivewear.com/myaccount/login', 'signed_in': False, 'extension_version': '1.7.13'}
+        browser = SxsExtensionBrowser('5000001', session=session)
+        with self.assertRaisesRegex(RuntimeError, 'sign-in expired or is missing'):
+            browser.ensure_login()
+        self.assertEqual([c.args[0] for c in session.call.call_args_list], ['prepare'])
+
+    def test_repeated_login_checks_do_not_repeat_window_setup(self):
+        session = mock.Mock()
+        session.call.return_value = {'url': 'https://www.ssactivewear.com/checkout/cart', 'signed_in': True, 'cart_container': True, 'extension_version': '1.7.13'}
+        browser = SxsExtensionBrowser('5000001', session=session)
+        browser.ensure_login()
+        browser.ensure_login()
+        self.assertEqual([c.args[0] for c in session.call.call_args_list], ['prepare', 'navigate', 'health'])
 
     def test_stock_addition_waits_for_the_expected_cart_quantity_without_readding(self):
         session = mock.Mock()

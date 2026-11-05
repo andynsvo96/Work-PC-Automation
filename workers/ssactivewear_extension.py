@@ -6,7 +6,7 @@ from urllib.parse import quote, urlsplit
 from ssactivewear_bridge import SxsSession, SxsBridgeError
 import ssactivewear_ordering as sxs
 
-MIN_EXTENSION_VERSION = (1, 7, 8)
+MIN_EXTENSION_VERSION = (1, 7, 13)
 
 
 class SxsExtensionBrowser:
@@ -17,6 +17,7 @@ class SxsExtensionBrowser:
         self.order_id = str(order_id)
         self.current_url = sxs.BASE_URL + '/'
         self.owned_lines = None
+        self.prepared = False
 
     def call(self, operation, **payload):
         result = self.session.call(operation, payload)
@@ -31,13 +32,19 @@ class SxsExtensionBrowser:
         self.current_url = result['url']
 
     def ensure_login(self):
-        self.get(sxs.CART_URL)
-        state = self.call('health')
+        if not self.prepared:
+            # Only the first command may create a new owned window. Once an
+            # order starts, losing its tab must never trigger another session.
+            state = self.call('prepare')
+            self.prepared = True
+        else:
+            self.get(sxs.CART_URL)
+            state = self.call('health')
         version = str(state.get('extension_version') or '')
         if not re.fullmatch(r'\d+\.\d+\.\d+(?:\.\d+)?', version) or tuple(map(int, version.split('.'))) < MIN_EXTENSION_VERSION:
-            raise RuntimeError('Reload CRM Order Assistant 1.7.8 or newer, then repeat its S&S browser check. The running extension version is ' + (version or 'unknown') + '.')
+            raise RuntimeError('Reload CRM Order Assistant 1.7.13 or newer for automatic minimized S&S setup. The running extension version is ' + (version or 'unknown') + '.')
         if state.get('signed_in') is not True or state.get('cart_container') is not True:
-            raise RuntimeError('Sign in to S&S normally in the connected browser, then run the extension browser check. No credentials are sent through the extension.')
+            raise RuntimeError('S&S sign-in expired or is missing. Use Open S&S sign-in in CRM Order Assistant, sign in normally, then Retry this batch. No new purchase was submitted.')
 
     def require_empty_cart(self):
         self.get(sxs.CART_URL)

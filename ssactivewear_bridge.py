@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from runtime_paths import state_file
 
 PROTOCOL = 'automation.ssactivewear.extension/v1'
-OPERATIONS = frozenset({'navigate', 'health', 'candidates', 'color', 'inventory',
+OPERATIONS = frozenset({'prepare', 'navigate', 'health', 'candidates', 'color', 'inventory',
                         'cart', 'verified_cart', 'fill', 'add', 'remove', 'checkout',
                         'review', 'valid', 'begin_submit', 'confirm_submit', 'confirmation'})
 PURCHASE_OPERATIONS = frozenset({'begin_submit', 'confirm_submit'})
@@ -101,10 +101,7 @@ class SxsBridge:
             db.execute('UPDATE sessions SET active=0 WHERE lease<?', (now,))
             clients = db.execute('SELECT * FROM clients WHERE enabled=1 AND seen>?', (now - 75,)).fetchall()
             if len(clients) != 1:
-                raise SxsBridgeError('Connect exactly one S&S browser using CRM Order Assistant, then run its read-only check. Sign in to S&S normally.')
-            probe = json.loads(clients[0]['probe'] or '{}')
-            if probe.get('success') is not True or probe.get('signed_in') is not True:
-                raise SxsBridgeError('Run the extension S&S browser check after signing in. A successful signed-in check is required before Reorder.')
+                raise SxsBridgeError('Keep Chrome running with exactly one S&S browser connected in CRM Order Assistant. Reorder opens its minimized window automatically.')
             if db.execute('SELECT id FROM sessions WHERE active=1').fetchone():
                 raise SxsBridgeError('The S&S extension browser already belongs to an active Reorder.')
             sid = uuid.uuid4().hex
@@ -124,6 +121,8 @@ class SxsBridge:
             session = db.execute('SELECT * FROM sessions WHERE id=? AND active=1 AND lease>?', (session_id, self.clock())).fetchone()
             if session is None:
                 raise SxsBridgeError('S&S browser session expired. Review the current cart before retrying.')
+            if operation == 'prepare' and db.execute('SELECT id FROM commands WHERE session_id=? LIMIT 1', (session_id,)).fetchone():
+                raise SxsBridgeError('S&S browser setup is allowed only once, before this order starts. Review its tab before retrying.')
             if operation in PURCHASE_OPERATIONS and payload.get('po') != session['order_id']:
                 raise SxsBridgeError('S&S purchase PO does not match this Reorder.')
             cid = uuid.uuid4().hex

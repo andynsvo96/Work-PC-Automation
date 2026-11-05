@@ -23,10 +23,10 @@
         <p id="sxs-status" class="bridge-status" role="status">Checking S&amp;S connection...</p>
         <button id="sxs-connect" type="button">Connect this browser</button>
         <button id="sxs-open" type="button">Open S&amp;S sign-in</button>
-        <label for="sxs-check-mode">Read-only browser check</label>
+        <label for="sxs-check-mode">Optional read-only browser check</label>
         <select id="sxs-check-mode"><option value="background">Background tab</option><option value="minimized">Minimized window</option></select>
         <button id="sxs-check" type="button">Run read-only check</button>
-        <p class="hint">Sign in normally. Keep the worker tab open and leave its cart alone during Reorder. You can use other Chrome tabs and windows.</p>
+        <p class="hint">Connect once and sign in normally. Reorder automatically opens or reuses a minimized window and checks sign-in. Keep Chrome running and leave its worker tab/cart alone until the whole batch finishes. The connection stays on between orders; the read-only check is optional.</p>
       </section>
     </main>
     <script src="popup.js"></script>

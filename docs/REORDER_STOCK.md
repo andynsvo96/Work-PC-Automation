@@ -5,10 +5,21 @@ CRM order links. It accepts the same validated input, deduplication, input order
 and 100-order limit as Custom Processing. CRM report/list URLs are rejected.
 
 Select **Order IDs or order links** in the Custom Processing popup, paste the
-orders, and select **Reorder Stock** at the bottom left. Each order gets a local
-serialized queue entry with its own result and Retry control. Other processing
-tools and their saved selections are independent of this action. Queue restoration
-retains the exact order ID and never switches to a configured report.
+orders, and select **Reorder Stock** at the bottom left. The entire input becomes
+one local queue entry. **View orders** lists every order in input order, with
+Waiting, Running, Success, Failed, or Not run status and the exact error when a
+worker fails. Confirmed purchases include clickable SanMar/S&S confirmation links,
+including a purchase that succeeded before a later CRM save failed. Orders with
+no red stock report that result without inventing a purchase link.
+
+Orders run serially under the existing CRM lock; a failed order does not prevent
+the remaining orders from being checked. Results are checkpointed after each order.
+**Retry** uses the same entry, skips successful orders, and retries only unfinished
+orders with their original IDs and durable purchase receipts. Cancellation stops
+the active worker and prevents starting another order. A server restart leaves
+interrupted work stopped for review. Old single-order queue entries remain usable;
+new batches never switch to a configured report. Other processing tools and their
+saved selections are independent of this action.
 
 ## Eligibility and supplier choice
 
@@ -96,13 +107,14 @@ order reference, and the exact labelled PO. Receipt parsing covers the observed
 `Order Confirmation: <number>` heading, including combined PO/warehouse labels,
 as well as the older numbered confirmation format. A live S&S checkout and its
 confirmation were verified through an existing logged-in Chrome session.
-S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.8** extension in a
+S&S Reorder now uses the opted-in **CRM Order Assistant 1.7.13** extension in a
 normally opened Chrome profile. The local worker sends stock instructions to
 one dedicated S&S tab without launching WebDriver, activating the tab, or using
-the computer's mouse/keyboard. A successful signed-in background/minimized
-browser check is required first. The worker also checks the actual running
-extension version (1.7.8 or newer) before entering stock, so a cached older
-background controller requires reloading before checkout can run. Signed-in
+the computer's mouse/keyboard. At the start of each order, it automatically opens
+or reuses its own unfocused minimized window and checks the signed-in cart before
+entering stock. The manual read-only browser check is optional. The worker also
+checks the actual running extension version (1.7.13 or newer), so a cached older
+background controller requires reloading before checkout can run. Earlier signed-in
 checks and the product workflow have
 passed live in both background-tab and minimized-window modes on Windows Chrome.
 The local Python worker matched G500 to Gildan 5000, selected Black, read stock
@@ -161,7 +173,7 @@ iframe context, using the existing production-date verification recovery.
 
 1. Restart the local Automation app and refresh the dashboard when no task is
    running. Do not start a second server.
-2. Install/reload **CRM Order Assistant 1.7.8** from
+2. Install/reload **CRM Order Assistant 1.7.13** from
    `crm-order-dark-mode-extension` at `chrome://extensions` in the normal Chrome
    profile you want to use. Existing CRM page scripts stay scoped to CRM.
 3. Open the extension popup and select **Connect this browser** under **S&S
@@ -169,13 +181,16 @@ iframe context, using the existing production-date verification recovery.
 4. Select **Open S&S sign-in** and sign in normally. Complete any site
    verification yourself. Credentials and the Automation PIN never pass through
    the extension or local bridge.
-5. Reopen the popup, select **Background tab** or **Minimized window**, then
-   **Run read-only check**. It reads S&S homepage/login/cart and 5000 product
-   search without submitting login, changing stock, or buying. A successful
-   **signed-in** result is required before Reorder can use that browser.
-6. Queue explicit orders with **Reorder Stock** as before. Keep its dedicated
-   S&S tab open and leave the S&S account cart alone. Other Chrome tabs/windows
-   and applications remain usable.
+5. Queue explicit orders with **Reorder Stock**. The extension automatically
+   creates a minimized S&S window, or reuses its existing minimized worker window,
+   and checks sign-in. Keep Chrome running, keep the worker tab open during the
+   batch, and leave the S&S account cart alone. Other Chrome tabs/windows and
+   applications remain usable. The connection stays enabled between orders and
+   batches, and automatically reconnects after the local app becomes available.
+6. Optionally use **Run read-only check** with **Background tab** or **Minimized
+   window** for diagnostics. It reads homepage/login/cart and 5000 product search
+   without submitting login, changing stock, or buying. This is no longer a
+   prerequisite for Reorder.
 
 Connect **exactly one** browser profile on the dashboard's host computer.
 Multiple active connections stop selection instead of choosing an account.
@@ -184,12 +199,17 @@ for up to 75 seconds. **Disconnect this browser** immediately stops future
 command delivery. Remote dashboard access still runs work on that dashboard's
 host, using its local extension; there is no cross-machine browser execution.
 
-Normal worker operations do not activate tabs or focus/restore windows. The
-operator's **Open S&S sign-in** button is an explicit exception. The minimized
-check opens its own unfocused minimized window. A frozen/discarded tab, a closed
-or repurposed worker tab, or a browser restart stops for review. After restarting
-Chrome, rerun the check; stored tab IDs never adopt another user tab. Closing
-Chrome or putting the computer to sleep prevents continued operation.
+Normal worker operations do not activate tabs or focus/restore windows. Only the
+worker's own window is minimized; a background diagnostic tab in the user's main
+window is left alone. The operator's **Open S&S sign-in** button explicitly focuses
+the sign-in page. After Chrome restarts, the next order can create a fresh minimized
+window without another manual check; stored numeric tab IDs never adopt a user tab.
+A tab closed between orders can also be recreated at the next order's initial
+setup. A closed, repurposed, frozen, or discarded tab during an active order stops
+for review. Setup is claimed once and cannot recreate a window midway through an
+order. Closing Chrome or putting the computer to sleep prevents continued operation;
+Reorder does not launch a closed browser or submit credentials. If sign-in expired,
+sign in normally through the popup, then Retry the original batch.
 
 The bridge retains the existing loopback/extension-origin restriction. Its
 endpoints register the opted-in browser, deliver worker-created commands, and
@@ -253,7 +273,7 @@ approved CRM stock PO alias is bound to the same order number and saved as
 `crm_po` in the local confirmed receipt. Recovery verifies that alias and adds a
 note linking it to the original supplier PO/reference. The supplier customer PO
 and confirmed purchase are retained. These worker-only checks load on the next
-worker run; an already-current 1.7.8 extension does not need another reload.
+worker run. Automatic minimized setup requires reloading extension 1.7.13.
 
 The production-note writer waits for CRM's append-only Production Notes field in
 its dedicated section. It preserves existing note history and checks that history
@@ -266,6 +286,7 @@ These worker changes load on the next run without an app restart.
 ```powershell
 python -m unittest discover -s tests -p test_crm_reorder.py
 node --test tests/test_reorder_ui.mjs
+python -m unittest discover -s tests -p test_reorder_batch.py
 python -m unittest discover -s tests -p test_ssactivewear_bridge.py
 node --test tests/test_ssactivewear_extension.mjs tests/test_extension_bridge.mjs tests/test_salesforce_tabs.mjs
 ```

@@ -15,10 +15,10 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
-## S&S Reorder browser — 1.7.8
+## S&S Reorder browser — 1.7.13
 
 S&S Reorder can use a normally opened Chrome profile through the extension,
-without launching WebDriver. Install/reload version **1.7.8** in that profile,
+without launching WebDriver. Install/reload version **1.7.13** in that profile,
 restart the local Automation app, and refresh CRM pages/dashboard.
 
 1. Open the popup and select **Connect this browser** under **S&S Reorder**.
@@ -26,18 +26,25 @@ restart the local Automation app, and refresh CRM pages/dashboard.
    no new page scripts.
 2. Select **Open S&S sign-in** and sign in normally. Credentials and the app PIN
    never pass through this connection.
-3. Reopen the popup, select **Background tab** or **Minimized window**, then
-   **Run read-only check**. This reads homepage/login/cart and 5000 search;
-   it does not add stock or submit an order. A successful signed-in result is
-   required before this browser can handle Reorder.
-4. Use the dashboard's **Reorder Stock** action. Keep its dedicated S&S tab open
-   and leave the S&S cart alone. You can use other Chrome tabs/windows or apps;
-   worker operations do not focus/restore the tab or window.
+3. Use the dashboard's **Reorder Stock** action. The extension automatically opens
+   or reuses its own minimized window and checks the signed-in cart before stock
+   entry. Keep Chrome running and leave the worker tab and S&S cart alone until
+   the batch finishes. You can use other Chrome tabs/windows or apps; the worker
+   does not focus/restore its window or minimize your main Chrome window.
+4. The connection stays enabled between orders and batches and reconnects when
+   the local app becomes available. **Run read-only check** remains an optional
+   diagnostic for background/minimized access; it is no longer required before
+   Reorder. If S&S asks for sign-in again, use **Open S&S sign-in**, sign in normally,
+   then Retry the original batch.
 
 Connect only one profile on the local dashboard's computer. A browser check or
 manual sign-in cannot interrupt an active Reorder. A closed, changed, discarded,
-or frozen tab stops for review; another user tab is never adopted. After a
-browser restart, rerun the check. Last status persists if you close the popup.
+or frozen tab during an order stops for review; another user tab is never adopted.
+After a browser restart, or if the worker tab closed between orders, the next
+order's initial setup may create a new minimized window automatically. It cannot
+replace a tab during an active order. Chrome must remain running; the extension
+does not launch a closed browser or enter credentials. Last status persists if
+you close the popup.
 
 The server's existing receipt reserves a purchase before submission. Commands
 are claimed once, never replayed after an extension restart. A lost response
@@ -77,7 +84,9 @@ from 11 warehouses, and returned to the same empty cart. No quantity entry,
 checkout, purchase, or CRM edit ran in that check. A later live Reorder verified
 cart entry, checkout, and a supplier-confirmed purchase while Chrome remained
 minimized. CRM production/due dates and the purchase note were also verified.
-Reload the extension and rerun its check after updating extension code. Offline tests cover page
+Reload the extension after updating extension code. The automatic setup has offline
+coverage; the earlier manual minimized-window checkout was verified live on Windows.
+The new setup still needs a live Windows/macOS check. Offline tests cover page
 operations, local origin restrictions, duplicate-delivery prevention, and tab
 ownership. See the [Reorder guide](../docs/REORDER_STOCK.md).
 

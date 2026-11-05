@@ -3392,6 +3392,10 @@ function renderQueue(payload) {
   const root = document.getElementById('queueList');
   if (!root) return;
   const tasks = sortedQueueTasks(queuePayload.tasks);
+  const reportDialog = document.getElementById('queueTaskReportDialog');
+  if (reportDialog && reportDialog.open && reportDialog.dataset.taskId) {
+    openQueueTaskReport(reportDialog.dataset.taskId);
+  }
   if (!tasks.length) {
     root.innerHTML = "<div class='queue-empty'>No queued automations yet.</div>";
     return;
@@ -3406,8 +3410,9 @@ function renderQueue(payload) {
     const resultContext = task.result_context && typeof task.result_context === 'object' ? task.result_context : {};
     const taskReport = resultContext.report && typeof resultContext.report === 'object' ? resultContext.report : {};
     const taskReportRows = Array.isArray(taskReport.order_details) ? taskReport.order_details : [];
-    const viewReportLabel = status === 'failed' ? 'View Errors' : 'View Retry Report';
-    const viewReportControl = status === 'failed' || (taskReportRows.length > 0 && resultContext.retry_completed)
+    const isReorder = ['crm.reorder', 'crm.reorder_batch'].includes(task.task_type);
+    const viewReportLabel = isReorder ? 'View orders' : status === 'failed' ? 'View Errors' : 'View Retry Report';
+    const viewReportControl = isReorder || status === 'failed' || (taskReportRows.length > 0 && resultContext.retry_completed)
       ? `<button class='secondary tiny' style='margin-left:8px' onclick="event.stopPropagation();openQueueTaskReport('${esc(task.id || '')}')">${esc(viewReportLabel)}</button>`
       : '';
     const draggable = status === 'queued';
@@ -3427,7 +3432,7 @@ function renderQueue(payload) {
     const rawMessageText = isProcessingTask
       ? stripDuplicateCrmProcessingProgress(status === 'idle' ? '' : (task.message || ''), orderProgressLabel)
       : (task.waiting_reason || (status === 'idle' ? '' : (task.message || '')));
-    const messageText = status === 'failed'
+    const messageText = status === 'failed' && !isReorder
       ? conciseAutomationFailureMessage(rawMessageText, resultContext, task.label)
       : rawMessageText;
     const progressLabel = isProcessingTask ? '' : queueTaskProgressLabel(task);
@@ -3492,12 +3497,15 @@ async function retryAutomationQueueTask(taskId, button) {
   const task = tasks.find((row) => String(row && row.id || '') === String(taskId || '')) || {};
   const sheetsScanner = String(task.label || '').trim().toLowerCase() === 'sheets scanner';
   const mainAutomation = String(task.task_type || '').trim().toLowerCase() === 'crm.processing';
+  const reorderBatch = task.task_type === 'crm.reorder_batch';
   const confirmed = window.confirm(sheetsScanner
     ? 'Retry all failed Sheets Scanner rows? Rows with an ERROR message will be included automatically. '
       + 'The automation checks CRM first and skips cancellations, refunds, refund fees, and sales notes that are already recorded.'
     : mainAutomation
       ? `Retry ${task.label || 'Main Automation'} in this same queue entry? Only the automation/order combinations recorded with errors will run again.`
-      : `Retry ${task.label || 'this order task'}? The original task will run again, detect completed CRM actions, and continue with unfinished work.`
+      : reorderBatch
+        ? `Retry ${task.label || 'Reorder Stock'} in this same queue entry? Successful orders will be skipped; only unfinished orders will run with their saved purchase receipts.`
+        : `Retry ${task.label || 'this order task'}? The original task will run again, detect completed CRM actions, and continue with unfinished work.`
   );
   if (!confirmed) return;
   if (button) {
@@ -3526,9 +3534,15 @@ async function retryAutomationQueueTask(taskId, button) {
 function openQueueTaskReport(taskId) {
   const tasks = Array.isArray(queuePayload && queuePayload.tasks) ? queuePayload.tasks : [];
   const task = tasks.find((row) => String(row && row.id || '') === String(taskId || ''));
+  if (!task) {
+    const dialog = document.getElementById('queueTaskReportDialog');
+    if (dialog && dialog.open && typeof dialog.close === 'function') dialog.close();
+    return;
+  }
   const context = task && task.result_context && typeof task.result_context === 'object' ? task.result_context : {};
   const report = context.report && typeof context.report === 'object' ? context.report : {};
   let allRows = Array.isArray(report.order_details) ? report.order_details : [];
+  const isReorder = ['crm.reorder', 'crm.reorder_batch'].includes(task && task.task_type);
   const isRetryReport = Boolean(context.retry_completed || report.is_retry_report);
   if (!allRows.length && String(task && task.status || '').toLowerCase() === 'failed') {
     allRows = [{
@@ -3539,15 +3553,16 @@ function openQueueTaskReport(taskId) {
       message: String(task && task.message || 'No error message recorded.'),
     }];
   }
-  const rows = isRetryReport ? allRows : allRows.filter((row) => !Boolean(row && row.success));
+  const rows = isRetryReport || isReorder ? allRows : allRows.filter((row) => !Boolean(row && row.success));
   const dialog = document.getElementById('queueTaskReportDialog');
   const title = document.getElementById('queueTaskReportDialogTitle');
   const summary = document.getElementById('queueTaskReportDialogSummary');
   const body = document.getElementById('queueTaskReportDialogBody');
   if (!dialog || !title || !summary || !body) return;
-  title.innerHTML = crmOrderTextHtml(isRetryReport ? `${task.label || 'Automation'} Retry Report` : `${task.label || 'Automation'} Errors`);
+  dialog.dataset.taskId = String(taskId || '');
+  title.innerHTML = crmOrderTextHtml(isReorder ? `${task.label || 'Reorder Stock'} — Orders` : isRetryReport ? `${task.label || 'Automation'} Retry Report` : `${task.label || 'Automation'} Errors`);
   const failureCount = allRows.filter((row) => !Boolean(row && row.success)).length;
-  summary.textContent = isRetryReport
+  summary.textContent = isReorder ? String(report.message || task.message || '') : isRetryReport
     ? `${allRows.length} original order result${allRows.length === 1 ? '' : 's'} retained; ${failureCount} currently failed.`
     : `${failureCount} failed order${failureCount === 1 ? '' : 's'} in this session.`;
   body.innerHTML = rows.length
@@ -3556,11 +3571,24 @@ function openQueueTaskReport(taskId) {
         const automation = String(row && (row.function_label || row.process || row.outcome) || '-');
         const status = String(row && (row.retry_status || row.status) || (row && row.success ? 'Success' : 'Failed'));
         const message = String(row && row.message || row && row.original_error || 'No error message recorded.');
-        const statusClass = row && row.success ? 'ok' : 'bad';
-        return `<tr><td>${crmOrderLinkHtml(orderId)}</td><td>${crmOrderTextHtml(automation)}</td><td class='${statusClass}'>${esc(status)}</td><td>${crmOrderTextHtml(message)}</td></tr>`;
+        const statusClass = row && row.success ? 'ok' : isReorder && row && row.success == null ? 'muted' : 'bad';
+        const confirmations = isReorder ? reorderConfirmationLinksHtml(row) : '';
+        return `<tr><td>${crmOrderLinkHtml(orderId)}</td><td>${crmOrderTextHtml(automation)}</td><td class='${statusClass}'>${esc(status)}</td><td>${crmOrderTextHtml(message)}${confirmations}</td></tr>`;
       }).join('')
     : "<tr><td colspan='4' class='muted'>No failed orders were recorded for this task.</td></tr>";
-  if (typeof dialog.showModal === 'function') dialog.showModal();
+  if (!dialog.open && typeof dialog.showModal === 'function') dialog.showModal();
+}
+
+function reorderConfirmationLinksHtml(row) {
+  const purchases = row && Array.isArray(row.purchases) ? row.purchases : [];
+  return purchases.map((purchase) => {
+    const label = `${purchase.vendor || 'Supplier'} confirmation${purchase.reference ? ` ${purchase.reference}` : ''}`;
+    try {
+      const url = new URL(purchase.url);
+      if (url.protocol !== 'https:' || !['www.ssactivewear.com', 'www.sanmar.com', 'sanmar.com'].includes(url.hostname) || url.username || url.password || url.port) return '';
+      return `<br><a href="${esc(url.href)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
+    } catch { return ''; }
+  }).join('');
 }
 
 function closeQueueTaskReportDialog() {

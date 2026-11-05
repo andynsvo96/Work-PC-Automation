@@ -417,6 +417,14 @@ def run(order_id, dry_run=False, visible=False, result_file=None):
         except Exception as exc:
             message = str(exc)
             payload.update(manual_review_required=True, outcome="review_required")
+            # A purchase can succeed before CRM recording fails. Keep its real
+            # confirmation available in the batch report and on targeted Retry.
+            try:
+                receipt = load_receipt(order_id)
+                if receipt:
+                    payload["groups"] = receipt.get("groups", [])
+            except Exception:
+                pass  # Preserve the original failure if the receipt is unreadable.
             for vendor, (driver, _profile) in drivers.items():
                 if getattr(driver, 'is_sxs_extension', False) is not True:
                     safe_take_screenshot(driver, f"reorder_{order_id}_{vendor}_review")

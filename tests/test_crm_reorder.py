@@ -455,14 +455,23 @@ class ReorderRouteTests(unittest.TestCase):
         register_reorder_routes(self.app, enqueue_automation=self.enqueue, run_reorder=self.runner, get_status=lambda: {})
         self.client = self.app.test_client()
 
-    def test_custom_ids_and_links_queue_distinct_local_order_tasks(self):
+    def test_custom_ids_and_links_queue_one_local_batch_in_input_order(self):
         result = self.client.post("/crm/reorder", json={"processing_filter": "custom", "custom_input_type": "orders", "custom_order_ids": "5000001, https://crm2.legacy.printfly.com/app#/order/5000002 5000001"})
         self.assertTrue(result.json["success"])
-        self.assertEqual([c.kwargs["task_arguments"] for c in self.enqueue.call_args_list], [{"order_id": "5000001"}, {"order_id": "5000002"}])
-        for call in self.enqueue.call_args_list:
-            self.assertEqual(call.kwargs["task_type"], "crm.reorder")
-            call.args[2]()
-        self.runner.assert_has_calls([mock.call(order_id="5000001"), mock.call(order_id="5000002")])
+        self.enqueue.assert_called_once()
+        call = self.enqueue.call_args
+        self.assertEqual(call.kwargs["task_arguments"], {"order_ids": ["5000001", "5000002"]})
+        self.assertEqual(call.kwargs["task_type"], "crm.reorder_batch")
+        self.assertEqual(len(result.json["tasks"]), 1)
+        call.args[2]()
+        self.runner.assert_called_once_with(order_ids=["5000001", "5000002"])
+
+    def test_queue_rejection_never_leaves_a_partial_batch(self):
+        self.enqueue.return_value = (False, "Queue unavailable", None)
+        result = self.client.post("/crm/reorder", json={"processing_filter": "custom", "custom_input_type": "orders", "custom_order_ids": "5000001 5000002"})
+        self.assertEqual(result.status_code, 409)
+        self.enqueue.assert_called_once()
+        self.runner.assert_not_called()
 
     def test_report_input_other_modes_and_malformed_lists_are_rejected_in_full(self):
         base = {"processing_filter": "custom", "custom_input_type": "orders", "custom_order_ids": "5000001"}

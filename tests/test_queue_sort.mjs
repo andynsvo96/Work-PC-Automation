@@ -69,6 +69,15 @@ test("the Queue sort control defaults to latest first and sorts by queued time",
   assert.deepEqual(renderedIds(elements), latest);
 });
 
+test("Reorder batches offer View orders in every queue state including successful runs", () => {
+  for (const status of ['queued', 'running', 'completed', 'failed', 'canceled']) {
+    const {context,elements}=dashboard();
+    context.renderQueue({tasks:[task('batch',status,'10',{task_type:'crm.reorder_batch',label:'Reorder Stock — 2 orders'})]});
+    assert.match(elements.queueList.innerHTML,/View orders/);
+    assert.match(elements.queueList.innerHTML,/openQueueTaskReport\('batch'\)/);
+  }
+});
+
 test("changing the control immediately sorts oldest or errors first and survives refresh", () => {
   const { context, elements } = dashboard();
   const payload = { tasks, queued: tasks.filter((row) => row.status === "queued") };

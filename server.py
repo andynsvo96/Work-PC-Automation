@@ -54,7 +54,7 @@ from clipboard_runtime import (
     create_platform_clipboard_adapter,
 )
 from credential_store import CREDENTIAL_TARGETS
-from crm_list_url import normalize_custom_crm_target
+from crm_list_url import normalize_custom_crm_order_ids, normalize_custom_crm_target
 import config as config_module
 from node_preferences import load_node_preferences, update_node_preferences
 from platform_runtime import get_platform_snapshot, normalize_os_name, resolve_worker_count
@@ -2223,6 +2223,10 @@ def _stock_issue_extension_failure_message(result_payload, fallback="", workflow
 def _automation_queue_result_context(task, ok, message):
     existing = dict((task or {}).get("result_context") or {})
     task_type = str((task or {}).get("task_type") or "")
+    if task_type == "crm.reorder_batch":
+        # Each completed order is already checkpointed. Retain that report if
+        # startup, cancellation, or a subprocess exception stopped the batch.
+        return {**existing, "retrying": False, "retry_completed": bool(existing.get("retrying"))}
     if task_type == "crm.processing":
         with crm_processing_state_lock:
             processing_state = load_crm_processing_state()
@@ -2246,7 +2250,7 @@ def _automation_queue_result_context(task, ok, message):
             "report": latest_report,
         }
     if task_type != "crm.mass_emailer":
-        if existing.get("retrying"):
+        if existing.get("retrying") and task_type != "crm.reorder":
             return {
                 **existing,
                 "retrying": False,
@@ -2314,9 +2318,13 @@ def _automation_queue_result_context(task, ok, message):
             order_details = _extract_crm_address_report(result_payload)
         elif task_type == "crm.auto_splitter":
             order_details = result_payload.get("order_results") if isinstance(result_payload.get("order_results"), list) else []
+        elif task_type == "crm.reorder":
+            arguments = (task or {}).get("task_arguments") or {}
+            order_details = [_crm_reorder_order_result(arguments.get("order_id", ""), ok, message, result_payload)]
         if result_payload or order_details:
             return {
                 **existing,
+                **({"retrying": False, "retry_completed": bool(existing.get("retrying"))} if task_type == "crm.reorder" else {}),
                 "report": {
                     "success": bool(ok),
                     "message": str(message or result_payload.get("message") or ""),
@@ -2574,6 +2582,7 @@ def _restore_automation_queue_callables(task):
         "crm.order_goods": (run_crm_order_goods_run_queued, get_crm_order_goods_status_payload),
         "crm.shipping_bypasser": (run_crm_shipping_bypasser_run_queued, get_crm_shipping_bypasser_status_payload),
         "crm.reorder": (run_crm_reorder_order_queued, get_crm_reorder_status_payload),
+        "crm.reorder_batch": (run_crm_reorder_batch_queued, get_crm_reorder_status_payload),
         "crm.push_back": (run_crm_push_back_run_queued, get_crm_push_back_status_payload),
         "crm.auto_splitter": (run_crm_auto_splitter_run_queued, get_crm_auto_splitter_status_payload),
         "crm.mass_emailer": (run_crm_mass_emailer_run_queued, get_crm_mass_emailer_status_payload),
@@ -2691,6 +2700,12 @@ def _automation_queue_task_is_retryable_order(task):
     if task_type == "crm.processing":
         context = task.get("result_context") if isinstance(task.get("result_context"), dict) else {}
         return bool(_crm_processing_retry_plan(context.get("report")))
+    if task_type == "crm.reorder_batch":
+        try:
+            normalize_custom_crm_order_ids((task.get("task_arguments") or {}).get("order_ids"))
+            return True
+        except ValueError:
+            return False
     if task_type not in _RETRYABLE_SINGLE_ORDER_TASK_TYPES:
         return False
     arguments = task.get("task_arguments") or task.get("arguments")
@@ -2709,7 +2724,7 @@ def _automation_queue_task_payload(task):
     message = task.get("message")
     if live_status and live_status.get("message"):
         message = live_status.get("message")
-    if str(task.get("status") or "").strip().lower() == "failed":
+    if str(task.get("status") or "").strip().lower() == "failed" and task.get("task_type") != "crm.reorder_batch":
         message = _concise_automation_failure_message(task, message)
     payload = {
         "id": task.get("id"),
@@ -2741,6 +2756,21 @@ def _automation_queue_task_payload(task):
         "restore_error": task.get("restore_error"),
         "retryable": _automation_queue_task_is_retryable_order(task),
     }
+    if task.get("task_type") == "crm.reorder_batch":
+        context = payload["result_context"]
+        if not context.get("report"):
+            ids = (task.get("task_arguments") or {}).get("order_ids") or []
+            context["report"] = _crm_reorder_batch_report([
+                _crm_reorder_waiting_result(order_id) for order_id in ids
+            ])
+        if task.get("status") in {"failed", "canceled"}:
+            rows = [dict(row) for row in context["report"].get("order_details", [])]
+            for row in rows:
+                if row.get("success") is None:
+                    interrupted = row.get("status") == "Running"
+                    row.update(success=False, status="Needs review" if interrupted else "Not run",
+                               message="Interrupted during this order. Review its cart and receipt before Retry." if interrupted else "Batch stopped before this order ran.")
+            context["report"] = _crm_reorder_batch_report(rows)
     if live_status:
         payload["live_status"] = live_status
         if live_status.get("progress"):
@@ -3133,6 +3163,19 @@ def retry_automation_queue_task(task_id):
                 "retry_requested_at": _automation_queue_now_iso(),
             }
             success_message = f"Retry {retry_count} queued in the original Sheets Scanner entry."
+        elif task.get("task_type") == "crm.reorder_batch":
+            if not _automation_queue_task_is_retryable_order(task):
+                return False, "Only unfinished Reorder batches with explicit order IDs can be retried."
+            report = existing_context.get("report") or {}
+            arguments = dict(task.get("task_arguments") or {})
+            arguments["previous_results"] = [dict(row) for row in report.get("order_details", []) if isinstance(row, dict)]
+            task["task_arguments"] = arguments
+            task["fn"] = partial(run_crm_reorder_batch_queued, **arguments)
+            retry_context = {
+                **existing_context, "retry_count": retry_count, "retrying": True,
+                "retry_completed": False, "retry_requested_at": _automation_queue_now_iso(),
+            }
+            success_message = f"Retry {retry_count} queued in the same Reorder batch; successful orders will be skipped."
         elif task.get("task_type") == "crm.processing":
             original_report = existing_context.get("report") if isinstance(existing_context.get("report"), dict) else {}
             main_retry_plan = _crm_processing_retry_plan(original_report)
@@ -13983,6 +14026,114 @@ def get_crm_reorder_status_payload():
     return {"running": bool(runtime.get("running")), "runtime": runtime}
 
 
+def _crm_reorder_waiting_result(order_id):
+    return {"order_id": order_id, "success": None, "status": "Waiting", "function_label": "Reorder Stock", "message": "Waiting to reorder.", "purchases": []}
+
+
+def _crm_reorder_order_result(order_id, ok, message, payload):
+    purchases = []
+    for group in payload.get("groups") or []:
+        if not isinstance(group, dict):
+            continue
+        confirmation = group.get("confirmation") if isinstance(group.get("confirmation"), dict) else {}
+        if group.get("state") != "confirmed" or confirmation.get("po_confirmed") is not True or confirmation.get("po") != order_id:
+            continue
+        purchases.append({
+            "vendor": "S&S Activewear" if group.get("vendor") == "ssactivewear" else "SanMar",
+            "reference": str(confirmation.get("order_number") or confirmation.get("web_reference") or ""),
+            "url": str(confirmation.get("url") or ""),
+        })
+    return {
+        "order_id": order_id, "success": bool(ok), "status": "Success" if ok else "Failed",
+        "function_label": "Reorder Stock", "message": str(message),
+        "outcome": str(payload.get("outcome") or ""), "purchases": purchases,
+    }
+
+
+def _crm_reorder_batch_report(rows):
+    succeeded = sum(row.get("success") is True for row in rows)
+    failed = sum(row.get("success") is False and row.get("status") != "Not run" for row in rows)
+    remaining = len(rows) - succeeded - failed
+    message = f"Reorder: {succeeded} succeeded; {failed} failed"
+    if remaining:
+        message += f"; {remaining} waiting or not run"
+    return {"success": succeeded == len(rows), "message": message + ".", "order_details": [dict(row) for row in rows]}
+
+
+def _checkpoint_crm_reorder_batch(task_id, rows, message=None):
+    report = _crm_reorder_batch_report(rows)
+    with crm_reorder_runtime_lock:
+        crm_reorder_runtime.update(payload={"order_results": report["order_details"]}, lastMessage=message or report["message"])
+    with automation_queue_condition:
+        task = next((task for task in automation_queue_tasks if task.get("id") == task_id and task.get("task_type") == "crm.reorder_batch"), None)
+        if task:
+            task["result_context"] = {**dict(task.get("result_context") or {}), "report": report}
+            return _persist_automation_queue_locked()
+    return True
+
+
+def _run_crm_reorder_worker(order_id, dry_run=False):
+    arguments = ["--order-id", order_id]
+    if dry_run:
+        arguments.append("--dry-run")
+    ok, message, payload = _run_script(CRM_REORDER_SCRIPT, arguments, "CRMReorder", timeout=1800, require_result=True)
+    if not isinstance(payload, dict):
+        ok, message, payload = False, "Reorder worker returned no result.", {}
+    return ok, message, payload
+
+
+def run_crm_reorder_batch_queued(order_ids, dry_run=False, previous_results=None):
+    try:
+        order_ids = normalize_custom_crm_order_ids(order_ids)
+    except ValueError as exc:
+        return False, str(exc)
+    task_id = automation_queue_current_task_id
+    previous = {row.get("order_id"): dict(row) for row in (previous_results or []) if isinstance(row, dict) and row.get("success") is True}
+    rows = [previous.get(order_id) or _crm_reorder_waiting_result(order_id) for order_id in order_ids]
+    if not crm_lock.acquire(blocking=False):
+        rows = [row if row.get("success") is True else _crm_reorder_order_result(row["order_id"], False, "Another CRM automation is running.", {}) for row in rows]
+        _checkpoint_crm_reorder_batch(task_id, rows)
+        return False, "Another CRM automation is running."
+    started_at = time.time()
+    try:
+        with crm_reorder_runtime_lock:
+            crm_reorder_runtime.clear()
+            crm_reorder_runtime.update(running=True, startedAt=datetime.now().isoformat())
+        for index, order_id in enumerate(order_ids):
+            if rows[index].get("success") is True:
+                continue
+            with automation_queue_condition:
+                canceled = any(task.get("id") == task_id and task.get("cancel_requested") for task in automation_queue_tasks)
+            if canceled or _automation_stop_requested_since(started_at) or _automation_stop_is_blocking():
+                for row in rows[index:]:
+                    if row.get("success") is not True:
+                        row.update(success=False, status="Not run", message="Batch stopped before this order ran.")
+                break
+            rows[index].update(status="Running", message="Reordering stock.")
+            with crm_reorder_runtime_lock:
+                crm_reorder_runtime.update(targetOrderId=order_id)
+            if not _checkpoint_crm_reorder_batch(task_id, rows, f"Reordering order {index + 1} of {len(rows)}: {order_id}."):
+                return False, automation_queue_persistence_error
+            order_started = time.monotonic()
+            try:
+                ok, message, payload = _run_crm_reorder_worker(order_id, dry_run)
+            except Exception as exc:
+                ok, message, payload = False, str(exc), {}
+            rows[index] = _crm_reorder_order_result(order_id, ok, message, payload)
+            rows[index]["duration_seconds"] = round(time.monotonic() - order_started, 2)
+            if not _checkpoint_crm_reorder_batch(task_id, rows):
+                return False, automation_queue_persistence_error
+        report = _crm_reorder_batch_report(rows)
+        if not _checkpoint_crm_reorder_batch(task_id, rows):
+            return False, automation_queue_persistence_error
+        _audit_result("crm.reorder", report["success"], report["message"])
+        return report["success"], report["message"]
+    finally:
+        with crm_reorder_runtime_lock:
+            crm_reorder_runtime.update(running=False, completedAt=datetime.now().isoformat())
+        crm_lock.release()
+
+
 def run_crm_reorder_order_queued(order_id, dry_run=False):
     if not re.fullmatch(r"\d{7}", str(order_id)):
         return False, "Reorder requires a seven-digit CRM order number."
@@ -13992,13 +14143,7 @@ def run_crm_reorder_order_queued(order_id, dry_run=False):
         with crm_reorder_runtime_lock:
             crm_reorder_runtime.clear()
             crm_reorder_runtime.update(running=True, targetOrderId=order_id, startedAt=datetime.now().isoformat())
-        arguments = ["--order-id", order_id]
-        if dry_run:
-            arguments.append("--dry-run")
-        ok, message, payload = _run_script(CRM_REORDER_SCRIPT, arguments, "CRMReorder", timeout=1800, require_result=True)
-        if not isinstance(payload, dict):
-            payload = {"success": False, "message": "Reorder worker returned no result."}
-            ok = False
+        ok, message, payload = _run_crm_reorder_worker(order_id, dry_run)
         with crm_reorder_runtime_lock:
             crm_reorder_runtime.update(payload=payload, lastSuccess=bool(ok), lastMessage=message)
         _audit_result("crm.reorder", ok, message)
@@ -15140,7 +15285,7 @@ def automation_chrome_profile_setup():
     if profile_key == 'ssactivewear':
         return jsonify({
             'success': True,
-            'message': 'S&S Reorder uses your normal Chrome browser. Reload CRM Order Assistant 1.7.0, open its popup, and choose Connect this browser. Allow S&S access, use Open S&S sign-in, then run the read-only background or minimized check. Connect only one browser profile.',
+            'message': 'Reload CRM Order Assistant 1.7.13 in your normal Chrome profile. Connect this browser once, allow S&S access, and use Open S&S sign-in if needed. Keep Chrome running; Reorder opens and checks a minimized window automatically and stays connected between orders. The read-only check is optional. Connect only one browser profile.',
             'browser_mode': 'extension',
             'fields_filled': [],
         })
@@ -15509,7 +15654,7 @@ def get_work_status_payload():
 
 register_reorder_routes(
     app, enqueue_automation=enqueue_automation,
-    run_reorder=run_crm_reorder_order_queued, get_status=get_crm_reorder_status_payload,
+    run_reorder=run_crm_reorder_batch_queued, get_status=get_crm_reorder_status_payload,
 )
 
 register_ssactivewear_bridge_routes(

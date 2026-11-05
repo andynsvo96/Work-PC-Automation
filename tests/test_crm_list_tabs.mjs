@@ -86,6 +86,7 @@ test("background message routes the selected IDs and actual sender to the tab op
   let listener;
   let received;
   const context = vm.createContext({
+    installSxsWorker() {}, // This fixture isolates CRM list routing from S&S startup.
     chrome: {
       runtime: { onMessage: { addListener: fn => { listener = fn; } } },
       webNavigation: { onCreatedNavigationTarget: { addListener() {} } }
