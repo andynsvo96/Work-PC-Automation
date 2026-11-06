@@ -34,6 +34,11 @@
         <tr id="weekend-rush" data-id="1234606" class="selectable previewPaneActive" style="background-color: #f3c49c"><td><a href="/order/1234606">1234606</a></td><td>2026-11-03</td><td>1</td></tr>
         <tr class="image-preview" style="background-color: #f3c49c"><td colspan="3"></td></tr>
         <tr id="purple" data-id="1234611" class="selectable previewPaneActive" style="background-color: #86209f"><td><a href="/order/1234611">1234611</a> | <a href="/app#/order/1234611" target="_blank">Lite</a></td><td>2026-11-06</td><td>1</td></tr>
+        <tr id="stock-issue-rush" data-id="1234612" class="selectable previewPaneActive" style="background-color: #2196f3; opacity: .5"><td><a href="/order/1234612">1234612</a></td><td>2026-11-03</td><td>1</td></tr>
+        <tr class="image-preview" style="background-color: #2196f3; opacity: .5"><td colspan="3"></td></tr>
+        <tr id="selected-stock-issue-rush" data-id="1234613" class="selectable previewPaneSelected" style="background-color: #2196f3; opacity: .5"><td><a href="/order/1234613">1234613</a></td><td>2026-11-03</td><td>1</td></tr>
+        <tr class="image-preview" style="background-color: #2196f3; opacity: .5"><td colspan="3"></td></tr>
+        <tr id="dimmed-native-rush" data-id="1234614" class="selectable previewPaneActive" style="background-color: #20df4b; opacity: .5"><td><a href="/order/1234614">1234614</a></td><td>2026-11-03</td><td>1</td></tr>
         <tr id="maroon" data-id="1234607" class="selectable previewPaneActive" style="background-color: #800000; opacity: .5"><td><a href="/order/1234607">1234607</a></td><td>2026-11-04</td><td>1</td></tr>
         <tr id="hidden-tan" data-id="1234608" class="selectable previewPaneActive" style="background-color: #f3c49c; display: none"><td><a href="/order/1234608">1234608</a></td><td>2026-11-04</td><td>1</td></tr>
         <tr id="tuesday-group"><td colspan="3">Production Date: 2026-11-03 | Total - 1</td></tr>
@@ -48,7 +53,7 @@
 <script>
   // Stand-in for the legacy CRM controller: modifiers toggle the native model,
   // selected rows turn gray, and loading briefly blocks subsequent selections.
-  window.fixtureSelection = new Set(['1234602', '1234603']);
+  window.fixtureSelection = new Set(['1234602', '1234603', '1234613']);
   window.fixtureClicks = [];
   window.fixtureMessages = [];
   window.fixtureIgnoreClicks = false;

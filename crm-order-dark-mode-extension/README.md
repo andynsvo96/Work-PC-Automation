@@ -46,6 +46,12 @@ below **Show Images & Sizes**, on the currently loaded CRM list page:
 Applicable status colors include tan (`#f3c49c`), native/extension neon green
 (`#20df4b` / `#22ec48`), and purple (`#86209f` / `#9c27b0`).
 
+Version **1.7.18** excludes stock-issue orders and dimmed rows from both buttons,
+including max-rush orders. Rush highlighting respects the original CRM status
+color: it applies only to undimmed tan, neon-green, or purple orders. Stock-issue
+orders keep their original status color instead of turning dark green. Already
+selected issue orders are deselected by either button and never opened.
+
 Native selection may turn a row gray with a yellow selection marker; its
 underlying status color still determines eligibility for both buttons. Both native
 neon green and the extension's rush highlight qualify. The regular and **Lite**
@@ -77,7 +83,7 @@ Version **1.7.17** fills the entire matching order, including its companion
 image-preview row, so no tan or purple strip remains underneath. Selecting the
 order temporarily hides the green and shows CRM's normal selection color and
 marker. Deselecting restores the full green highlight. Both list buttons still
-recognize selected rush orders as applicable.
+recognize eligible selected rush orders as applicable.
 
 Highlighting is automatic, independent of the dark-mode setting and local
 Automation app. It follows list refreshes, pagination, changed dates, and local

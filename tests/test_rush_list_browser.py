@@ -128,6 +128,7 @@ class RushListBrowserTests(unittest.TestCase):
         self.driver.execute_script("""
             const row = document.createElement('div');
             row.id = 'added';
+            row.className = 'report-row';
             row.innerHTML = '<a href="/order/1234599">1234599</a> Production Date: 10/30/2026 Due Date: 11/02/2026';
             document.body.append(row);
         """)
@@ -223,6 +224,51 @@ class RushListBrowserTests(unittest.TestCase):
         self.driver.execute_script("document.querySelector('#weekend-rush').dispatchEvent(new MouseEvent('click', {bubbles:true, ctrlKey:true, metaKey:true}));")
         self.assertEqual(self.selected_order_ids(), [])
         self.assertTrue(all(paint[0] == "rgb(34, 236, 72)" for paint in self.order_paint("weekend-rush")))
+
+    def test_stock_issue_rush_orders_keep_status_colors_and_both_buttons_exclude_them(self):
+        expected = ["1234601", "1234603", "1234605", "1234606", "1234611"]
+        for action in [self.select_applicable, self.open_applicable]:
+            with self.subTest(action=action.__name__):
+                self.show_list(31, "/report/select-applicable")
+                self.assertEqual(self.highlighted(), ["weekend-rush"])
+                self.assertEqual(self.order_paint("stock-issue-rush")[0][0], "rgb(33, 150, 243)")
+                self.assertEqual(self.order_paint("stock-issue-rush")[-2][0], "rgb(33, 150, 243)")
+                self.assertIn("1234613", self.selected_order_ids())
+                action()
+                self.assertEqual(self.selected_order_ids(), expected)
+                self.assertEqual(self.highlighted(), ["weekend-rush"])
+                for row_id in ["stock-issue-rush", "selected-stock-issue-rush"]:
+                    self.assertEqual(self.order_paint(row_id)[0][0], "rgb(33, 150, 243)")
+                    self.assertEqual(self.order_paint(row_id)[-2][0], "rgb(33, 150, 243)")
+                messages = self.driver.execute_script("return fixtureMessages;")
+                self.assertEqual(messages, [] if action == self.select_applicable else [
+                    {"type": "crm-list:open-applicable", "orderIds": expected}
+                ])
+
+    def test_changing_a_selected_rush_order_to_stock_issue_removes_highlight_and_eligibility(self):
+        self.show_list(31, "/report/select-applicable")
+        self.assertEqual(self.select_applicable(), "5 orders selected")
+        self.driver.execute_script("""
+            const row = document.querySelector('#weekend-rush');
+            row.style.backgroundColor = row.nextElementSibling.style.backgroundColor = '#2196f3';
+            row.style.opacity = row.nextElementSibling.style.opacity = '.5';
+        """)
+        self.wait_for_rows([])
+        self.assertEqual(self.open_applicable(), "4 selected · 4 tabs opened")
+        expected = ["1234601", "1234603", "1234605", "1234611"]
+        self.assertEqual(self.selected_order_ids(), expected)
+        self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [
+            {"type": "crm-list:open-applicable", "orderIds": expected}
+        ])
+        self.assertEqual(self.order_paint("weekend-rush")[0][0], "rgb(33, 150, 243)")
+        self.assertEqual(self.order_paint("weekend-rush")[-2][0], "rgb(33, 150, 243)")
+        self.driver.execute_script("""
+            const row = document.querySelector('#weekend-rush');
+            row.style.backgroundColor = row.nextElementSibling.style.backgroundColor = '#f3c49c';
+            row.style.opacity = row.nextElementSibling.style.opacity = '1';
+        """)
+        self.wait_for_rows(["weekend-rush"])
+        self.assertEqual(self.select_applicable(), "5 orders selected")
 
     def selected_order_ids(self):
         return self.driver.execute_script("return [...fixtureSelection].sort();")

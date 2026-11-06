@@ -149,7 +149,7 @@ function crmRefreshRushListRows() {
     for (const link of document.querySelectorAll("a[href]")) {
       if (!crmListOrderId(link)) continue;
       const row = crmListRowForOrder(link);
-      if (!row || checked.has(row)) continue;
+      if (!row || checked.has(row) || !crmListRowIsApplicable(row)) continue;
       checked.add(row);
       if (crmListFulfillmentDate(row) === dates.fulfillment && crmListProductionDate(row) === dates.production) nextRows.add(row);
     }
@@ -171,10 +171,12 @@ function crmListSelectableRows() {
 }
 
 function crmListRowIsApplicable(row) {
-  if (row.classList.contains(CRM_LIST_RUSH_CLASS)) return true;
   // Native selection/hover paints rows gray. The inline CRM status color keeps
-  // the original eligibility available even while an order is selected.
-  const color = row.style.backgroundColor || getComputedStyle(row).backgroundColor;
+  // the original eligibility available even while an order is selected. Rush
+  // highlighting must never promote another status or a dimmed issue row.
+  const style = getComputedStyle(row);
+  if (Number(style.opacity) < 1) return false;
+  const color = row.style.backgroundColor || style.backgroundColor;
   return CRM_LIST_APPLICABLE_COLORS.has(color);
 }
 

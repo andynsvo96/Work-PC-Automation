@@ -4,9 +4,33 @@ import test from "node:test";
 import vm from "node:vm";
 
 const source = await readFile(new URL("../crm-order-dark-mode-extension/rush-list-highlight.js", import.meta.url), "utf8");
-const context = vm.createContext({ document: { readyState: "loading", addEventListener() {} } });
+const context = vm.createContext({
+  document: { readyState: "loading", addEventListener() {} },
+  getComputedStyle: row => row.computedStyle
+});
 vm.runInContext(source, context);
 const evaluate = expression => vm.runInContext(expression, context);
+
+test("rush highlights cannot make stock issues or dimmed status colors applicable", () => {
+  for (const [color, opacity, highlighted, expected] of [
+    ["rgb(243, 196, 156)", "1", false, true],
+    ["rgb(134, 32, 159)", "1", true, true],
+    ["rgb(32, 223, 75)", "1", false, true],
+    ["rgb(34, 236, 72)", "1", true, true],
+    ["rgb(33, 150, 243)", "0.5", true, false],
+    ["rgb(33, 150, 243)", "1", true, false],
+    ["rgb(32, 223, 75)", "0.5", false, false],
+    ["rgb(243, 196, 156)", "0.5", true, false],
+    ["rgb(196, 125, 84)", "1", true, false]
+  ]) {
+    context.candidate = {
+      style: { backgroundColor: color },
+      computedStyle: { backgroundColor: "rgb(101, 110, 135)", opacity },
+      classList: { contains: () => highlighted }
+    };
+    assert.equal(evaluate("crmListRowIsApplicable(candidate)"), expected, `${color}, opacity ${opacity}, highlighted ${highlighted}`);
+  }
+});
 
 test("Friday requires Friday production and the immediately following Monday fulfillment", () => {
   for (const [date, production, fulfillment] of [
