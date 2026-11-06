@@ -188,6 +188,42 @@ class RushListBrowserTests(unittest.TestCase):
         self.driver.execute_script("document.querySelector('#monday-group td').textContent = 'Production Date: 2026-11-02 | Total - 8';")
         self.wait_for_rows(["weekend-rush"])
 
+    def order_paint(self, row_id):
+        return self.driver.execute_script("""
+            const row = document.getElementById(arguments[0]);
+            const preview = row.nextElementSibling;
+            return [row, ...row.cells, preview, ...preview.cells].map(element => {
+                const style = getComputedStyle(element);
+                return [style.backgroundColor, style.color, style.borderLeftColor, style.borderLeftWidth];
+            });
+        """, row_id)
+
+    def test_rush_highlight_fills_the_order_and_its_preview_over_tan_and_purple(self):
+        for status in ["#f3c49c", "#86209f"]:
+            with self.subTest(status=status):
+                self.show_list(31, "/report/select-applicable")
+                self.driver.execute_script("""
+                    const row = document.querySelector('#weekend-rush');
+                    row.style.backgroundColor = row.nextElementSibling.style.backgroundColor = arguments[0];
+                """, status)
+                self.assertTrue(all(paint[0] == "rgb(34, 236, 72)" for paint in self.order_paint("weekend-rush")))
+                self.assertEqual(self.order_paint("tan-one")[0][0], "rgb(243, 196, 156)")
+                self.assertEqual(self.order_paint("tan-one")[-2][0], "rgb(243, 196, 156)")
+
+    def test_manual_selection_uses_native_colors_and_marker_then_restores_green(self):
+        self.show_list(31, "/report/select-applicable")
+        self.driver.find_element(By.CSS_SELECTOR, "#tan-one td:last-child").click()
+        native_selection = self.order_paint("tan-one")
+        WebDriverWait(self.driver, 5).until(lambda _: not self.driver.find_elements(By.CSS_SELECTOR, "#preview-pane.loading"))
+        self.driver.find_element(By.CSS_SELECTOR, "#weekend-rush td:last-child").click()
+        self.assertEqual(self.order_paint("weekend-rush"), native_selection)
+        self.assertEqual(self.highlighted(), ["weekend-rush"])
+        self.assertEqual(self.selected_order_ids(), ["1234606"])
+        WebDriverWait(self.driver, 5).until(lambda _: not self.driver.find_elements(By.CSS_SELECTOR, "#preview-pane.loading"))
+        self.driver.execute_script("document.querySelector('#weekend-rush').dispatchEvent(new MouseEvent('click', {bubbles:true, ctrlKey:true, metaKey:true}));")
+        self.assertEqual(self.selected_order_ids(), [])
+        self.assertTrue(all(paint[0] == "rgb(34, 236, 72)" for paint in self.order_paint("weekend-rush")))
+
     def selected_order_ids(self):
         return self.driver.execute_script("return [...fixtureSelection].sort();")
 
@@ -229,6 +265,7 @@ class RushListBrowserTests(unittest.TestCase):
         expected = ["1234601", "1234603", "1234605", "1234606", "1234611"]
         self.assertEqual(self.selected_order_ids(), expected)
         self.assertEqual(self.driver.execute_script("return [...document.querySelectorAll('#report-table .previewPaneSelected')].map(row => row.dataset.id).sort();"), expected)
+        self.assertEqual(self.order_paint("weekend-rush"), self.order_paint("tan-one"))
         messages = self.driver.execute_script("return fixtureMessages;")
         self.assertEqual(messages, [{"type": "crm-list:open-applicable", "orderIds": expected}])
         self.assertEqual(self.driver.current_url, original_url)
@@ -307,6 +344,7 @@ class RushListBrowserTests(unittest.TestCase):
         self.assertEqual(self.select_applicable(), "5 orders selected")
         self.assertEqual(self.selected_order_ids(), expected)
         self.assertEqual(self.driver.execute_script("return [...document.querySelectorAll('#report-table .previewPaneSelected')].map(row => row.dataset.id).sort();"), expected)
+        self.assertEqual(self.order_paint("weekend-rush"), self.order_paint("tan-one"))
         self.assertEqual(self.driver.execute_script("return fixtureMessages;"), [])
         self.assertEqual(self.driver.current_url, original_url)
         self.assertEqual(self.driver.current_window_handle, original_tab)

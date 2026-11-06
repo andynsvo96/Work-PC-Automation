@@ -1,10 +1,14 @@
 /* Screen-only, independent of the order-page dark-mode preference. */
 @media screen {
-  .crm-list-rush,
-  .crm-list-rush > td,
-  .crm-list-rush > th,
-  .crm-list-rush > [role="cell"],
-  .crm-list-rush > [role="gridcell"] {
+  /* CRM gives each order a companion preview row, even with images hidden.
+     Leave both rows to CRM's native styling while the order is selected. */
+  .crm-list-rush:not(.previewPaneSelected),
+  .crm-list-rush:not(.previewPaneSelected) > td,
+  .crm-list-rush:not(.previewPaneSelected) > th,
+  .crm-list-rush:not(.previewPaneSelected) > [role="cell"],
+  .crm-list-rush:not(.previewPaneSelected) > [role="gridcell"],
+  tr.crm-list-rush:not(.previewPaneSelected) + tr.image-preview,
+  tr.crm-list-rush:not(.previewPaneSelected) + tr.image-preview > td {
     background-color: rgb(34, 236, 72) !important;
     color: #111 !important;
   }

@@ -73,6 +73,12 @@ this treats Monday as the working day. Production dates in report group headers
 are supported. The rule uses the computer's local calendar without a holiday
 calendar. Monday through Thursday retain CRM's own urgency behavior.
 
+Version **1.7.17** fills the entire matching order, including its companion
+image-preview row, so no tan or purple strip remains underneath. Selecting the
+order temporarily hides the green and shows CRM's normal selection color and
+marker. Deselecting restores the full green highlight. Both list buttons still
+recognize selected rush orders as applicable.
+
 Highlighting is automatic, independent of the dark-mode setting and local
 Automation app. It follows list refreshes, pagination, changed dates, and local
 midnight, removing stale extension highlights as the date or list changes.
