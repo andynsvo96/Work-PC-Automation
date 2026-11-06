@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Offline Salesforce sender fixture</title>
+<style>
+  body { font: 16px sans-serif; }
+  section { border: 1px solid #aaa; padding: 12px; margin: 12px; }
+  [role="combobox"], [role="option"] { display: block; padding: 6px; cursor: pointer; }
+  .select-options { position: absolute; background: white; border: 1px solid #888; z-index: 10; }
+  [hidden] { display: none !important; }
+</style>
+<h1>Salesforce composer fixture</h1>
+<div id="unrelated" role="listbox"><a role="option">Orders &lt;orders@rushordertees.com&gt;</a></div>
+<script>
+  const personal = "Agent <agent@example.test>";
+  const orders = "Orders <orders@rushordertees.com>";
+  window.fixture = { composers: {}, sends: 0, unrelatedClicks: 0, recipientClicks: 0 };
+  document.querySelector("#unrelated a").onclick = () => fixture.unrelatedClicks++;
+
+  // Sanitized Aura structure from the supplied captures; popup IDs contain colons
+  // and the lazy-loaded menu moves out of the From field into document.body.
+  window.addComposer = (id, options = {}) => {
+    const composer = document.createElement("section");
+    composer.id = id;
+    composer.innerHTML = `
+      <div data-target-selection-name="sfdc:RecordField.OutgoingEmail.ValidatedFromAddress">
+        <div class="uiInput uiInputSelect forceInputPicklist">
+          <span class="uiPicklistLabel">From</span>
+          <div class="standardField uiMenu">
+            <div class="uiPopupTrigger"><a role="combobox" tabindex="0" aria-expanded="false"
+              aria-disabled="false" aria-haspopup="true" class="select"><span></span></a></div>
+            <div class="select-options uiPopupTarget uiMenuList" role="listbox" hidden></div>
+          </div>
+        </div>
+      </div>
+      <div data-target-selection-name="sfdc:RecordField.OutgoingEmail.ToAddress">
+        <a role="combobox" tabindex="0">Customer &lt;customer@example.test&gt;</a>
+      </div>
+      <label>Subject <input value="Fixture subject"></label>
+      <div contenteditable="true">Email body mentioning orders@rushordertees.com</div>
+      <button>Send</button>`;
+    const control = composer.querySelector('[role="combobox"]');
+    const value = control.querySelector("span");
+    const menu = composer.querySelector('[role="listbox"]');
+    value.textContent = options.current || personal;
+    menu.id = `${id}:3497:0`;
+    control.setAttribute("aria-controls", menu.id);
+    if (options.disabled) control.setAttribute("aria-disabled", "true");
+    if (options.hidden) composer.hidden = true;
+    const state = { composer, control, value, menu, opens: 0, closes: 0, choices: [] };
+    fixture.composers[id] = state;
+    control.onclick = () => {
+      if (control.getAttribute("aria-disabled") === "true") return;
+      if (control.getAttribute("aria-expanded") === "true") {
+        state.closes++;
+        control.setAttribute("aria-expanded", "false");
+        menu.hidden = true;
+        return;
+      }
+      state.opens++;
+      control.focus();
+      control.setAttribute("aria-expanded", "true");
+      setTimeout(() => {
+        if (!composer.isConnected || control.getAttribute("aria-expanded") !== "true") return;
+        const labels = [personal, "Orders Team <ordershelp@rushordertees.com>",
+          "Orders <notorders@rushordertees.com>", "Orders <orders@rushordertees.com.example.test>",
+          "Orders <orders@rushordertees.com-evil>", "Orders <x'orders@rushordertees.com>"];
+        if (options.orders !== false) labels.push(orders);
+        if (options.duplicate) labels.push(orders);
+        menu.replaceChildren();
+        for (const label of labels) {
+          const item = document.createElement("a");
+          item.setAttribute("role", "option");
+          item.setAttribute("tabindex", "0");
+          item.title = item.textContent = label;
+          item.setAttribute("aria-selected", String(label === value.textContent));
+          if (options.ordersDisabled && label === orders) item.setAttribute("aria-disabled", "true");
+          item.onclick = () => {
+            if (item.getAttribute("aria-disabled") === "true") return;
+            state.choices.push(label);
+            if (options.rejectSelection) return;
+            value.textContent = label;
+            control.setAttribute("aria-expanded", "false");
+            menu.hidden = true;
+          };
+          menu.append(item);
+        }
+        document.body.append(menu);
+        menu.hidden = false;
+      }, options.delay ?? 80);
+    };
+    composer.querySelector('[data-target-selection-name$=".ToAddress"] a').onclick = () => fixture.recipientClicks++;
+    composer.querySelector("button").onclick = () => fixture.sends++;
+    document.body.append(composer);
+    return composer;
+  };
+</script>
+</html>

@@ -1,6 +1,6 @@
 # CRM Order Assistant
 
-Private Manifest V3 extension for the Automation project's CRM pages. It provides local order-page dark mode, queued single-order tools, list selection and rush highlighting, and reliable Salesforce tab reuse. List controls select orders and open tabs; queued tools remain scoped to individual order pages.
+Private Manifest V3 extension for the Automation project's CRM pages. It provides local order-page dark mode, queued single-order tools, list selection and rush highlighting, reliable Salesforce tab reuse, and an automatic Orders email sender default. List controls select orders and open tabs; queued tools remain scoped to individual order pages.
 
 ## Install locally
 
@@ -11,7 +11,7 @@ Private Manifest V3 extension for the Automation project's CRM pages. It provide
 
 The preference is stored locally in that Chrome profile. Removing or reloading the extension keeps the preference unless Chrome extension data is cleared.
 
-After extension updates, reload the extension at `chrome://extensions` and refresh open CRM order and list pages. Updates that also change the local Automation app require an app restart as noted below.
+After extension updates, reload the extension at `chrome://extensions` and refresh open CRM order/list and Salesforce pages. Updates that also change the local Automation app require an app restart as noted below.
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
@@ -336,6 +336,35 @@ Older app versions reject the new requests rather than dropping the sizes.
 Restart the local Automation app, refresh the dashboard, reload CRM Order
 Assistant at `chrome://extensions`, and refresh open CRM order pages.
 
+## Salesforce Orders email default - 1.7.19
+
+Each newly opened Salesforce Lightning email composer automatically selects
+**Orders &lt;orders@rushordertees.com&gt;** in its **From** dropdown. This works
+independently of CRM dark mode and the local Automation app, including composers
+opened after navigating between Salesforce records without refreshing the page.
+
+An email already using Orders is left alone. After the default is applied, you
+can manually choose another sender for that draft. The extension yields if you
+start clicking or typing while its selection is pending. It uses only the
+composer's From dropdown and its linked popup, with an exact email-address match;
+Orders Team and similar addresses do not qualify. It never clicks Send or edits
+the recipients, subject, or body.
+
+If Orders is missing, disabled, ambiguous, or the dropdown does not load within
+three seconds, selection stops and the current sender remains. A rejected
+selection is not retried. Check the visible From value before sending. Reload
+**CRM Order Assistant 1.7.19** at `chrome://extensions` and refresh open Salesforce
+pages to enable this feature. No local Automation app restart is needed.
+
+Offline browser verification uses sanitized markup based on saved Salesforce
+pages and an isolated Chrome profile; it never opens a live customer record:
+
+```powershell
+python -m unittest discover -s tests -p test_salesforce_sender_browser.py
+```
+
+Set `CHROMEDRIVER` if a local driver is not already available under `.wdm/`.
+
 ## Salesforce tab reuse
 
 Clicking a Salesforce link in CRM navigates an existing Salesforce tab instead of opening a duplicate. The search includes every normal Chrome window in the current browser profile; if the reused tab is in another window, that window and tab are focused. If no Salesforce tab is open, the link opens normally in a new tab.
@@ -354,6 +383,11 @@ identifiable order and matching readable production and fulfillment/due dates.
 Both list buttons use the native selectable rows in CRM's report table. The manifest injects
 across the CRM host to reach embedded frames; `content.js` keeps its order-page
 gate. Styling exists only in screen media, so CRM printing stays light.
+
+The separate sender content script runs on HTTPS `*.salesforce.com` and
+`*.force.com` pages, including matching frames, and acts only on Salesforce's
+OutgoingEmail From fields. It uses the extension's existing Salesforce host
+access and adds no permissions or local-app requests.
 
 ## Local app bridge and order tools
 

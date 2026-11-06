@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "CRM Order Assistant",
-  "version": "1.7.18",
-  "description": "CRM order tools with queued single-order automations and reliable Salesforce tab reuse.",
+  "version": "1.7.19",
+  "description": "CRM order tools, Salesforce tab reuse, and automatic Orders email sender selection.",
   "permissions": ["storage", "tabs", "webNavigation"],
   "host_permissions": [
     "https://crm2.legacy.printfly.com/*",
@@ -39,6 +39,12 @@
       "js": ["rush-list-highlight.js"],
       "css": ["rush-list-highlight.css"],
       "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://*.salesforce.com/*", "https://*.force.com/*"],
+      "js": ["salesforce-email-sender.js"],
+      "run_at": "document_idle",
       "all_frames": true
     }
   ]
