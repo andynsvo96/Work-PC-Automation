@@ -74,6 +74,7 @@ from routes.reorder_routes import register_reorder_routes
 from safe_sync import publish_repository_update
 from salesforce_templates import default_template_store
 from shipping_bypasser_mappings import (
+    SHIPPING_BRAND_RULES,
     load_mapping_document,
     mapping_counts,
     save_mapping_products,
@@ -15584,6 +15585,7 @@ def api_shipping_bypasser_mappings_get():
                 "products": document["products"],
                 "product_count": product_count,
                 "color_count": color_count,
+                "brand_rules": SHIPPING_BRAND_RULES,
             }
         )
     except Exception as exc:

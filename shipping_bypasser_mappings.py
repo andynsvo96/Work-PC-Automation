@@ -14,6 +14,84 @@ _MAPPINGS_LOCK = threading.RLock()
 _MAX_PRODUCTS = 2000
 _MAX_COLORS_PER_PRODUCT = 500
 
+# Display descriptions of the built-in handlers in crm_shipping_bypasser.py.
+# Exact product overrides are separate and take precedence over these rules.
+SHIPPING_BRAND_RULES = (
+    {
+        "brand": "Bella+Canvas",
+        "description": (
+            "Resolve recognized styles to SanMar's BC prefix, replacing a leading B "
+            "or dropping a trailing CRM-only C when needed. Keep letters that belong "
+            "to the SanMar style, including CVC."
+        ),
+        "applies_to": "Only recognized Bella+Canvas style IDs are converted automatically.",
+        "examples": [
+            {"crm_product_id": "3413C", "sanmar_product_id": "BC3413"},
+            {"crm_product_id": "B6500", "sanmar_product_id": "BC6500"},
+            {"crm_product_id": "3001CVC", "sanmar_product_id": "BC3001CVC"},
+        ],
+        "click_inventory_button": True,
+    },
+    {
+        "brand": "A4",
+        "description": "Add an a4 prefix to the CRM style when searching SanMar.",
+        "applies_to": "Applies to products identified as A4 stock.",
+        "examples": [{"crm_product_id": "NW3201", "sanmar_product_id": "a4NW3201"}],
+        "click_inventory_button": False,
+    },
+    {
+        "brand": "Gildan",
+        "description": (
+            "Resolve shortened G-prefixed CRM styles to recognized SanMar styles, "
+            "adding zeros where needed. Styles SanMar already lists with G keep that prefix."
+        ),
+        "applies_to": "Only recognized Gildan style IDs are converted automatically.",
+        "examples": [
+            {"crm_product_id": "G500", "sanmar_product_id": "5000"},
+            {"crm_product_id": "G640", "sanmar_product_id": "64000"},
+            {"crm_product_id": "G2400", "sanmar_product_id": "G2400"},
+        ],
+        "click_inventory_button": False,
+    },
+    {
+        "brand": "Rabbit Skins",
+        "description": "Add SanMar's RS prefix when the CRM style omits it.",
+        "applies_to": "Only recognized Rabbit Skins style IDs are converted automatically.",
+        "examples": [{"crm_product_id": "4400", "sanmar_product_id": "RS4400"}],
+        "click_inventory_button": True,
+    },
+    {
+        "brand": "Jerzees",
+        "description": (
+            "Add a trailing M when that resolves to a recognized SanMar style. "
+            "Keep styles that already match SanMar unchanged."
+        ),
+        "applies_to": "Requires Jerzees in the product details and a recognized style ID.",
+        "examples": [
+            {"crm_product_id": "562", "sanmar_product_id": "562M"},
+            {"crm_product_id": "29LS", "sanmar_product_id": "29LS"},
+        ],
+        "click_inventory_button": False,
+    },
+    {
+        "brand": "Next Level",
+        "description": (
+            "Use SanMar's NL prefix. Convert a leading N or trailing NL, "
+            "or add NL to a bare numeric style."
+        ),
+        "applies_to": (
+            "N-prefixed, NL-suffixed, and bare numeric conversions require at least four digits. "
+            "Bare numeric IDs also require Next Level in the product details."
+        ),
+        "examples": [
+            {"crm_product_id": "N6210", "sanmar_product_id": "NL6210"},
+            {"crm_product_id": "3933NL", "sanmar_product_id": "NL3933"},
+            {"crm_product_id": "3600", "sanmar_product_id": "NL3600"},
+        ],
+        "click_inventory_button": False,
+    },
+)
+
 
 def mapping_key(value):
     return re.sub(r"[^A-Z0-9]+", "", str(value or "").upper())

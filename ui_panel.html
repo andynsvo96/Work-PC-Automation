@@ -136,11 +136,15 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .settings-empty-search{display:none;margin:10px 0;padding:14px;border:1px dashed #cbd5e1;border-radius:10px;color:#64748b;font-size:12px;text-align:center}
 .shipping-mapping-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
 .shipping-mapping-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.shipping-mapping-view-switch{display:flex;gap:8px;flex-wrap:wrap}
 .shipping-mapping-status{margin:0 0 14px;padding:10px 12px;border:1px solid #dbe3ef;border-radius:9px;background:#f8fafc;color:#64748b;font-size:12px}
 .shipping-mapping-status.dirty{border-color:#fcd34d;background:#fffbeb;color:#92400e}
 .shipping-mapping-status.error{border-color:#fecaca;background:#fef2f2;color:#b91c1c}
 .shipping-mapping-list{display:flex;flex-direction:column;gap:12px}
-.shipping-mapping-product{padding:16px;border:1px solid #dbe3ef;border-radius:11px;background:#f8fafc}
+.shipping-mapping-product,.shipping-brand-rule{padding:16px;border:1px solid #dbe3ef;border-radius:11px;background:#f8fafc}
+.shipping-brand-rule p{margin:9px 0;color:#475569;font-size:12px;line-height:1.6}
+.shipping-brand-rule-examples{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.shipping-brand-rule-examples code{padding:5px 8px;border:1px solid #dbe3ef;border-radius:6px;background:#fff;color:#334155;font-size:12px}
 .shipping-mapping-product-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:13px}
 .shipping-mapping-product-title{font-size:14px;font-weight:800;color:#0f172a}
 .shipping-mapping-product-subtitle{margin-top:3px;color:#64748b;font-size:11px}
@@ -621,7 +625,10 @@ button.icon-btn.has-items:hover:not(:disabled){background:#0062a3;border-color:#
 :root[data-theme='dark'] .settings-task-note,
 :root[data-theme='dark'] .settings-connections-note{color:#9d9d9d}
 :root[data-theme='dark'] .shipping-mapping-status,
-:root[data-theme='dark'] .shipping-mapping-product{background:#2d2d30;border-color:#3c3c3c}
+:root[data-theme='dark'] .shipping-mapping-product,
+:root[data-theme='dark'] .shipping-brand-rule{background:#2d2d30;border-color:#3c3c3c}
+:root[data-theme='dark'] .shipping-brand-rule p{color:#b8b8b8}
+:root[data-theme='dark'] .shipping-brand-rule-examples code{background:#1e1e1e;border-color:#3c3c3c;color:#d4d4d4}
 :root[data-theme='dark'] .shipping-mapping-status{color:#b8b8b8}
 :root[data-theme='dark'] .shipping-mapping-status.dirty{background:#3d321d;border-color:#8a6d1f;color:#f6d365}
 :root[data-theme='dark'] .shipping-mapping-status.error{background:#3b2527;border-color:#8f3a3e;color:#f48771}
@@ -1722,7 +1729,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
         <button class='settings-nav-btn' type='button' data-settings-target='connections' data-search='connections profiles setup login paycom crm slack sanmar salesforce' onclick="showSettingsSection('connections')"><span class='settings-nav-icon'>◎</span><span>Connections</span><span class='settings-nav-badge'>5</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='crm' data-search='crm automation links reports lists batch workers browser retry credentials dry run' onclick="showSettingsSection('crm')"><span class='settings-nav-icon'>▤</span><span>CRM automation</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='salesforce-templates' data-search='salesforce template email title subject body html formatting auto' onclick="showSettingsSection('salesforce-templates')"><span class='settings-nav-icon'>✉</span><span>Salesforce Template</span></button>
-        <button class='settings-nav-btn' type='button' data-settings-target='shipping-mappings' data-search='shipping bypasser mappings crm sanmar products colors ids aliases' onclick="showSettingsSection('shipping-mappings')"><span class='settings-nav-icon'>↔</span><span>Shipping mappings</span></button>
+        <button class='settings-nav-btn' type='button' data-settings-target='shipping-mappings' data-search='shipping bypasser mappings crm sanmar products colors ids aliases brands rules bella canvas' onclick="showSettingsSection('shipping-mappings')"><span class='settings-nav-icon'>↔</span><span>Shipping mappings</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='work' data-search='work paycom weekly hours cap clock in out sync break schedule pin' onclick="showSettingsSection('work')"><span class='settings-nav-icon'>◷</span><span>Work &amp; Paycom</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='slack' data-search='slack messages channel clock in out lunch return day' onclick="showSettingsSection('slack')"><span class='settings-nav-icon'>▢</span><span>Slack messages</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='system' data-search='system hardware computer cpu memory ram workers auto detect manual' onclick="showSettingsSection('system')"><span class='settings-nav-icon'>⚙</span><span>System &amp; workers</span></button>
@@ -1891,20 +1898,32 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
 
       <section class='settings-section' data-settings-section='shipping-mappings'>
         <div class='settings-section-heading'>
-          <div><h2>Shipping Bypasser mappings</h2><p>Edit CRM product/color IDs and their exact SanMar product/color matches.</p></div>
+          <div><h2>Shipping Bypasser mappings</h2><p>Edit specific product/color matches or view the special rules used for product brands.</p></div>
           <details class='section-note'><summary>Mapping help</summary><div class='section-note-body'><p>Keep each CRM product ID unique. Put every special color for that product in its Colors list. SanMar color values should match the visible SanMar label exactly. Save changes before running Shipping Bypasser.</p></div></details>
         </div>
         <div class='settings-panel-card'>
           <div class='shipping-mapping-toolbar'>
-            <div><strong>Product and color mappings</strong><div class='muted'>These entries are stored separately from normal application settings.</div></div>
-            <div class='shipping-mapping-actions'>
-              <button class='secondary tiny' type='button' onclick='loadShippingBypassMappings(true, this)'>Reload</button>
-              <button class='secondary tiny' type='button' onclick='addShippingMappingProduct()'>Add product</button>
-              <button class='tiny' id='shippingMappingSaveBtn' type='button' onclick='saveShippingBypassMappings(this)'>Save mappings</button>
+            <div class='shipping-mapping-view-switch' role='group' aria-label='Shipping mapping views'>
+              <button class='tiny' type='button' data-shipping-mapping-view='items' aria-pressed='true' aria-controls='shippingMappingItemsView' onclick="showShippingMappingView('items')">Specific items</button>
+              <button class='secondary tiny' type='button' data-shipping-mapping-view='brands' aria-pressed='false' aria-controls='shippingMappingBrandRulesView' onclick="showShippingMappingView('brands')">Special brand rules</button>
             </div>
+            <button class='secondary tiny' type='button' onclick='loadShippingBypassMappings(true, this)'>Reload</button>
           </div>
           <div class='shipping-mapping-status' id='shippingMappingStatus' role='status' aria-live='polite'>Loading mappings…</div>
-          <div class='shipping-mapping-list' id='shippingMappingList'></div>
+          <div id='shippingMappingItemsView'>
+            <div class='shipping-mapping-toolbar'>
+              <div><strong>Product and color mappings</strong><div class='muted'>These entries are stored separately from normal application settings.</div></div>
+              <div class='shipping-mapping-actions'>
+                <button class='secondary tiny' type='button' onclick='addShippingMappingProduct()'>Add product</button>
+                <button class='tiny' id='shippingMappingSaveBtn' type='button' onclick='saveShippingBypassMappings(this)'>Save mappings</button>
+              </div>
+            </div>
+            <div class='shipping-mapping-list' id='shippingMappingList'></div>
+          </div>
+          <div id='shippingMappingBrandRulesView' hidden>
+            <p class='muted'>These built-in rules apply automatically to matching styles and are read-only here. Exact product mappings in Specific items take priority.</p>
+            <div class='shipping-mapping-list' id='shippingBrandRuleList'><div class='shipping-mapping-empty'>Loading special brand rules…</div></div>
+          </div>
         </div>
       </section>
 
@@ -1995,6 +2014,7 @@ let queueDragTaskId = null;
 let settingsSaveTimer = null;
 let settingsSavePromise = Promise.resolve();
 let shippingBypassMappings = [];
+let shippingBypassBrandRules = [];
 let shippingBypassMappingsLoaded = false;
 let shippingBypassMappingsDirty = false;
 const SETTINGS_SECTION_STORAGE_KEY = 'automation.settings.section';
@@ -9776,6 +9796,35 @@ async function loadStatus(setStatusText = true) {
   }
 }
 
+function showShippingMappingView(view) {
+  const showBrands = view === 'brands';
+  document.getElementById('shippingMappingItemsView').hidden = showBrands;
+  document.getElementById('shippingMappingBrandRulesView').hidden = !showBrands;
+  document.querySelectorAll('[data-shipping-mapping-view]').forEach((button) => {
+    const selected = button.dataset.shippingMappingView === (showBrands ? 'brands' : 'items');
+    button.setAttribute('aria-pressed', String(selected));
+    button.classList.toggle('secondary', !selected);
+  });
+}
+
+function renderShippingBypassBrandRules() {
+  const root = document.getElementById('shippingBrandRuleList');
+  if (!root) return;
+  if (!shippingBypassBrandRules.length) {
+    root.innerHTML = "<div class='shipping-mapping-empty'>Brand rules are unavailable. Restart the app and reload mappings.</div>";
+    return;
+  }
+  root.innerHTML = shippingBypassBrandRules.map((rule) => `
+    <article class='shipping-brand-rule'>
+      <div class='shipping-mapping-product-title'>${esc(rule.brand || '')}</div>
+      <p>${esc(rule.description || '')}</p>
+      <div class='shipping-brand-rule-examples'>${(rule.examples || []).map((example) => `<code>${esc(example.crm_product_id || '')} → ${esc(example.sanmar_product_id || '')}</code>`).join('')}</div>
+      <p>${esc(rule.applies_to || '')}</p>
+      ${rule.click_inventory_button ? '<p>Opens “Check inventory and pricing” before choosing colors and quantities.</p>' : ''}
+    </article>
+  `).join('');
+}
+
 function setShippingMappingStatus(message, state = '') {
   const status = document.getElementById('shippingMappingStatus');
   if (!status) return;
@@ -9949,15 +9998,19 @@ async function loadShippingBypassMappings(showFeedback = false, button = null) {
       shippingBypassMappings = Array.isArray(payload.products)
         ? payload.products.map(normalizeShippingMappingProduct)
         : [];
+      shippingBypassBrandRules = Array.isArray(payload.brand_rules) ? payload.brand_rules : [];
       shippingBypassMappingsLoaded = true;
       shippingBypassMappingsDirty = false;
       renderShippingBypassMappings();
-      setShippingMappingStatus(`${payload.product_count || 0} product(s) and ${payload.color_count || 0} unique color mapping(s) loaded.`);
+      renderShippingBypassBrandRules();
+      setShippingMappingStatus(`${payload.product_count || 0} product(s), ${payload.color_count || 0} unique color mapping(s), and ${shippingBypassBrandRules.length} brand rule(s) loaded.`);
       if (showFeedback) setStatus('Shipping Bypasser mappings reloaded.', 'settings');
       return true;
     } catch (error) {
       shippingBypassMappingsLoaded = false;
       setShippingMappingStatus(error.message || 'Mappings could not be loaded.', 'error');
+      const brandRoot = document.getElementById('shippingBrandRuleList');
+      if (brandRoot) brandRoot.textContent = 'Special brand rules could not be loaded. Use Reload to try again.';
       if (showFeedback) setStatus('Mapping load failed: ' + error.message, 'settings');
       return false;
     }
