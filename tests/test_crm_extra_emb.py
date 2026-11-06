@@ -89,7 +89,8 @@ process.stdout.write(JSON.stringify({result,design:r.designs[0]}));
             apply = stack.enter_context(patch.object(extra, "_apply_crm_sleeve_changes", return_value=mutation))
             verify = stack.enter_context(patch.object(extra, "_verify_crm_sleeve_changes", return_value={"note_saved": True}))
             stack.enter_context(patch.object(extra, "_capture_view_invoice_link", return_value="https://example.test/invoice"))
-            send = stack.enter_context(patch.object(extra, "_prepare_and_send_salesforce_email", return_value={"sent": True}))
+            send = stack.enter_context(patch.object(extra, "_prepare_and_send_salesforce_email", return_value={"sent": True, "activity_verified": True}))
+            stack.enter_context(patch.object(extra, "_send_salesforce_text_messages", return_value={"sent": True}))
             stack.enter_context(patch.object(reverse, "STATE_DIR", directory))
             selection = [{"tab_number": 1, "quantity": 10, "extra_emb": "embroidery"}]
             self.assertTrue(extra.process_sleeve_prints_order("5209138", selection)["success"])

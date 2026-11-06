@@ -385,6 +385,41 @@ another surcharge. A CRM save timeout does not prove that any changes persisted.
 Restart the local app to load this fix: the queued Extra Print Areas runner uses
 the worker module in the server process. No extension reload is needed.
 
+### Extra Print Areas payment texts
+
+Paid Extra Print Areas requests now send the payment request and the captured
+View Invoice URL as **two separate Twilio messages**, after Salesforce confirms
+the email in Activity. The copy uses the selected category and unit prices;
+mixed ink/embroidery requests keep their separate prices, and reverse prints
+keep their per-area price. All-zero requests, including Comp Sleeves, send only
+the existing email. Other reachout workflows do not send these payment texts.
+
+`workers/salesforce_text_messaging.py` verifies the active Account/Contact record
+and customer email, scopes controls to its visible `TwilioSFTwoWayMessages`
+component, and opens a Contact's **Text** tab. Cached hidden records, multiple
+visible message panels, another unsent draft, missing controls, and Twilio
+configuration/opt-in errors cannot trigger a send. Lightning shadow roots are
+supported. Each text must produce a new exact matching outgoing row with an
+accepted submission status before the next text starts. This confirms Twilio
+submission, not delivery to the customer's phone.
+
+Receipts in `runtime/state/extra_print_text_receipts/` freeze both texts and the
+invoice URL before email. Confirmed email and text states survive retries and
+server restarts. A confirmed legacy reverse-print/additional-embroidery email
+also continues to the text stage without resending the email. Text submission
+is checkpointed before each click. Retry can send an unattempted second text,
+but a pending, failed, or unconfirmed text stops for Twilio-history review and
+is never automatically resent. Do not delete or manually advance these receipts
+to bypass a review stop. Dry runs skip text clicks and text-receipt writes.
+
+Restart the local app to load this feature; no extension reload is required.
+Offline checks use `python -m unittest discover -s tests -p
+"test_salesforce_text*.py"`, including the synthetic Account/Contact browser
+fixture `tests/fixtures/salesforce_twilio.html`. A local ChromeDriver is required
+for browser checks (`CHROMEDRIVER` can select its path). The fixture never opens
+live Salesforce or sends real messages. Windows Chrome was verified; live
+Twilio delivery and macOS execution still require platform verification.
+
 ## Partial copyright cancellation
 
 The extension's Copyright - Cancel action carries a complete order design scan

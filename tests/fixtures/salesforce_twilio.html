@@ -1,0 +1,87 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Offline Salesforce Twilio fixture</title>
+<style>
+  body { font: 14px sans-serif; }
+  one-record-home-flexipage2 { display: block; }
+  .TwilioSFTwoWayMessages { border: 1px solid #999; padding: 12px; width: 600px; }
+  .messages-listing { max-height: 180px; overflow: auto; }
+  textarea { width: 550px; height: 55px; }
+  .hide, .slds-hide { display: none; }
+</style>
+<button onclick="fixture.unrelatedClicks++">Send Message</button>
+<a href="mailto:customer@example.test">Unrelated email outside record</a>
+<one-record-home-flexipage2 id="cached" style="display:none"></one-record-home-flexipage2>
+<one-record-home-flexipage2 id="current"></one-record-home-flexipage2>
+<script>
+const fixture = window.fixture = {sends: [], textClicks: 0, unrelatedClicks: 0, email: 'customer@example.test',
+  status: 'sent', noConfirmation: false, delay: 0, disableSecond: false};
+
+function addRow(panel, body, status, outgoing = true) {
+  const row = document.createElement('div');
+  row.className = `message-wrapper ${outgoing ? 'outgoing' : 'incoming'}`;
+  const bubble = document.createElement('div'); bubble.className = 'message';
+  const paragraph = document.createElement('p'); paragraph.textContent = body; bubble.append(paragraph);
+  const time = document.createElement('div'); time.className = 'message-time';
+  const label = document.createElement('span'); label.className = 'uiOutputText'; label.textContent = status;
+  time.append(label); row.append(bubble, time);
+  panel.querySelector('.messages-listing').append(row);
+  return label;
+}
+
+function makePanel(parent, cached = false) {
+  const panel = document.createElement('div'); panel.className = 'TwilioSFTwoWayMessages';
+  panel.innerHTML = '<h3>Messages</h3><div class="messages-listing"></div>'
+    + '<div class="empty-state hide">Configuration Needed</div>'
+    + '<div class="empty-state hide">There was an error authenticating to Twilio</div>'
+    + '<div class="footer"><div class="add-message"><lightning-textarea></lightning-textarea>'
+    + '<div class="sendButton"><button disabled>Send Message</button></div></div>'
+    + '<div class="add-message hide">Opt-In Required</div></div>';
+  const input = document.createElement('textarea'); input.placeholder = 'Enter Message...';
+  panel.querySelector('lightning-textarea').attachShadow({mode: 'open'}).append(input);
+  const button = panel.querySelector('button');
+  input.addEventListener('input', () => button.disabled = !input.value);
+  button.addEventListener('click', () => {
+    if (cached) { fixture.unrelatedClicks++; return; }
+    fixture.sends.push(input.value);
+    if (!fixture.noConfirmation) {
+      const label = addRow(panel, input.value, fixture.delay ? '' : fixture.status);
+      if (fixture.delay) setTimeout(() => label.textContent = fixture.status, fixture.delay);
+    }
+    input.value = ''; button.disabled = true;
+    if (fixture.disableSecond && fixture.sends.length === 1) input.disabled = true;
+  });
+  parent.append(panel);
+  if (!cached) { fixture.panel = panel; fixture.input = input; fixture.button = button; }
+  return panel;
+}
+
+function install() {
+  const root = document.querySelector('#current');
+  root.innerHTML = '<a class="customer-email" href="mailto:customer@example.test">customer@example.test</a>';
+  fixture.root = root;
+  const sidebar = document.createElement('lightning-tabset'); root.append(sidebar);
+  const shadow = sidebar.attachShadow({mode: 'open'});
+  if (location.pathname.includes('/Contact/')) {
+    shadow.innerHTML = '<div role="tablist"><a role="tab" aria-selected="true">Activity</a>'
+      + '<a role="tab" aria-selected="false">Chatter</a><a role="tab" aria-selected="false">Text</a></div>'
+      + '<div role="tabpanel" hidden></div>';
+    fixture.textTab = [...shadow.querySelectorAll('[role="tab"]')].find(tab => tab.textContent === 'Text');
+    const content = shadow.querySelector('[role="tabpanel"]');
+    fixture.textTab.addEventListener('click', () => {
+      fixture.textClicks++;
+      for (const tab of shadow.querySelectorAll('[role="tab"]')) tab.setAttribute('aria-selected', String(tab === fixture.textTab));
+      setTimeout(() => { content.hidden = false; if (!fixture.panel) makePanel(content); }, 80);
+    });
+  } else {
+    makePanel(shadow);
+  }
+  const style = document.createElement('style');
+  style.textContent = '.hide, .slds-hide {display:none} .TwilioSFTwoWayMessages {display:block; padding:12px; width:600px}';
+  shadow.append(style);
+  const cached = document.querySelector('#cached');
+  cached.innerHTML = '<a href="mailto:customer@example.test">customer@example.test</a>';
+  makePanel(cached, true);
+}
+install();
+</script>

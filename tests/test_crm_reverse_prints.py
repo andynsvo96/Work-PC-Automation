@@ -263,7 +263,8 @@ class ReverseWorkflowTests(unittest.TestCase):
         stack.enter_context(patch.object(extra, "_apply_crm_sleeve_changes", return_value={}))
         stack.enter_context(patch.object(extra, "_verify_crm_sleeve_changes", return_value={"note_saved": True}))
         stack.enter_context(patch.object(extra, "_capture_view_invoice_link", return_value="https://example.test/invoice"))
-        send = stack.enter_context(patch.object(extra, "_prepare_and_send_salesforce_email", return_value={"sent": True}))
+        send = stack.enter_context(patch.object(extra, "_prepare_and_send_salesforce_email", return_value={"sent": True, "activity_verified": True}))
+        stack.enter_context(patch.object(extra, "_send_salesforce_text_messages", return_value={"sent": True}))
         mutation = {"jobs": [{"source": source_design(), "clone_index": 1, "unit_price": "8"}]}
         apply = stack.enter_context(patch.object(reverse, "apply_reverse_prints", return_value=mutation))
         verify = stack.enter_context(patch.object(reverse, "verify_reverse_prints", return_value=True))

@@ -4,6 +4,7 @@ The Chrome extension supplies the selected design tabs and a requested method fo
 each print area.  This worker applies the CRM changes once, collects the View Invoice
 link without sending the CRM invoice, then sends the appropriate Salesforce
 Additional Requests or Comp Sleeves email.
+Paid requests then send two separately receipted Salesforce Twilio texts.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ if WORKERS_DIR not in sys.path:
 
 import crm_copyright_cancel as shared
 from crm_stock_issue_extension import _verify_final_recipients
+from workers import salesforce_text_messaging as text_messaging
 
 
 AUTOMATION_KEY = "sleeve_prints"
@@ -276,6 +278,47 @@ def _format_cost_text(sleeves, ink_price, embroidery_price, reverse_price=None):
     if flags["ink"] and _area_family(sleeves, INK) == "sleeve":
         return f"{_money_text(ink_price)} per sleeve print"
     return _money_text(ink_price if flags["ink"] else embroidery_price)
+
+
+def _payment_text_messages(plan, invoice_link):
+    """Use the selected unit prices, without duplicating the email's 'per' text."""
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(invoice_link)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or any(char.isspace() for char in invoice_link):
+        raise SleevePrintsError("The payment text requires a valid View Invoice link.")
+    selections = plan["selections"]
+    terms = []
+    for method, price_key in ((INK, "ink_price"), (EMBROIDERY, "embroidery_price")):
+        areas = [{side: selection.get(side) if selection.get(side) == method else "" for side in SLEEVE_SIDES}
+                 for selection in selections if any(selection.get(side) == method for side in SLEEVE_SIDES)]
+        if areas:
+            terms.append(f"{_money_text(plan[price_key])} per {_format_request_text(areas)}")
+    if any(selection.get("reverse") for selection in selections):
+        terms.append(f"{_money_text(plan['reverse_price'])} per area for reverse prints")
+    if any(selection.get("extra_emb") for selection in selections):
+        terms.append(f"{_money_text(plan['embroidery_price'])} per additional embroidery area")
+    request_text = _format_request_text(selections)
+    return [
+        "Hello, this is RushOrderTees. To proceed with your order please make the additional payment of "
+        + " and ".join(terms)
+        + f" by clicking the link below. If you prefer to forgo the {request_text}, please reply back and let us know ASAP.",
+        invoice_link,
+    ]
+
+
+def _send_salesforce_text_messages(driver, crm_handle, order_id, customer_email, path, *, login_wait_seconds=0):
+    receipt = text_messaging.load_receipt(path, order_id, customer_email)
+    # Completed or uncertain sends can be resolved without opening another tab.
+    if receipt and all(entry["state"] == "confirmed" for entry in receipt["messages"]):
+        return text_messaging.send_text_messages(driver, path, order_id, customer_email)
+    if receipt and any(entry["state"] == "attempted" for entry in receipt["messages"]):
+        return text_messaging.send_text_messages(driver, path, order_id, customer_email)
+    shared._open_salesforce_account(
+        driver, crm_handle, customer_email, login_wait_seconds=login_wait_seconds, order_id=order_id,
+    )
+    shared._verify_salesforce_email(driver, customer_email)
+    return text_messaging.send_text_messages(driver, path, order_id, customer_email)
 
 
 def format_sales_note(sleeves, ink_price, embroidery_price, reverse_price=None):
@@ -1159,6 +1202,7 @@ def process_sleeve_prints_order(
         "dry_run": bool(dry_run), "stages": [], "warnings": [],
     }
     driver = None
+    text_path = None
     stage = "browser_start"
 
     def begin(key, message):
@@ -1287,32 +1331,74 @@ def process_sleeve_prints_order(
             result["crm_order_update"] = {"mutation": mutation, "save": save, "verification": verification}
             complete("crm_order_update", result["crm_order_update"])
 
+        email_already_sent = False
         if reverse_mutation is not None or extra_emb_selections:
             receipt = crm_reverse_prints.email_receipt_path(order_id, contact["email"], plan, reverse_mutation or {"jobs": []})
-            if crm_reverse_prints.email_was_sent(receipt):
-                result["salesforce"] = {"sent": False, "skipped": True, "reason": "matching_email_already_sent"}
-                complete("salesforce_email", result["salesforce"])
-                result.update(success=True, failed_stage=None)
-                return result
+            email_already_sent = crm_reverse_prints.email_was_sent(receipt)
+
+        payment_required = any((plan[key] or Decimal("0")) > 0 for key in ("ink_price", "embroidery_price", "reverse_price"))
+        text_receipt = None
+        if payment_required:
+            from workers import crm_reverse_prints
+            # Key by the original queued request, including its price overrides.
+            # A live quantity/tier change must not hide an earlier text send;
+            # compare the frozen bodies before email or any further text.
+            receipt_plan = {**request, "selections": request["sleeves"]}
+            identity = crm_reverse_prints.email_receipt_path(order_id, contact["email"], receipt_plan, {"jobs": []})
+            text_path = identity.parent.parent / "extra_print_text_receipts" / identity.name
+            text_receipt = text_messaging.load_receipt(text_path, order_id, contact["email"])
+            if text_receipt:
+                email_already_sent = email_already_sent or text_receipt["email_confirmed"]
 
         begin("invoice_link", "Copying the CRM View Invoice link without sending the invoice.")
-        invoice_link = _capture_view_invoice_link(driver)
+        invoice_link = text_receipt["messages"][1]["text"] if text_receipt else _capture_view_invoice_link(driver)
         result["invoice_link"] = invoice_link
         complete("invoice_link", {"captured": True})
+        if payment_required:
+            messages = _payment_text_messages(plan, invoice_link)
+            if not dry_run:
+                text_receipt = text_messaging.prepare_receipt(text_path, order_id, contact["email"], messages)
 
         begin("salesforce_email", f"Preparing and sending the {process.salesforce_template} email.")
-        salesforce = _prepare_and_send_salesforce_email(
-            driver, crm_handle, order_id, contact["email"], request_text, cost_text, invoice_link,
-            process=process, dry_run=dry_run, login_wait_seconds=login_wait_seconds,
-        )
+        if email_already_sent:
+            salesforce = {"sent": False, "skipped": True, "reason": "matching_email_already_sent"}
+        else:
+            salesforce = _prepare_and_send_salesforce_email(
+                driver, crm_handle, order_id, contact["email"], request_text, cost_text, invoice_link,
+                process=process, dry_run=dry_run, login_wait_seconds=login_wait_seconds,
+            )
         result["salesforce"] = salesforce
         if receipt is not None and salesforce.get("sent"):
             crm_reverse_prints.record_email_sent(receipt)
         complete("salesforce_email", salesforce)
+        if payment_required:
+            begin("salesforce_texts", "Sending the payment request and invoice link as two Salesforce texts.")
+            if dry_run:
+                result["text_messages"] = {"sent": False, "dry_run": True, "messages": messages}
+            else:
+                if not email_already_sent and salesforce.get("activity_verified") is not True:
+                    raise SleevePrintsError("Salesforce email Activity must be confirmed before sending payment texts.")
+                text_messaging.confirm_email(text_path, text_receipt)
+                result["text_messages"] = _send_salesforce_text_messages(
+                    driver, crm_handle, order_id, contact["email"], text_path, login_wait_seconds=login_wait_seconds,
+                )
+            complete("salesforce_texts", result["text_messages"])
+        else:
+            result["text_messages"] = {"sent": False, "skipped": True, "reason": "no_additional_payment"}
         result["success"] = True
         result["failed_stage"] = None
         return result
     except Exception as exc:
+        if text_path is not None and stage == "salesforce_texts":
+            try:
+                saved_texts = text_messaging.load_receipt(text_path, order_id, contact["email"])
+                result["text_messages"] = {
+                    "sent": False,
+                    "confirmed_count": sum(entry["state"] == "confirmed" for entry in (saved_texts or {}).get("messages", [])),
+                    "manual_review_required": any(entry["state"] == "attempted" for entry in (saved_texts or {}).get("messages", [])),
+                }
+            except text_messaging.TextMessageError:
+                result["text_messages"] = {"sent": False, "manual_review_required": True}
         if driver is not None:
             shared.safe_take_screenshot(driver, f"sleeve_prints_{order_id}_{stage}_error")
         result["failed_stage"] = stage
