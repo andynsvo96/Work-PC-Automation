@@ -21,7 +21,7 @@ def register_reorder_routes(app, *, enqueue_automation, run_reorder, get_status)
         label = f"Reorder Stock Order {order_ids[0]}" if len(order_ids) == 1 else f"Reorder Stock — {len(order_ids)} orders"
         ok, message, task = enqueue_automation(
             label, "Processing", partial(run_reorder, **arguments),
-            details="Replace red vendor stock; each customer PO uses its CRM order number.",
+            details="Replace red SanMar stock; each customer PO uses its CRM order number.",
             status_fn=get_status, task_type="crm.reorder_batch", task_arguments=arguments,
             automation_signature={"type": "crm.reorder_batch", "order_ids": order_ids},
         )

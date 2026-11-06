@@ -7,15 +7,22 @@ import server
 
 
 class ServerLifecycleTests(unittest.TestCase):
-    def test_sxs_setup_explains_extension_connection_without_opening_webdriver(self):
+    def test_retired_supplier_setup_is_rejected_without_opening_a_browser(self):
         with server.app.test_request_context(json={'profile': 'ssactivewear'}), mock.patch.object(
             server, 'open_and_prefill_setup_profile'
         ) as webdriver_setup, mock.patch.object(server, 'open_native_setup_profile') as native:
-            result = server.automation_chrome_profile_setup().get_json()
-        self.assertTrue(result['success'])
-        self.assertEqual(result['browser_mode'], 'extension')
+            response, status = server.automation_chrome_profile_setup()
+        self.assertEqual(status, 400)
+        self.assertFalse(response.get_json()['success'])
         webdriver_setup.assert_not_called()
         native.assert_not_called()
+
+    def test_retired_supplier_bridge_routes_are_not_registered(self):
+        routes = {rule.rule for rule in server.app.url_map.iter_rules()}
+        for action in ('connect', 'poll', 'result'):
+            self.assertNotIn('/api/extension/bridge/ssactivewear/' + action, routes)
+        self.assertIn('/api/extension/bridge/status', routes)
+        self.assertIn('/crm/reorder', routes)
 
     def test_windows_paycom_setup_uses_native_chrome_for_device_verification(self):
         target = {

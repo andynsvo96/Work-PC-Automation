@@ -5,6 +5,21 @@ import test from "node:test";
 const source = await readFile(new URL("../crm-order-dark-mode-extension/bridge.js", import.meta.url), "utf8");
 const bridge = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 
+test("extension no longer requests supplier website access or installs a supplier worker", async () => {
+  const folder = new URL("../crm-order-dark-mode-extension/", import.meta.url);
+  const manifest = JSON.parse(await readFile(new URL("manifest.json", folder), "utf8"));
+  assert.deepEqual(manifest.permissions, ["storage", "tabs", "webNavigation"]);
+  assert.deepEqual(manifest.optional_permissions || [], []);
+  assert.deepEqual(manifest.optional_host_permissions || [], []);
+  assert.ok(manifest.host_permissions.every(host => !host.includes("ssactivewear")));
+  const background = await readFile(new URL("background.js", folder), "utf8");
+  const popup = await readFile(new URL("popup.html", folder), "utf8");
+  const popupScript = await readFile(new URL("popup.js", folder), "utf8");
+  assert.doesNotMatch(background + popup + popupScript, /sxs|ssactivewear/i);
+  assert.match(popup, /id="theme-toggle"/);
+  assert.match(background, /rankSalesforceTabs/);
+});
+
 test("item suggestions retain CRM stock and the literal required replacement product", async (t) => {
   const products = [{ style: "DM130", description: "District Tee", color: "Red", design_item_ids: ["design-item-101"], total_quantity: 4 }];
   const request = t.mock.method(globalThis, "fetch", async (url, options) => {

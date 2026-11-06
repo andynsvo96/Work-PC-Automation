@@ -1386,6 +1386,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
       <label for='crmProcessingCustomOrderIdsInput'>Order IDs or individual CRM order links</label>
       <textarea id='crmProcessingCustomOrderIdsInput' rows='6' required placeholder='1234567&#10;https://crm2.legacy.printfly.com/order/2345678' style='box-sizing:border-box;width:100%;margin-top:6px;resize:vertical'></textarea>
       <div class='muted' style='margin-top:6px'>Up to 100 orders. Paste seven-digit IDs or individual CRM order links, separated by commas, spaces, or new lines. Duplicates run once.</div>
+      <div class='muted' style='margin-top:6px'>Reorder Stock supports SanMar only.</div>
     </div>
     <div class='bad' id='crmProcessingCustomInputError' role='alert' style='margin-top:10px'></div>
     <div class='row' style='justify-content:flex-end;margin-top:12px'>
@@ -1718,7 +1719,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
       <div class='settings-nav-label'>Settings</div>
       <nav class='settings-nav' id='settingsNav'>
         <button class='settings-nav-btn active' type='button' data-settings-target='overview' data-search='overview summary common tasks setup status' onclick="showSettingsSection('overview')"><span class='settings-nav-icon'>＋</span><span>Overview</span></button>
-        <button class='settings-nav-btn' type='button' data-settings-target='connections' data-search='connections profiles setup login paycom crm slack sanmar ssactivewear salesforce' onclick="showSettingsSection('connections')"><span class='settings-nav-icon'>◎</span><span>Connections</span><span class='settings-nav-badge'>6</span></button>
+        <button class='settings-nav-btn' type='button' data-settings-target='connections' data-search='connections profiles setup login paycom crm slack sanmar salesforce' onclick="showSettingsSection('connections')"><span class='settings-nav-icon'>◎</span><span>Connections</span><span class='settings-nav-badge'>5</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='crm' data-search='crm automation links reports lists batch workers browser retry credentials dry run' onclick="showSettingsSection('crm')"><span class='settings-nav-icon'>▤</span><span>CRM automation</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='salesforce-templates' data-search='salesforce template email title subject body html formatting auto' onclick="showSettingsSection('salesforce-templates')"><span class='settings-nav-icon'>✉</span><span>Salesforce Template</span></button>
         <button class='settings-nav-btn' type='button' data-settings-target='shipping-mappings' data-search='shipping bypasser mappings crm sanmar products colors ids aliases' onclick="showSettingsSection('shipping-mappings')"><span class='settings-nav-icon'>↔</span><span>Shipping mappings</span></button>
@@ -1798,7 +1799,6 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
             <div class='settings-connection-card has-credential-action'><button class='settings-connection-profile-btn' type='button' onclick="openChromeProfileSetup('crm', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>C</span>CRM</span><span class='settings-connection-action'>Open profile setup →</span></button><button class='secondary tiny settings-credential-btn' type='button' title='Set CRM credentials in the operating system credential store' onclick="openCredentialSetup('crm', this)">Set credentials</button></div>
             <div class='settings-connection-card has-credential-action'><button class='settings-connection-profile-btn' type='button' onclick="openChromeProfileSetup('slack', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>Slack</span><span class='settings-connection-action'>Open profile setup →</span></button><button class='secondary tiny settings-credential-btn' type='button' title='Set Slack credentials in the operating system credential store' onclick="openCredentialSetup('slack', this)">Set credentials</button></div>
             <div class='settings-connection-card has-credential-action'><button class='settings-connection-profile-btn' type='button' onclick="openChromeProfileSetup('sanmar', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>SanMar</span><span class='settings-connection-action'>Open profile setup →</span></button><button class='secondary tiny settings-credential-btn' type='button' title='Set SanMar credentials in the operating system credential store' onclick="openCredentialSetup('sanmar', this)">Set credentials</button></div>
-            <div class='settings-connection-card'><button class='settings-connection-profile-btn' type='button' onclick="openChromeProfileSetup('ssactivewear', this)"><span class='settings-connection-name'><span class='settings-connection-mark'>S</span>S&amp;S Activewear</span><span class='settings-connection-action'>Browser extension setup &rarr;</span></button></div>
           </div>
           <div class='salesforce-worker-panel'>
             <div class='salesforce-worker-heading'>
@@ -3580,6 +3580,7 @@ function openQueueTaskReport(taskId) {
 }
 
 function reorderConfirmationLinksHtml(row) {
+  // Retired supplier links are retained only for historical purchase review.
   const purchases = row && Array.isArray(row.purchases) ? row.purchases : [];
   return purchases.map((purchase) => {
     const label = `${purchase.vendor || 'Supplier'} confirmation${purchase.reference ? ` ${purchase.reference}` : ''}`;

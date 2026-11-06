@@ -13,9 +13,3 @@ p { margin: 0; }
 .toggle input:checked + .track .thumb { transform: translateX(16px); background: #fff; }
 .toggle input:focus-visible + .track { outline: 2px solid #4fc1ff; outline-offset: 2px; }
 .hint { color: #9d9d9d; font-size: 12px; line-height: 1.4; }
-.sxs-controls { border-top: 1px solid #444; margin-top: 16px; padding-top: 12px; display: grid; gap: 8px; }
-.sxs-controls h2 { font-size: 14px; margin: 0; }
-.sxs-controls label { font-size: 12px; }
-.sxs-controls button, .sxs-controls select { color: #eee; background: #333; border: 1px solid #666; border-radius: 4px; padding: 7px; }
-.sxs-controls button { cursor: pointer; }
-.sxs-controls button:disabled { opacity: .6; cursor: wait; }

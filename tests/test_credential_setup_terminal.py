@@ -6,13 +6,14 @@ import server
 
 
 class CredentialSetupTerminalTests(unittest.TestCase):
-    def test_sxs_secure_prompt_and_dedicated_profile_are_registered(self):
-        with mock.patch.object(server, "normalize_os_name", return_value="windows"), mock.patch.object(server.subprocess, "Popen") as popen:
-            self.assertEqual(server._launch_credential_setup_terminal("ssactivewear"), "Windows Credential Manager")
-        self.assertIn("ssactivewear", popen.call_args.args[0][-1])
-        target = server._chrome_profile_setup_targets()["ssactivewear"]
-        self.assertIn("ssactivewear", target["profile_path"])
-        self.assertEqual(target["url"], "https://www.ssactivewear.com/myaccount/login")
+    def test_retired_supplier_cannot_launch_credential_or_profile_setup(self):
+        with mock.patch.object(server.subprocess, "Popen") as popen:
+            with self.assertRaisesRegex(ValueError, "Unknown credential setup service"):
+                server._launch_credential_setup_terminal("ssactivewear")
+        popen.assert_not_called()
+        targets = server._chrome_profile_setup_targets()
+        self.assertNotIn("ssactivewear", targets)
+        self.assertIn("sanmar", targets)
 
     def setUp(self):
         self.previous_pin_required = server.APP_PIN_REQUIRED

@@ -12,7 +12,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "workers"))
 
 import crm_reorder as worker
-import ssactivewear_ordering as sxs
 from flask import Flask
 from routes.reorder_routes import register_reorder_routes
 
@@ -38,7 +37,7 @@ class ReorderPlanningTests(unittest.TestCase):
     def test_stock_is_aggregated_once_across_designs_with_same_numeric_po(self):
         products = worker.aggregate_products([tab(), tab(tab_index=2)], "sanmar")
         self.assertEqual(products[0]["quantities"], {"L": 2, "XL": 2, "2XL": 2})
-        self.assertEqual(worker.aggregate_products([tab()], "ssactivewear"), [])
+        self.assertEqual(worker.aggregate_products([], "sanmar"), [])
 
     def test_all_shipping_classes_extend_dates_and_preserve_existing_later_dates(self):
         eta = date(2026, 11, 5)
@@ -128,7 +127,7 @@ class ReorderStockScanTests(unittest.TestCase):
     @staticmethod
     def state(assigned=False, *, ready=True):
         return {"ready": ready, "design_tab_id": "design-fixture", "records": [
-            {"id": "old-stock", "vendor": "S&S Activewear", "po": "H-Fixture-OLD", "assigned": assigned},
+            {"id": "old-stock", "vendor": "Sanmar", "po": "H-Fixture-OLD", "assigned": assigned},
         ]}
 
     def test_late_inventory_rows_cannot_be_reported_as_no_reorder_needed(self):
@@ -139,7 +138,7 @@ class ReorderStockScanTests(unittest.TestCase):
         ]
         _order, tabs = worker.scan_order(driver, "5000001")
         self.assertEqual(len(tabs), 1)
-        self.assertEqual(tabs[0]["vendor"], "ssactivewear")
+        self.assertEqual(tabs[0]["vendor"], "sanmar")
         self.assertEqual(tabs[0]["red_records"][0]["po"], "H-Fixture-OLD")
 
     def test_empty_or_unreadable_inventory_stops_for_review_instead_of_success(self):
@@ -162,273 +161,32 @@ class ReorderStockScanTests(unittest.TestCase):
         _order, tabs = worker.scan_order(driver, "5000001")
         self.assertEqual(tabs, [])
 
+    def test_non_sanmar_red_stock_stops_before_any_supplier_access(self):
+        for supplier in ("S&S Activewear", "SS Activewear", "S and S Activewear", "Local Inventory"):
+            with self.subTest(supplier=supplier), mock.patch.object(worker, "load_receipt", return_value=None):
+                state = self.state()
+                state["records"][0]["vendor"] = supplier
+                driver = mock.Mock()
+                driver.execute_script.return_value = state
+                vendor = mock.Mock()
+                with self.assertRaisesRegex(RuntimeError, "SanMar only"):
+                    worker.process_order(driver, vendor, "5000001")
+                vendor.assert_not_called()
 
-class SxsPlanningTests(unittest.TestCase):
-    def test_richardson_supplier_labels_preserve_source_and_do_not_map_other_styles_or_fits(self):
-        for source, target in (("Khaki/ Khaki/ Navy", "Khaki/ Navy CMB"), ("Caramel/ Black", "Carmel/ Black"),
-                               ("Cream/ Grey Brown/ Brown", "Cream/ Grey Brown/ Brown")):
-            p = product(product_id="112", product_name="Richardson Adjustable Snapback Trucker Cap", color=source,
-                        quantities={"ONESIZE": 1, "XL": 2}, is_gildan=False)
-            mapped = sxs.supplier_product(p)
-            self.assertEqual(mapped["color"], target)
-            self.assertEqual(mapped["quantities"], {"M/L": 1, "XL": 2})
-            self.assertEqual(p["color"], source)
-            self.assertEqual(p["quantities"], {"ONESIZE": 1, "XL": 2})
-            for other in ({**p, "product_id": "112Y"}, {**p, "product_name": "Other Brand Trucker Cap"}):
-                self.assertEqual(sxs.supplier_product(other), other)
+    def test_mixed_sanmar_and_retired_supplier_designs_cannot_partially_purchase(self):
+        sanmar = self.state()
+        retired = self.state()
+        retired["records"][0]["vendor"] = "S&S Activewear"
+        driver = mock.Mock()
+        driver.execute_script.side_effect = [sanmar, sanmar, retired, retired]
+        vendor = mock.Mock()
+        with mock.patch.object(worker.bypass, "_find_stock_tabs", return_value=[{"label": "Design 1"}, {"label": "Design 2"}]), mock.patch.object(
+            worker, "load_receipt", return_value=None
+        ), self.assertRaisesRegex(RuntimeError, "SanMar only"):
+            worker.process_order(driver, vendor, "5000001")
+        vendor.assert_not_called()
 
-    def test_richardson_size_alias_collisions_require_quantity_review(self):
-        p = product(product_id="112", product_name="Richardson Snapback Trucker Cap", quantities={"ONESIZE": 1, "M/L": 1})
-        with self.assertRaisesRegex(RuntimeError, 'multiple CRM size labels'):
-            sxs.supplier_product(p)
 
-    def test_richardson_planning_allocates_supplier_labels_and_retains_the_crm_source(self):
-        p = product(product_id="112", product_name="Richardson Snapback Trucker Cap", color="Khaki/ Khaki/ Navy", quantities={"ONESIZE": 1})
-        with mock.patch.object(sxs, 'open_product', return_value={"url": "https://www.ssactivewear.com/p/richardson/112"}) as opened, mock.patch.object(
-            sxs, 'inventory', return_value=[{"warehouse": "Reading, PA", "eta_text": "Est. Delivery: 11/06/2026", "stock": {"M/L": 1}}]
-        ):
-            group = worker.sxs_group(mock.Mock(), [p])
-        self.assertEqual(opened.call_args.args[1]["color"], "Khaki/ Navy CMB")
-        self.assertEqual(group["lines"][0]["source_product"], p)
-        self.assertEqual(group["lines"][0]["quantities"], {"M/L": 1})
-        self.assertEqual(p["quantities"], {"ONESIZE": 1})
-
-    def test_stock_shortage_identifies_the_exact_product_color_size_and_required_quantity(self):
-        p = product(product_id="112", product_name="Richardson Snapback Trucker Cap", color="Cream/ Grey Brown/ Brown", quantities={"M/L": 1})
-        line = {"product": p, "quantities": p["quantities"], "inventory": [
-            {"warehouse": "Reading, PA", "eta_text": "Est. Delivery: 11/06/2026", "stock": {"M/L": 0}},
-            {"warehouse": "Middleboro, MA", "eta_text": "Est. Delivery: 11/06/2026", "stock": {"M/L": 0}}]}
-        with self.assertRaisesRegex(RuntimeError, r'112 Cream/ Grey Brown/ Brown; M/L needs 1, available 0.*No partial purchase'):
-            sxs.allocate([line])
-
-    def test_richardson_112_uses_labelled_brand_style_and_description(self):
-        p = product(product_id="112", product_name="Richardson - Adjustable Snapback Trucker Cap", quantities={"ONESIZE": 1})
-        correct = {"url": "https://www.ssactivewear.com/p/richardson/112", "title": "112 Richardson Snapback Trucker Cap",
-                   "style": "112", "brand": "Richardson", "description": "Snapback Trucker Cap"}
-        variants = [{**correct, "url": "https://www.ssactivewear.com/p/richardson/" + style.lower(), "style": style}
-                    for style in ("112Y", "112P", "112FP")]
-        other = {**correct, "url": "https://www.ssactivewear.com/p/other_brand/112", "brand": "Other Brand", "title": "112 Other Brand Snapback Trucker Cap"}
-        self.assertEqual(sxs.select_product(p, [*variants, other, correct]), correct)
-
-    def test_labelled_supplier_brands_do_not_require_individual_allowlist_entries(self):
-        p = product(product_id="6006", product_name="Yupoong Classic Trucker Cap")
-        candidate = {"url": "https://www.ssactivewear.com/p/yupoong/6006", "title": "6006 Yupoong Classic Trucker Cap",
-                     "style": "6006", "brand": "Yupoong", "description": "Classic Trucker Cap"}
-        self.assertEqual(sxs.select_product(p, [candidate]), candidate)
-
-    def test_labelled_brand_still_requires_crm_evidence_consistent_url_and_exact_style(self):
-        p = product(product_id="112", product_name="Richardson Adjustable Snapback Trucker Cap")
-        candidate = {"url": "https://www.ssactivewear.com/p/richardson/112", "title": "112 Richardson Snapback Trucker Cap",
-                     "style": "112", "brand": "Richardson", "description": "Snapback Trucker Cap"}
-        for change in ({"brand": ""}, {"style": "112Y"}, {"style": ""},
-                       {"url": "https://www.ssactivewear.com/p/other_brand/112"},
-                       {"url": "http://www.ssactivewear.com/p/richardson/112"},
-                       {"url": "https://user@www.ssactivewear.com/p/richardson/112"},
-                       {"title": "112 Richardson Youth Snapback Trucker Cap"},
-                       {"title": "112 Richardson Fleece Hooded Sweatshirt"}):
-            with self.subTest(change=change), self.assertRaises(RuntimeError):
-                sxs.select_product(p, [{**candidate, **change}])
-        with self.assertRaises(RuntimeError):
-            sxs.select_product({**p, "product_name": "Adjustable Snapback Trucker Cap"}, [candidate])
-
-    def test_two_brands_in_the_crm_description_require_review_even_with_different_scores(self):
-        p = product(product_id="112", product_name="Richardson Yupoong Adjustable Snapback Trucker Cap")
-        candidates = [{"url": f"https://www.ssactivewear.com/p/{brand.lower()}/112", "brand": brand, "style": "112",
-                       "title": f"112 {brand} " + description, "description": description}
-                      for brand, description in (("Richardson", "Adjustable Snapback Trucker Cap"), ("Yupoong", "Snapback Trucker Cap"))]
-        with self.assertRaisesRegex(RuntimeError, 'unambiguous'):
-            sxs.select_product(p, candidates)
-
-    def test_core365_ce10_matches_the_exact_supplier_brand_style_and_description(self):
-        p = product(product_id="CE10", product_name="Core365 Unisex Capital Performance T-Shirt", color="True Royal", quantities={"M": 1})
-        correct = {"url": "https://www.ssactivewear.com/p/core365/ce10", "title": "CE10 CORE365 Unisex Capital Performance T-Shirt"}
-        other_brand = {"url": "https://www.ssactivewear.com/p/other_brand/ce10", "title": "CE10 Other Brand Unisex Capital Performance T-Shirt"}
-        long_sleeve = {"url": "https://www.ssactivewear.com/p/core365/ce10l", "title": "CE10L CORE365 Capital Long Sleeve Performance T-Shirt"}
-        self.assertEqual(sxs.select_product(p, [other_brand, long_sleeve, correct]), correct)
-        for candidate in (other_brand, long_sleeve):
-            with self.subTest(candidate=candidate), self.assertRaises(RuntimeError):
-                sxs.select_product(p, [candidate])
-
-    def test_login_input_does_not_type_when_focus_moves_elsewhere(self):
-        driver = mock.Mock(current_url=sxs.LOGIN_URL)
-        driver.execute_script.return_value = False
-        field = mock.Mock()
-        self.assertFalse(sxs._fill_login_control(driver, field, 'fixture-password'))
-        self.assertEqual(field.click.call_count, 2)
-        field.send_keys.assert_not_called()
-
-    def test_ambiguous_login_fields_stop_before_reading_credentials(self):
-        driver = mock.Mock(current_url=sxs.LOGIN_URL)
-        fields = [mock.Mock(), mock.Mock()]
-        for field in fields:
-            field.is_displayed.return_value = True
-            field.is_enabled.return_value = True
-        driver.find_elements.side_effect = lambda by, value: fields if value == 'M_M_zEmailTB' else []
-        with mock.patch.object(sxs, 'safe_get_with_partial_load'), mock.patch.object(
-            sxs, '_raise_site_error'
-        ), mock.patch.object(sxs, 'accept_cookie_banner'), mock.patch.object(sxs, 'read_credential') as read:
-            with self.assertRaisesRegex(RuntimeError, 'login form is ambiguous'):
-                sxs.ensure_login(driver)
-        read.assert_not_called()
-
-    def test_cookie_consent_is_never_clicked_on_another_origin(self):
-        driver = mock.Mock(current_url="https://example.com/")
-        with mock.patch.object(sxs.bypass, "_click_with_fallback") as click:
-            with self.assertRaisesRegex(RuntimeError, "origin"):
-                sxs.accept_cookie_banner(driver)
-        click.assert_not_called()
-
-    def test_supplier_error_stops_before_saved_credentials_are_read(self):
-        error = "ERROR Looks like we're having some problems. Ray ID - aabbccddeeff0011 Client IP - 192.0.2.1"
-        for location in ("cart", "login"):
-            with self.subTest(location=location):
-                driver = mock.Mock(current_url=sxs.LOGIN_URL)
-                driver.find_elements.return_value = []
-                driver.execute_script.side_effect = [error] if location == "cart" else ["Sign In", error]
-                with mock.patch.object(sxs, "safe_get_with_partial_load"), mock.patch.object(sxs, "read_credential") as credentials:
-                    with self.assertRaisesRegex(RuntimeError, "S&S returned its website error page") as raised:
-                        sxs.ensure_login(driver)
-                self.assertIn("aabbccddeeff0011", str(raised.exception))
-                self.assertNotIn("192.0.2.1", str(raised.exception))
-                credentials.assert_not_called()
-
-    def test_supplier_error_during_a_wait_is_reported_without_timeout(self):
-        driver = mock.Mock(current_url=sxs.BASE_URL)
-        driver.find_elements.return_value = []
-        driver.execute_script.return_value = "Looks like we’re having some problems. Ray ID - aabbccddeeff0011"
-        ready = mock.Mock(return_value=False)
-        with self.assertRaisesRegex(RuntimeError, "Ray ID: aabbccddeeff0011"):
-            sxs._wait(driver, ready, timeout=0)
-        ready.assert_not_called()
-        driver.execute_script.return_value = "Sign In Welcome to S&S"
-        ready.return_value = "ready"
-        self.assertEqual(sxs._wait(driver, ready, timeout=0), "ready")
-
-    def test_credentials_and_checkout_require_the_exact_https_supplier_origin(self):
-        sxs._require_site(mock.Mock(current_url="https://www.ssactivewear.com/checkout/"))
-        for url in ("http://www.ssactivewear.com/checkout", "https://www.ssactivewear.com.example.com/login", "https://example.com/login"):
-            with self.subTest(url=url), self.assertRaisesRegex(RuntimeError, "origin"):
-                sxs._require_site(mock.Mock(current_url=url))
-
-    def test_comfort_colors_style_from_actual_crm_example(self):
-        p = product(product_id="C1717", product_name="Comfort Colors Heavyweight T-Shirt")
-        candidates = [{"url": "https://www.ssactivewear.com/p/comfort_colors/1717", "title": "1717 Comfort Colors Garment-Dyed Heavyweight T-Shirt"}]
-        self.assertEqual(sxs.select_product(p, candidates), candidates[0])
-
-    def test_comfort_colors_cc_suffix_matches_the_labelled_supplier_style(self):
-        # Live CRM catalogue spelling on order 5473493; preserve its source text.
-        p = product(product_id="1467CC", product_name="Comfort Colors Unisex Lighweight Cotton Hooded Sweatshirt")
-        original = copy.deepcopy(p)
-        correct = {"url": "https://www.ssactivewear.com/p/comfort_colors/1467",
-                   "title": "1467 Comfort Colors Unisex Garment-Dyed Lightweight Hooded Sweatshirt",
-                   "style": "1467", "brand": "Comfort Colors",
-                   "description": "Unisex Garment-Dyed Lightweight Hooded Sweatshirt"}
-        self.assertEqual(sxs.style_id(p), "1467")
-        self.assertEqual(sxs.select_product(p, [correct]), correct)
-        self.assertEqual(p, original)
-        for change in ({"url": "https://www.ssactivewear.com/p/comfort_colors/1566", "style": "1566"},
-                       {"url": "https://www.ssactivewear.com/p/comfort_colors/1467y", "style": "1467Y"},
-                       {"url": "https://www.ssactivewear.com/p/other_brand/1467", "brand": "Other Brand"},
-                       {"title": "1467 Comfort Colors Youth Lightweight Hooded Sweatshirt"},
-                       {"title": "1467 Comfort Colors Heavyweight T-Shirt"}):
-            with self.subTest(change=change), self.assertRaises(RuntimeError):
-                sxs.select_product(p, [{**correct, **change}])
-
-    def test_comfort_colors_cc_suffix_conversion_requires_the_brand_and_numeric_style(self):
-        for raw in ("1467CC", "1717CC", "1467cc"):
-            with self.subTest(raw=raw):
-                self.assertEqual(sxs.style_id(product(product_id=raw, product_name="Comfort Colors Hooded Sweatshirt")), raw[:-2])
-        for raw, name in (("1467CC", "Hanes Hooded Sweatshirt"), ("1467CC", "Hooded Sweatshirt"),
-                          ("1467YCC", "Comfort Colors Youth Hooded Sweatshirt"),
-                          ("1467CCX", "Comfort Colors Hooded Sweatshirt"),
-                          ("1467", "Comfort Colors Hooded Sweatshirt")):
-            with self.subTest(raw=raw, name=name):
-                self.assertEqual(sxs.style_id(product(product_id=raw, product_name=name)), raw)
-
-    def test_tultex_fine_jersey_matches_its_brand_and_style(self):
-        p = product(product_id="202", product_name="Tultex Unisex Fine Jersey T-Shirt")
-        candidate = {"url": "https://www.ssactivewear.com/p/tultex/202", "title": "202 Tultex Unisex Fine Jersey T-Shirt"}
-        other = {"url": "https://www.ssactivewear.com/p/other_brand/202", "title": "202 Other Brand Unisex Fine Jersey T-Shirt"}
-        self.assertEqual(sxs.select_product(p, [other, candidate]), candidate)
-        with self.assertRaisesRegex(RuntimeError, "unambiguous"):
-            sxs.select_product(p, [other])
-
-    def candidates(self):
-        return [{"url": "https://www.ssactivewear.com/p/gildan/5000", "title": "5000 Gildan Unisex Heavy Cotton T-Shirt"}, {"url": "https://www.ssactivewear.com/p/bayside/5000", "title": "5000 Bayside Unisex USA-Made Fine Jersey T-Shirt"}]
-
-    def test_style_brand_and_description_distinguish_bayside_from_gildan(self):
-        self.assertEqual(sxs.select_product(product(), self.candidates())["url"], self.candidates()[0]["url"])
-        with self.assertRaises(RuntimeError):
-            sxs.select_product(product(), self.candidates()[1:])
-
-    def test_unknown_brand_and_youth_mismatch_stop_instead_of_guessing(self):
-        for p in (product(product_name="Cotton Shirt"), product(product_name="Gildan Youth Cotton Shirt")):
-            with self.assertRaises(RuntimeError):
-                sxs.select_product(p, self.candidates())
-
-    def line(self, warehouses, quantities=None):
-        return {"product": product(), "selected": self.candidates()[0], "quantities": quantities or {"L": 2}, "inventory": [{"warehouse": name, "eta_text": "Est. Delivery: 11/03/2026", "stock": stock} for name, stock in warehouses]}
-
-    def test_reading_preferred_then_complete_other_warehouse_before_split(self):
-        line = self.line([("Middleboro, MA", {"L": 10}), ("Reading, PA", {"L": 10})])
-        self.assertEqual(sxs.allocate([line])[0]["warehouse"], "Reading, PA")
-        line["inventory"][1]["stock"]["L"] = 1
-        self.assertEqual(sxs.allocate([line])[0]["warehouse"], "Middleboro, MA")
-
-    def test_sxs_reorder_accepts_one_available_piece_without_an_extra_buffer(self):
-        line = self.line([("Reading, PA", {"L": 1})], quantities={"L": 1})
-        self.assertEqual(sxs.allocate([line])[0]["quantities"], {"L": 1})
-        line["inventory"][0]["stock"]["L"] = 0
-        with self.assertRaisesRegex(RuntimeError, "every required size"):
-            sxs.allocate([line])
-
-    def test_split_is_used_only_when_no_complete_warehouse_and_never_short_ships(self):
-        line = self.line([("Reading, PA", {"L": 1}), ("Middleboro, MA", {"L": 1})])
-        allocation = sxs.allocate([line])
-        self.assertEqual([x["quantities"]["L"] for x in allocation], [1, 1])
-        line["quantities"]["L"] = 3
-        with self.assertRaisesRegex(RuntimeError, "every required size"):
-            sxs.allocate([line])
-
-    def test_common_warehouse_covers_all_products_before_split(self):
-        a = self.line([("Reading, PA", {"L": 2}), ("Middleboro, MA", {"L": 2})])
-        b = self.line([("Reading, PA", {"L": 0}), ("Middleboro, MA", {"L": 2})])
-        self.assertEqual({x["warehouse"] for x in sxs.allocate([a, b])}, {"Middleboro, MA"})
-
-    def test_cart_requires_exact_product_color_size_quantity_and_warehouse(self):
-        line = self.line([("Reading, PA", {"L": 50})]); line["warehouse"] = "Reading, PA"
-        row = {"url": "https://www.ssactivewear.com/p/gildan/5000/black-heavy_cotton", "color": "Black", "size": "L", "quantity": 2, "method": "S&S Ship", "warehouse": "Reading, PA"}
-        sxs.validate_cart([row], [line])
-        for change in ({"quantity": 1}, {"color": "White"}, {"size": "XL"}, {"warehouse": "Reno, NV"}, {"url": "https://www.ssactivewear.com/p/bayside/5000/black"}, {"method": "Pick Up"}):
-            with self.subTest(change=change), self.assertRaises(RuntimeError):
-                sxs.validate_cart([{**row, **change}], [line])
-
-    def test_confirmation_requires_supplier_success_reference_and_exact_labelled_po(self):
-        text = "Thank you for your order! Order Number: 98765432 PO Number: 5000001"
-        url = "https://www.ssactivewear.com/checkout/confirmation"
-        self.assertTrue(sxs.confirmation_from_text(text, "5000001", url)["po_confirmed"])
-        for altered, location in ((text.replace("5000001", "50000010"), url), ("PO Number: 5000001", url), (text, "https://example.com/confirmation"), (text.replace("PO Number:", "Phone:"), url)):
-            self.assertIsNone(sxs.confirmation_from_text(altered, "5000001", location))
-
-    def test_actual_order_confirmation_heading_accepts_line_breaks_and_combined_labels(self):
-        url = "https://www.ssactivewear.com/checkout/orderconfirmation?orderguid=fixture"
-        for text in ("Order Confirmation: 98765432\nPO Number: 5000001\nWarehouse: Reading, PA", "Order Confirmation: 98765432PO Number: 5000001Warehouse: Reading, PA"):
-            with self.subTest(text=text):
-                result = sxs.confirmation_from_text(text, "5000001", url)
-                self.assertEqual(result["order_number"], "98765432")
-                self.assertEqual(result["po"], "5000001")
-                self.assertIsNone(sxs.confirmation_from_text(text.replace("5000001", "50000010"), "5000001", url))
-                self.assertIsNone(sxs.confirmation_from_text(text + "\nOrder Confirmation: 87654321", "5000001", url))
-
-    def test_split_cart_supports_separate_rows_and_verified_grouped_quantities(self):
-        line = self.line([("Reading, PA", {"L": 1}), ("Middleboro, MA", {"L": 1})])
-        lines = sxs.allocate([line])
-        row = {"url": "https://www.ssactivewear.com/p/gildan/5000/black-heavy_cotton", "color": "Black", "size": "L", "quantity": 1, "method": "S&S Ship", "warehouse": "Reading, PA"}
-        sxs.validate_cart([row, {**row, "warehouse": "Middleboro, MA"}], lines)
-        grouped = {**row, "quantity": 2, "warehouse": "Multiple warehouses", "allocations": {"Reading, PA": 1, "Middleboro, MA": 1}}
-        sxs.validate_cart([grouped], lines)
-        with self.assertRaisesRegex(RuntimeError, "match"):
-            sxs.validate_cart([{**grouped, "allocations": {"Reading, PA": 2}}], lines)
 
 
 class ReorderRecoveryTests(unittest.TestCase):
@@ -459,6 +217,27 @@ class ReorderRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Mixed"):
             self.run_order()
         self.vendor.assert_not_called(); self.submit.assert_not_called()
+
+    def test_retired_supplier_receipts_stop_without_changing_saved_purchases(self):
+        for state in ("planned", "submitting", "uncertain", "confirmed"):
+            with self.subTest(state=state):
+                receipt = {"version": 1, "order_id": "5000001", "customer_po": "5000001",
+                           "source_signature": worker.signature(worker.snapshot(self.tabs)),
+                           "groups": [{"vendor": "sanmar", "state": "planned"},
+                                      {"vendor": "ssactivewear", "state": state,
+                                       "confirmation": {"po": "5000001", "po_confirmed": True}}]}
+                worker.save_receipt(receipt)
+                path = Path(worker.RECEIPT_DIR, "5000001.json")
+                original = path.read_bytes()
+                with self.assertRaisesRegex(RuntimeError, "SanMar only.*review existing purchases manually"):
+                    self.run_order()
+                self.assertEqual(path.read_bytes(), original)
+                self.assertEqual(worker.load_receipt("5000001")["groups"][1]["state"], state)
+        self.scan.assert_not_called()
+        self.vendor.assert_not_called()
+        self.empty.assert_not_called()
+        self.submit.assert_not_called()
+        self.finish.assert_not_called()
 
     def test_existing_numeric_source_po_stops_before_another_supplier_purchase(self):
         self.tabs[0]['red_records'][0]['po'] = '5000001'

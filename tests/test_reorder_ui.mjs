@@ -25,10 +25,16 @@ function dashboard(type='orders', result={success:true,message:'Queued'}) {
 test('Reorder button belongs to the custom dialog and appears only for order inputs',()=>{
   const markup=source.match(/<dialog id='crmProcessingCustomInputDialog'[\s\S]*?<\/dialog>/)[0];
   assert.match(markup,/id='crmReorderStockBtn'[^>]*margin-right:auto[^>]*>Reorder Stock<\/button>/);
+  assert.match(markup,/Reorder Stock supports SanMar only/);
   const d=dashboard('link');d.context.syncCrmProcessingCustomInputControls();
   assert.equal(d.elements.crmReorderStockBtn.style.display,'none');
   d.elements.crmProcessingCustomInputType.value='orders';d.context.syncCrmProcessingCustomInputControls();
   assert.equal(d.elements.crmReorderStockBtn.style.display,'');
+});
+
+test('connection settings keep SanMar and remove the retired supplier', () => {
+  assert.ok(source.includes("openChromeProfileSetup('sanmar', this)"));
+  assert.ok(!source.includes("openChromeProfileSetup('ssactivewear'"));
 });
 
 test('button queues the pasted snapshot as JSON without invoking other processing tools',async()=>{

@@ -5,9 +5,6 @@ import {
 } from "./bridge.js";
 import { isSalesforceUrl, rankSalesforceTabs } from "./salesforce-tabs.mjs";
 import { openApplicableCRMOrders } from "./crm-list-tabs.mjs";
-import { installSxsWorker } from "./ssactivewear-worker.mjs";
-
-installSxsWorker(chrome);
 
 export const THEME_STORAGE_KEY = "crmOrderDarkModeEnabled";
 

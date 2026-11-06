@@ -4,47 +4,11 @@
 <body>
 <div id="order-design-details"><ul><li id="design-fixture" class="order-form-design-tab active">H-Fixture 1 - QTY: 3 View Proofs</li></ul></div>
 <table class="goods-ordered"><thead><tr><th></th><th>PO</th><th>Vendor Order #</th><th>Order Date</th><th>Est. Delivery</th><th>Shipped To</th></tr></thead><tbody>
-<tr data-assigned="false" ng-repeat="inventoryOrder in inventoryOrders" ng-style="inventoryOrder.assignedToCurrentSubcontractor ? {backgroundColor:'#FDFD95'} : {backgroundColor:'#EA9899'}" style="background-color:rgb(234,152,153)"><th>S&amp;S Activewear</th><td>H-Fixture-OLD</td><td>12345678</td><td>10/25/2026</td><td>10/28/2026</td><td>Mach 6 Manufacturing</td></tr>
+<tr data-assigned="false" ng-repeat="inventoryOrder in inventoryOrders" ng-style="inventoryOrder.assignedToCurrentSubcontractor ? {backgroundColor:'#FDFD95'} : {backgroundColor:'#EA9899'}" style="background-color:rgb(234,152,153)"><th>Sanmar</th><td>H-Fixture-OLD</td><td>12345678</td><td>10/25/2026</td><td>10/28/2026</td><td>Mach 6 Manufacturing</td></tr>
 <tr data-assigned="true" ng-repeat="inventoryOrder in inventoryOrders" ng-style="inventoryOrder.assignedToCurrentSubcontractor ? {backgroundColor:'#FDFD95'} : {backgroundColor:'#EA9899'}" style="background-color:rgb(253,253,149)"><th>Sanmar</th><td>5000001</td><td></td><td>11/02/2026</td><td></td><td>M6 Print and Ship to Philly</td></tr>
 </tbody></table>
-<a id="cart-link" aria-label="Cart: 0 items">Cart</a>
-<div id="zcolorname">83 Colors - Selected Color: <b>Black - PMS: 426</b></div>
-<div id="colorSwatch"><a id="cSwatch16787" class="active"><span>Black</span></a></div>
-<div id="inventory"></div><a role="button" id="aToCDesk" href="#cart">Add to Cart</a>
-<div id="M_M_zCart"></div><input id="zCheckoutBTN" type="button" value="Checkout">
-<div id="M_M_zShippingContainer"><h3>Shipping Address:</h3><div id="shipping-address">EZ Tees Inc<br>2727 Commerce Way<br>Philadelphia, PA 19154</div><h3>Shipping Options:</h3>
-<select id="M_M_zShippingContainer_zShippingMethodsR_ctl01_zFreightServiceCB"><option value="0">Est. Delivery: 11/05/2026 UPS Surepost</option><option selected value="2">$0.00 Est. Delivery: 11/03/2026 UPS Ground - 3:00 CT</option></select></div>
-<select id="M_M_zTermsCB"><option>Credit/Debit Card</option><option selected>Net 60</option><option>eCheck</option></select>
-<label for="M_M_zPONumberTB">PO Number</label><input id="M_M_zPONumberTB" type="text" maxlength="20">
-<input type="button" id="M_M_zCheckoutBTN" value="Complete Order">
-<div id="M_M_zConfirmOrderPopup_PW-1" style="display:none"><p>Are you sure you want to submit your order?</p><button id="M_M_zConfirmOrderPopup_zCompleteBTN">YES</button></div>
 <script>
 window.angular={element:row=>({scope:()=>row.tagName==='TABLE'
  ? {inventoryOrders:[...row.querySelectorAll('tbody tr')].map(node=>({id:'fixture-'+node.rowIndex,assignedToCurrentSubcontractor:node.dataset.assigned==='true'}))}
  : {inventoryOrder:{id:'fixture-'+row.rowIndex,assignedToCurrentSubcontractor:row.dataset.assigned==='true'}}})};
-const sizes=['S','M','L','XL','2XL','3XL','4XL','5XL'];
-for(const [id,name] of [[12,'Reading, PA'],[18,'Middleboro, MA']]) {
- const r=document.createElement('div');r.className='gR';r.id=`wh_1_${id}_1_16787`;
- r.innerHTML=`<div class="color"><span class="warehouse">${name}</span><div class="shipby"><div class="shippingRowLabel">Est. Delivery: 11/03/2026</div></div></div>`+sizes.map((s,i)=>`<div class="i"><span class="sr-only">${s}</span><span class="quantity">${i===0?'&gt;50,000':'120'}</span><input type="text" aria-label="quantity" id="q_${id}_${s}" csid="16787" sidm="${775+i}"></div>`).join('');
- document.querySelector('#inventory').append(r);
-}
-document.querySelector('#aToCDesk').onclick=e=>{
- e.preventDefault();let total=0;const rows=[];
- for(const r of document.querySelectorAll('.gR')) for(const c of r.querySelectorAll('.i')) {
-  const q=Number(c.querySelector('input').value);if(!q)continue;total+=q;
-  const size=c.querySelector('.sr-only').textContent;const wh=r.querySelector('.warehouse').textContent;
-  rows.push(`<div class="cR"><div class="cDes"><a href="https://www.ssactivewear.com/p/gildan/5000/black-heavy_cotton"><b>5000</b> - Gildan - Unisex Heavy Cotton T-Shirt</a></div><div class="cCol">Black</div><div class="cSiz">${size}</div><div class="cMet">S&amp;S Ship</div><div class="cLoc">${wh}</div><div class="cPie"><input type="number" value="${q}"><a role="button" aria-label="remove item" onclick="this.closest('.cR').remove();window.updateFixtureCartCount()">Remove</a></div></div>`);
- }
- document.querySelector('#cart-link').setAttribute('aria-label',`Cart: ${total} items`);
- if(document.querySelector('#qtyMiniCart')) document.querySelector('#qtyMiniCart').textContent=String(total);
- document.querySelector('#M_M_zCart').innerHTML=rows.join('');
-};
-window.updateFixtureCartCount=()=>{
- const total=[...document.querySelectorAll('#M_M_zCart .cPie input')].reduce((sum,i)=>sum+Number(i.value),0);
- document.querySelector('#cart-link').setAttribute('aria-label',`Cart: ${total} items`);
- if(document.querySelector('#qtyMiniCart'))document.querySelector('#qtyMiniCart').textContent=String(total);
-};
-window.completeClicks=0;window.confirmClicks=0;
-document.querySelector('#M_M_zCheckoutBTN').onclick=()=>{window.completeClicks++;document.querySelector('#M_M_zConfirmOrderPopup_PW-1').style.display='block'};
-document.querySelector('#M_M_zConfirmOrderPopup_zCompleteBTN').onclick=()=>{window.confirmClicks++;document.querySelector('#M_M_zConfirmOrderPopup_PW-1').innerHTML=`<h2>Order Confirmation</h2>Thank you for your order! Order Number: 98765432 PO Number: ${document.querySelector('#M_M_zPONumberTB').value}`};
 </script></body></html>

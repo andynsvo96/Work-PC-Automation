@@ -25,7 +25,6 @@ from credential_store import (
     CRM_CREDENTIAL_TARGET,
     PAYCOM_CREDENTIAL_TARGET,
     SANMAR_CREDENTIAL_TARGET,
-    SSACTIVEWEAR_CREDENTIAL_TARGET,
     SALESFORCE_CREDENTIAL_TARGET,
     SLACK_CREDENTIAL_TARGET,
     CredentialStoreError,
@@ -182,7 +181,6 @@ def _credential_values(service):
     targets = {
         "crm": CRM_CREDENTIAL_TARGET,
         "sanmar": SANMAR_CREDENTIAL_TARGET,
-        "ssactivewear": SSACTIVEWEAR_CREDENTIAL_TARGET,
         "slack": SLACK_CREDENTIAL_TARGET,
         "salesforce": SALESFORCE_CREDENTIAL_TARGET,
     }

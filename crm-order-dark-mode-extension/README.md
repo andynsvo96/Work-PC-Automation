@@ -15,93 +15,18 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
-## S&S Reorder browser — 1.7.15
+## SanMar-only Reorder - 1.7.16
 
-S&S Reorder can use a normally opened Chrome profile through the extension,
-without launching WebDriver. Install/reload version **1.7.15** in that profile,
-restart the local Automation app, and refresh CRM pages/dashboard.
+Version **1.7.16** removes the S&S browser connection, sign-in launcher, read-only
+browser checks, background worker, alarms, scripting permission, and supplier
+website access. Reorder runs only through the local app's SanMar worker and no
+longer needs an extension supplier connection. CRM order tools, dark mode, list
+controls, and Salesforce tab reuse retain their existing behavior.
 
-1. Open the popup and select **Connect this browser** under **S&S Reorder**.
-   Grant optional S&S access and scripting permission. Other websites receive
-   no new page scripts.
-2. Select **Open S&S sign-in** and sign in normally. Credentials and the app PIN
-   never pass through this connection.
-3. Use the dashboard's **Reorder Stock** action. The extension automatically opens
-   or reuses its own minimized window and checks the signed-in cart before stock
-   entry. Keep Chrome running and leave the worker tab and S&S cart alone until
-   the batch finishes. You can use other Chrome tabs/windows or apps; the worker
-   does not focus/restore its window or minimize your main Chrome window.
-4. The connection stays enabled between orders and batches and reconnects when
-   the local app becomes available. **Run read-only check** remains an optional
-   diagnostic for background/minimized access; it is no longer required before
-   Reorder. If S&S asks for sign-in again, use **Open S&S sign-in**, sign in normally,
-   then Retry the original batch.
-
-Connect only one profile on the local dashboard's computer. A browser check or
-manual sign-in cannot interrupt an active Reorder. A closed, changed, discarded,
-or frozen tab during an order stops for review; another user tab is never adopted.
-After a browser restart, or if the worker tab closed between orders, the next
-order's initial setup may create a new minimized window automatically. It cannot
-replace a tab during an active order. Chrome must remain running; the extension
-does not launch a closed browser or enter credentials. Last status persists if
-you close the popup.
-
-The server's existing receipt reserves a purchase before submission. Commands
-are claimed once, never replayed after an extension restart. A lost response
-permits reading supplier confirmation without another click. Uncertain
-submissions require review, and pre-existing cart stock is retained.
-
-Signed-in browser checks and product operations have passed live in both
-background tabs and minimized windows on Windows Chrome.
-Search reads cards' style, brand, and title even when accessibility layout gives the
-main product link no layout box; color-count links cannot replace descriptions.
-Version 1.7.15 also returns each card's labelled brand, style, and description.
-The worker checks those fields against CRM and the supplier URL before accepting
-brands outside its legacy list, including Richardson 112. Missing or conflicting
-brand evidence and youth/adult or style mismatches still stop for review.
-The worker also maps the approved Richardson 112 color labels and its standard
-one-size fit to S&S's M/L label, retaining the original CRM data in the purchase
-plan. Stock shortages report the exact item, size, and quantity; all required
-stock must be available before purchasing.
-The check explicitly minimizes only its newly created check window and
-reports the window state when a visibility check fails. Health diagnostics are
-limited to product colors, warehouse shipping labels, and known control identities;
-they contain no credentials.
-Color selection waits for product initialization, invokes only the matched
-swatch's known selector in the page context, then verifies color, inventory color
-IDs, and loaded warehouse dates. No arbitrary script or function name is accepted.
-Stock addition and removal use fixed page-context controls. Addition verifies
-the entered quantity and cart-count change; cleanup requires the same exact cart
-before the click and verifies every remaining row afterward.
-Version 1.7.14 supports the live unlabelled Remove link by checking its known
-handler and exact cart-row identifiers. It also supports the order confirmation
-message box when S&S omits its ARIA role. Reload the extension to load these fixes;
-the next queued worker loads the Python changes without an app restart.
-Cart reads wait for the piece count and loaded rows to agree. Removed-item
-notices are excluded; unreadable stock rows still stop the run. Checkout's
-authenticated reduced header is recognized by its account checkout fields.
-A navigation-closed response triggers only destination checks, never another
-Checkout click. A checkout sign-in redirect requires normal manual sign-in.
-The final action selects one visible Confirm/Yes control inside the current
-message-box dialog or the older named order popup, requiring its exact
-order-submission prompt; hidden legacy controls and nested button inputs cannot
-create duplicate targets. Missing or competing controls stop without clicking.
-Complete Order and Confirm use fixed page-context clicks, with the exact session
-PO, Commerce Way address, UPS Ground, and Net 60 rechecked before either action.
-Each click is dispatched once; verification messages never click again.
-Reorder checks the running extension version before entering stock, so an old
-background controller stops with an explicit reload instruction.
-The live check matched Gildan 5000, selected Black, read stock and delivery dates
-from 11 warehouses, and returned to the same empty cart. No quantity entry,
-checkout, purchase, or CRM edit ran in that check. A later live Reorder verified
-cart entry, checkout, and a supplier-confirmed purchase while Chrome remained
-minimized. CRM production/due dates and the purchase note were also verified.
-Reload the extension after updating extension code. Version 1.7.14 passed live
-Windows verification of automatic minimized setup, unlabelled cart cleanup, and
-one Complete Order/Confirm sequence with the exact supplier PO confirmed.
-macOS remains unverified. Offline tests cover page
-operations, local origin restrictions, duplicate-delivery prevention, and tab
-ownership. See the [Reorder guide](../docs/REORDER_STOCK.md).
+Restart the local Automation app, reload CRM Order Assistant at
+`chrome://extensions`, and refresh the dashboard and open CRM pages. Existing
+S&S purchase receipts and historical confirmation links remain available; their
+unfinished tasks require manual review. See the [Reorder guide](../docs/REORDER_STOCK.md).
 
 ## Open Applicable and Select Applicable
 

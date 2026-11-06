@@ -1,11 +1,9 @@
 {
   "manifest_version": 3,
   "name": "CRM Order Assistant",
-  "version": "1.7.15",
+  "version": "1.7.16",
   "description": "CRM order tools with queued single-order automations and reliable Salesforce tab reuse.",
-  "permissions": ["storage", "tabs", "webNavigation", "alarms"],
-  "optional_permissions": ["scripting"],
-  "optional_host_permissions": ["https://www.ssactivewear.com/*"],
+  "permissions": ["storage", "tabs", "webNavigation"],
   "host_permissions": [
     "https://crm2.legacy.printfly.com/*",
     "*://*.salesforce.com/*",

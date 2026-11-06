@@ -6,9 +6,8 @@ import json
 import os
 import re
 import time
-from collections import defaultdict
 from contextlib import ExitStack
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 from _bootstrap import ensure_project_root_on_path
@@ -16,8 +15,6 @@ from _bootstrap import ensure_project_root_on_path
 ensure_project_root_on_path()
 
 import crm_shipping_bypasser as bypass
-import ssactivewear_ordering as sxs
-from ssactivewear_extension import SxsExtensionBrowser
 from automation_runtime import (
     configure_console_utf8,
     safe_driver_quit, safe_take_screenshot, write_result_payload, write_status_payload,
@@ -28,7 +25,18 @@ AUTOMATION_NAME = "crm.reorder"
 RECEIPT_DIR = state_file("stock_reorders")
 PHILLY_SUBCONTRACTOR = re.compile(r"^M6 Print and Ship to Philly(?:\s*\(PA\))?$", re.I)
 
-STOCK_ROWS_SCRIPT = sxs.DOM + r"""
+STOCK_ROWS_SCRIPT = r"""
+const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
+function visible(el) {
+  if (!el) return false;
+  const r = el.getBoundingClientRect();
+  if (!r.width || !r.height) return false;
+  for (let p = el; p; p = p.parentElement) {
+    const s = getComputedStyle(p);
+    if (s.display === 'none' || s.visibility === 'hidden') return false;
+  }
+  return true;
+}
 const activeTabs = [...document.querySelectorAll('#order-design-details li.order-form-design-tab.active')].filter(visible);
 const active = activeTabs.length === 1 ? activeTabs[0] : null;
 // The inventory request and ngRepeat render can finish after the design itself
@@ -72,13 +80,13 @@ def vendor_key(vendor):
     value = re.sub(r"[^a-z0-9]", "", str(vendor).lower())
     if value in {"sanmar", "sanmarbulk"}:
         return "sanmar"
-    if value in {"ss", "ssactivewear", "sandsactivewear"}:
-        return "ssactivewear"
-    raise RuntimeError(f"Unsupported stock supplier: {vendor}.")
+    raise RuntimeError(f"Reorder supports SanMar only. Unsupported stock supplier: {vendor}. Review this order manually.")
 
 
 def vendor_label(key):
-    return "Sanmar" if key == "sanmar" else "S&S Activewear"
+    if key != "sanmar":
+        raise RuntimeError("Reorder supports SanMar only. Review this order manually.")
+    return "Sanmar"
 
 
 def _read_rows(driver, timeout=20):
@@ -156,6 +164,8 @@ def load_receipt(order_id):
         if not isinstance(crm_po, str) or not re.fullmatch(re.escape(order_id) + r"(?:-(?:[2-9]|[1-9]\d+))?", crm_po):
             raise ValueError("invalid CRM stock PO")
         for group in receipt["groups"]:
+            # Retired supplier receipts remain readable for purchase history.
+            # process_order rejects them before scanning or changing CRM.
             if group.get("state") not in {"planned", "submitting", "uncertain", "confirmed"} or group.get("vendor") not in {"sanmar", "ssactivewear"}:
                 raise ValueError("invalid purchase state")
             if group["state"] == "confirmed" and (not group.get("confirmation", {}).get("po_confirmed") or group["confirmation"].get("po") != order_id):
@@ -205,19 +215,6 @@ def sanmar_groups(driver, products):
     return [{"vendor": "sanmar", "plan": p, "lines": p["expanded_lines"], "state": "planned"} for p in plans]
 
 
-def sxs_group(driver, products):
-    lines = []
-    for source_product in products:
-        product = sxs.supplier_product(source_product)
-        selected = sxs.open_product(driver, product)
-        quantities = {sxs.size_key(s): q for s, q in product["quantities"].items()}
-        line = {"product": product, "selected": selected, "quantities": quantities, "inventory": sxs.inventory(driver)}
-        if product != source_product:
-            line["source_product"] = source_product
-        lines.append(line)
-    return {"vendor": "ssactivewear", "lines": sxs.allocate(lines), "state": "planned"}
-
-
 def date_changes(order, eta):
     due = order.get("due_date")
     if not due:
@@ -233,51 +230,32 @@ def _as_date(value):
 
 
 def prepare_group(driver, group, order):
+    vendor_label(group["vendor"])
     po = order["order_id"]
-    if group["vendor"] == "sanmar":
-        # A saved allocation never silently changes warehouses after a partial purchase.
-        for line in group["lines"]:
-            bypass._search_sanmar_product(driver, line["search_id"], click_inventory_button=line.get("click_inventory_button", False), expected_style_keys=line.get("expected_style_keys"))
-            bypass._select_sanmar_color(driver, line["product"]["color"], product=line["product"])
-            inventory = bypass._exclude_closed_sanmar_warehouses(bypass._wait_for_sanmar_inventory(driver, line["search_id"]), bypass._sanmar_closed_warehouses(driver))
-            available = bypass._inventory_by_warehouse(inventory).get(line["warehouse"], {}).get("stock", {})
-            if not all(bypass._stock_qty_can_cover_order(available.get(size, 0), qty, stock_buffer=0) for size, qty in line["quantities"].items()):
-                raise RuntimeError("The saved SanMar warehouse allocation is no longer available.")
-        state = bypass._prepare_sanmar_shipping_plan(driver, po, order, group["lines"], group["plan"], check_closed_warehouses=True, nj_pickup_order=True)
-        if not state.get("success"):
-            raise RuntimeError(state.get("message") or "SanMar checkout could not be prepared.")
-        if state["shipping"]["ship_mode"] == "ship":
-            if not state.get("eta"):
-                raise RuntimeError("SanMar delivery date is unavailable; review required.")
-            bypass._click_sanmar_button(driver, r"Proceed\s+To\s+Payment")
-        bypass._wait_for_text(driver, r"Review\s+&\s+Submit|Review\s+and\s+Submit|Customer\s+PO", timeout=20)
-        requirements = {"order_type": "inhouse", "shipping": state["shipping"]}
-        bypass._fill_review_and_submit(driver, po, dry_run=True, shipping_requirements=requirements)
-        return {"eta": state.get("eta") or date.today(), "shipping_requirements": requirements}
-    by_product = defaultdict(list)
+    # A saved allocation never silently changes warehouses after a partial purchase.
     for line in group["lines"]:
-        by_product[(line["product"]["product_id"], line["product"]["color"])].append(line)
-    for lines in by_product.values():
-        selected = sxs.open_product(driver, lines[0]["product"])
-        if selected["url"] != lines[0]["selected"]["url"]:
-            raise RuntimeError("S&S product identity changed since the saved allocation.")
-        sxs.fill_product(driver, lines)
-    return sxs.checkout(driver, po, group["lines"])
+        bypass._search_sanmar_product(driver, line["search_id"], click_inventory_button=line.get("click_inventory_button", False), expected_style_keys=line.get("expected_style_keys"))
+        bypass._select_sanmar_color(driver, line["product"]["color"], product=line["product"])
+        inventory = bypass._exclude_closed_sanmar_warehouses(bypass._wait_for_sanmar_inventory(driver, line["search_id"]), bypass._sanmar_closed_warehouses(driver))
+        available = bypass._inventory_by_warehouse(inventory).get(line["warehouse"], {}).get("stock", {})
+        if not all(bypass._stock_qty_can_cover_order(available.get(size, 0), qty, stock_buffer=0) for size, qty in line["quantities"].items()):
+            raise RuntimeError("The saved SanMar warehouse allocation is no longer available.")
+    state = bypass._prepare_sanmar_shipping_plan(driver, po, order, group["lines"], group["plan"], check_closed_warehouses=True, nj_pickup_order=True)
+    if not state.get("success"):
+        raise RuntimeError(state.get("message") or "SanMar checkout could not be prepared.")
+    if state["shipping"]["ship_mode"] == "ship":
+        if not state.get("eta"):
+            raise RuntimeError("SanMar delivery date is unavailable; review required.")
+        bypass._click_sanmar_button(driver, r"Proceed\s+To\s+Payment")
+    bypass._wait_for_text(driver, r"Review\s+&\s+Submit|Review\s+and\s+Submit|Customer\s+PO", timeout=20)
+    requirements = {"order_type": "inhouse", "shipping": state["shipping"]}
+    bypass._fill_review_and_submit(driver, po, dry_run=True, shipping_requirements=requirements)
+    return {"eta": state.get("eta") or date.today(), "shipping_requirements": requirements}
 
 
 def _empty(driver, vendor, owned=False):
-    if vendor == "ssactivewear":
-        if owned:
-            if getattr(driver, 'is_sxs_extension', False) is True:
-                return driver.empty_owned_cart()
-            # Remove only the fully verified cart created by this run, never a pre-existing cart.
-            while sxs.cart_rows(driver):
-                before = sxs.cart_rows(driver)
-                sxs._click(driver, '#M_M_zCart .cR a[aria-label="remove item"]')
-                sxs._wait(driver, lambda: sxs.cart_rows(driver) != before)
-        else:
-            sxs.require_empty_cart(driver)
-    elif owned:
+    vendor_label(vendor)
+    if owned:
         result = bypass._clear_sanmar_cart(driver)
         if not result.get("success"):
             raise RuntimeError("SanMar Reorder cart could not be emptied; review before retrying.")
@@ -320,8 +298,12 @@ def finish_crm(driver, order_id, tabs, receipt):
 
 
 def process_order(crm, vendors, order_id, dry_run=False):
-    order, tabs = scan_order(crm, order_id)
     receipt = load_receipt(order_id)
+    if receipt and any(g["vendor"] != "sanmar" for g in receipt["groups"]):
+        raise RuntimeError("Reorder supports SanMar only. This receipt includes a retired supplier; review existing purchases manually before retrying.")
+    order, tabs = scan_order(crm, order_id)
+    for tab in tabs:
+        vendor_label(tab["vendor"])
     current_signature = signature(snapshot(tabs))
     if receipt and receipt.get("source_signature") != current_signature:
         raise RuntimeError("CRM products, design tabs, red source POs or destinations changed since this Reorder. Review saved purchases.")
@@ -345,33 +327,24 @@ def process_order(crm, vendors, order_id, dry_run=False):
     if not receipt or not all(g.get("state") == "confirmed" for g in receipt["groups"]):
         for vendor in required_vendors:
             driver = vendors(vendor)
-            (bypass._ensure_sanmar_logged_in(driver) if vendor == "sanmar" else sxs.ensure_login(driver))
+            bypass._ensure_sanmar_logged_in(driver)
             _empty(driver, vendor)
     if not receipt:
         groups = []
         for vendor in required_vendors:
             products = aggregate_products(tabs, vendor)
-            if vendor == "sanmar":
-                groups.extend(sanmar_groups(vendors(vendor), products))
-            else:
-                groups.append(sxs_group(vendors(vendor), products))
+            groups.extend(sanmar_groups(vendors(vendor), products))
         receipt = {"version": 1, "order_id": order_id, "customer_po": order_id, "source_signature": current_signature, "source_tabs": snapshot(tabs), "groups": groups}
     if not receipt["groups"]:
         raise RuntimeError("No complete replacement purchase plan was created.")
-    # Preflight every supplier/cart before buying any stock. Remove only carts that
-    # exactly matched this run, so a later supplier failure cannot submit a partial order.
+    # Preflight every cart before buying any stock, including split NJ/shipped
+    # purchases. A later cart failure must not submit a partial order.
     for group in receipt["groups"]:
         if group["state"] == "confirmed":
             continue
         driver = vendors(group["vendor"])
         state = prepare_group(driver, group, order)
         group["review"] = bypass._json_safe(state)
-        if group["vendor"] == "ssactivewear":
-            if getattr(driver, 'is_sxs_extension', False) is True:
-                driver.get(sxs.CART_URL)
-            else:
-                bypass.safe_get_with_partial_load(driver, sxs.CART_URL, "S&S Reorder preflight cart")
-            sxs.validate_cart(sxs.verified_cart_rows(driver, group["lines"]), group["lines"])
         _empty(driver, group["vendor"], owned=True)
     eta = max(_as_date(g["review"]["eta"]) for g in receipt["groups"])
     production, due = date_changes(order, eta)
@@ -402,11 +375,8 @@ def process_order(crm, vendors, order_id, dry_run=False):
         group["state"] = "submitting"
         save_receipt(receipt)  # A crash from here can never automatically repeat the purchase.
         try:
-            if group["vendor"] == "sanmar":
-                bypass._fill_review_and_submit(driver, order_id, shipping_requirements=state["shipping_requirements"])
-                confirmation = bypass._capture_sanmar_confirmation(driver, order_id, order_id)
-            else:
-                confirmation = sxs.submit(driver, order_id)
+            bypass._fill_review_and_submit(driver, order_id, shipping_requirements=state["shipping_requirements"])
+            confirmation = bypass._capture_sanmar_confirmation(driver, order_id, order_id)
             if not confirmation or not confirmation.get("po_confirmed") or confirmation.get("po") != order_id:
                 raise RuntimeError("The exact Reorder PO was not confirmed by the supplier.")
             group.update(state="confirmed", confirmation=confirmation)
@@ -432,11 +402,8 @@ def run(order_id, dry_run=False, visible=False, result_file=None):
             crm = bypass._build_crm_session_driver(bypass.PROFILE_PATH, headless_mode=not visible, profile_label=f"CRM Reorder {order_id}")
             drivers["crm"] = (crm, bypass.PROFILE_PATH)
             def vendor_driver(vendor):
+                vendor_label(vendor)
                 if vendor not in drivers:
-                    if vendor == 'ssactivewear':
-                        driver = SxsExtensionBrowser(order_id)
-                        drivers[vendor] = (driver, None)
-                        return driver
                     profile = bypass.SANMAR_PROFILE_PATH
                     stack.enter_context(bypass._worker_profile_lock(profile))
                     driver = bypass._build_sanmar_driver(visible=visible)
@@ -458,17 +425,10 @@ def run(order_id, dry_run=False, visible=False, result_file=None):
             except Exception:
                 pass  # Preserve the original failure if the receipt is unreadable.
             for vendor, (driver, _profile) in drivers.items():
-                if getattr(driver, 'is_sxs_extension', False) is not True:
-                    safe_take_screenshot(driver, f"reorder_{order_id}_{vendor}_review")
+                safe_take_screenshot(driver, f"reorder_{order_id}_{vendor}_review")
         finally:
             for driver, profile in reversed(list(drivers.values())):
-                if getattr(driver, 'is_sxs_extension', False) is True:
-                    try:
-                        driver.close()
-                    except Exception:
-                        payload['browser_release_warning'] = 'S&S connection release was not confirmed; its local lease will expire.'
-                else:
-                    safe_driver_quit(driver, profile_path=profile)
+                safe_driver_quit(driver, profile_path=profile)
     payload.update(order_id=order_id, customer_po=order_id, dry_run=bool(dry_run), action="reorder_stock")
     write_result_payload(AUTOMATION_NAME, "crm_reorder.py", success, message, payload, result_file=result_file)
     return success

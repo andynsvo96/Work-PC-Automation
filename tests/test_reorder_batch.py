@@ -10,10 +10,10 @@ import server
 from runtime_paths import DEBUG_DIR
 
 
-def purchase(vendor="ssactivewear", order_id="5000001"):
+def purchase(vendor="sanmar", order_id="5000001"):
     return {"vendor": vendor, "state": "confirmed", "confirmation": {
         "po": order_id, "po_confirmed": True, "order_number": "98765432",
-        "url": "https://www.ssactivewear.com/checkout/orderconfirmation?orderguid=fixture",
+        "url": "https://www.sanmar.com/checkout/orderConfirmation/fixture",
     }}
 
 
@@ -54,6 +54,14 @@ class ReorderBatchTests(unittest.TestCase):
 
     def rows(self):
         return self.task["result_context"]["report"]["order_details"]
+
+    def test_retired_supplier_confirmations_remain_visible_for_manual_review(self):
+        legacy = purchase(vendor="ssactivewear")
+        legacy["confirmation"]["url"] = "https://www.ssactivewear.com/checkout/orderconfirmation?orderguid=fixture"
+        row = server._crm_reorder_order_result("5000001", False, "SanMar only; review existing purchases manually.", {"groups": [legacy]})
+        self.assertFalse(row["success"])
+        self.assertEqual(row["purchases"][0]["vendor"], "S&S Activewear")
+        self.assertEqual(row["purchases"][0]["url"], legacy["confirmation"]["url"])
 
     def test_one_batch_continues_after_failures_and_retains_real_confirmation_links(self):
         results = [

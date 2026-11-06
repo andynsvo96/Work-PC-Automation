@@ -71,7 +71,6 @@ from routes.salesforce_template_routes import register_salesforce_template_route
 from routes.system_routes import register_system_routes
 from routes.work_routes import register_work_routes
 from routes.reorder_routes import register_reorder_routes
-from routes.ssactivewear_bridge_routes import register_ssactivewear_bridge_routes
 from safe_sync import publish_repository_update
 from salesforce_templates import default_template_store
 from shipping_bypasser_mappings import (
@@ -582,7 +581,7 @@ def _powershell_single_quote(value):
 def _launch_credential_setup_terminal(service):
     """Open an interactive OS terminal for the credential setup command."""
     service_key = str(service or "").strip().lower()
-    allowed_services = {"paycom", "crm", "slack", "sanmar", "ssactivewear", "salesforce"}
+    allowed_services = {"paycom", "crm", "slack", "sanmar", "salesforce"}
     if service_key not in allowed_services or service_key not in CREDENTIAL_TARGETS:
         raise ValueError("Unknown credential setup service.")
 
@@ -14037,6 +14036,7 @@ def _crm_reorder_waiting_result(order_id):
 
 
 def _crm_reorder_order_result(order_id, ok, message, payload):
+    # Retain historical supplier labels/links when retired purchases need review.
     purchases = []
     for group in payload.get("groups") or []:
         if not isinstance(group, dict):
@@ -14531,9 +14531,6 @@ def enforce_app_access_security():
         "/api/extension/bridge/process-order/status",
         "/api/extension/bridge/process-order/manual",
         "/api/extension/bridge/process-order/manual/copyright-designs",
-        "/api/extension/bridge/ssactivewear/connect",
-        "/api/extension/bridge/ssactivewear/poll",
-        "/api/extension/bridge/ssactivewear/result",
     }
     if request.path in public_paths:
         return None
@@ -15250,11 +15247,6 @@ def _chrome_profile_setup_targets():
             "profile_path": _resolve_profile_path(getattr(config_module, "SANMAR_PROFILE_DIR", "chrome_profile_sanmar")),
             "url": sanmar_login_url,
         },
-        "ssactivewear": {
-            "label": "S&S Activewear",
-            "profile_path": _resolve_profile_path(getattr(config_module, "SSACTIVEWEAR_PROFILE_DIR", "chrome_profile_ssactivewear")),
-            "url": "https://www.ssactivewear.com/myaccount/login",
-        },
         "salesforce": {
             "label": "Salesforce",
             "profile_path": _resolve_profile_path(getattr(config_module, "CRM_PROFILE_DIR", "chrome_profile_crm")),
@@ -15287,14 +15279,6 @@ def automation_chrome_profile_setup():
     target = targets.get(profile_key)
     if not target:
         return jsonify({"success": False, "message": "Unknown Chrome profile setup target."}), 400
-
-    if profile_key == 'ssactivewear':
-        return jsonify({
-            'success': True,
-            'message': 'Reload CRM Order Assistant 1.7.13 in your normal Chrome profile. Connect this browser once, allow S&S access, and use Open S&S sign-in if needed. Keep Chrome running; Reorder opens and checks a minimized window automatically and stays connected between orders. The read-only check is optional. Connect only one browser profile.',
-            'browser_mode': 'extension',
-            'fields_filled': [],
-        })
 
     profile_path = target["profile_path"]
     os.makedirs(profile_path, exist_ok=True)
@@ -15661,11 +15645,6 @@ def get_work_status_payload():
 register_reorder_routes(
     app, enqueue_automation=enqueue_automation,
     run_reorder=run_crm_reorder_batch_queued, get_status=get_crm_reorder_status_payload,
-)
-
-register_ssactivewear_bridge_routes(
-    app, is_local_extension=_extension_bridge_request_is_local_extension,
-    response=_extension_bridge_response,
 )
 
 register_work_routes(
