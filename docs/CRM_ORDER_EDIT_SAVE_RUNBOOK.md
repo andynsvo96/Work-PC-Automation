@@ -364,13 +364,23 @@ changes. It reloads after every save and verifies the requested areas, exact
 product/size prices, and persisted Sales Notes. Note matching normalizes whitespace
 and ignores the unsaved `addSalesNotes` draft.
 
-An existing embroidery `.crm.json` receipt contains the original target prices.
-Retry checks those targets before any note repair. If the areas and prices match
-but the note is missing, it saves only the note once, reloads, and verifies all
-three again before email. Missing areas, changed prices, incomplete receipts, or
-a note still absent after recovery stop for review. Keep the original queue entry
-and receipt; removing the receipt can cause another surcharge. A CRM save timeout
-does not prove that any changes persisted.
+An embroidery `.crm.json` receipt contains intended changes recorded before
+Save Order, rather than proof that the edit succeeded. Retry inspects persisted
+areas and prices. Missing changes can be applied when every active product/size
+row still has either its original price or the receipt's exact target price.
+Recovery sets that target directly and adds only missing areas. A row already at
+its target is never charged again, including a partial save with mixed original
+and target prices. Every active row must match the receipt's row coordinates;
+new receipts also record and check product/size identities, quantities, and original
+prices. For legacy receipts, original prices are derived from their targets minus
+the selected surcharge. A changed row, an unrelated price, an incomplete receipt,
+or changes after a confirmed email stop before any recovery save.
+
+If areas and prices match but the note is missing, Retry saves only the note once,
+reloads, and verifies all three again before email. A note still absent after
+recovery stops before email. Confirmed email receipts still suppress duplicate
+sends. Keep the original queue entry and receipt; removing the receipt can cause
+another surcharge. A CRM save timeout does not prove that any changes persisted.
 
 Restart the local app to load this fix: the queued Extra Print Areas runner uses
 the worker module in the server process. No extension reload is needed.

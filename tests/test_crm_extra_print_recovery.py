@@ -30,7 +30,7 @@ process.stdout.write(JSON.stringify(result));
         self.resource = {
             "salesNotes": "Earlier note", "addSalesNotes": NOTE,
             "designs": [{"printAreas": [{"description": "Front-Left Chest", "methodDescription": "Embroidery"}],
-                         "designItems": [{"pricePerPiece": "59.05"}]}],
+                         "designItems": [{"splitIntoSizes": 0, "pricePerPiece": "59.05"}]}],
         }
         self.scope_patch = patch.object(extra.shared, "_order_scope", side_effect=self.scope)
         self.scope_patch.start()

@@ -95,7 +95,7 @@ process.stdout.write(JSON.stringify({result,design:r.designs[0]}));
             self.assertTrue(extra.process_sleeve_prints_order("5209138", selection)["success"])
             self.assertTrue(extra.process_sleeve_prints_order("5209138", selection)["success"])
             self.assertEqual(apply.call_count, 1)
-            self.assertEqual(verify.call_count, 2)
+            self.assertEqual(verify.call_count, 3)
             self.assertEqual(send.call_count, 1)
             verify.side_effect = extra.SleevePrintsError("Saved prices do not match")
             with self.assertRaises(extra.SleevePrintsError):

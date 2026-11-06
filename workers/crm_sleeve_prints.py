@@ -47,6 +47,43 @@ SLEEVE_SIDES = tuple(PRINT_AREAS)
 MONEY_QUANTUM = Decimal("0.01")
 MAX_SLEEVE_PRICE = Decimal("1000.00")
 
+_CRM_PRICE_ROWS_JS = r"""
+function extraPrintPriceKey(row) {
+  return `${row.tab_number}:${row.item_index}:${row.size_index === null ? 'item' : row.size_index}`;
+}
+function extraPrintPriceRows(designs, tabs) {
+  const rows = [];
+  for (const tab of tabs) {
+    const design = (designs || [])[tab - 1];
+    if (!design || design.crudAction === 'd') continue;
+    for (const [itemIndex, item] of (design.designItems || []).entries()) {
+      if (!item || item.crudAction === 'd') continue;
+      const sizes = Number(item.splitIntoSizes) === 0 ? [[null, null]] : (item.sizes || []).map((size, index) => [index, size]);
+      for (const [sizeIndex, size] of sizes) {
+        if (sizeIndex !== null && (!size || size.crudAction === 'd' || Number(size.quantity) <= 0)) continue;
+        const quantity = Number(size ? size.quantity : item.quantity ?? design.quantity);
+        rows.push({
+          tab_number: tab, item_index: itemIndex, size_index: sizeIndex,
+          price: String((size || item).pricePerPiece),
+          quantity: Number.isFinite(quantity) ? quantity : null,
+          identity: {
+            design_id: String(design.id ?? ''), artwork_id: String(design.designId ?? ''),
+            item_id: String(item.id ?? ''), size_id: String(size && size.id || ''),
+            size: String(size && (size.sizeDescription || size.sizeName ||
+              (typeof size.size === 'string' ? size.size : (size.size || {}).description)) || '')
+          }
+        });
+      }
+    }
+  }
+  return rows;
+}
+function extraPrintSameRow(expected, actual) {
+  return actual && (expected.quantity == null || expected.quantity === actual.quantity)
+    && Object.entries(expected.identity || {}).every(([key, value]) => actual.identity[key] === value);
+}
+"""
+
 
 class SleevePrintsError(RuntimeError):
     """Raised when the Extra Print Areas workflow cannot safely continue."""
@@ -432,7 +469,7 @@ def _record_emb_mutation(path, mutation):
             os.unlink(temporary)
 
 
-def _apply_crm_sleeve_changes(driver, plan, sales_note):
+def _apply_crm_sleeve_changes(driver, plan, sales_note, *, price_targets=None):
     # Opening Edit Order can asynchronously replace the resource and clear its
     # draft. Wait for the editor, then resolve the resource in a separate call.
     if not shared._order_scope(driver, "return !!s.editMode;"):
@@ -453,10 +490,11 @@ def _apply_crm_sleeve_changes(driver, plan, sales_note):
         ],
         "sales_note": sales_note,
         "area_names": PRINT_AREAS,
+        "price_targets": price_targets,
     }
     result = shared._order_scope(
         driver,
-        r"""
+        _CRM_PRICE_ROWS_JS + r"""
         const request = arguments[0];
         function clean(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
         function lower(value) { return clean(value).toLowerCase(); }
@@ -520,6 +558,36 @@ def _apply_crm_sleeve_changes(driver, plan, sales_note):
         const templates = statics.printAreaTemplates || [];
         const methods = statics.printMethods || [];
         if (!addPrintArea || !updateAreaTemplate || !updateAreaMethod) throw new Error('CRM print-area controls are unavailable.');
+        const beforePrices = extraPrintPriceRows(r.designs, request.selections.map(selection => Number(selection.tab_number)));
+        const beforeByKey = new Map(beforePrices.map(row => [extraPrintPriceKey(row), row]));
+        const targets = request.price_targets === null ? null
+          : new Map(request.price_targets.map(row => [extraPrintPriceKey(row), row]));
+        if (targets) {
+          if (targets.size !== request.price_targets.length || targets.size !== beforePrices.length)
+            throw new Error('Extra Print Areas recovery product/size rows changed; no changes were saved.');
+          // Check every row before changing any area or price. Legacy receipts
+          // derive the original price from their fixed target minus this fee.
+          for (const current of beforePrices) {
+            const expected = targets.get(extraPrintPriceKey(current));
+            const selection = request.selections.find(value => Number(value.tab_number) === current.tab_number);
+            if (!expected || !extraPrintSameRow(expected, current))
+              throw new Error('Extra Print Areas recovery product/size identity or quantity changed; no changes were saved.');
+            const target = price(expected.price);
+            const original = price(expected.before_price ?? (Math.round((target - price(selection.surcharge)) * 100) / 100));
+            if (Math.round((target - original) * 100) !== Math.round(price(selection.surcharge) * 100)
+                || ![original, target].includes(price(current.price)))
+              throw new Error('Extra Print Areas recovery price is neither the original price nor its saved target; no changes were saved.');
+          }
+        }
+        function priceUpdate(tab, itemIndex, sizeIndex) {
+          const before = beforeByKey.get(extraPrintPriceKey({tab_number: tab, item_index: itemIndex, size_index: sizeIndex}));
+          const expected = targets && targets.get(extraPrintPriceKey(before));
+          const selection = request.selections.find(value => Number(value.tab_number) === tab);
+          const next = expected ? price(expected.price) : Math.round((price(before.price) + price(selection.surcharge)) * 100) / 100;
+          return {...before, before_price: expected ? String(expected.before_price ??
+            (Math.round((next - price(selection.surcharge)) * 100) / 100).toFixed(2)) : before.price,
+            price: next === price(before.price) ? before.price : next.toFixed(2)};
+        }
         const addedAreas = [];
         const existingAreas = [];
         const priceUpdates = [];
@@ -583,30 +651,29 @@ def _apply_crm_sleeve_changes(driver, plan, sales_note):
               updateAreaMethod(newArea, method);
               addedAreas.push({tab_number: selection.tab_number, description, method: expectedMethod});
             }
-            const surcharge = price(selection.surcharge);
             let adjusted = 0;
             for (let itemIndex = 0; itemIndex < (design.designItems || []).length; itemIndex += 1) {
               const item = design.designItems[itemIndex];
               if (!item || item.crudAction === 'd') continue;
               if (Number(item.splitIntoSizes) === 0) {
-                const next = Math.round((price(item.pricePerPiece) + surcharge) * 100) / 100;
-                if (surcharge !== 0) {
-                  item.pricePerPiece = next.toFixed(2);
+                const update = priceUpdate(selection.tab_number, itemIndex, null);
+                if (price(item.pricePerPiece) !== price(update.price)) {
+                  item.pricePerPiece = update.price;
                   if (watchItemChanges) watchItemChanges(item);
                 }
-                priceUpdates.push({tab_number: selection.tab_number, item_index: itemIndex, size_index: null, price: String(item.pricePerPiece)});
+                priceUpdates.push(update);
                 adjusted += 1;
                 continue;
               }
               for (let sizeIndex = 0; sizeIndex < (item.sizes || []).length; sizeIndex += 1) {
                 const size = item.sizes[sizeIndex];
                 if (!size || size.crudAction === 'd' || Number(size.quantity) <= 0) continue;
-                const next = Math.round((price(size.pricePerPiece) + surcharge) * 100) / 100;
-                if (surcharge !== 0) {
-                  size.pricePerPiece = next.toFixed(2);
+                const update = priceUpdate(selection.tab_number, itemIndex, sizeIndex);
+                if (price(size.pricePerPiece) !== price(update.price)) {
+                  size.pricePerPiece = update.price;
                   if (watchSizeChanges) watchSizeChanges(item, size);
                 }
-                priceUpdates.push({tab_number: selection.tab_number, item_index: itemIndex, size_index: sizeIndex, price: String(size.pricePerPiece)});
+                priceUpdates.push(update);
                 adjusted += 1;
               }
             }
@@ -625,12 +692,12 @@ def _apply_crm_sleeve_changes(driver, plan, sales_note):
     return result
 
 
-def _verify_crm_sleeve_changes(driver, sales_note, mutation, *, require_note=True):
+def _verify_crm_sleeve_changes(driver, sales_note, mutation, *, require_note=True, allow_incomplete=False):
     expected_areas = list((mutation or {}).get("added_areas") or []) + list((mutation or {}).get("existing_areas") or [])
     expected_prices = list((mutation or {}).get("price_updates") or [])
     verification = shared._order_scope(
         driver,
-        r"""
+        _CRM_PRICE_ROWS_JS + r"""
         const note = arguments[0];
         const expectedAreas = arguments[1];
         const expectedPrices = arguments[2];
@@ -651,13 +718,16 @@ def _verify_crm_sleeve_changes(driver, sales_note, mutation, *, require_note=Tru
           if (!matched) missingAreas.push(expected);
         }
         const incorrectPrices = [];
+        const actualRows = extraPrintPriceRows(r.designs, [...new Set(expectedPrices.map(row => Number(row.tab_number)))]);
+        const actualByKey = new Map(actualRows.map(row => [extraPrintPriceKey(row), row]));
+        const expectedKeys = new Set(expectedPrices.map(extraPrintPriceKey));
         for (const expected of expectedPrices) {
-          const design = (r.designs || [])[Number(expected.tab_number) - 1];
-          const item = design && (design.designItems || [])[Number(expected.item_index)];
-          const actual = expected.size_index === null
-            ? item && item.pricePerPiece
-            : item && (item.sizes || [])[Number(expected.size_index)] && (item.sizes || [])[Number(expected.size_index)].pricePerPiece;
-          if (Number(actual) !== Number(expected.price)) incorrectPrices.push({...expected, actual});
+          const row = actualByKey.get(extraPrintPriceKey(expected));
+          if (!extraPrintSameRow(expected, row) || Number(row.price) !== Number(expected.price))
+            incorrectPrices.push({...expected, actual: row ? row.price : null, identity_changed: !extraPrintSameRow(expected, row)});
+        }
+        for (const row of actualRows) {
+          if (!expectedKeys.has(extraPrintPriceKey(row))) incorrectPrices.push({...row, reason: 'Unexpected product/size row'});
         }
         // The editor's addSalesNotes draft is never proof of a persisted note.
         const salesNotes = [r.salesNotes, r.filteredSalesNotes].filter(Boolean).join('\n');
@@ -671,6 +741,8 @@ def _verify_crm_sleeve_changes(driver, sales_note, mutation, *, require_note=Tru
         expected_areas,
         expected_prices,
     ) or {}
+    if allow_incomplete:
+        return verification
     if verification.get("missing_areas"):
         raise SleevePrintsError(
             f"CRM Extra Print Areas were not confirmed after reload: {verification['missing_areas']}. "
@@ -1139,6 +1211,12 @@ def process_sleeve_prints_order(
         })
         reverse_selections = [x for x in plan["selections"] if x.get("reverse")]
         extra_emb_selections = [x for x in plan["selections"] if x.get("extra_emb")]
+        if extra_emb_selections:
+            queued_quantities = {selection["tab_number"]: selection["quantity"] for selection in request["sleeves"]}
+            if any(selection["quantity"] != queued_quantities[selection["tab_number"]] for selection in plan["selections"]):
+                # Quantities participate in the legacy receipt key. Stop before
+                # a changed quantity could hide the original receipt entirely.
+                raise SleevePrintsError("Extra Print Areas quantities changed since this request was queued. Review the saved order before retrying; existing recovery receipts are preserved.")
         reverse_mutation = None
         receipt = None
         emb_mutation_path = None
@@ -1152,17 +1230,36 @@ def process_sleeve_prints_order(
             emb_mutation_path = receipt.with_suffix(".crm.json")
         if emb_mutation_path is not None and emb_mutation_path.exists():
             mutation = json.loads(emb_mutation_path.read_text(encoding="utf-8"))
-            # An interrupted save must be inspected, never blindly repriced.
             if not mutation.get("price_updates") or not (mutation.get("added_areas") or mutation.get("existing_areas")):
                 raise SleevePrintsError("The Extra Print Areas recovery receipt has no verifiable area or price targets. Review the saved order before retrying; the receipt is preserved.")
             result["crm_order_update"] = {"mutation": mutation, "reused_receipt": True}
+            inspection = _verify_crm_sleeve_changes(
+                driver, sales_note, mutation, require_note=False, allow_incomplete=True,
+            )
+            reapplied = bool(inspection.get("missing_areas") or inspection.get("incorrect_prices"))
+            if reapplied:
+                if crm_reverse_prints.email_was_sent(receipt):
+                    raise SleevePrintsError("The Extra Print Areas order changed after its confirmed email. Review CRM before retrying; the receipts are preserved.")
+                if dry_run:
+                    raise SleevePrintsError("Extra Print Areas still need to be applied; dry-run mode skipped the recovery save.")
+                # A pre-save receipt is a plan, not a completed edit. Reuse its
+                # exact targets; each active row must still have its original or
+                # target price. Never add the surcharge to an already-priced row.
+                recovered = _apply_crm_sleeve_changes(
+                    driver, plan, "" if inspection.get("note_saved") else sales_note,
+                    price_targets=mutation["price_updates"],
+                )
+                mutation = {**mutation, "price_updates": recovered["price_updates"]}
+                _record_emb_mutation(emb_mutation_path, mutation)
+                result["crm_order_update"].update(mutation=mutation, reapplied=True)
+                result["crm_order_update"]["save"] = shared._save_order_and_wait(driver)
             verification = _verify_saved_crm_sleeve_changes(
                 driver, order_url, order_id, sales_note, mutation,
                 login_wait_seconds=login_wait_seconds, dry_run=dry_run,
             )
             if reverse_mutation is not None:
                 crm_reverse_prints.verify_reverse_prints(driver, reverse_mutation)
-            result["crm_order_update"].update(verification=verification, skipped=not verification.get("note_repaired"))
+            result["crm_order_update"].update(verification=verification, skipped=not (reapplied or verification.get("note_repaired")))
             complete("crm_order_update", result["crm_order_update"])
         elif _crm_note_exists(before_state, sales_note) and not reverse_selections and not extra_emb_selections and not comp_sleeves:
             mutation = {"skipped": True, "reason": "matching_sales_note_already_saved", "added_areas": [], "existing_areas": [], "price_updates": []}

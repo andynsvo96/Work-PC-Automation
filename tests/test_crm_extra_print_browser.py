@@ -126,30 +126,93 @@ class ExtraPrintAreasBrowserTests(unittest.TestCase):
         self.assertEqual(self.driver.execute_script("return localStorage.getItem('extra-price-writes')"), "1")
         self.assertEqual(extra._read_crm_sleeve_state(self.driver)["sales_notes"].count(NOTE), 1)
 
-    def test_unsaved_or_partially_saved_receipt_stops_before_note_or_email(self):
+    def prepare_legacy_receipt(self):
         plan = extra._build_live_plan(extra.normalize_request(SELECTION, embroidery_price="9.00"),
                                       extra._read_crm_sleeve_state(self.driver))
         mutation = extra._apply_crm_sleeve_changes(self.driver, plan, NOTE)
+        for row in mutation['price_updates']:
+            for key in ('before_price', 'identity', 'quantity'):
+                row.pop(key, None)
         path = reverse.email_receipt_path("5451301", "customer@example.test", plan, {"jobs": []}).with_suffix(".crm.json")
         extra._record_emb_mutation(path, mutation)
-        saved = path.read_bytes()
         self.apply.reset_mock()
+        return path
+
+    def test_unsaved_legacy_receipt_reapplies_areas_and_fee_then_emails_once(self):
+        path = self.prepare_legacy_receipt()
         # The draft was never saved: navigation restores the original CRM state.
-        with self.assertRaisesRegex(extra.SleevePrintsError, "Extra Print Areas were not confirmed"):
-            self.process()
-        self.assertEqual(path.read_bytes(), saved)
-        self.apply.assert_not_called()
-        self.assertIsNone(self.driver.execute_script("return localStorage.getItem('copyright-note-save-attempts')"))
-        # A partial save with the requested areas but original prices also stops.
+        result = self.process()
+        self.assertTrue(result['success'])
+        self.assertTrue(result['crm_order_update']['reapplied'])
+        self.assertFalse(result['crm_order_update']['skipped'])
+        self.apply.assert_called_once()
+        rows = json.loads(path.read_text(encoding='utf-8'))['price_updates']
+        self.assertEqual([(row['before_price'], row['price']) for row in rows], [('50.05', '59.05')])
+        self.assertEqual(self.driver.execute_script("return resource.designs[0].designItems[0].pricePerPiece"), '59.05')
+        self.assertEqual(len(extra._read_crm_sleeve_state(self.driver)['designs'][0]['print_areas']), 2)
+        self.email.assert_called_once()
+        self.assertTrue(self.process()['salesforce']['skipped'])
+        self.assertEqual(self.apply.call_count, 1)
+        self.assertEqual(extra._read_crm_sleeve_state(self.driver)['sales_notes'].count(NOTE), 1)
+
+    def test_partial_legacy_save_adds_missing_area_without_repeating_paid_size_fee(self):
         self.driver.execute_script("""
-          resource.designs[0].printAreas = ['Front-Left Chest', 'Front-Right Chest'].map(description =>
-            ({description, methodDescription: 'Embroidery'}));
+          resource.designs[0].designItems = [{splitIntoSizes: 1, sizes: [
+            {id: 11, size: 'S', quantity: 4, pricePerPiece: '50.05'},
+            {id: 12, size: 'M', quantity: 5, pricePerPiece: '50.05'}]}];
           persist();
         """)
-        with self.assertRaisesRegex(extra.SleevePrintsError, "prices were not confirmed"):
+        path = self.prepare_legacy_receipt()
+        self.navigate(None, None, None)
+        self.driver.execute_script("""
+          resource.designs[0].printAreas = [{description: 'Front-Left Chest', methodDescription: 'Embroidery'}];
+          resource.designs[0].designItems[0].sizes[0].pricePerPiece = '59.05';
+          persist();
+        """)
+        result = self.process()
+        self.assertTrue(result['success'])
+        self.assertEqual(self.driver.execute_script("return resource.designs[0].designItems[0].sizes.map(size => size.pricePerPiece)"), ['59.05', '59.05'])
+        self.assertEqual(len(extra._read_crm_sleeve_state(self.driver)['designs'][0]['print_areas']), 2)
+        self.email.assert_called_once()
+        self.assertEqual([row['before_price'] for row in json.loads(path.read_text(encoding='utf-8'))['price_updates']], ['50.05', '50.05'])
+
+    def test_unrelated_price_change_stops_before_any_recovery_save(self):
+        path = self.prepare_legacy_receipt()
+        saved = path.read_bytes()
+        self.navigate(None, None, None)
+        self.driver.execute_script("resource.designs[0].designItems[0].pricePerPiece = '55.05'; persist();")
+        with self.assertRaisesRegex(extra.SleevePrintsError, "neither the original price nor its saved target"):
             self.process()
         self.assertEqual(path.read_bytes(), saved)
+        self.assertEqual(self.driver.execute_script("return resource.designs[0].printAreas[0].description"), 'Front')
+        self.assertIsNone(self.driver.execute_script("return localStorage.getItem('copyright-note-save-attempts')"))
         self.invoice.assert_not_called()
+        self.email.assert_not_called()
+
+    def test_new_receipt_detects_changed_product_identity_even_at_target_price(self):
+        self.driver.execute_script("localStorage.setItem('copyright-note-save-failures', '2');")
+        with self.assertRaises(extra.SleevePrintsError):
+            self.process()
+        path = self.receipt()
+        saved = path.read_bytes()
+        self.driver.execute_script("resource.designs[0].id = 999; persist();")
+        with self.assertRaisesRegex(extra.SleevePrintsError, "identity or quantity changed"):
+            self.process()
+        self.assertEqual(path.read_bytes(), saved)
+        self.email.assert_not_called()
+
+    def test_changed_total_quantity_does_not_create_a_second_receipt_or_fee(self):
+        self.driver.execute_script("localStorage.setItem('copyright-note-save-failures', '2');")
+        with self.assertRaises(extra.SleevePrintsError):
+            self.process()
+        path = self.receipt()
+        saved = path.read_bytes()
+        self.driver.execute_script("resource.designs[0].quantity = 10; persist();")
+        with self.assertRaisesRegex(extra.SleevePrintsError, "quantities changed since this request was queued"):
+            self.process()
+        self.assertEqual(self.receipt(), path)
+        self.assertEqual(path.read_bytes(), saved)
+        self.assertEqual(self.apply.call_count, 1)
         self.email.assert_not_called()
 
     def test_incomplete_receipt_stops_for_review(self):
