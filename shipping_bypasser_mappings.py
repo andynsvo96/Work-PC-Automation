@@ -33,6 +33,16 @@ SHIPPING_BRAND_RULES = (
         "click_inventory_button": True,
     },
     {
+        "brand": "Comfort Colors",
+        "description": "Remove C letters from the CRM style ID when searching SanMar.",
+        "applies_to": "Applies to products identified as Comfort Colors in the product details.",
+        "examples": [
+            {"crm_product_id": "1467CC", "sanmar_product_id": "1467"},
+            {"crm_product_id": "1717CC", "sanmar_product_id": "1717"},
+        ],
+        "click_inventory_button": False,
+    },
+    {
         "brand": "A4",
         "description": "Add an a4 prefix to the CRM style when searching SanMar.",
         "applies_to": "Applies to products identified as A4 stock.",

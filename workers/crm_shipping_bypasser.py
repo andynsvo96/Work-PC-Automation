@@ -342,6 +342,7 @@ BELLA_CANVAS_CRM_COLOR_WORD_ALIASES = {
 UNIQUE_PRODUCT_ID_HANDLERS = {
     "A4": "A4 stock styles are searched with an a4 prefix, for example NW3201 -> a4NW3201.",
     "Bella+Canvas": "Bella+Canvas CRM styles can omit the SanMar BC prefix or carry a CRM-only C suffix, for example 3413C -> BC3413.",
+    "Comfort Colors": "Remove C letters from Comfort Colors CRM styles when searching SanMar, for example 1467CC -> 1467.",
     "Gildan": "Some Gildan CRM styles differ from SanMar styles, for example G500 -> 5000 and G640 -> 64000.",
     "3001C": "Search as 3001, choose BC3001, then click Check inventory and pricing before selecting color/quantities.",
     "Rabbit Skins": "Rabbit Skins CRM styles may omit the RS prefix, for example 4400 -> RS4400, and require the inventory/pricing button.",
@@ -3396,6 +3397,16 @@ def _is_bella_canvas_product(product):
     )
 
 
+def _comfort_colors_sanmar_style_id(product):
+    source_text = " ".join(
+        str((product or {}).get(name) or "")
+        for name in ("stock_line", "product_name", "product_id")
+    )
+    if not re.search(r"\bCOMFORT\s+COLORS\b", source_text, flags=re.I):
+        return ""
+    return _upper_key((product or {}).get("product_id")).replace("C", "")
+
+
 def _next_level_sanmar_style_id(product_id, allow_bare_numeric=False):
     raw_style = _upper_key(product_id)
     if not raw_style:
@@ -3438,6 +3449,9 @@ def _sanmar_expected_style_keys(product, search_id=None):
         normalized = _upper_key(value)
         if normalized and normalized not in keys:
             keys.append(normalized)
+    comfort_colors_style_id = _comfort_colors_sanmar_style_id(product)
+    if comfort_colors_style_id and comfort_colors_style_id not in keys:
+        keys.insert(0, comfort_colors_style_id)
     gildan_style_id = _gildan_sanmar_style_id(raw_product_id)
     if gildan_style_id and gildan_style_id not in keys:
         keys.append(gildan_style_id)
@@ -3480,6 +3494,14 @@ def _sanmar_search_options_for_product(product):
             "click_inventory_button": bool(override.get("click_inventory_button")),
             "handler": str(override.get("handler") or search_id),
             "expected_style_keys": override.get("expected_style_keys") or _sanmar_expected_style_keys(product, resolved_search_id),
+        }
+    comfort_colors_style_id = _comfort_colors_sanmar_style_id(product)
+    if comfort_colors_style_id:
+        return {
+            "search_id": comfort_colors_style_id,
+            "click_inventory_button": False,
+            "handler": "Comfort Colors",
+            "expected_style_keys": [comfort_colors_style_id],
         }
     if (product or {}).get("is_a4"):
         resolved_search_id = f"a4{search_id}"

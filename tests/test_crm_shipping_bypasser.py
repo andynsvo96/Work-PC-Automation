@@ -236,6 +236,72 @@ class ShippingBypassProductColorMappingTests(unittest.TestCase):
         self.assertEqual(colors[("TEST100", "BLUEWHITE")], ["Blue/ White"])
 
 
+class ShippingBypassComfortColorsTests(unittest.TestCase):
+    def test_comfort_colors_removes_c_letters_from_search_and_expected_style(self):
+        cases = [
+            ({"product_id": "1467CC", "product_name": "Comfort Colors Unisex Lightweight Cotton Hooded Sweatshirt"}, "1467"),
+            ({"product_id": " 1467cc ", "stock_line": "1467CC comfort colors Hoodie - Alpha Stock"}, "1467"),
+            ({"product_id": "1717CC", "product_name": "Comfort Colors T-Shirt"}, "1717"),
+            ({"product_id": "6014C", "product_name": "Comfort Colors Long Sleeve T-Shirt"}, "6014"),
+            ({"product_id": "CC1717", "product_name": "Comfort Colors T-Shirt"}, "1717"),
+            ({"product_id": "1717", "product_name": "Comfort Colors T-Shirt"}, "1717"),
+        ]
+        for product, sanmar_style in cases:
+            with self.subTest(product=product):
+                original = dict(product)
+                options = crm_shipping_bypasser._sanmar_search_options_for_product(product)
+                self.assertEqual(options["search_id"], sanmar_style)
+                self.assertEqual(options["expected_style_keys"], [sanmar_style])
+                self.assertEqual(options["handler"], "Comfort Colors")
+                self.assertFalse(options["click_inventory_button"])
+                self.assertIn(sanmar_style, crm_shipping_bypasser._sanmar_expected_style_keys(product))
+                self.assertEqual(product, original)
+
+    def test_c_letters_are_preserved_without_the_comfort_colors_brand(self):
+        for product_name in ("Generic Hoodie", "Gildan Hoodie", "ComfortWash Hoodie", ""):
+            with self.subTest(product_name=product_name):
+                options = crm_shipping_bypasser._sanmar_search_options_for_product(
+                    {"product_id": "1467CC", "product_name": product_name}
+                )
+                self.assertEqual(options["search_id"], "1467CC")
+                self.assertEqual(options["handler"], "")
+                self.assertNotIn("1467", options["expected_style_keys"])
+
+    def test_exact_item_mapping_takes_priority_over_comfort_colors_rule(self):
+        override = {
+            "search_id": "EXACT1467",
+            "expected_style_keys": ["EXACT1467"],
+            "click_inventory_button": True,
+            "handler": "Custom item",
+        }
+        with mock.patch.object(crm_shipping_bypasser, "SANMAR_PRODUCT_SEARCH_OVERRIDES", {"1467CC": override}):
+            options = crm_shipping_bypasser._sanmar_search_options_for_product(
+                {"product_id": "1467CC", "product_name": "Comfort Colors Hoodie"}
+            )
+        self.assertEqual(options, override)
+
+    def test_cart_verification_requires_the_resolved_sanmar_style(self):
+        product = {"index": 1, "product_id": "1467CC", "product_name": "Comfort Colors Hoodie", "color": "Peach"}
+        options = crm_shipping_bypasser._sanmar_search_options_for_product(product)
+        line = {"product": product, "quantities": {"S": 1}, **options}
+        for style, expected_success in (("1467", True), ("1467CC", False), ("14670", False)):
+            with self.subTest(style=style):
+                result = crm_shipping_bypasser._validate_sanmar_cart_contents(
+                    None, [line], cart_lines=[{"style": style, "color": "Peach", "size": "S", "quantity": 1}]
+                )
+                self.assertEqual(result["success"], expected_success)
+
+    def test_comfort_colors_settings_examples_match_the_worker(self):
+        rule = next(rule for rule in shipping_bypasser_mappings.SHIPPING_BRAND_RULES if rule["brand"] == "Comfort Colors")
+        for example in rule["examples"]:
+            with self.subTest(example=example):
+                options = crm_shipping_bypasser._sanmar_search_options_for_product(
+                    {"product_id": example["crm_product_id"], "product_name": rule["brand"]}
+                )
+                self.assertEqual(options["search_id"], example["sanmar_product_id"])
+                self.assertEqual(options["click_inventory_button"], rule["click_inventory_button"])
+
+
 class ShippingBypass3200ColorMappingTests(unittest.TestCase):
     # CRM labels and SanMar labels from the supplied color screenshots.
     COLORS = {
