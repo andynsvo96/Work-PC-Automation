@@ -63,7 +63,8 @@ class CompSleevesPricingTests(unittest.TestCase):
     def test_comp_sleeves_add_areas_without_writing_prices_and_verify_unchanged_prices(self):
         plan = live_plan([{"tab_number": 1, "quantity": 10, "left": "ink", "right": "embroidery"}],
                          ink_price=0, embroidery_price=0)
-        with patch.object(sleeves.shared, "_order_scope", return_value={}) as scope:
+        with (patch.object(sleeves.shared, "_order_scope", return_value={}) as scope,
+              patch.object(sleeves.shared._product_separator, "_enter_edit_mode")):
             sleeves._apply_crm_sleeve_changes(None, plan, "Comp sleeve note")
         script, payload = scope.call_args.args[1:]
         harness = '''
@@ -207,7 +208,7 @@ class CompSleevesWorkflowTests(unittest.TestCase):
                 {"tab_number": 1, "quantity": 10, "print_areas": []}]}
             stack.enter_context(patch.object(sleeves, "_read_crm_sleeve_state", return_value=state))
             apply = stack.enter_context(patch.object(sleeves, "_apply_crm_sleeve_changes", return_value={}))
-            verify = stack.enter_context(patch.object(sleeves, "_verify_crm_sleeve_changes", return_value={}))
+            verify = stack.enter_context(patch.object(sleeves, "_verify_crm_sleeve_changes", return_value={"note_saved": True}))
             stack.enter_context(patch.object(sleeves, "_capture_view_invoice_link", return_value="https://example.test/invoice"))
             send = stack.enter_context(patch.object(sleeves, "_prepare_and_send_salesforce_email", return_value={"sent": True}))
             selection = [{"tab_number": 1, "quantity": 10, "left": "ink", "right": "ink"}]
@@ -219,7 +220,7 @@ class CompSleevesWorkflowTests(unittest.TestCase):
             self.assertEqual(apply.call_args.args[1]["selections"][0]["right"], "ink")
             verify.assert_called_once()
             self.assertEqual(sleeves.shared.safe_get_with_partial_load.call_count, 2)
-            self.assertIn("Verify saved sleeve areas", sleeves.shared.safe_get_with_partial_load.call_args.args[2])
+            self.assertIn("Verify saved Extra Print Areas", sleeves.shared.safe_get_with_partial_load.call_args.args[2])
             self.assertEqual(send.call_args.kwargs["process"], sleeves.COMP_SLEEVES_PROCESS)
             state["sales_notes"] = ""
             result = sleeves.process_sleeve_prints_order("1234567", selection, ink_price=0)

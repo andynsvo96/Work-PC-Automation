@@ -313,7 +313,7 @@ def _read_crm_sleeve_state(driver):
           return total;
         }
         return {
-          sales_notes: String(r.salesNotes || r.addSalesNotes || ''),
+          sales_notes: [r.salesNotes, r.filteredSalesNotes].filter(Boolean).join('\n'),
           designs: (r.designs || []).map((design, index) => ({
             tab_number: index + 1,
             quantity: designQuantity(design),
@@ -409,7 +409,8 @@ def _build_live_plan(request, state):
 
 
 def _crm_note_exists(state, note):
-    return str(note or "").casefold() in str((state or {}).get("sales_notes") or "").casefold()
+    normalized = lambda value: " ".join(str(value or "").split()).casefold()
+    return bool(normalized(note)) and normalized(note) in normalized((state or {}).get("sales_notes"))
 
 
 def _salesforce_process_for_plan(plan):
@@ -432,6 +433,10 @@ def _record_emb_mutation(path, mutation):
 
 
 def _apply_crm_sleeve_changes(driver, plan, sales_note):
+    # Opening Edit Order can asynchronously replace the resource and clear its
+    # draft. Wait for the editor, then resolve the resource in a separate call.
+    if not shared._order_scope(driver, "return !!s.editMode;"):
+        shared._product_separator._enter_edit_mode(driver)
     payload = {
         "selections": [
             {
@@ -519,7 +524,6 @@ def _apply_crm_sleeve_changes(driver, plan, sales_note):
         const existingAreas = [];
         const priceUpdates = [];
         runInAngular(s, () => {
-          if (!s.editMode && typeof s.editModeOn === 'function') s.editModeOn();
           for (const selection of request.selections) {
             const designIndex = Number(selection.tab_number) - 1;
             const design = (r.designs || [])[designIndex];
@@ -609,7 +613,7 @@ def _apply_crm_sleeve_changes(driver, plan, sales_note):
             if (!adjusted) throw new Error(`Tab ${selection.tab_number} has no active product size price to update.`);
           }
           const existingDraft = String(r.addSalesNotes || '').trim();
-          if (!existingDraft.toLowerCase().includes(request.sales_note.toLowerCase())) {
+          if (request.sales_note && !lower(existingDraft).includes(lower(request.sales_note))) {
             r.addSalesNotes = [existingDraft, request.sales_note].filter(Boolean).join('\n');
             if (s.order && typeof s.order.setAddSalesNotes === 'function') s.order.setAddSalesNotes(r.addSalesNotes);
           }
@@ -621,7 +625,7 @@ def _apply_crm_sleeve_changes(driver, plan, sales_note):
     return result
 
 
-def _verify_crm_sleeve_changes(driver, sales_note, mutation):
+def _verify_crm_sleeve_changes(driver, sales_note, mutation, *, require_note=True):
     expected_areas = list((mutation or {}).get("added_areas") or []) + list((mutation or {}).get("existing_areas") or [])
     expected_prices = list((mutation or {}).get("price_updates") or [])
     verification = shared._order_scope(
@@ -655,9 +659,10 @@ def _verify_crm_sleeve_changes(driver, sales_note, mutation):
             : item && (item.sizes || [])[Number(expected.size_index)] && (item.sizes || [])[Number(expected.size_index)].pricePerPiece;
           if (Number(actual) !== Number(expected.price)) incorrectPrices.push({...expected, actual});
         }
-        const salesNotes = String(r.salesNotes || r.addSalesNotes || '');
+        // The editor's addSalesNotes draft is never proof of a persisted note.
+        const salesNotes = [r.salesNotes, r.filteredSalesNotes].filter(Boolean).join('\n');
         return {
-          note_saved: salesNotes.toLowerCase().includes(String(note || '').toLowerCase()),
+          note_saved: !!clean(note) && lower(salesNotes).includes(lower(note)),
           missing_areas: missingAreas,
           incorrect_prices: incorrectPrices
         };
@@ -666,13 +671,57 @@ def _verify_crm_sleeve_changes(driver, sales_note, mutation):
         expected_areas,
         expected_prices,
     ) or {}
-    if not verification.get("note_saved"):
-        raise SleevePrintsError("CRM saved the order, but the Extra Print Areas Sales Note was not confirmed afterward.")
     if verification.get("missing_areas"):
-        raise SleevePrintsError(f"CRM saved the order, but these Extra Print Areas were not confirmed: {verification['missing_areas']}")
+        raise SleevePrintsError(
+            f"CRM Extra Print Areas were not confirmed after reload: {verification['missing_areas']}. "
+            "Review the saved order before retrying; existing recovery receipts are preserved."
+        )
     if verification.get("incorrect_prices"):
-        raise SleevePrintsError(f"CRM saved the order, but these Extra Print Area prices were not confirmed: {verification['incorrect_prices']}")
+        raise SleevePrintsError(
+            f"CRM Extra Print Area prices were not confirmed after reload: {verification['incorrect_prices']}. "
+            "Review the saved order before retrying; existing recovery receipts are preserved."
+        )
+    if require_note and not verification.get("note_saved"):
+        raise SleevePrintsError("The Extra Print Areas Sales Note did not persist after reload and one note-only save retry. Stopped before email; existing recovery receipts are preserved.")
     return verification
+
+
+def _verify_saved_crm_sleeve_changes(driver, order_url, order_id, sales_note, mutation, *,
+                                    login_wait_seconds=0, dry_run=False):
+    def reload_order():
+        shared.safe_get_with_partial_load(driver, order_url, f"Verify saved Extra Print Areas for CRM order {order_id}")
+        shared._login_to_crm_if_needed(driver, order_url, login_wait_seconds=login_wait_seconds)
+        shared._switch_to_crm_app_frame(driver)
+        shared._wait_for_order_scope(driver, order_id=order_id)
+
+    reload_order()
+    # Validate areas and exact receipt prices before considering a note repair.
+    # A rejected or partial save must never be recovered by adding the fee again.
+    verification = _verify_crm_sleeve_changes(driver, sales_note, mutation, require_note=False)
+    if verification.get("note_saved"):
+        return verification
+    if dry_run:
+        raise SleevePrintsError("The Extra Print Areas Sales Note is missing; dry-run mode skipped the note-only save.")
+    shared._product_separator._enter_edit_mode(driver)
+    shared._order_scope(
+        driver,
+        r"""
+        const note = arguments[0];
+        const normalized = value => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const draft = String(r.addSalesNotes || '').trim();
+        if (!normalized(draft).includes(normalized(note))) {
+          runInAngular(s, () => {
+            r.addSalesNotes = [draft, note].filter(Boolean).join('\n');
+            if (typeof s.order.setAddSalesNotes === 'function') s.order.setAddSalesNotes(r.addSalesNotes);
+          });
+        }
+        """,
+        sales_note,
+    )
+    note_save = shared._save_order_and_wait(driver)
+    reload_order()
+    verification = _verify_crm_sleeve_changes(driver, sales_note, mutation)
+    return {**verification, "note_repaired": True, "note_save": note_save}
 
 
 def _capture_view_invoice_link(driver, timeout=45):
@@ -1104,10 +1153,16 @@ def process_sleeve_prints_order(
         if emb_mutation_path is not None and emb_mutation_path.exists():
             mutation = json.loads(emb_mutation_path.read_text(encoding="utf-8"))
             # An interrupted save must be inspected, never blindly repriced.
-            verification = _verify_crm_sleeve_changes(driver, sales_note, mutation)
+            if not mutation.get("price_updates") or not (mutation.get("added_areas") or mutation.get("existing_areas")):
+                raise SleevePrintsError("The Extra Print Areas recovery receipt has no verifiable area or price targets. Review the saved order before retrying; the receipt is preserved.")
+            result["crm_order_update"] = {"mutation": mutation, "reused_receipt": True}
+            verification = _verify_saved_crm_sleeve_changes(
+                driver, order_url, order_id, sales_note, mutation,
+                login_wait_seconds=login_wait_seconds, dry_run=dry_run,
+            )
             if reverse_mutation is not None:
                 crm_reverse_prints.verify_reverse_prints(driver, reverse_mutation)
-            result["crm_order_update"] = {"mutation": mutation, "verification": verification, "skipped": True}
+            result["crm_order_update"].update(verification=verification, skipped=not verification.get("note_repaired"))
             complete("crm_order_update", result["crm_order_update"])
         elif _crm_note_exists(before_state, sales_note) and not reverse_selections and not extra_emb_selections and not comp_sleeves:
             mutation = {"skipped": True, "reason": "matching_sales_note_already_saved", "added_areas": [], "existing_areas": [], "price_updates": []}
@@ -1123,14 +1178,13 @@ def process_sleeve_prints_order(
             )
             if emb_mutation_path is not None:
                 _record_emb_mutation(emb_mutation_path, mutation)
+            result["crm_order_update"] = {"mutation": mutation}
             save = shared._save_order_and_wait(driver)
-            if comp_sleeves or reverse_mutation is not None:
-                # Read persisted tab names, areas and prices before preparing the email.
-                shared.safe_get_with_partial_load(driver, order_url, f"Verify saved Extra Print Areas for CRM order {order_id}")
-                shared._login_to_crm_if_needed(driver, order_url, login_wait_seconds=login_wait_seconds)
-                shared._switch_to_crm_app_frame(driver)
-                shared._wait_for_order_scope(driver, order_id=order_id)
-            verification = _verify_crm_sleeve_changes(driver, sales_note, mutation)
+            result["crm_order_update"]["save"] = save
+            verification = _verify_saved_crm_sleeve_changes(
+                driver, order_url, order_id, sales_note, mutation,
+                login_wait_seconds=login_wait_seconds, dry_run=dry_run,
+            )
             if reverse_mutation is not None:
                 crm_reverse_prints.verify_reverse_prints(driver, reverse_mutation)
             result["crm_order_update"] = {"mutation": mutation, "save": save, "verification": verification}

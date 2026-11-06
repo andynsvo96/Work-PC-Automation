@@ -261,7 +261,7 @@ class ReverseWorkflowTests(unittest.TestCase):
             {"tab_number": 1, "quantity": 8, "print_areas": [{"description": "Front", "method": "HD Digital"}]}]}
         stack.enter_context(patch.object(extra, "_read_crm_sleeve_state", return_value=state))
         stack.enter_context(patch.object(extra, "_apply_crm_sleeve_changes", return_value={}))
-        stack.enter_context(patch.object(extra, "_verify_crm_sleeve_changes", return_value={}))
+        stack.enter_context(patch.object(extra, "_verify_crm_sleeve_changes", return_value={"note_saved": True}))
         stack.enter_context(patch.object(extra, "_capture_view_invoice_link", return_value="https://example.test/invoice"))
         send = stack.enter_context(patch.object(extra, "_prepare_and_send_salesforce_email", return_value={"sent": True}))
         mutation = {"jobs": [{"source": source_design(), "clone_index": 1, "unit_price": "8"}]}

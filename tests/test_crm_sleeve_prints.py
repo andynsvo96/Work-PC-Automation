@@ -73,7 +73,8 @@ class SleevePrintsPricingTests(unittest.TestCase):
             {"tab_number": 1, "quantity": 10, "side_left": "ink", "side_right": "embroidery"}])
         plan = crm_sleeve_prints._build_live_plan(request, {"designs": [
             {"tab_number": 1, "quantity": 10, "print_areas": [{"method": "Screen Printing"}]}]})
-        with patch.object(crm_sleeve_prints.shared, "_order_scope", return_value={}) as scope:
+        with (patch.object(crm_sleeve_prints.shared, "_order_scope", return_value={}) as scope,
+              patch.object(crm_sleeve_prints.shared._product_separator, "_enter_edit_mode")):
             crm_sleeve_prints._apply_crm_sleeve_changes(None, plan, "Side test")
         script, payload = scope.call_args.args[1:]
         harness = '''

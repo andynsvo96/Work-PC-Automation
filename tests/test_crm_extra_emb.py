@@ -23,7 +23,8 @@ class ExtraEmbTests(unittest.TestCase):
             with self.subTest(names=names):
                 plan = self.plan(names, "12.50")
                 self.assertEqual(plan["selections"][0]["surcharge"], Decimal("12.50"))
-                with patch.object(extra.shared, "_order_scope", return_value={}) as scope:
+                with (patch.object(extra.shared, "_order_scope", return_value={}) as scope,
+                      patch.object(extra.shared._product_separator, "_enter_edit_mode")):
                     extra._apply_crm_sleeve_changes(None, plan, "Emb note")
                 script, payload = scope.call_args.args[1:]
                 harness = '''
@@ -83,8 +84,10 @@ process.stdout.write(JSON.stringify({result,design:r.designs[0]}));
             state = {"sales_notes": "Additional embroidery area\n$15.00 each\nemailed txted", "designs": [
                 {"tab_number": 1, "quantity": 10, "print_areas": [{"description": "Front", "method": "Embroidery"}]}]}
             stack.enter_context(patch.object(extra, "_read_crm_sleeve_state", return_value=state))
-            apply = stack.enter_context(patch.object(extra, "_apply_crm_sleeve_changes", return_value={"price_updates": []}))
-            verify = stack.enter_context(patch.object(extra, "_verify_crm_sleeve_changes", return_value={}))
+            mutation = {"existing_areas": [{"tab_number": 1, "description": "Front-Left Chest", "method": "Embroidery"}],
+                        "price_updates": [{"tab_number": 1, "item_index": 0, "size_index": None, "price": "25.00"}]}
+            apply = stack.enter_context(patch.object(extra, "_apply_crm_sleeve_changes", return_value=mutation))
+            verify = stack.enter_context(patch.object(extra, "_verify_crm_sleeve_changes", return_value={"note_saved": True}))
             stack.enter_context(patch.object(extra, "_capture_view_invoice_link", return_value="https://example.test/invoice"))
             send = stack.enter_context(patch.object(extra, "_prepare_and_send_salesforce_email", return_value={"sent": True}))
             stack.enter_context(patch.object(reverse, "STATE_DIR", directory))

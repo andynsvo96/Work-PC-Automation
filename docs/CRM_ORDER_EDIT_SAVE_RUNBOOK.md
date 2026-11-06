@@ -357,6 +357,24 @@ An original with empty tabs and no matching retained-original recovery report st
 
 The current save wait loop uses a bounded timeout and stable checks. Do the same.
 
+### Extra Print Areas recovery
+
+Extra Print Areas enters Edit Order and waits before resolving the resource for
+changes. It reloads after every save and verifies the requested areas, exact
+product/size prices, and persisted Sales Notes. Note matching normalizes whitespace
+and ignores the unsaved `addSalesNotes` draft.
+
+An existing embroidery `.crm.json` receipt contains the original target prices.
+Retry checks those targets before any note repair. If the areas and prices match
+but the note is missing, it saves only the note once, reloads, and verifies all
+three again before email. Missing areas, changed prices, incomplete receipts, or
+a note still absent after recovery stop for review. Keep the original queue entry
+and receipt; removing the receipt can cause another surcharge. A CRM save timeout
+does not prove that any changes persisted.
+
+Restart the local app to load this fix: the queued Extra Print Areas runner uses
+the worker module in the server process. No extension reload is needed.
+
 ## Partial copyright cancellation
 
 The extension's Copyright - Cancel action carries a complete order design scan
