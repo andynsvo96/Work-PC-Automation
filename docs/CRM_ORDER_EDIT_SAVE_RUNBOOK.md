@@ -399,26 +399,40 @@ and customer email, scopes controls to its visible `TwilioSFTwoWayMessages`
 component, and opens a Contact's **Text** tab. Cached hidden records, multiple
 visible message panels, another unsent draft, missing controls, and Twilio
 configuration/opt-in errors cannot trigger a send. Lightning shadow roots are
-supported. Each text must produce a new exact matching outgoing row with an
-accepted submission status before the next text starts. This confirms Twilio
-submission, not delivery to the customer's phone.
+supported. Each text must produce a new exact matching outgoing record before
+the next text starts. Delivery status, including failed, undelivered, or pending,
+is retained as information and does not block the invoice text. This confirms
+submission for the customer's record, not delivery to their phone.
+
+Live Lightning/Aura requires native keyboard events to bind the text to Twilio's
+message model; setting the textarea value and dispatching synthetic events can
+leave **Send Message** disabled. The helper centers and focuses the scoped input,
+then types with Selenium without a pointer click that the fixed utility bar can
+intercept. An exact existing draft can be rebound without duplicating its text.
+Confirmation includes both `.outgoing` and `.outgoing-error` rows; both prove the
+text is recorded and allow the invoice message to continue.
 
 Receipts in `runtime/state/extra_print_text_receipts/` freeze both texts and the
 invoice URL before email. Confirmed email and text states survive retries and
 server restarts. A confirmed legacy reverse-print/additional-embroidery email
 also continues to the text stage without resending the email. Text submission
-is checkpointed before each click. Retry can send an unattempted second text,
-but a pending, failed, or unconfirmed text stops for Twilio-history review and
-is never automatically resent. Do not delete or manually advance these receipts
-to bypass a review stop. Dry runs skip text clicks and text-receipt writes.
+is checkpointed before each click. Retry checks an attempted text's exact outgoing
+history on the original customer record against its saved pre-send count. An
+increased count confirms the recorded submission without another click, including
+older receipts stopped by a carrier failure. Retry then sends an unattempted
+second text. An attempted text with no new matching record stays stopped for
+review and is never resent automatically. Do not delete or manually advance
+receipts to bypass this check. Dry runs skip text clicks and text-receipt writes.
 
 Restart the local app to load this feature; no extension reload is required.
 Offline checks use `python -m unittest discover -s tests -p
 "test_salesforce_text*.py"`, including the synthetic Account/Contact browser
 fixture `tests/fixtures/salesforce_twilio.html`. A local ChromeDriver is required
 for browser checks (`CHROMEDRIVER` can select its path). The fixture never opens
-live Salesforce or sends real messages. Windows Chrome was verified; live
-Twilio delivery and macOS execution still require platform verification.
+live Salesforce or sends real messages. Windows Chrome Account submission was
+also verified live: the payment text and separate invoice link each persisted
+once after reopening Salesforce, with carrier errors retained as information.
+Contact tab handling is covered by the offline fixture; macOS remains unverified.
 
 ## Partial copyright cancellation
 

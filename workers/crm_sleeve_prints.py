@@ -309,10 +309,9 @@ def _payment_text_messages(plan, invoice_link):
 
 def _send_salesforce_text_messages(driver, crm_handle, order_id, customer_email, path, *, login_wait_seconds=0):
     receipt = text_messaging.load_receipt(path, order_id, customer_email)
-    # Completed or uncertain sends can be resolved without opening another tab.
+    # Completed sends need no UI. Pending sends require history reconciliation
+    # on the verified record before the unattempted invoice text can continue.
     if receipt and all(entry["state"] == "confirmed" for entry in receipt["messages"]):
-        return text_messaging.send_text_messages(driver, path, order_id, customer_email)
-    if receipt and any(entry["state"] == "attempted" for entry in receipt["messages"]):
         return text_messaging.send_text_messages(driver, path, order_id, customer_email)
     shared._open_salesforce_account(
         driver, crm_handle, customer_email, login_wait_seconds=login_wait_seconds, order_id=order_id,

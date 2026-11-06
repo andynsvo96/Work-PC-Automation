@@ -15,11 +15,11 @@
 <one-record-home-flexipage2 id="current"></one-record-home-flexipage2>
 <script>
 const fixture = window.fixture = {sends: [], textClicks: 0, unrelatedClicks: 0, email: 'customer@example.test',
-  status: 'sent', noConfirmation: false, delay: 0, disableSecond: false};
+  status: 'sent', noConfirmation: false, delay: 0, disableSecond: false, trustedInputOnly: true};
 
 function addRow(panel, body, status, outgoing = true) {
   const row = document.createElement('div');
-  row.className = `message-wrapper ${outgoing ? 'outgoing' : 'incoming'}`;
+  row.className = `message-wrapper ${outgoing ? (['failed', 'undelivered'].includes(status) ? 'outgoing-error' : 'outgoing') : 'incoming'}`;
   const bubble = document.createElement('div'); bubble.className = 'message';
   const paragraph = document.createElement('p'); paragraph.textContent = body; bubble.append(paragraph);
   const time = document.createElement('div'); time.className = 'message-time';
@@ -40,7 +40,10 @@ function makePanel(parent, cached = false) {
   const input = document.createElement('textarea'); input.placeholder = 'Enter Message...';
   panel.querySelector('lightning-textarea').attachShadow({mode: 'open'}).append(input);
   const button = panel.querySelector('button');
-  input.addEventListener('input', () => button.disabled = !input.value);
+  input.addEventListener('input', event => {
+    if (fixture.trustedInputOnly && !event.isTrusted) return;
+    button.disabled = !input.value;
+  });
   button.addEventListener('click', () => {
     if (cached) { fixture.unrelatedClicks++; return; }
     fixture.sends.push(input.value);

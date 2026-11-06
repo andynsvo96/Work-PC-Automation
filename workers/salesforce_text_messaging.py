@@ -1,7 +1,7 @@
 """Send a receipted pair of texts through the active Salesforce Twilio panel.
 
-A pending click is deliberately never retried automatically. A new matching
-outgoing Twilio row confirms submission, not delivery to the customer's phone.
+A pending click is deliberately never repeated. A matching new outgoing Twilio
+row confirms submission even when delivery fails, and can reconcile a receipt.
 """
 
 import json
@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 import tempfile
 import time
+
+from selenium.webdriver.common.keys import Keys
 
 
 class TextMessageError(RuntimeError):
@@ -75,17 +77,17 @@ const disabled = el => el.disabled || el.getAttribute('aria-disabled') === 'true
 if (action === 'fill') {
   if (disabled(input)) return {error: 'The customer Twilio message input is disabled.'};
   if (input.value && input.value !== message) return {error: 'The Twilio input contains another draft. Review it before retrying.'};
-  const view = input.ownerDocument.defaultView;
-  Object.getOwnPropertyDescriptor(view.HTMLTextAreaElement.prototype, 'value').set.call(input, message);
-  input.dispatchEvent(new view.Event('input', {bubbles: true, composed: true}));
-  input.dispatchEvent(new view.Event('change', {bubbles: true, composed: true}));
+  // Keep the input above Salesforce's fixed utility bar before native entry.
+  input.scrollIntoView({block: 'center', inline: 'nearest'});
+  input.focus({preventScroll: true});
+  return {input, record, value: input.value, enabled: !disabled(input) && !disabled(button)};
 }
 if (action === 'send') {
   if (input.value !== message || disabled(input) || disabled(button)) return {error: 'The exact text and enabled Send Message button were not retained.'};
   button.click();
   return {clicked: true, record};
 }
-const rows = all(panel, '.message-wrapper.outgoing').map(row => {
+const rows = all(panel, '.message-wrapper.outgoing, .message-wrapper.outgoing-error').map(row => {
   const body = all(row, '.message')[0];
   const statuses = all(row, '.message-time .uiOutputText');
   return {text: body ? text(body) : '', status: statuses.length ? text(statuses[statuses.length - 1]).toLowerCase() : ''};
@@ -132,7 +134,7 @@ def load_receipt(path, order_id, recipient):
                 if entries[0]["state"] != "confirmed":
                     raise ValueError("Invalid message order")
             if entry["state"] == "confirmed":
-                if entry["status"] not in {"queued", "sending", "sent", "delivered", "read"}:
+                if not isinstance(entry["status"], str):
                     raise ValueError("Invalid confirmation")
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise TextMessageError("The Salesforce text receipt cannot be verified. Review Twilio history before retrying; no text was sent.") from exc
@@ -179,20 +181,57 @@ def _wait_for_panel(driver, recipient, *, record=None, message=None, timeout=30)
         time.sleep(0.4)
 
 
+def _fill_text(driver, recipient, message, record):
+    state = _snapshot(driver, recipient, "fill", message, record)
+    if state.get("input") is None:
+        raise TextMessageError("The customer Twilio message input did not become ready for entry.")
+    if state.get("value") == message and state.get("enabled"):
+        return
+    control = state["input"]
+    # Lightning does not always bind synthetic input/change events to the Aura
+    # message model. Native keys update that model and enable Send Message.
+    if state.get("value") == message:
+        control.send_keys(Keys.END, " ", Keys.BACKSPACE, Keys.TAB)
+    else:
+        control.send_keys(message, Keys.TAB)
+
+
+def _wait_for_recorded_text(driver, recipient, record, entry, timeout):
+    deadline = time.monotonic() + timeout
+    expected = " ".join(entry["text"].split())
+    while True:
+        state = _snapshot(driver, recipient, record=record)
+        rows = [row for row in state.get("rows", []) if " ".join(str(row.get("text") or "").split()) == expected]
+        if len(rows) > entry["baseline_count"]:
+            return rows[-1]
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.5)
+
+
 def send_text_messages(driver, path, order_id, recipient, *, timeout=30):
     path = Path(path)
     receipt = load_receipt(path, order_id, recipient)
     if receipt is None or receipt["email_confirmed"] is not True:
         raise TextMessageError("Salesforce email must be confirmed before sending payment texts.")
-    if any(entry["state"] == "attempted" for entry in receipt["messages"]):
-        raise TextMessageError("A previous Salesforce text send is unconfirmed. Review Twilio history before retrying; no text was resent.")
     sent_count = 0
+    recovered_count = 0
     for index, entry in enumerate(receipt["messages"]):
         if entry["state"] == "confirmed":
             continue
         panel = _wait_for_panel(driver, recipient, record=receipt["record"], timeout=timeout)
         receipt["record"] = panel["record"]
-        _snapshot(driver, recipient, "fill", entry["text"], receipt["record"])
+        if entry["state"] == "attempted":
+            # Read-only recovery: an increased exact outgoing-row count on the
+            # original record proves this text is logged. Never click it again.
+            row = _wait_for_recorded_text(driver, recipient, receipt["record"], entry, timeout)
+            if row is None:
+                raise TextMessageError("A previous Salesforce text send is unconfirmed. Review Twilio history before retrying; no text was resent.")
+            entry.update(state="confirmed", status=str(row.get("status") or ""), recovered_from_history=True)
+            _write(path, receipt)
+            recovered_count += 1
+            continue
+        _fill_text(driver, recipient, entry["text"], receipt["record"])
         panel = _wait_for_panel(driver, recipient, record=receipt["record"], message=entry["text"], timeout=timeout)
         exact = lambda row: " ".join(row.get("text", "").split()) == " ".join(entry["text"].split())
         baseline = sum(exact(row) for row in panel["rows"])
@@ -202,21 +241,13 @@ def send_text_messages(driver, path, order_id, recipient, *, timeout=30):
         clicked = _snapshot(driver, recipient, "send", entry["text"], receipt["record"])
         if clicked.get("clicked") is not True:
             raise TextMessageError("The Salesforce text Send Message click is uncertain. Review Twilio history before retrying.")
-        deadline = time.monotonic() + timeout
-        while True:
-            state = _snapshot(driver, recipient, record=receipt["record"])
-            rows = [row for row in state.get("rows", []) if exact(row)]
-            if len(rows) > baseline:
-                status = rows[-1].get("status")
-                if status in {"failed", "undelivered", "canceled"}:
-                    raise TextMessageError(f"Salesforce text {index + 1} is {status}. Review Twilio history; it will not be resent automatically.")
-                if status in {"queued", "sending", "sent", "delivered", "read"}:
-                    entry.update(state="confirmed", status=status)
-                    _write(path, receipt)
-                    sent_count += 1
-                    break
-            if time.monotonic() >= deadline:
-                raise TextMessageError(f"Salesforce text {index + 1} was not confirmed in Twilio history. Review it before retrying; no automatic resend is allowed.")
-            time.sleep(0.5)
-    return {"sent": True, "confirmed_count": 2, "sent_count": sent_count, "skipped": sent_count == 0,
+        row = _wait_for_recorded_text(driver, recipient, receipt["record"], entry, timeout)
+        if row is None:
+            raise TextMessageError(f"Salesforce text {index + 1} was not confirmed in Twilio history. Review it before retrying; no automatic resend is allowed.")
+        # Delivery status is recorded as information. Even an undelivered or
+        # failed outgoing row proves submission and allows the invoice text.
+        entry.update(state="confirmed", status=str(row.get("status") or ""))
+        _write(path, receipt)
+        sent_count += 1
+    return {"sent": True, "confirmed_count": 2, "sent_count": sent_count, "recovered_count": recovered_count, "skipped": sent_count == 0,
             "messages": [{"text": entry["text"], "status": entry["status"]} for entry in receipt["messages"]]}

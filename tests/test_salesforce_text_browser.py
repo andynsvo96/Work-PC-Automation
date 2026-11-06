@@ -107,18 +107,48 @@ class SalesforceTextBrowserTests(unittest.TestCase):
             self.send()
         self.assertEqual(self.script("return fixture.sends"), MESSAGES[:1])
 
-    def test_delayed_status_is_confirmed_before_second_message(self):
+    def test_recorded_message_can_continue_while_delivery_status_is_pending(self):
         self.navigate()
         self.script("fixture.delay = 120;")
         self.assertTrue(self.send()["sent"])
         self.assertEqual(self.script("return fixture.sends"), MESSAGES)
 
-    def test_failed_first_text_stops_before_invoice(self):
+    def test_native_entry_binds_lightning_model_and_recovers_an_exact_unbound_draft(self):
+        self.navigate()
+        self.script("fixture.input.value = arguments[0]; fixture.input.dispatchEvent(new Event('input', {bubbles:true}));", MESSAGES[0])
+        self.assertTrue(self.script("return fixture.button.disabled"))
+        self.assertTrue(self.send()["sent"])
+        self.assertEqual(self.script("return fixture.sends"), MESSAGES)
+
+    def test_native_entry_scrolls_above_a_fixed_salesforce_utility_bar(self):
+        self.navigate()
+        self.script("""
+          fixture.root.style.marginTop = '1800px';
+          const utility = document.createElement('div');
+          utility.style.cssText = 'position:fixed;bottom:0;height:110px;width:100%;background:#ccc;z-index:10000';
+          utility.textContent = 'Salesforce utility bar'; document.body.append(utility);
+        """)
+        self.assertTrue(self.send()["sent"])
+        self.assertEqual(self.script("return fixture.sends"), MESSAGES)
+
+    def test_undelivered_outgoing_records_allow_both_texts_and_do_not_repeat_on_retry(self):
         self.navigate()
         self.script("fixture.status = 'undelivered';")
-        with self.assertRaisesRegex(texts.TextMessageError, "text 1 is undelivered"):
-            self.send()
-        self.assertEqual(self.script("return fixture.sends"), MESSAGES[:1])
+        result = self.send()
+        self.assertEqual([entry["status"] for entry in result["messages"]], ["undelivered", "undelivered"])
+        self.assertEqual(self.script("return fixture.sends"), MESSAGES)
+        self.assertTrue(self.send()["skipped"])
+        self.assertEqual(self.script("return fixture.sends"), MESSAGES)
+
+    def test_pending_first_send_recovers_from_history_before_sending_only_invoice(self):
+        self.navigate()
+        self.script("fixture.noConfirmation = true;")
+        with self.assertRaisesRegex(texts.TextMessageError, "text 1 was not confirmed"):
+            self.send(timeout=0)
+        self.script("addRow(fixture.panel, arguments[0], 'undelivered'); fixture.noConfirmation = false;", MESSAGES[0])
+        result = self.send()
+        self.assertEqual((result["recovered_count"], result["sent_count"]), (1, 1))
+        self.assertEqual(self.script("return fixture.sends"), MESSAGES)
 
     def test_first_confirmed_then_disabled_input_can_resume_invoice_without_repeating_first(self):
         self.navigate()

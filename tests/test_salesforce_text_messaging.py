@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+from selenium.webdriver.common.keys import Keys
+
 from workers import crm_reverse_prints as reverse
 from workers import crm_sleeve_prints as extra
 from workers import salesforce_text_messaging as texts
@@ -38,7 +40,17 @@ class TwilioDriver:
         if action == "fill":
             if self.fail_second_fill and len(self.sends) == 1:
                 raise RuntimeError("Second input unavailable")
-            self.value = message
+            driver = self
+
+            class Input:
+                def send_keys(self, *values):
+                    for value in values:
+                        if value == Keys.BACKSPACE:
+                            driver.value = driver.value[:-1]
+                        elif value not in {Keys.TAB, Keys.END}:
+                            driver.value += value
+
+            return {"input": Input(), "record": self.record, "value": self.value, "enabled": bool(self.value)}
         if action == "send":
             if self.before_click:
                 self.before_click()
@@ -112,7 +124,7 @@ class TextReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(texts.TextMessageError, "previous.*unconfirmed"):
             self.send()
         self.assertEqual(self.driver.sends, [MESSAGES[0]])
-        self.assertEqual(self.driver.actions, [])
+        self.assertNotIn("send", self.driver.actions)
 
     def test_uncertain_second_send_blocks_both_messages_on_retry(self):
         self.confirmed_email()
@@ -125,20 +137,51 @@ class TextReceiptTests(unittest.TestCase):
             self.send()
         self.assertEqual(self.driver.sends, MESSAGES)
 
-    def test_click_exception_and_failed_delivery_stop_before_invoice_and_block_retry(self):
+    def test_click_exception_without_a_record_stops_before_invoice_and_blocks_resend(self):
         self.confirmed_email()
-        for mode in ("exception", "failed", "undelivered"):
-            with self.subTest(mode=mode):
+        self.driver.before_click = Mock(side_effect=RuntimeError("Click disconnected"))
+        with self.assertRaisesRegex(RuntimeError, "Click disconnected"):
+            self.send()
+        with self.assertRaisesRegex(texts.TextMessageError, "previous.*unconfirmed"):
+            self.send()
+        self.assertEqual(self.driver.sends, [])
+
+    def test_recorded_delivery_status_does_not_block_invoice_or_repeat_either_text(self):
+        self.confirmed_email()
+        for status in ("failed", "undelivered", "canceled", "", "carrier diagnostic"):
+            with self.subTest(status=status):
                 self.path.write_text(json.dumps(self.receipt), encoding="utf-8")
                 self.driver = TwilioDriver()
-                self.driver.status = mode
-                if mode == "exception":
-                    self.driver.before_click = Mock(side_effect=RuntimeError("Click disconnected"))
-                with self.assertRaises((texts.TextMessageError, RuntimeError)):
-                    self.send()
-                with self.assertRaisesRegex(texts.TextMessageError, "previous.*unconfirmed"):
-                    self.send()
-                self.assertLessEqual(len(self.driver.sends), 1)
+                self.driver.status = status
+                result = self.send()
+                self.assertEqual(result["confirmed_count"], 2)
+                self.assertEqual([entry["status"] for entry in result["messages"]], [status, status])
+                self.assertEqual(self.driver.sends, MESSAGES)
+                self.assertTrue(self.send()["skipped"])
+                self.assertEqual(self.driver.sends, MESSAGES)
+
+    def test_pending_first_text_recovers_its_undelivered_record_and_sends_only_invoice(self):
+        self.confirmed_email()
+        self.driver.missing_confirmation = True
+        with self.assertRaisesRegex(texts.TextMessageError, "text 1 was not confirmed"):
+            self.send()
+        self.driver.rows.append({"text": MESSAGES[0], "status": "undelivered"})
+        self.driver.missing_confirmation = False
+        result = self.send()
+        self.assertEqual((result["recovered_count"], result["sent_count"]), (1, 1))
+        self.assertEqual(self.driver.sends, MESSAGES)
+        self.assertEqual(result["messages"][0]["status"], "undelivered")
+
+    def test_pending_second_text_recovers_its_failed_record_without_any_resend(self):
+        self.confirmed_email()
+        self.driver.before_click = lambda: setattr(self.driver, "missing_confirmation", len(self.driver.sends) == 1)
+        with self.assertRaisesRegex(texts.TextMessageError, "text 2 was not confirmed"):
+            self.send()
+        self.driver.rows.append({"text": MESSAGES[1], "status": "failed"})
+        result = self.send()
+        self.assertEqual((result["recovered_count"], result["sent_count"]), (1, 0))
+        self.assertTrue(result["skipped"])
+        self.assertEqual(self.driver.sends, MESSAGES)
 
     def test_changed_customer_or_body_and_corrupt_receipts_cannot_bypass_duplicate_checks(self):
         with self.assertRaisesRegex(texts.TextMessageError, "texts changed"):
