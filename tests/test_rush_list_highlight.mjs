@@ -10,6 +10,7 @@ const context = vm.createContext({
 });
 vm.runInContext(source, context);
 const evaluate = expression => vm.runInContext(expression, context);
+const rushDates = date => JSON.parse(evaluate(`JSON.stringify(crmListRushDates(new Date(${date})))`));
 
 test("rush highlights cannot make stock issues or dimmed status colors applicable", () => {
   for (const [color, opacity, highlighted, expected] of [
@@ -32,31 +33,74 @@ test("rush highlights cannot make stock issues or dimmed status colors applicabl
   }
 });
 
-test("Friday requires Friday production and the immediately following Monday fulfillment", () => {
+test("Friday's original Friday-production / Monday-fulfillment rule stays active all day", () => {
   for (const [date, production, fulfillment] of [
     ["2026, 9, 30, 23, 59", "2026-10-30", "2026-11-02"],
     ["2026, 2, 6, 0, 1", "2026-03-06", "2026-03-09"],
     ["2027, 11, 31", "2027-12-31", "2028-01-03"],
     ["2036, 1, 29", "2036-02-29", "2036-03-03"]
   ]) {
-    assert.equal(evaluate(`JSON.stringify(crmListRushDates(new Date(${date})))`), JSON.stringify({ production, fulfillment }));
+    assert.ok(rushDates(date).some(pair => pair.production === production && pair.fulfillment === fulfillment));
   }
 });
 
-test("Saturday and Sunday both use Monday production with Tuesday fulfillment", () => {
-  for (const date of ["2026, 9, 31, 23, 59", "2026, 10, 1, 0, 1"]) {
-    assert.equal(evaluate(`JSON.stringify(crmListRushDates(new Date(${date})))`),
-      JSON.stringify({ production: "2026-11-02", fulfillment: "2026-11-03" }));
+test("weekends before the cutoff use Monday production with Tuesday fulfillment", () => {
+  for (const date of ["2026, 9, 31, 12, 59, 59", "2026, 10, 1, 0, 1"]) {
+    assert.deepEqual(rushDates(date), [{ production: "2026-11-02", fulfillment: "2026-11-03" }]);
   }
   for (const date of ["2028, 11, 30", "2028, 11, 31"]) {
-    assert.equal(evaluate(`JSON.stringify(crmListRushDates(new Date(${date})))`),
-      JSON.stringify({ production: "2029-01-01", fulfillment: "2029-01-02" }));
+    assert.deepEqual(rushDates(date), [{ production: "2029-01-01", fulfillment: "2029-01-02" }]);
   }
 });
 
-test("Monday through Thursday leave CRM's own urgency colors alone", () => {
+test("Monday through Thursday leave CRM's own urgency colors alone before 1 PM", () => {
   for (const day of [26, 27, 28, 29]) {
-    assert.equal(evaluate(`crmListRushDates(new Date(2026, 9, ${day}))`), null);
+    for (const time of ["0", "12, 59, 59, 999"]) {
+      assert.deepEqual(rushDates(`2026, 9, ${day}, ${time}`), []);
+    }
+  }
+});
+
+test("at 1 PM each weekday includes today's and next business day's production due the business day after", () => {
+  for (const [day, today, tomorrow, fulfillment] of [
+    [26, "2026-10-26", "2026-10-27", "2026-10-28"],
+    [27, "2026-10-27", "2026-10-28", "2026-10-29"],
+    [28, "2026-10-28", "2026-10-29", "2026-10-30"],
+    [29, "2026-10-29", "2026-10-30", "2026-11-02"],
+    [30, "2026-10-30", "2026-11-02", "2026-11-03"]
+  ]) {
+    const expected = [
+      ...(day === 30 ? [{ production: today, fulfillment: tomorrow }] : []),
+      { production: today, fulfillment }, { production: tomorrow, fulfillment }
+    ];
+    for (const time of ["13", "23, 59, 59, 999"]) {
+      assert.deepEqual(rushDates(`2026, 9, ${day}, ${time}`), expected);
+    }
+  }
+  assert.deepEqual(rushDates("2026, 9, 30, 12, 59, 59, 999"), [
+    { production: "2026-10-30", fulfillment: "2026-11-02" }
+  ]);
+});
+
+test("weekends after 1 PM retain Monday and include today's production due Tuesday", () => {
+  for (const [day, production] of [[31, "2026-10-31"], [32, "2026-11-01"]]) {
+    assert.deepEqual(rushDates(`2026, 9, ${day}, 13`), [
+      { production: "2026-11-02", fulfillment: "2026-11-03" },
+      { production, fulfillment: "2026-11-03" }
+    ]);
+  }
+});
+
+test("cutoff business dates cross DST, leap days, and year boundaries using the local calendar", () => {
+  for (const [date, today, tomorrow, fulfillment] of [
+    ["2026, 2, 6, 13", "2026-03-06", "2026-03-09", "2026-03-10"],
+    ["2026, 9, 30, 13", "2026-10-30", "2026-11-02", "2026-11-03"],
+    ["2027, 11, 31, 13", "2027-12-31", "2028-01-03", "2028-01-04"],
+    ["2036, 1, 28, 13", "2036-02-28", "2036-02-29", "2036-03-03"]
+  ]) {
+    const pairs = rushDates(date);
+    assert.ok(pairs.some(pair => pair.production === today && pair.fulfillment === fulfillment));
+    assert.ok(pairs.some(pair => pair.production === tomorrow && pair.fulfillment === fulfillment));
   }
 });
 

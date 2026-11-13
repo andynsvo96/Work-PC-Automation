@@ -63,28 +63,28 @@ class RushListBrowserTests(unittest.TestCase):
         cls.driver = webdriver.Chrome(service=Service(driver_path), options=options)
         cls.addClassCleanup(cls.driver.quit)
 
-    def show_list(self, day=30, route="/report/967"):
+    def show_list(self, day=30, route="/report/967", hour=12, minute=0):
         self.driver.get(self.base_url + route)
         self.driver.execute_script("""
             window.RealDate = Date;
-            window.fixtureNow = new RealDate(2026, 9, arguments[0], 12).getTime();
+            window.fixtureNow = new RealDate(2026, 9, arguments[0], arguments[1], arguments[2]).getTime();
             window.Date = class extends RealDate {
                 constructor(...args) { super(...(args.length ? args : [window.fixtureNow])); }
                 static now() { return window.fixtureNow; }
             };
-            window.fixtureMidnightTimers = [];
+            window.fixtureRefreshTimers = [];
             const realSetTimeout = window.setTimeout.bind(window);
             window.setTimeout = (callback, delay, ...args) => {
                 if (delay > 60000) {
-                    fixtureMidnightTimers.push({callback, delay});
+                    fixtureRefreshTimers.push({callback, delay});
                     return 0;
                 }
                 return realSetTimeout(callback, delay, ...args);
             };
             const style = document.createElement('style');
-            style.textContent = arguments[1];
+            style.textContent = arguments[3];
             document.head.append(style);
-        """, day, (EXTENSION / "rush-list-highlight.css").read_text(encoding="utf-8"))
+        """, day, hour, minute, (EXTENSION / "rush-list-highlight.css").read_text(encoding="utf-8"))
         self.driver.execute_script((EXTENSION / "rush-list-highlight.js").read_text(encoding="utf-8"))
         self.driver.execute_async_script("requestAnimationFrame(() => requestAnimationFrame(arguments[0]));")
 
@@ -144,30 +144,46 @@ class RushListBrowserTests(unittest.TestCase):
         self.wait_for_rows(["tuesday"])
         self.assertEqual(self.driver.execute_script("return getComputedStyle(document.querySelector('#native td')).backgroundColor;"), "rgb(34, 236, 72)")
 
-    def test_midnight_timer_switches_from_friday_to_weekend_and_clears_monday(self):
-        self.show_list(day=29)
+    def test_cutoff_timer_highlights_tuesday_and_wednesday_production_due_thursday(self):
+        self.show_list(day=27, hour=12, minute=59)
         self.assertEqual(self.highlighted(), [])
-        self.assertEqual(self.driver.execute_script("return fixtureMidnightTimers[0].delay;"), 12 * 60 * 60 * 1000 + 50)
+        self.assertEqual(self.driver.execute_script("return fixtureRefreshTimers[0].delay;"), 60050)
         self.driver.execute_script("""
-            fixtureNow = new RealDate(2026, 9, 30, 0, 0, 1).getTime();
-            fixtureMidnightTimers.shift().callback();
+            fixtureNow = new RealDate(2026, 9, 27, 13).getTime();
+            fixtureRefreshTimers.shift().callback();
         """)
-        self.wait_for_rows(["attribute", "bound", "card", "due-column", "monday"])
+        self.wait_for_rows(["cutoff-today", "cutoff-tomorrow"])
+        for row_id in ["cutoff-today", "cutoff-tomorrow"]:
+            self.assertEqual(self.driver.execute_script(
+                "return getComputedStyle(document.querySelector('#' + arguments[0] + ' td')).backgroundColor;", row_id
+            ), "rgb(34, 236, 72)")
         self.driver.execute_script("""
-            fixtureNow = new RealDate(2026, 9, 31, 0, 0, 1).getTime();
-            fixtureMidnightTimers.shift().callback();
-        """)
-        self.wait_for_rows(["tuesday"])
-        self.driver.execute_script("""
-            fixtureNow = new RealDate(2026, 10, 1, 0, 0, 1).getTime();
-            fixtureMidnightTimers.shift().callback();
-        """)
-        self.wait_for_rows(["tuesday"])
-        self.driver.execute_script("""
-            fixtureNow = new RealDate(2026, 10, 2, 0, 0, 1).getTime();
-            fixtureMidnightTimers.shift().callback();
+            fixtureNow = new RealDate(2026, 9, 28, 0, 0, 1).getTime();
+            fixtureRefreshTimers.shift().callback();
         """)
         self.wait_for_rows([])
+
+    def test_cutoff_and_midnight_timers_preserve_friday_and_weekend_rules(self):
+        self.show_list(day=29)
+        self.assertEqual(self.highlighted(), [])
+        friday_rows = ["attribute", "bound", "card", "due-column", "monday"]
+        for day, hour, expected in [
+            (29, 13, friday_rows + ["wrong-production"]), (30, 0, friday_rows),
+            (30, 13, friday_rows + ["friday-cutoff", "tuesday"]),
+            (31, 0, ["tuesday"]), (31, 13, ["tuesday"]),
+            (32, 0, ["tuesday"]), (32, 13, ["tuesday"]), (33, 0, [])
+        ]:
+            with self.subTest(day=day, hour=hour):
+                delay, expected_delay = self.driver.execute_script("""
+                    const boundary = new RealDate(2026, 9, arguments[0], arguments[1]).getTime();
+                    return [fixtureRefreshTimers[0].delay, boundary - fixtureNow + 50];
+                """, day, hour)
+                self.assertEqual(delay, expected_delay)
+                self.driver.execute_script("""
+                    fixtureNow = new RealDate(2026, 9, arguments[0], arguments[1], 0, 1).getTime();
+                    fixtureRefreshTimers.shift().callback();
+                """, day, hour)
+                self.wait_for_rows(expected)
 
     def test_both_weekend_days_require_monday_production_and_tuesday_fulfillment(self):
         for day in [31, 32]:
@@ -227,9 +243,12 @@ class RushListBrowserTests(unittest.TestCase):
 
     def test_stock_issue_rush_orders_keep_status_colors_and_both_buttons_exclude_them(self):
         expected = ["1234601", "1234603", "1234605", "1234606", "1234611"]
-        for action in [self.select_applicable, self.open_applicable]:
-            with self.subTest(action=action.__name__):
-                self.show_list(31, "/report/select-applicable")
+        for day, hour, action in [
+            (31, 12, self.select_applicable), (31, 12, self.open_applicable),
+            (30, 13, self.select_applicable), (30, 13, self.open_applicable)
+        ]:
+            with self.subTest(day=day, hour=hour, action=action.__name__):
+                self.show_list(day, "/report/select-applicable", hour=hour)
                 self.assertEqual(self.highlighted(), ["weekend-rush"])
                 self.assertEqual(self.order_paint("stock-issue-rush")[0][0], "rgb(33, 150, 243)")
                 self.assertEqual(self.order_paint("stock-issue-rush")[-2][0], "rgb(33, 150, 243)")

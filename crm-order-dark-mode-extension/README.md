@@ -64,20 +64,31 @@ If CRM's selection cannot be verified or the list changes during selection, no
 tabs are opened. If Chrome opens only part of a batch, the status reports the
 count and keeps the selection; inspect the open tabs before clicking again.
 
-## Friday and weekend list highlighting
+## Max-rush list highlighting
 
-Version **1.6.4** extends the Friday rule and requires both **Production Date**
-and **Fulfillment Date** (also spelled **Fulfilment Date**) or **Due Date**:
+Version **1.7.20** adds a daily **1 PM cutoff**, using the computer's local time.
+Starting at **1:00 PM**, orders with **Production Date** set to **today or the
+next business day** qualify as max rush when their **Fulfillment Date** (also
+spelled **Fulfilment Date**) or **Due Date** is the **business day after that**:
 
-| Viewing day | Production Date | Fulfillment / Due Date |
+| Viewing day, from 1 PM | Production Date | Fulfillment / Due Date |
 | --- | --- | --- |
-| Friday | That Friday | Immediately following Monday |
-| Saturday or Sunday | Immediately following Monday | Immediately following Tuesday |
+| Monday | That Monday or Tuesday | Immediately following Wednesday |
+| Tuesday | That Tuesday or Wednesday | Immediately following Thursday |
+| Wednesday | That Wednesday or Thursday | Immediately following Friday |
+| Thursday | That Thursday or Friday | Immediately following Monday |
+| Friday | That Friday or Monday | Immediately following Tuesday |
+| Saturday or Sunday | That viewing day or Monday | Immediately following Tuesday |
 
-Matching orders display the CRM's neon green (`rgb(34, 236, 72)`). On weekends,
-this treats Monday as the working day. Production dates in report group headers
-are supported. The rule uses the computer's local calendar without a holiday
-calendar. Monday through Thursday retain CRM's own urgency behavior.
+The existing rules remain active **all day**: Friday production due the following
+Monday qualifies on Friday; Monday production due Tuesday qualifies on Saturday
+and Sunday. Before 1 PM, Monday through Thursday retain CRM's own urgency behavior.
+
+Matching orders display the CRM's neon green (`rgb(34, 236, 72)`). Business-day
+calculations skip Saturday and Sunday, without a holiday calendar. Both production
+and fulfillment/due dates must be readable and consistent. Production dates in
+report group headers are supported. Stock-issue and dimmed orders keep their
+original colors and remain excluded from both list buttons.
 
 Version **1.7.17** fills the entire matching order, including its companion
 image-preview row, so no tan or purple strip remains underneath. Selecting the
@@ -86,12 +97,13 @@ marker. Deselecting restores the full green highlight. Both list buttons still
 recognize eligible selected rush orders as applicable.
 
 Highlighting is automatic, independent of the dark-mode setting and local
-Automation app. It follows list refreshes, pagination, changed dates, and local
-midnight, removing stale extension highlights as the date or list changes.
+Automation app. It follows list refreshes, pagination, changed dates, the local
+1 PM cutoff, and midnight, removing stale extension highlights as the time or
+list changes.
 Unreadable or conflicting dates are left unchanged. Printed pages retain their
 original CRM colors and omit both list controls.
 
-Reload **CRM Order Assistant** at `chrome://extensions`, then refresh open CRM
+Reload **CRM Order Assistant 1.7.20** at `chrome://extensions`, then refresh open CRM
 list/report pages. **No local Automation app restart is needed.**
 
 ## Retry an unfinished automation

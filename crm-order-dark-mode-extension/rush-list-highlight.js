@@ -1,5 +1,6 @@
 // List tools have their own route gate; order tools and dark mode stay order-only.
 const CRM_LIST_RUSH_CLASS = "crm-list-rush";
+const CRM_LIST_PRODUCTION_CUTOFF_HOUR = 13;
 const CRM_LIST_APPLICABLE_COLORS = new Set([
   "rgb(243, 196, 156)", // Tan.
   "rgb(32, 223, 75)", "rgb(34, 236, 72)", // Native and extension neon green.
@@ -41,14 +42,32 @@ function crmListCalendarDay(today, offset = 0) {
   return crmListDateKey(`${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`);
 }
 
+function crmListNextBusinessDay(today) {
+  const next = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1, 12);
+  while (next.getDay() === 6 || next.getDay() === 0) next.setDate(next.getDate() + 1);
+  return next;
+}
+
 function crmListRushDates(today = new Date()) {
+  const dates = [];
+  const addDates = (production, fulfillment) => {
+    const pair = { production: crmListCalendarDay(production), fulfillment: crmListCalendarDay(fulfillment) };
+    if (!dates.some(date => date.production === pair.production && date.fulfillment === pair.fulfillment)) dates.push(pair);
+  };
   const day = today.getDay();
-  if (day === 5) return { production: crmListCalendarDay(today), fulfillment: crmListCalendarDay(today, 3) };
+  const nextBusinessDay = crmListNextBusinessDay(today);
+  if (day === 5) addDates(today, nextBusinessDay);
   if (day === 6 || day === 0) {
-    const mondayOffset = day === 6 ? 2 : 1;
-    return { production: crmListCalendarDay(today, mondayOffset), fulfillment: crmListCalendarDay(today, mondayOffset + 1) };
+    addDates(nextBusinessDay, crmListNextBusinessDay(nextBusinessDay));
   }
-  return null;
+  if (today.getHours() >= CRM_LIST_PRODUCTION_CUTOFF_HOUR) {
+    // After the cutoff, the next working day becomes the production baseline.
+    // Keep today's production eligible when CRM has not yet moved its date.
+    const fulfillment = crmListNextBusinessDay(nextBusinessDay);
+    addDates(today, fulfillment);
+    addDates(nextBusinessDay, fulfillment);
+  }
+  return dates;
 }
 
 function crmListRoute(location = window.location) {
@@ -143,15 +162,17 @@ function crmListRowForOrder(link) {
 
 function crmRefreshRushListRows() {
   const nextRows = new Set();
-  const dates = crmIsOrderListRoute() ? crmListRushDates() : null;
-  if (dates) {
+  const dates = crmIsOrderListRoute() ? crmListRushDates() : [];
+  if (dates.length) {
     const checked = new Set();
     for (const link of document.querySelectorAll("a[href]")) {
       if (!crmListOrderId(link)) continue;
       const row = crmListRowForOrder(link);
       if (!row || checked.has(row) || !crmListRowIsApplicable(row)) continue;
       checked.add(row);
-      if (crmListFulfillmentDate(row) === dates.fulfillment && crmListProductionDate(row) === dates.production) nextRows.add(row);
+      const fulfillment = crmListFulfillmentDate(row);
+      const production = crmListProductionDate(row);
+      if (dates.some(date => fulfillment === date.fulfillment && production === date.production)) nextRows.add(row);
     }
   }
   for (const row of crmRushListRows) {
@@ -303,15 +324,17 @@ function crmStartRushListTools() {
     window.addEventListener(event, crmQueueRushListRefresh);
   }
   document.addEventListener("visibilitychange", crmQueueRushListRefresh);
-  function refreshAtMidnight() {
+  function refreshAtBoundary() {
     const now = new Date();
-    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const boundary = now.getHours() < CRM_LIST_PRODUCTION_CUTOFF_HOUR
+      ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), CRM_LIST_PRODUCTION_CUTOFF_HOUR)
+      : new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
     window.setTimeout(() => {
       crmQueueRushListRefresh();
-      refreshAtMidnight();
-    }, midnight.getTime() - now.getTime() + 50);
+      refreshAtBoundary();
+    }, boundary.getTime() - now.getTime() + 50);
   }
-  refreshAtMidnight();
+  refreshAtBoundary();
   crmQueueRushListRefresh();
 }
 
