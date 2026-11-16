@@ -713,7 +713,8 @@ button.icon-btn{min-height:34px;padding:7px 12px;border-radius:8px;background:va
 :root:not([data-theme='dark']) .tab-btn.active{color:#1d4ed8}
 .tab-symbol{font-size:15px}
 .m6-posting-toggle{margin-left:auto;white-space:nowrap;min-height:36px;background:var(--rough-green-soft);border-color:var(--rough-green);color:var(--rough-green)}
-.m6-posting-toggle[aria-pressed='false']{background:var(--rough-amber-soft);border-color:var(--rough-amber);color:var(--rough-amber)}
+#m6PostingToggle[aria-pressed='false']{background:transparent;border-color:var(--rough-muted);color:var(--rough-muted);box-shadow:none}
+#m6PostingToggle[aria-pressed='false']:hover:not(:disabled){border-color:var(--rough-text);color:var(--rough-text)}
 @media (max-width:560px){.m6-posting-toggle{grid-column:1/-1;justify-self:end}}
 .page-heading{margin:0 0 20px;align-items:flex-end}
 .page-heading h2{margin:0 0 5px;font-size:29px;letter-spacing:-.02em}
