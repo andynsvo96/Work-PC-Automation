@@ -698,6 +698,23 @@ The shipping bypasser demonstrates a pragmatic DOM path:
 7. Wait for visible `Edit Order`.
 8. Refresh or re-read as needed.
 
+### Suggest Different Item Sales Note
+
+`workers/crm_stock_issue_item.py` saves its stock-issue follow-up in **Sales
+Notes**. After the confirmed Salesforce email, enter Edit Order and wait for the
+editor before resolving the resource and setting `addSalesNotes`. Preserve any
+existing draft. Save Order, reload, and check `salesNotes` / `filteredSalesNotes`;
+`addSalesNotes` is an unsaved draft and cannot confirm persistence. A missing
+note gets one save retry, then stops for review. Production Notes stay intact
+and cannot satisfy Sales Note verification.
+
+Retry the original queue task to preserve its stock selection and confirmed
+email receipt, including tasks previously stopped at `production_note`. A saved
+Sales Note is reused. Next, verify the M6 Slack delivery unless the dashboard's
+local **Post to M6** switch is Off, then apply and reload-verify `Issue - Stock`.
+An intentional M6 skip records no delivery receipt and still permits the status
+update. Keep existing email and Slack receipts to avoid duplicate sends.
+
 ## Dry Run Rules
 
 Every destructive or final-save workflow should support `--dry-run`.

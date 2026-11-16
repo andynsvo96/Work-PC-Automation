@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import html
 import json
 import os
 from pathlib import Path
@@ -18,7 +19,7 @@ ensure_project_root_on_path()
 from runtime_paths import STATE_DIR
 from salesforce_templates import STOCK_ISSUE_ITEM_TEMPLATE_NAME, default_template_store
 import slack_delivery_receipts as slack_receipts
-import crm_shipping_bypasser as production_notes
+from m6_posting import skipped_post_result
 from workers import crm_stock_swap as stock_reader
 from workers import crm_stock_issue_extension as extension
 from workers import salesforce_activity_confirmation as confirmation
@@ -151,7 +152,7 @@ def placeholder_values(order_id, request):
     }
 
 
-def format_production_note(order_id, request):
+def format_sales_note(order_id, request):
     values = placeholder_values(order_id, request)
     return f"{values['[STOCK]']} stock issue\nSuggest {values['[PRODUCT]']}\nEmailed Txted"
 
@@ -161,37 +162,54 @@ def format_slack_message(order_id):
     return f"{shared.PROCESSOR_ORDER_URL_TEMPLATE.format(order_id=order_id)} - Rush Order stock issue"
 
 
-def _production_note_present(driver, note):
-    state = driver.execute_script(r"""
-        const roots = document.querySelectorAll('#order-notes-production-notes');
-        if (roots.length !== 1) return {error: 'Exactly one Production Notes section is required.'};
-        const saved = roots[0].cloneNode(true);
-        saved.querySelectorAll('textarea,input,button').forEach(node => node.remove());
-        const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
-        return {present: normalize(saved.textContent).includes(normalize(arguments[0]))};
-    """, note) or {}
-    if not isinstance(state, dict):
-        raise StockIssueItemError('The saved Production Notes could not be read.')
-    if state.get('error') or not isinstance(state.get('present'), bool):
-        raise StockIssueItemError(state.get('error') or 'The saved Production Notes could not be read.')
-    return state['present']
+def _sales_note_present(driver, note):
+    # addSalesNotes is an unsaved draft and cannot prove persistence.
+    saved = shared._order_scope(driver, "return [r.salesNotes || '', r.filteredSalesNotes || ''];")
+    if not isinstance(saved, list) or any(not isinstance(value, str) for value in saved):
+        raise StockIssueItemError('The saved Sales Notes could not be read.')
+    def normalize(value):
+        return ' '.join(html.unescape(re.sub(r'<[^>]*>', ' ', value)).split()).casefold()
+    return any(normalize(note) in normalize(value) for value in saved)
 
 
-def _append_production_note(driver, order_id, note, *, dry_run=False):
+def _save_sales_note(driver, order_id, note):
+    # Opening the editor may replace the resource and reset its draft.
+    previous_draft = shared._order_scope(driver, "return String(r.addSalesNotes || '').trim();")
+    shared._product_separator._enter_edit_mode(driver)
+    shared._order_scope(driver, r"""
+        const note = arguments[0];
+        const draft = String(r.addSalesNotes || '').trim();
+        const previous = String(arguments[1] || '').trim();
+        const normalize = value => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const merged = normalize(draft).includes(normalize(previous)) ? draft
+            : normalize(previous).includes(normalize(draft)) ? previous : [previous, draft].filter(Boolean).join('\n');
+        const after = normalize(merged).includes(normalize(note)) ? merged : [merged, note].filter(Boolean).join('\n');
+        runInAngular(s, () => {
+            r.addSalesNotes = after;
+            if (s.order.setAddSalesNotes) s.order.setAddSalesNotes(after);
+        });
+        return true;
+    """, note, previous_draft)
+    save = shared._save_order_and_wait(driver)
+    driver.refresh()
     shared._activate_crm_context(driver)
     shared._wait_for_order_scope(driver, order_id=order_id)
-    present = _production_note_present(driver, note)
+    return save
+
+
+def _append_sales_note(driver, order_id, note, *, dry_run=False):
+    shared._activate_crm_context(driver)
+    shared._wait_for_order_scope(driver, order_id=order_id)
+    present = _sales_note_present(driver, note)
     result = {'note': note, 'updated': False, 'already_present': present,
               'confirmed': present, 'dry_run': bool(dry_run)}
     if present or dry_run:
         return result
-    state = production_notes._save_and_verify_crm_production_note(driver, order_id, note)
-    shared._activate_crm_context(driver)
-    shared._wait_for_order_scope(driver, order_id=order_id)
-    if not _production_note_present(driver, note):
-        raise StockIssueItemError('The production note did not persist after reload. Retry the original task to recover it.')
-    return {**result, 'updated': state == 'recorded', 'already_present': state == 'already_present',
-            'confirmed': True, 'save': state}
+    for attempt in range(2):
+        save = _save_sales_note(driver, order_id, note)
+        if _sales_note_present(driver, note):
+            return {**result, 'updated': True, 'confirmed': True, 'save': save, 'save_attempts': attempt + 1}
+    raise StockIssueItemError('The Sales Note did not persist after save and reload. Both save attempts failed verification; retry the original task to recover it.')
 
 
 def _send_required_slack(order_id, *, dry_run=False):
@@ -200,6 +218,9 @@ def _send_required_slack(order_id, *, dry_run=False):
     delivery_key = f'{AUTOMATION_KEY}:{order_id}'
     result = {'message': message, 'channel_url': RUSH_ORDER_SLACK_CHANNEL_URL, 'delivery_key': delivery_key,
               'sent': False, 'confirmed': False, 'dry_run': bool(dry_run)}
+    skipped = skipped_post_result(RUSH_ORDER_SLACK_CHANNEL_URL)
+    if skipped:
+        return {**result, **skipped}
     if dry_run:
         return result
     previous = slack_receipts.load(RUSH_ORDER_SLACK_CHANNEL_URL, delivery_key, message)
@@ -209,6 +230,9 @@ def _send_required_slack(order_id, *, dry_run=False):
         channel_url=RUSH_ORDER_SLACK_CHANNEL_URL, delivery_key=delivery_key)
     if not ok:
         raise StockIssueItemError(f'Required stock issue Slack notification failed: {response}')
+    skipped = skipped_post_result(RUSH_ORDER_SLACK_CHANNEL_URL, response)
+    if skipped:
+        return {**result, **skipped}
     receipt = slack_receipts.load(RUSH_ORDER_SLACK_CHANNEL_URL, delivery_key, message)
     if not receipt or receipt['status'] != 'confirmed':
         raise StockIssueItemError('The Slack stock issue notification has no confirmed delivery receipt; review the channel.')
@@ -340,10 +364,9 @@ def process_stock_issue_item_order(order_id, product, products, *, dry_run=False
         shared._login_to_crm_if_needed(driver, order_url, login_wait_seconds=login_wait_seconds)
         snapshot = stock_reader._read_snapshot(driver, order_id)
         request["products"] = verify_selected_stock(snapshot, request["products"])
-        note = format_production_note(order_id, request)
-        result.update({**request, "placeholders": placeholder_values(order_id, request), 'production_note_text': note})
-        # Prove that the correct note section exists before sending the customer email.
-        _production_note_present(driver, note)
+        note = format_sales_note(order_id, request)
+        result.update({**request, "placeholders": placeholder_values(order_id, request), 'sales_note_text': note})
+        _sales_note_present(driver, note)
         result["stages"].append({"key": stage, "success": True})
         crm_handle = driver.current_window_handle
         contact = shared._wait_for_crm_contact_info(driver, order_id=order_id)
@@ -356,23 +379,23 @@ def process_stock_issue_item_order(order_id, product, products, *, dry_run=False
             raise StockIssueItemError('Salesforce Activity has not confirmed the email; follow-up actions require review.')
         result["stages"].append({"key": stage, "success": True, "details": result["salesforce"]})
 
-        stage = 'production_note'
+        stage = 'sales_note'
         if callable(progress_callback):
-            progress_callback(stage, 'Saving and verifying the stock issue production note.')
+            progress_callback(stage, 'Saving and verifying the stock issue Sales Note.')
         driver.switch_to.window(crm_handle)
-        shared.safe_get_with_partial_load(driver, order_url, f'CRM order {order_id} production note')
+        shared.safe_get_with_partial_load(driver, order_url, f'CRM order {order_id} sales note')
         shared._login_to_crm_if_needed(driver, order_url, login_wait_seconds=login_wait_seconds)
         verify_selected_stock(stock_reader._read_snapshot(driver, order_id), request['products'])
-        result['production_note'] = _append_production_note(driver, order_id, note, dry_run=dry_run)
-        if not dry_run and result['production_note'].get('confirmed') is not True:
-            raise StockIssueItemError('The production note was not confirmed after saving; follow-up actions require review.')
-        result['stages'].append({'key': stage, 'success': True, 'details': result['production_note']})
+        result['sales_note'] = _append_sales_note(driver, order_id, note, dry_run=dry_run)
+        if not dry_run and result['sales_note'].get('confirmed') is not True:
+            raise StockIssueItemError('The Sales Note was not confirmed after saving; follow-up actions require review.')
+        result['stages'].append({'key': stage, 'success': True, 'details': result['sales_note']})
 
         stage = 'slack'
         if callable(progress_callback):
             progress_callback(stage, 'Confirming the required Rush Order stock issue Slack message.')
         result['slack'] = _send_required_slack(order_id, dry_run=dry_run)
-        if not dry_run and result['slack'].get('confirmed') is not True:
+        if not dry_run and result['slack'].get('confirmed') is not True and result['slack'].get('disabled_by_setting') is not True:
             raise StockIssueItemError('The Slack stock issue notification is not confirmed; the status was not applied.')
         result['stages'].append({'key': stage, 'success': True, 'details': result['slack']})
 

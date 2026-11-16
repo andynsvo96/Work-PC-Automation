@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Stock issue Sales Note save fixture</title>
+<body>
+<h1>Order 1234567</h1>
+<button id="edit" ng-click="editModeOn();" onclick="fixtureScope.editModeOn()">Edit Order</button>
+<button id="save" ng-click="saveOrder();" onclick="fixtureScope.saveOrder()" hidden>Save Order</button>
+<section id="order-notes-sales-notes"><h2>Sales Notes</h2><pre id="sales"></pre></section>
+<section id="order-notes-production-notes"><h2>Production Notes</h2><pre id="production"></pre></section>
+<script>
+const parameters = new URLSearchParams(location.search);
+const key = 'stock-issue-notes:' + parameters.get('case');
+const rejectedSaves = Number(parameters.get('reject') || 0);
+const state = JSON.parse(sessionStorage.getItem(key) || 'null') || {
+  sales: 'Keep existing Sales Note', production: 'Keep existing Production Note', saves: 0,
+};
+window.fixtureResource = {
+  id: '1234567', designs: [{id: 1}], salesNotes: state.sales, filteredSalesNotes: state.sales,
+  productionNotes: state.production, addSalesNotes: '',
+};
+window.fixtureScope = {
+  copyOrder() {}, editMode: false, saving: false,
+  $apply(fn) { return fn(); },
+  order: {
+    getResource() { return window.fixtureResource; },
+    setAddSalesNotes(value) { window.fixtureResource.addSalesNotes = value; },
+  },
+  editModeOn() {
+    window.fixtureResource = {...window.fixtureResource, addSalesNotes: ''};
+    this.editMode = true;
+    render();
+  },
+  saveOrder() {
+    state.saves += 1;
+    if (state.saves > rejectedSaves) {
+      state.sales = [state.sales, window.fixtureResource.addSalesNotes].filter(Boolean).join('\n');
+    }
+    sessionStorage.setItem(key, JSON.stringify(state));
+    window.fixtureResource.salesNotes = state.sales;
+    window.fixtureResource.filteredSalesNotes = state.sales;
+    window.fixtureResource.addSalesNotes = '';
+    this.editMode = false;
+    render();
+  },
+};
+window.angular = {element() { return {scope() { return fixtureScope; }}; }};
+function render() {
+  document.getElementById('edit').hidden = fixtureScope.editMode;
+  document.getElementById('save').hidden = !fixtureScope.editMode;
+  document.getElementById('sales').textContent = state.sales;
+  document.getElementById('production').textContent = state.production;
+}
+window.fixtureSavedState = () => ({...state});
+render();
+</script>
+</body>
+</html>

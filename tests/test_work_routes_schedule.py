@@ -81,6 +81,35 @@ class WorkRouteScheduleTests(unittest.TestCase):
         self.assertEqual(captured["repeat_interval_minutes"], 12)
         self.assertIn("Repeat every 12 minutes", captured["advanced_summary"])
 
+    def test_scheduled_repeats_preserve_both_controls_for_processing_and_scanner(self):
+        for endpoint in ("/crm/process", "/crm/mass-emailer"):
+            with self.subTest(endpoint=endpoint):
+                app, captured = self._app_with_captured_queue()
+                response = app.test_client().post(endpoint, json={
+                    "advanced_mode": "scheduled_repeat", "scheduled_time": "2026-11-16T15:00:00",
+                    "repeat_interval_minutes": 30,
+                })
+                self.assertEqual(response.status_code, 202)
+                self.assertEqual(captured["queue_mode"], "repeat")
+                self.assertEqual(captured["scheduled_for"], "2026-11-16T15:00:00")
+                self.assertEqual(captured["repeat_interval_minutes"], 30)
+                self.assertIn("Scheduled for", captured["advanced_summary"])
+                self.assertIn("Repeat every 30 minutes", captured["advanced_summary"])
+                signature = captured["automation_signature"]
+                self.assertEqual(signature["advanced_mode"], "scheduled_repeat")
+                self.assertEqual(signature["scheduled_time"], captured["scheduled_for"])
+                self.assertEqual(signature["repeat_interval_minutes"], 30)
+
+    def test_scheduled_repeat_keeps_zero_interval(self):
+        app, captured = self._app_with_captured_queue()
+        response = app.test_client().post("/crm/mass-emailer", json={
+            "advanced_mode": "scheduled_repeat", "scheduled_time": "2026-11-16T15:00:00", "repeat_interval_minutes": 0,
+        })
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(captured["queue_mode"], "repeat")
+        self.assertEqual(captured["repeat_interval_minutes"], 0)
+        self.assertIn("Repeat immediately", captured["advanced_summary"])
+
     def test_work_in_accepts_scheduled_queue_controls(self):
         app, captured = self._app_with_captured_queue()
         response = app.test_client().post(

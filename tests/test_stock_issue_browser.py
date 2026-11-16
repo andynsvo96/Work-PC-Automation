@@ -12,6 +12,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from workers import crm_stock_issue_color as stock_color
 from workers import crm_stock_issue_size as stock_size
+from workers import crm_stock_issue_item as stock_item
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -343,6 +344,50 @@ class StockIssueBrowserTests(unittest.TestCase):
         self.assertIn("available color such as Navy or White", text)
         self.assertNotIn("[STOCK]", text)
         self.assertEqual(result["grammar_adjustments"], 1)
+
+    def test_item_note_saves_to_sales_and_preserves_production_notes_on_retry(self):
+        self.driver.get((ROOT / 'tests/fixtures/stock_issue_item_notes.html').as_uri() + '?case=sales')
+        note = '5040 black stock issue\nSuggest Replacement Tee\nEmailed Txted'
+        # An unsaved draft is ignored, and entering Edit Order resets it.
+        draft = 'Keep unsaved Sales Note\n' + note
+        self.driver.execute_script('fixtureResource.addSalesNotes = arguments[0];', draft)
+        self.assertFalse(stock_item._sales_note_present(self.driver, note))
+        result = stock_item._append_sales_note(self.driver, '1234567', note)
+        self.assertTrue(result['confirmed'])
+        saved = self.driver.execute_script('return fixtureSavedState();')
+        self.assertEqual(saved['sales'], 'Keep existing Sales Note\n' + draft)
+        self.assertEqual(saved['production'], 'Keep existing Production Note')
+        self.assertEqual(saved['saves'], 1)
+        retry = stock_item._append_sales_note(self.driver, '1234567', note)
+        self.assertTrue(retry['already_present'])
+        self.assertEqual(self.driver.execute_script('return fixtureSavedState().saves;'), 1)
+
+    def test_item_note_retries_a_rejected_save_and_verifies_the_reload(self):
+        self.driver.get((ROOT / 'tests/fixtures/stock_issue_item_notes.html').as_uri() + '?case=retry&reject=1')
+        note = '5040 black stock issue\nSuggest Replacement Tee\nEmailed Txted'
+        result = stock_item._append_sales_note(self.driver, '1234567', note)
+        self.assertEqual(result['save_attempts'], 2)
+        saved = self.driver.execute_script('return fixtureSavedState();')
+        self.assertEqual(saved['sales'].count(note), 1)
+        self.assertEqual(saved['production'], 'Keep existing Production Note')
+
+    def test_item_note_stops_after_two_rejected_saves(self):
+        self.driver.get((ROOT / 'tests/fixtures/stock_issue_item_notes.html').as_uri() + '?case=failure&reject=2')
+        with self.assertRaisesRegex(stock_item.StockIssueItemError, 'Both save attempts failed verification'):
+            stock_item._append_sales_note(self.driver, '1234567', 'Stock issue\nSuggest Tee\nEmailed Txted')
+        saved = self.driver.execute_script('return fixtureSavedState();')
+        self.assertEqual(saved['saves'], 2)
+        self.assertEqual(saved['sales'], 'Keep existing Sales Note')
+        self.assertEqual(saved['production'], 'Keep existing Production Note')
+
+    def test_item_note_dry_run_never_saves_or_uses_a_production_note_as_confirmation(self):
+        self.driver.get((ROOT / 'tests/fixtures/stock_issue_item_notes.html').as_uri() + '?case=dry-run')
+        note = 'Stock issue\nSuggest Tee\nEmailed Txted'
+        self.driver.execute_script('fixtureResource.productionNotes = arguments[0];', note)
+        result = stock_item._append_sales_note(self.driver, '1234567', note, dry_run=True)
+        self.assertFalse(result['confirmed'])
+        self.assertTrue(result['dry_run'])
+        self.assertEqual(self.driver.execute_script('return fixtureSavedState().saves;'), 0)
 
     def test_stock_sentence_survives_rich_text_in_a_ckeditor_frame(self):
         self.driver.get("about:blank")

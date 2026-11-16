@@ -317,8 +317,8 @@ repeating a confirmed email. A changed replacement, stock, recipient, or an
 edited draft after an uncertain attempt stops for Activity review. Use **Retry**
 on the original queue entry to retain its selections and entered replacement.
 
-After Salesforce Activity confirms the email, the worker appends this Production
-Note, using the same stock sizes and corresponding replacement list as the email:
+After Salesforce Activity confirms the email, the worker appends this **Sales
+Note**, using the same stock sizes and corresponding replacement list as the email:
 
 ```text
 [STOCK] stock issue
@@ -328,12 +328,29 @@ Emailed Txted
 
 Each line is separated by a real newline. The saved note must persist after a
 reload. The worker then sends `[CRM ORDER LINK] - Rush Order stock issue` to the
-same Rush Order Slack channel used by the other stock issue reachouts. It requires
-a confirmed Slack delivery receipt before applying the configured stock issue
+same Rush Order Slack channel used by the other stock issue reachouts when the
+dashboard's **Post to M6** switch is On. It requires a confirmed Slack delivery
+receipt, or an intentional skip while that switch is Off, before applying the configured stock issue
 status (normally **Issue - Stock**) and verifying it after a reload. Retrying the
 original queue entry reuses the confirmed email and Slack receipts and skips an
 already saved note. A failed or uncertain follow-up stops the task at that stage
 for recovery; it cannot report completion before all stages succeed.
+
+The worker enters Edit Order before setting the Sales Note draft and verifies
+saved Sales Notes after reloading. An unsaved draft or a matching Production Note
+does not count. A missing Sales Note gets one save retry. Existing Production
+Notes remain intact. Restart the local app and refresh the dashboard after this
+correction; no extension reload or CRM page refresh is required. Retry the
+original failed queue entry, including tasks stopped at `production_note`, to
+reuse its confirmed email and finish the Sales Note, Slack, and status steps.
+
+**Post to M6** sits at the right end of the dashboard's main tab bar. It defaults
+to On, persists on the computer running the local app, and applies to both
+dashboard automation and extension requests through that app. Off skips only
+M6 (`T03DK2TN7/C04KPACK6VC`); other Slack channels retain their behavior. It does
+not suppress CRM saves, status updates, or Salesforce emails. Changes apply at
+the Slack step without an extension reload. Turning it back on does not send
+messages skipped by finished tasks.
 
 Previously queued requests retain their original combined replacement text on
 Retry. The worker does not guess individual replacements from that older text.

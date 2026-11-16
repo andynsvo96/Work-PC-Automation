@@ -54,6 +54,7 @@ from config import (
 )
 import crm_product_separator as _product_separator
 from slack_team import run as _run_slack_team
+from m6_posting import skipped_post_result
 
 configure_console_utf8()
 
@@ -3349,6 +3350,10 @@ def _send_mach6_stock_cancel_slack(order_url, dry_run=False):
     message = f"{order_url} cancelled"
     channel_id_match = re.search(r"/client/[^/]+/([^/?#]+)", channel_url)
     channel_id = channel_id_match.group(1) if channel_id_match else ""
+    skipped = skipped_post_result(channel_url)
+    if skipped:
+        return {**skipped, "dry_run": bool(dry_run), "channel_url": channel_url,
+                "channel_id": channel_id, "message": message}
     if dry_run:
         return {
             "sent": False,
@@ -3362,6 +3367,10 @@ def _send_mach6_stock_cancel_slack(order_url, dry_run=False):
     ok, result_message = _run_slack_team("custom", custom_message=message, channel_url=channel_url)
     if not ok:
         raise SplitterError(f"Mach6 stock-return Slack message failed for {channel_id or channel_url}: {result_message}")
+    skipped = skipped_post_result(channel_url, result_message)
+    if skipped:
+        return {**skipped, "dry_run": False, "channel_url": channel_url,
+                "channel_id": channel_id, "message": message}
     return {
         "sent": True,
         "dry_run": False,

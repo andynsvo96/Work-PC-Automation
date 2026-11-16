@@ -145,6 +145,18 @@ class QueuePersistenceTests(unittest.TestCase):
         self.assertEqual(server.get_automation_queue_payload()["queued_count"], 0)
         self.assertTrue(all(task["status"] == "failed" for task in self.restart()))
 
+    def test_initial_scheduled_repeat_wait_survives_restart(self):
+        due = (datetime.now() + timedelta(hours=2)).isoformat()
+        task = self.enqueue("Scheduled repeating scan", queue_mode="repeat", scheduled_for=due, repeat_interval_minutes=30)
+        restored = self.restart()[0]
+        self.assertEqual(restored["id"], task["id"])
+        self.assertEqual(restored["status"], "idle")
+        self.assertEqual(restored["idle_reason"], "scheduled_wait")
+        self.assertEqual(restored["next_run_at"], due)
+        self.assertEqual(restored["scheduled_for"], due)
+        self.assertEqual(restored["repeat_interval_minutes"], 30)
+        self.assertEqual(server._automation_queue_promote_due_idle_locked(), [])
+
     def test_every_manual_extension_request_restores_exact_runner_and_selections(self):
         request = {
             "days": 5, "products": [{"design_item_ids": ["123"], "affected_sizes": ["XL"]}],
@@ -268,7 +280,10 @@ class QueuePersistenceTests(unittest.TestCase):
             run.assert_not_called()
 
     def test_worker_restores_due_task_and_persists_repeat_wait(self):
-        task = self.enqueue(queue_mode="scheduled", scheduled_for=(datetime.now() - timedelta(minutes=1)).isoformat())
+        task = self.enqueue(queue_mode="scheduled", scheduled_for=(datetime.now() + timedelta(minutes=1)).isoformat())
+        # Simulate a schedule that elapsed while the application was stopped.
+        task["next_run_at"] = (datetime.now() - timedelta(minutes=1)).isoformat()
+        server._persist_automation_queue_locked()
         with mock.patch.object(server, "run_slack", return_value=(True, "Confirmed")) as run:
             self.restart()
             self.run_once()

@@ -712,6 +712,9 @@ button.icon-btn{min-height:34px;padding:7px 12px;border-radius:8px;background:va
 .tab-btn.active{background:var(--rough-blue-soft);border-color:var(--rough-blue);color:#4fc1ff;box-shadow:inset 0 0 0 1px var(--rough-blue)}
 :root:not([data-theme='dark']) .tab-btn.active{color:#1d4ed8}
 .tab-symbol{font-size:15px}
+.m6-posting-toggle{margin-left:auto;white-space:nowrap;min-height:36px;background:var(--rough-green-soft);border-color:var(--rough-green);color:var(--rough-green)}
+.m6-posting-toggle[aria-pressed='false']{background:var(--rough-amber-soft);border-color:var(--rough-amber);color:var(--rough-amber)}
+@media (max-width:560px){.m6-posting-toggle{grid-column:1/-1;justify-self:end}}
 .page-heading{margin:0 0 20px;align-items:flex-end}
 .page-heading h2{margin:0 0 5px;font-size:29px;letter-spacing:-.02em}
 .page-heading p{font-size:13px;color:var(--rough-muted)}
@@ -801,6 +804,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
   <button class='tab-btn' id='tabBtnProcessing' onclick="setActiveTab('processing')"><span class='tab-symbol'>▤</span>Processing</button>
   <button class='tab-btn' id='tabBtnSystem' onclick="setActiveTab('system')"><span class='tab-symbol'>▦</span>System</button>
   <button class='tab-btn' id='tabBtnConsole' onclick="setActiveTab('console')"><span class='tab-symbol'>›_</span>Console</button>
+  <button class='m6-posting-toggle' id='m6PostingToggle' type='button' aria-pressed='mixed' disabled onclick='toggleM6Posting()' title='Controls M6 posts from this computer, including Chrome extension tasks'>Post to M6: Loading…</button>
 </div>
 <div id='platformCapabilityNotice' class='notice platform-capability-notice'>Windows only</div>
 <div id='versionGateNotice' class='notice version-gate-notice'></div>
@@ -3185,10 +3189,10 @@ function queueTimeText(task) {
   if (task.status === 'queued' && task.activated_at) return `Queued ${fmtTime(task.activated_at)}`;
   if (task.status === 'idle') {
     const seconds = queueNextRunSeconds(task);
-    if (task.queue_mode === 'repeat') {
+    if (task.queue_mode === 'repeat' && task.idle_reason !== 'scheduled_wait') {
       return seconds == null ? 'Idle between repeat runs' : `Next repeat in ${formatCountdownSeconds(seconds)}`;
     }
-    if (task.queue_mode === 'scheduled') {
+    if (task.queue_mode === 'scheduled' || task.idle_reason === 'scheduled_wait') {
       const at = task.scheduled_for || task.next_run_at;
       return seconds == null ? 'Idle until scheduled time' : `Scheduled ${fmtTime(at)} | starts in ${formatCountdownSeconds(seconds)}`;
     }
@@ -7524,9 +7528,54 @@ async function loadCrmProcessingStatus(setStatusText = false) {
   }
 }
 
+let m6PostingEnabled = null;
+let m6PostingSaving = false;
+let m6PostingRevision = 0;
+
+function renderM6PostingToggle() {
+  const button = document.getElementById('m6PostingToggle');
+  if (!button) return;
+  button.disabled = m6PostingSaving || m6PostingEnabled === null;
+  button.setAttribute('aria-pressed', m6PostingEnabled === null ? 'mixed' : String(m6PostingEnabled));
+  button.textContent = m6PostingSaving ? 'Post to M6: Saving…' : `Post to M6: ${m6PostingEnabled === null ? 'Unavailable' : m6PostingEnabled ? 'On' : 'Off'}`;
+}
+
+async function loadM6Posting() {
+  if (m6PostingSaving) return;
+  const revision = ++m6PostingRevision;
+  try {
+    const data = await api('/api/m6-posting');
+    if (!data.success || typeof data.enabled !== 'boolean') throw new Error(data.message || 'M6 setting unavailable.');
+    if (!m6PostingSaving && revision === m6PostingRevision) m6PostingEnabled = data.enabled;
+  } catch (error) {
+    if (!m6PostingSaving && revision === m6PostingRevision) m6PostingEnabled = null;
+  }
+  renderM6PostingToggle();
+}
+
+async function toggleM6Posting() {
+  if (m6PostingSaving || m6PostingEnabled === null) return;
+  const enabled = !m6PostingEnabled;
+  m6PostingRevision += 1;
+  m6PostingSaving = true;
+  renderM6PostingToggle();
+  try {
+    const data = await api('/api/m6-posting', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled})});
+    if (!data.success || typeof data.enabled !== 'boolean') throw new Error(data.message || 'M6 setting could not be saved.');
+    m6PostingEnabled = data.enabled;
+    setStatus(`Post to M6 is ${data.enabled ? 'on' : 'off'} for automation and Chrome extension tasks on this computer.`);
+  } catch (error) {
+    setStatus(`Post to M6 update failed: ${error.message}`);
+  } finally {
+    m6PostingSaving = false;
+    await loadM6Posting();
+  }
+}
+
 function crmProcessingAdvancedMode() {
   const repeat = document.getElementById('crmProcessingRepeatToggle');
   const scheduled = document.getElementById('crmProcessingScheduledToggle');
+  if (repeat && repeat.checked && scheduled && scheduled.checked) return 'scheduled_repeat';
   if (repeat && repeat.checked) return 'repeat';
   if (scheduled && scheduled.checked) return 'scheduled';
   return 'normal';
@@ -7554,8 +7603,21 @@ function resolveCrmProcessingScheduledDateTime(timeValue) {
   const now = new Date();
   const scheduled = new Date(now);
   scheduled.setHours(hours, minutes, 0, 0);
-  if (scheduled <= now) scheduled.setDate(scheduled.getDate() + 1);
-  return scheduled;
+  return scheduled > now ? scheduled : null;
+}
+
+function syncScheduledTimeInput(input, enabled) {
+  if (!input) return;
+  const now = new Date();
+  const earliest = new Date(now);
+  earliest.setSeconds(0, 0);
+  earliest.setMinutes(earliest.getMinutes() + 1);
+  const noTimeLeft = earliest.getDate() !== now.getDate();
+  input.min = noTimeLeft ? '23:59' : `${String(earliest.getHours()).padStart(2, '0')}:${String(earliest.getMinutes()).padStart(2, '0')}`;
+  input.max = '23:59';
+  input.disabled = !enabled || noTimeLeft;
+  input.setCustomValidity(enabled && (noTimeLeft || (input.value && !resolveCrmProcessingScheduledDateTime(input.value)))
+    ? 'Choose a scheduled time later today. Past times cannot be scheduled.' : '');
 }
 
 function syncCrmProcessingAdvancedControls(source = '') {
@@ -7564,25 +7626,27 @@ function syncCrmProcessingAdvancedControls(source = '') {
   const minutes = document.getElementById('crmProcessingRepeatMinutesInput');
   const timeInput = document.getElementById('crmProcessingScheduledTimeInput');
   const summary = document.getElementById('crmProcessingAdvancedSummaryText');
-  if (source === 'repeat' && repeat && repeat.checked && scheduled) scheduled.checked = false;
-  if (source === 'scheduled' && scheduled && scheduled.checked && repeat) repeat.checked = false;
   const mode = crmProcessingAdvancedMode();
   if (minutes) {
-    minutes.disabled = mode !== 'repeat';
+    minutes.disabled = !(repeat && repeat.checked);
     minutes.value = String(normalizeCrmProcessingRepeatMinutes(minutes.value));
   }
-  if (timeInput) timeInput.disabled = mode !== 'scheduled';
+  syncScheduledTimeInput(timeInput, Boolean(scheduled && scheduled.checked));
   if (!summary) return;
-  if (mode === 'repeat') {
+  if (scheduled && scheduled.checked) {
+    const scheduledDateTime = timeInput && timeInput.value ? resolveCrmProcessingScheduledDateTime(timeInput.value) : null;
+    const repeatMinutes = normalizeCrmProcessingRepeatMinutes(minutes ? minutes.value : 5);
+    const repeatText = repeat && repeat.checked
+      ? (repeatMinutes === 0 ? ' Then repeat immediately after each finish until canceled.' : ` Then repeat every ${repeatMinutes} minute${repeatMinutes === 1 ? '' : 's'} until canceled.`)
+      : '';
+    summary.textContent = scheduledDateTime
+      ? `Start today at ${fmtDateTime(formatCrmProcessingLocalDateTime(scheduledDateTime))}.${repeatText}`
+      : `Choose a time later today. Past times cannot be scheduled.${repeatText}`;
+  } else if (mode === 'repeat') {
     const repeatMinutes = normalizeCrmProcessingRepeatMinutes(minutes ? minutes.value : 5);
     summary.textContent = repeatMinutes === 0
       ? 'Repeat is on. The action you start will rerun immediately after each finish until canceled.'
       : `Repeat is on. The action you start will stay in Queue and rerun every ${repeatMinutes} minute${repeatMinutes === 1 ? '' : 's'} until canceled.`;
-  } else if (mode === 'scheduled') {
-    const scheduledDateTime = timeInput && timeInput.value ? resolveCrmProcessingScheduledDateTime(timeInput.value) : null;
-    summary.textContent = scheduledDateTime
-      ? `Scheduled is on. The action you start will stay idle in Queue until ${fmtDateTime(formatCrmProcessingLocalDateTime(scheduledDateTime))}.`
-      : 'Scheduled is on. The action you start will stay idle in Queue until the selected time.';
   } else {
     summary.textContent = 'Runs once immediately unless Repeat or Scheduled is checked.';
   }
@@ -7591,20 +7655,21 @@ function syncCrmProcessingAdvancedControls(source = '') {
 function buildCrmProcessingAdvancedPayload() {
   const mode = crmProcessingAdvancedMode();
   const payload = {};
-  if (mode === 'repeat') {
+  if (mode === 'repeat' || mode === 'scheduled_repeat') {
     const minutes = normalizeCrmProcessingRepeatMinutes((document.getElementById('crmProcessingRepeatMinutesInput') || {}).value);
-    payload.advanced_mode = 'repeat';
+    payload.advanced_mode = mode;
     payload.repeat_interval_minutes = minutes;
-  } else if (mode === 'scheduled') {
+  }
+  if (mode === 'scheduled' || mode === 'scheduled_repeat') {
     const scheduledTime = String((document.getElementById('crmProcessingScheduledTimeInput') || {}).value || '').trim();
     if (!scheduledTime) {
       throw new Error('Choose a scheduled time before queuing scheduled AUTOMATE.');
     }
     const scheduledDateTime = resolveCrmProcessingScheduledDateTime(scheduledTime);
     if (!scheduledDateTime) {
-      throw new Error('Choose a valid scheduled time before queuing scheduled AUTOMATE.');
+      throw new Error('Choose a scheduled time later today. Past times cannot be scheduled.');
     }
-    payload.advanced_mode = 'scheduled';
+    payload.advanced_mode = mode;
     payload.scheduled_time = formatCrmProcessingLocalDateTime(scheduledDateTime);
   }
   return payload;
@@ -10126,10 +10191,10 @@ async function toggleCommunicationWorkday(button = null) {
 function syncCommunicationScheduleControls() {
   const toggle = document.getElementById('communicationScheduledToggle');
   const timeInput = document.getElementById('communicationScheduledTimeInput');
-  if (timeInput) timeInput.disabled = !Boolean(toggle && toggle.checked);
+  syncScheduledTimeInput(timeInput, Boolean(toggle && toggle.checked));
   const summary = document.getElementById('communicationAdvancedSummary');
   if (summary) summary.textContent = toggle && toggle.checked
-    ? `Scheduled${timeInput && timeInput.value ? ' ' + timeInput.value : ' — choose time'}`
+    ? (timeInput && resolveCrmProcessingScheduledDateTime(timeInput.value) ? `Scheduled today at ${timeInput.value}` : 'Choose a time later today')
     : 'Advanced scheduling';
 }
 
@@ -10140,7 +10205,7 @@ function communicationSchedulePayload() {
   const timeValue = String(timeInput && timeInput.value || '').trim();
   const scheduled = resolveCrmProcessingScheduledDateTime(timeValue);
   if (!scheduled) {
-    setStatus('Choose a valid scheduled time, or turn Scheduled off.');
+    setStatus('Choose a scheduled time later today, or turn Scheduled off.');
     return null;
   }
   return {
@@ -10255,6 +10320,7 @@ async function reloadAll() {
   renderTemperatureThresholdSettings();
   renderTemperatureGauges(desktopMetricsLastPayload || {});
   await loadNodeRuntime(false);
+  await loadM6Posting();
   await loadClipboardStatus();
   await loadStatus();
   await loadCrmProcessingStatus(false);
@@ -10293,6 +10359,9 @@ if (!UI_OPENED_FROM_FILE) {
   startWorkHoursTimer();
   startDesktopMetricsTimer();
   setInterval(() => {
+    loadM6Posting();
+    syncCommunicationScheduleControls();
+    syncCrmProcessingAdvancedControls();
     loadStatus(false);
     loadCrmProcessingStatus(false);
     loadCrmStatus(false);

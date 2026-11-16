@@ -7,6 +7,7 @@ import unittest
 from unittest import mock
 
 import server
+import m6_posting
 from workers import crm_stock_issue_item as item
 
 
@@ -118,9 +119,9 @@ class StockIssueItemTests(unittest.TestCase):
                 self.assertEqual(values['[STOCK]'], 'DM130 red District Perfect Tri Tee ' + suffix)
                 self.assertEqual(values['[PRODUCT]'], 'Replacement Tee')
 
-    def test_production_note_uses_the_email_placeholders_and_real_line_breaks(self):
+    def test_sales_note_uses_the_email_placeholders_and_real_line_breaks(self):
         request = item.normalize_request(None, [sized_product(affected_sizes=['M', 'XL'])])
-        self.assertEqual(item.format_production_note('1234567', request),
+        self.assertEqual(item.format_sales_note('1234567', request),
             'DM130 red District Perfect Tri Tee in sizes medium and x-large stock issue\nSuggest Replacement Tee\nEmailed Txted')
         with mock.patch.object(item.shared, 'PROCESSOR_ORDER_URL_TEMPLATE', 'https://example.test/order/{order_id}'):
             self.assertEqual(item.format_slack_message('1234567'),
@@ -398,6 +399,7 @@ class StockIssueItemFollowupTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.stack.enter_context(mock.patch.object(item, 'STATE_DIR', self.root))
+        self.stack.enter_context(mock.patch.object(m6_posting, 'get_m6_posting_enabled', return_value=True))
         self.stack.enter_context(mock.patch.object(item.slack_receipts, 'RECEIPT_DIR', self.root / 'slack'))
         self.channel = 'https://app.slack.com/client/T123/C456'
         self.stack.enter_context(mock.patch.object(item, 'RUSH_ORDER_SLACK_CHANNEL_URL', self.channel))
@@ -411,18 +413,18 @@ class StockIssueItemFollowupTests(unittest.TestCase):
                                                  return_value={'email': 'customer@example.test'}))
         self.notes = set()
         self.events = []
-        self.present = self.stack.enter_context(mock.patch.object(item, '_production_note_present',
+        self.present = self.stack.enter_context(mock.patch.object(item, '_sales_note_present',
             side_effect=lambda _driver, note: note in self.notes))
 
         def save_note(_driver, order_id, note):
             self.assertEqual(order_id, '1234567')
-            self.events.append('production_note')
+            self.events.append('sales_note')
             self.notes.add(note)
             return 'recorded'
 
         self.save_note_effect = save_note
-        self.save_note = self.stack.enter_context(mock.patch.object(item.production_notes,
-            '_save_and_verify_crm_production_note', side_effect=save_note))
+        self.save_note = self.stack.enter_context(mock.patch.object(item,
+            '_save_sales_note', side_effect=save_note))
         self.prepare = self.stack.enter_context(mock.patch.object(item, '_prepare_email', return_value={
             'subject': 'Order #1234567 Stock', 'body': 'Confirmed stock and replacement draft', 'sent': False, 'dry_run': True}))
 
@@ -458,10 +460,10 @@ class StockIssueItemFollowupTests(unittest.TestCase):
     def test_live_workflow_confirms_email_then_note_slack_and_status(self):
         ok, message, payload = self.run_workflow()
         self.assertTrue(ok, message)
-        self.assertEqual(self.events, ['email', 'production_note', 'slack', 'crm_status'])
-        self.assertEqual(payload['production_note_text'],
+        self.assertEqual(self.events, ['email', 'sales_note', 'slack', 'crm_status'])
+        self.assertEqual(payload['sales_note_text'],
             'DM130 red District Perfect Tri Tee in all sizes stock issue\nSuggest Replacement Tee\nEmailed Txted')
-        self.assertTrue(payload['production_note']['confirmed'])
+        self.assertTrue(payload['sales_note']['confirmed'])
         self.assertTrue(payload['slack']['confirmed'])
         self.assertTrue(payload['crm_status']['persisted'])
 
@@ -475,8 +477,8 @@ class StockIssueItemFollowupTests(unittest.TestCase):
         self.slack_sender.assert_not_called()
         self.status.assert_not_called()
 
-    def test_production_note_preflight_failure_stops_before_the_email(self):
-        self.present.side_effect = item.StockIssueItemError('Production Notes section missing')
+    def test_sales_note_preflight_failure_stops_before_the_email(self):
+        self.present.side_effect = item.StockIssueItemError('Sales Notes unavailable')
         ok, _, payload = self.run_workflow()
         self.assertFalse(ok)
         self.assertEqual(payload['failed_stage'], 'stock_verification')
@@ -488,7 +490,7 @@ class StockIssueItemFollowupTests(unittest.TestCase):
         self.save_note.side_effect = RuntimeError('Note did not persist')
         ok, _, payload = self.run_workflow()
         self.assertFalse(ok)
-        self.assertEqual(payload['failed_stage'], 'production_note')
+        self.assertEqual(payload['failed_stage'], 'sales_note')
         self.slack_sender.assert_not_called()
         self.status.assert_not_called()
         self.save_note.side_effect = self.save_note_effect
@@ -504,7 +506,7 @@ class StockIssueItemFollowupTests(unittest.TestCase):
         ok, _, payload = self.run_workflow()
         self.assertFalse(ok)
         self.assertEqual(payload['failed_stage'], 'slack')
-        self.assertTrue(payload['production_note']['confirmed'])
+        self.assertTrue(payload['sales_note']['confirmed'])
         self.status.assert_not_called()
 
     def test_note_that_does_not_persist_stops_before_slack_and_status(self):
@@ -513,9 +515,42 @@ class StockIssueItemFollowupTests(unittest.TestCase):
         ok, message, payload = self.run_workflow()
         self.assertFalse(ok)
         self.assertIn('did not persist', message)
-        self.assertEqual(payload['failed_stage'], 'production_note')
+        self.assertEqual(payload['failed_stage'], 'sales_note')
+        self.assertEqual(self.save_note.call_count, 2)
         self.slack_sender.assert_not_called()
         self.status.assert_not_called()
+
+    def test_missing_sales_note_retries_once_and_continues_without_another_email(self):
+        self.save_note.side_effect = [None, mock.DEFAULT]
+        # The second successful CRM save becomes visible only after reload.
+        self.present.side_effect = [False, False, False, True]
+        ok, message, payload = self.run_workflow()
+        self.assertTrue(ok, message)
+        self.assertEqual(payload['sales_note']['save_attempts'], 2)
+        self.assertEqual(self.save_note.call_count, 2)
+        self.email.assert_called_once()
+        self.slack_sender.assert_called_once()
+        self.status.assert_called_once()
+
+    def test_disabled_m6_still_applies_status_without_a_slack_receipt(self):
+        with mock.patch.object(item, 'RUSH_ORDER_SLACK_CHANNEL_URL', m6_posting.M6_CHANNEL_URL), \
+                mock.patch.object(m6_posting, 'get_m6_posting_enabled', return_value=False):
+            ok, message, payload = self.run_workflow()
+        self.assertTrue(ok, message)
+        self.assertTrue(payload['sales_note']['confirmed'])
+        self.assertTrue(payload['slack']['disabled_by_setting'])
+        self.assertFalse(payload['slack']['sent'])
+        self.assertTrue(payload['crm_status']['persisted'])
+        self.slack_sender.assert_not_called()
+        self.assertFalse((self.root / 'slack').exists())
+
+    def test_switching_m6_off_during_slack_startup_does_not_block_status(self):
+        self.slack_sender.side_effect = None
+        self.slack_sender.return_value = (True, m6_posting.SKIPPED_MESSAGE)
+        ok, message, payload = self.run_workflow()
+        self.assertTrue(ok, message)
+        self.assertTrue(payload['slack']['disabled_by_setting'])
+        self.status.assert_called_once()
 
     def test_missing_slack_receipt_cannot_be_reported_as_success(self):
         self.slack_sender.side_effect = None
@@ -531,7 +566,7 @@ class StockIssueItemFollowupTests(unittest.TestCase):
         ok, message, retry = self.run_workflow()
         self.assertTrue(ok, message)
         self.assertTrue(retry['salesforce']['skipped'])
-        self.assertTrue(retry['production_note']['already_present'])
+        self.assertTrue(retry['sales_note']['already_present'])
         self.assertTrue(retry['slack']['skipped'])
         self.assertEqual(self.prepare.call_count, 1)
         self.assertEqual(self.email.call_count, 1)
@@ -542,7 +577,7 @@ class StockIssueItemFollowupTests(unittest.TestCase):
     def test_dry_run_never_sends_or_writes_a_note_or_receipt(self):
         ok, message, payload = self.run_workflow(dry_run=True)
         self.assertTrue(ok, message)
-        self.assertTrue(payload['production_note']['dry_run'])
+        self.assertTrue(payload['sales_note']['dry_run'])
         self.assertTrue(payload['slack']['dry_run'])
         self.assertTrue(payload['crm_status']['dry_run'])
         self.email.assert_not_called()

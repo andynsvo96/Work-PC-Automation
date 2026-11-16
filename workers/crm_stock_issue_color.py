@@ -15,6 +15,7 @@ if WORKERS_DIR not in sys.path:
 
 import crm_stock_issue_extension as extension
 from rush_order_notifications import RUSH_ORDER_SLACK_CHANNEL_URL
+from m6_posting import skipped_post_result
 
 
 shared = extension.shared
@@ -555,6 +556,9 @@ def _send_required_slack(order_id, activity, dry_run=False):
         "message": message,
         "channel_url": RUSH_ORDER_SLACK_CHANNEL_URL,
     }
+    skipped = skipped_post_result(RUSH_ORDER_SLACK_CHANNEL_URL)
+    if skipped:
+        return {**result, **skipped}
     if dry_run:
         return result
     activity["slack_send_attempted"] = True
@@ -565,6 +569,9 @@ def _send_required_slack(order_id, activity, dry_run=False):
     )
     if not ok:
         raise StockIssueColorError(f"Required Suggest Different Color Slack notification failed: {response}")
+    skipped = skipped_post_result(RUSH_ORDER_SLACK_CHANNEL_URL, response)
+    if skipped:
+        return {**result, **skipped}
     activity["slack_sent"] = True
     result.update({"sent": True, "result": response})
     return result

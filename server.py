@@ -56,6 +56,7 @@ from clipboard_runtime import (
 from credential_store import CREDENTIAL_TARGETS
 from crm_list_url import normalize_custom_crm_order_ids, normalize_custom_crm_target
 import config as config_module
+from m6_posting import M6PostingError, get_m6_posting_enabled, set_m6_posting_enabled
 from node_preferences import load_node_preferences, update_node_preferences
 from platform_runtime import get_platform_snapshot, normalize_os_name, resolve_worker_count
 from profile_setup_autofill import (
@@ -1966,8 +1967,6 @@ def _automation_queue_parse_datetime(value):
             parsed_time = datetime.strptime(text.upper().replace(".", ""), fmt).time()
             now = datetime.now()
             scheduled = datetime.combine(now.date(), parsed_time)
-            if scheduled <= now:
-                scheduled += timedelta(days=1)
             return scheduled
         except ValueError:
             continue
@@ -1984,11 +1983,11 @@ def _automation_queue_seconds_until(iso_value):
 def _automation_queue_idle_message(task):
     mode = str(task.get("queue_mode") or "").strip().lower()
     seconds = _automation_queue_seconds_until(task.get("next_run_at"))
-    if mode == "repeat":
+    if mode == "repeat" and task.get("idle_reason") != "scheduled_wait":
         if seconds is None:
             return "Idle between repeat runs."
         return f"Idle. Next repeat run in {_format_countdown_hms(seconds)}."
-    if mode == "scheduled":
+    if mode == "scheduled" or task.get("idle_reason") == "scheduled_wait":
         scheduled = task.get("scheduled_for") or task.get("next_run_at")
         if seconds is None:
             return "Idle until scheduled time."
@@ -2978,7 +2977,13 @@ def _automation_queue_worker_loop():
                     interval_minutes = _normalize_automation_repeat_interval_minutes(
                         task.get("repeat_interval_minutes")
                     )
-                    next_run_at = datetime.now() + timedelta(minutes=interval_minutes)
+                    now = datetime.now()
+                    next_run_at = now + timedelta(minutes=interval_minutes)
+                    anchor = _automation_queue_parse_datetime(task.get("scheduled_for"))
+                    if anchor and interval_minutes > 0:
+                        interval = timedelta(minutes=interval_minutes)
+                        elapsed_intervals = max(0, (now - anchor) // interval)
+                        next_run_at = anchor + (elapsed_intervals + 1) * interval
                     task["status"] = "idle"
                     task["idle_reason"] = "repeat_wait"
                     task["next_run_at"] = next_run_at.isoformat()
@@ -3034,15 +3039,18 @@ def enqueue_automation(
     if mode == "repeat":
         interval_minutes = _normalize_automation_repeat_interval_minutes(repeat_interval_minutes)
     scheduled_dt = _automation_queue_parse_datetime(scheduled_for)
-    if mode == "scheduled" and scheduled_dt is None:
+    has_schedule = mode == "scheduled" or (mode == "repeat" and scheduled_for is not None)
+    if has_schedule and scheduled_dt is None:
         return False, "Scheduled queue task needs a valid time.", None
+    if has_schedule and scheduled_dt <= datetime.now():
+        return False, "Choose a scheduled time later today. Past times cannot be queued.", None
     _ensure_automation_queue_worker()
     now_iso = _automation_queue_now_iso()
     status = "queued"
     next_run_at = None
     idle_reason = None
     message = "Waiting in queue."
-    if mode == "scheduled":
+    if has_schedule:
         status = "idle"
         next_run_at = scheduled_dt.isoformat()
         idle_reason = "scheduled_wait"
@@ -14935,6 +14943,23 @@ def api_app_update():
     except Exception as exc:
         logger.exception("Could not start app update")
         return jsonify({"success": False, "message": f"Could not start update: {exc}"}), 500
+
+
+@app.route("/api/m6-posting", methods=["GET"])
+@app.route("/api/m6-posting", methods=["POST"])
+def api_m6_posting():
+    try:
+        if request.method == "POST":
+            data = request.get_json(silent=True)
+            enabled = set_m6_posting_enabled(data.get("enabled") if isinstance(data, dict) else None)
+            log_automation_event("settings.m6_posting", "UPDATED", f"Post to M6 {'on' if enabled else 'off'}.", source="server.py")
+        else:
+            enabled = get_m6_posting_enabled()
+        return jsonify({"success": True, "enabled": enabled})
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    except M6PostingError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 500
 
 
 @app.route("/api/worker-settings", methods=["POST"])

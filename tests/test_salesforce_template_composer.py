@@ -107,6 +107,10 @@ class LocalTemplateBrowserTests(unittest.TestCase):
         def stock_notes():
             return Response((ROOT/'tests/fixtures/crm_append_production_note.html').read_text(encoding='utf-8'),mimetype='text/html')
 
+        @app.get('/stock-sales-notes')
+        def stock_sales_notes():
+            return Response((ROOT/'tests/fixtures/stock_issue_item_notes.html').read_text(encoding='utf-8'),mimetype='text/html')
+
         cls.http=make_server('127.0.0.1',0,app,threaded=True)
         cls.addClassCleanup(cls.http.server_close)
         cls.addClassCleanup(cls.http.shutdown)
@@ -135,30 +139,28 @@ class LocalTemplateBrowserTests(unittest.TestCase):
     def write_library(self, records):
         self.store.path.write_text(json.dumps({'schema_version':1,'templates':records}),encoding='utf-8')
 
-    def test_item_production_note_preserves_other_notes_and_persists_three_lines_once(self):
-        self.driver.get(self.url + '/stock-notes?stock-issue=1')
-        self.driver.execute_script("localStorage.removeItem('append_production_notes');")
+    def test_item_sales_note_preserves_production_notes_and_persists_three_lines_once(self):
+        self.driver.get(self.url + '/stock-sales-notes?case=composer')
+        self.driver.execute_script("sessionStorage.removeItem('stock-issue-notes:composer');")
         self.driver.refresh()
         note = 'DM130 red District Tee in size medium stock issue\nSuggest Soft & Light Tee\nEmailed Txted'
-        with mock.patch.object(stock_item.production_notes, '_wait_for_order_goods_page_ready', return_value=True):
-            result = stock_item._append_production_note(self.driver, '5000001', note)
-            retry = stock_item._append_production_note(self.driver, '5000001', note)
+        result = stock_item._append_sales_note(self.driver, '1234567', note)
+        retry = stock_item._append_sales_note(self.driver, '1234567', note)
         self.assertTrue(result['confirmed'])
         self.assertTrue(retry['already_present'])
-        saved = self.driver.execute_script("return localStorage.getItem('append_production_notes');")
-        self.assertEqual(saved, 'Existing production note\n' + note)
-        self.assertEqual(self.driver.find_element('id', 'sales').get_attribute('value'), 'Existing sales note')
-        self.assertEqual(self.driver.execute_script("return document.querySelector('.columns section:last-child textarea').value"),
-                         'Existing art note')
+        saved = self.driver.execute_script('return fixtureSavedState();')
+        self.assertEqual(saved['sales'], 'Keep existing Sales Note\n' + note)
+        self.assertEqual(saved['production'], 'Keep existing Production Note')
+        self.assertEqual(saved['saves'], 1)
         self.driver.refresh()
-        self.assertTrue(stock_item._production_note_present(self.driver, note))
+        self.assertTrue(stock_item._sales_note_present(self.driver, note))
 
-    def test_item_dry_run_does_not_save_a_production_note_or_apply_stock_status(self):
+    def test_item_dry_run_does_not_save_a_sales_note_or_apply_stock_status(self):
         self.driver.get(self.url + '/stock-notes?stock-issue=1')
         self.driver.execute_script("localStorage.removeItem('append_production_notes'); localStorage.removeItem('fixture_stock_status'); localStorage.removeItem('fixture_stock_apply_count');")
         self.driver.refresh()
         with mock.patch.object(stock_item, 'CRM_STATUS', 'Issue - Stock'):
-            note = stock_item._append_production_note(self.driver, '5000001', 'Preview\nSuggest Tee\nEmailed Txted', dry_run=True)
+            note = stock_item._append_sales_note(self.driver, '5000001', 'Preview\nSuggest Tee\nEmailed Txted', dry_run=True)
             status = stock_item._apply_stock_issue_status(self.driver, '5000001', dry_run=True)
         self.assertTrue(note['dry_run'])
         self.assertTrue(status['dry_run'])

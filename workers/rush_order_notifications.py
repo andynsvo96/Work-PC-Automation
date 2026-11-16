@@ -3,6 +3,7 @@
 from decimal import Decimal, InvalidOperation
 
 import config as config_module
+from m6_posting import skipped_post_result
 
 from slack_team import run as _run_slack_team
 
@@ -75,6 +76,9 @@ def send_paid_rush_notification(order_url, notification_type, shipping_charge, d
 
     message = f"{str(order_url or '').strip()} Rush Order - {str(notification_type or '').strip()}"
     result["message"] = message
+    skipped = skipped_post_result(RUSH_ORDER_SLACK_CHANNEL_URL)
+    if skipped:
+        return {**result, **skipped}
     if dry_run:
         result["planned"] = True
         return result
@@ -86,5 +90,8 @@ def send_paid_rush_notification(order_url, notification_type, shipping_charge, d
     )
     if not ok:
         raise RushOrderSlackNotificationError(f"Rush-order Slack notification failed: {response}")
+    skipped = skipped_post_result(RUSH_ORDER_SLACK_CHANNEL_URL, response)
+    if skipped:
+        return {**result, **skipped}
     result.update({"sent": True, "result": response})
     return result

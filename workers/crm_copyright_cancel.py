@@ -110,6 +110,7 @@ from crm_validate_address import _clone_profile_for_worker
 import crm_product_separator as _product_separator
 from crm_shipping_bypasser import run as _run_shipping_bypasser
 from slack_team import run as _run_slack_team
+from m6_posting import skipped_post_result
 from rush_order_notifications import send_paid_rush_notification
 
 configure_console_utf8()
@@ -826,6 +827,10 @@ def _read_post_cancel_stock_state(driver, crm_handle, order_id):
 
 def _send_post_cancel_slack_message(channel_url, message, dry_run, *, order_id, reconcile_only=False):
     channel_id = _slack_channel_id_from_url(channel_url)
+    skipped = skipped_post_result(channel_url)
+    if skipped:
+        return {**skipped, "dry_run": bool(dry_run), "channel_url": channel_url,
+                "channel_id": channel_id, "message": message}
     if dry_run:
         return {
             "sent": False,
@@ -842,6 +847,10 @@ def _send_post_cancel_slack_message(channel_url, message, dry_run, *, order_id, 
     )
     if not ok:
         raise CopyrightCancelError(f"Slack stock-return message failed for {channel_id or channel_url}: {result_message}")
+    skipped = skipped_post_result(channel_url, result_message)
+    if skipped:
+        return {**skipped, "dry_run": False, "channel_url": channel_url,
+                "channel_id": channel_id, "message": message}
     return {
         "sent": True,
         "dry_run": False,

@@ -473,7 +473,7 @@ def register_work_routes(
 
     def _crm_processing_advanced_mode(options):
         key = str((options or {}).get("advanced_mode") or "").strip().lower()
-        if key in {"repeat", "scheduled"}:
+        if key in {"repeat", "scheduled", "scheduled_repeat"}:
             return key
         return "normal"
 
@@ -522,7 +522,7 @@ def register_work_routes(
         if effective.get("processing_filter") == "custom":
             signature.update(normalize_custom_crm_target(effective))
         queue_options = {"automation_signature": signature}
-        if mode == "repeat":
+        if mode in {"repeat", "scheduled_repeat"}:
             interval = options.get("repeat_interval_minutes")
             interval_label = 5 if interval in (None, "") else interval
             repeat_label = (
@@ -538,17 +538,19 @@ def register_work_routes(
                 }
             )
             signature["repeat_interval_minutes"] = interval
-        elif mode == "scheduled":
-            scheduled = options.get("scheduled_time")
+        if mode in {"scheduled", "scheduled_repeat"}:
+            scheduled = options.get("scheduled_time") or ""
             scheduled_label = _crm_processing_schedule_label(scheduled)
             queue_options.update(
                 {
-                    "queue_mode": "scheduled",
+                    "queue_mode": "repeat" if mode == "scheduled_repeat" else "scheduled",
                     "scheduled_for": scheduled,
                     "advanced_summary": f"Scheduled for {scheduled_label} | {effective.get('processing_filter')} | {', '.join(steps)}",
                 }
             )
             signature["scheduled_time"] = scheduled
+            if mode == "scheduled_repeat":
+                queue_options["advanced_summary"] += f" | {repeat_label}"
         return queue_options
 
     def _crm_processing_queue_label(options):
@@ -576,7 +578,9 @@ def register_work_routes(
             steps.append("Push Back")
         step_text = ", ".join(steps) if steps else "none selected"
         prefix = "Processing"
-        if advanced_mode == "repeat":
+        if advanced_mode == "scheduled_repeat":
+            prefix = "Scheduled Repeat Processing"
+        elif advanced_mode == "repeat":
             prefix = "Repeat Processing"
         elif advanced_mode == "scheduled":
             prefix = "Scheduled Processing"
@@ -883,7 +887,7 @@ def register_work_routes(
             "advanced_mode": mode,
         }
         queue_options = {"automation_signature": signature}
-        if mode == "repeat":
+        if mode in {"repeat", "scheduled_repeat"}:
             interval = options.get("repeat_interval_minutes")
             interval_label = 5 if interval in (None, "") else interval
             repeat_label = "Repeat immediately" if str(interval_label).strip() == "0" else f"Repeat every {interval_label} minutes"
@@ -895,16 +899,18 @@ def register_work_routes(
                 }
             )
             signature["repeat_interval_minutes"] = interval
-        elif mode == "scheduled":
-            scheduled = options.get("scheduled_time")
+        if mode in {"scheduled", "scheduled_repeat"}:
+            scheduled = options.get("scheduled_time") or ""
             queue_options.update(
                 {
-                    "queue_mode": "scheduled",
+                    "queue_mode": "repeat" if mode == "scheduled_repeat" else "scheduled",
                     "scheduled_for": scheduled,
                     "advanced_summary": f"Scheduled for {_crm_processing_schedule_label(scheduled)} | Sheets Scanner",
                 }
             )
             signature["scheduled_time"] = scheduled
+            if mode == "scheduled_repeat":
+                queue_options["advanced_summary"] += f" | {repeat_label}"
         return queue_options
 
     @app.route("/crm/mass-emailer", methods=["POST", "GET"])

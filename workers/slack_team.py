@@ -42,6 +42,7 @@ from config import (
 from slack_message_rotation import record_slack_day_message_use, select_slack_day_message
 from slack_post_history import record_slack_post
 import slack_delivery_receipts as delivery_receipts
+from m6_posting import M6PostingError, SKIPPED_MESSAGE, skipped_post_result
 
 configure_console_utf8()
 
@@ -91,6 +92,10 @@ class SlackBeforeSubmitError(RuntimeError):
 
 class SlackDuplicateCheckError(RuntimeError):
     """An earlier order notification may exist; another send requires review."""
+
+
+class _M6PostingSkipped(RuntimeError):
+    """The dashboard disabled M6 before the Send button was activated."""
 
 
 def write_result(success, message):
@@ -668,6 +673,8 @@ def _run_once(action, message, channel_url, profile_path, headless_mode, *, deli
     driver = None
     send_attempted = False
     try:
+        if skipped_post_result(channel_url):
+            return True, SKIPPED_MESSAGE, False
         receipt = delivery_receipts.load(channel_url, delivery_key, message) if delivery_key else None
         if receipt and receipt["status"] == "confirmed":
             return True, "Slack order message already confirmed in its saved receipt; no new message sent.", False
@@ -716,9 +723,15 @@ def _run_once(action, message, channel_url, profile_path, headless_mode, *, deli
             safe_take_screenshot(driver, f"slack_{action}_compose_failed")
             return False, "Unable to place message text in Slack composer.", True
 
+        if skipped_post_result(channel_url):
+            return True, SKIPPED_MESSAGE, False
         send_attempted = True
-        submission_options = {"before_submit": lambda: delivery_receipts.reserve(channel_url, delivery_key, message)} if delivery_key else {}
-        message_id = submit_message(driver, composer, message, channel_url=channel_url, **submission_options)
+        def before_submit():
+            if skipped_post_result(channel_url):
+                raise _M6PostingSkipped(SKIPPED_MESSAGE)
+            if delivery_key:
+                delivery_receipts.reserve(channel_url, delivery_key, message)
+        message_id = submit_message(driver, composer, message, channel_url=channel_url, before_submit=before_submit)
         if not message_id:
             safe_take_screenshot(driver, f"slack_{action}_send_not_confirmed")
             return False, SEND_UNCONFIRMED_MESSAGE, False
@@ -738,6 +751,10 @@ def _run_once(action, message, channel_url, profile_path, headless_mode, *, deli
         safe_take_screenshot(driver, f"slack_{action}_sent")
         elapsed = time.time() - start_time
         return True, f"Slack '{message}' verified in the conversation after refresh. ({elapsed:.1f}s)", False
+    except _M6PostingSkipped:
+        return True, SKIPPED_MESSAGE, False
+    except M6PostingError as err:
+        return False, str(err), False
     except (SlackDuplicateCheckError, delivery_receipts.SlackReceiptError) as err:
         if driver:
             safe_take_screenshot(driver, f"slack_{action}_duplicate_review")
@@ -790,6 +807,11 @@ def run(action, force_test_url=False, custom_message=None, channel_url=None, *, 
         else:
             print(f"Detected {day_name} message: '{message}'")
     channel_url = resolve_slack_channel_url(force_test_url=force_test_url, channel_url=channel_url)
+    try:
+        if skipped_post_result(channel_url):
+            return True, SKIPPED_MESSAGE
+    except M6PostingError as exc:
+        return False, str(exc)
     profile_path = str(os.getenv("SLACK_PROFILE_DIR") or "").strip() or os.path.join(SCRIPT_DIR, "slack_chrome_profile")
 
     headless_enabled = os.getenv("AUTOMATION_HEADLESS", "1").strip().lower() not in ("0", "false", "no", "off")
