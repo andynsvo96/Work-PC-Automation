@@ -2745,7 +2745,7 @@ async function toggleHeadlessMode() {
     renderNodeRuntime(payload);
     setStatus(payload.message || `Headless mode ${next ? 'enabled' : 'disabled'}.`);
   } catch (error) {
-    setStatus('Could not update Headless mode: ' + error.message);
+    setErrorStatus('Could not update Headless mode: ' + error.message);
   } finally {
     if (button) button.disabled = false;
   }
@@ -3011,25 +3011,27 @@ function setStatus(msg, targetTab = null) {
   const el = document.getElementById(id);
   if (tab === 'settings') setSettingsSaveState(msg);
   else if (el) el.textContent = msg;
-  showActionFeedback(msg);
 }
 function setProcessingStatus(msg) { setStatus(msg, 'processing'); }
+
+function setErrorStatus(msg, targetTab = null) {
+  setStatus(msg, targetTab);
+  showActionFeedback(msg);
+}
 
 function showActionFeedback(message) {
   const feedback = document.getElementById('actionFeedback');
   const messageEl = document.getElementById('actionFeedbackMessage');
   const text = String(message || '').trim();
   if (!feedback || !messageEl || !text || text === dismissedActionFeedbackMessage) return;
-  const isError = /fail|error|could not|cannot|locked|blocked|offline|unavailable|missing|required|invalid/i.test(text);
   dismissedActionFeedbackMessage = null;
   messageEl.textContent = text;
-  feedback.classList.toggle('error', isError);
-  feedback.classList.add('active');
+  feedback.classList.add('active', 'error');
   if (actionFeedbackTimer) clearTimeout(actionFeedbackTimer);
   actionFeedbackTimer = setTimeout(() => {
     feedback.classList.remove('active', 'error');
     actionFeedbackTimer = null;
-  }, isError ? 15000 : 7000);
+  }, 15000);
 }
 
 function dismissActionFeedback() {
@@ -3120,7 +3122,7 @@ async function toggleClipboardAutoSync(button = null) {
       setStatus(payload.message || 'Clipboard setting updated.');
     });
   } catch (error) {
-    setStatus('Clipboard setting failed: ' + error.message);
+    setErrorStatus('Clipboard setting failed: ' + error.message);
     await loadClipboardStatus();
   }
 }
@@ -3133,7 +3135,7 @@ async function sendClipboard(button = null) {
       await loadClipboardStatus();
     });
   } catch (error) {
-    setStatus('Clipboard send failed: ' + error.message);
+    setErrorStatus('Clipboard send failed: ' + error.message);
     await loadClipboardStatus();
   }
 }
@@ -3146,7 +3148,7 @@ async function pullClipboard(button = null) {
       await loadClipboardStatus();
     });
   } catch (error) {
-    setStatus('Clipboard receive failed: ' + error.message);
+    setErrorStatus('Clipboard receive failed: ' + error.message);
     await loadClipboardStatus();
   }
 }
@@ -3513,7 +3515,7 @@ async function cancelQueueTask(taskId) {
     renderQueue(d);
     await refreshAutomationStatusesAfterQueueChange();
   } catch (e) {
-    setStatus('Queue cancel failed: ' + e.message);
+    setErrorStatus('Queue cancel failed: ' + e.message);
   }
 }
 
@@ -3552,7 +3554,7 @@ async function retryAutomationQueueTask(taskId, button) {
       button.disabled = false;
       button.textContent = 'Retry';
     }
-    setStatus('Queue retry failed: ' + error.message);
+    setErrorStatus('Queue retry failed: ' + error.message);
   }
 }
 
@@ -3629,7 +3631,7 @@ async function cancelAllQueueTasks() {
     renderQueue(d);
     await refreshAutomationStatusesAfterQueueChange();
   } catch (e) {
-    setStatus('Queue cancel-all failed: ' + e.message);
+    setErrorStatus('Queue cancel-all failed: ' + e.message);
   }
 }
 
@@ -3639,7 +3641,7 @@ async function deleteQueueTask(taskId) {
     const d = await api(`/api/queue/${encodeURIComponent(taskId)}/delete`, { method: 'POST' });
     renderQueue(d);
   } catch (e) {
-    setStatus('Queue delete failed: ' + e.message);
+    setErrorStatus('Queue delete failed: ' + e.message);
   }
 }
 
@@ -3650,7 +3652,7 @@ async function clearFinishedQueueTasks() {
     renderQueue(d);
     setStatus(d.message || 'Finished queue history cleared.');
   } catch (e) {
-    setStatus('Queue clear failed: ' + e.message);
+    setErrorStatus('Queue clear failed: ' + e.message);
   }
 }
 
@@ -3692,7 +3694,7 @@ async function handleQueueDrop(event) {
     });
     renderQueue(d);
   } catch (e) {
-    setStatus('Queue reorder failed: ' + e.message);
+    setErrorStatus('Queue reorder failed: ' + e.message);
   }
 }
 
@@ -3711,7 +3713,7 @@ async function openChromeProfileSetup(profile, button = null) {
       });
       setStatus(d.message || 'Chrome profile setup window opened.', 'settings');
     } catch (e) {
-      setStatus('Chrome profile setup failed: ' + e.message, 'settings');
+      setErrorStatus('Chrome profile setup failed: ' + e.message, 'settings');
     }
   });
 }
@@ -3727,7 +3729,7 @@ async function openCredentialSetup(service, button = null) {
       });
       setStatus(d.message || 'Credential setup terminal opened.', 'settings');
     } catch (e) {
-      setStatus('Credential setup failed: ' + e.message, 'settings');
+      setErrorStatus('Credential setup failed: ' + e.message, 'settings');
     }
   });
 }
@@ -3776,7 +3778,7 @@ async function loadSalesforceWorkerSetupStatus(showFeedback = false, button = nu
       return payload;
     } catch (error) {
       if (root) root.innerHTML = `<div class='notice'>Salesforce worker status failed: ${esc(error.message)}</div>`;
-      if (showFeedback) setStatus('Salesforce worker status failed: ' + error.message, 'settings');
+      if (showFeedback) setErrorStatus('Salesforce worker status failed: ' + error.message, 'settings');
       return null;
     }
   };
@@ -3798,7 +3800,7 @@ async function setupSalesforceWorker(worker, button = null) {
       const payload = await requestSalesforceWorkerSetup(worker);
       setStatus(payload.message || `Salesforce Worker ${worker} setup opened.`, 'settings');
     } catch (error) {
-      setStatus(`Salesforce Worker ${worker} setup failed: ${error.message}`, 'settings');
+      setErrorStatus(`Salesforce Worker ${worker} setup failed: ${error.message}`, 'settings');
     }
     await loadSalesforceWorkerSetupStatus(false);
   });
@@ -3817,10 +3819,11 @@ async function testSalesforceWorker(worker, button = null) {
     setStatus(`Testing Salesforce Worker ${worker}…`, 'settings');
     try {
       const payload = await requestSalesforceWorkerTest(worker);
-      setStatus(payload.message || `Salesforce Worker ${worker} test finished.`, 'settings');
+      if (payload.connected) setStatus(payload.message || `Salesforce Worker ${worker} is connected.`, 'settings');
+      else setErrorStatus(payload.message || `Salesforce Worker ${worker} connection failed.`, 'settings');
       return Boolean(payload.connected);
     } catch (error) {
-      setStatus(`Salesforce Worker ${worker} test failed: ${error.message}`, 'settings');
+      setErrorStatus(`Salesforce Worker ${worker} test failed: ${error.message}`, 'settings');
       return false;
     } finally {
       await loadSalesforceWorkerSetupStatus(false);
@@ -3857,7 +3860,8 @@ async function testAllSalesforceWorkers(button = null) {
     const parts = [`Tested ${testable.length} Salesforce worker${testable.length === 1 ? '' : 's'}: ${connected} connected`];
     if (failed.length) parts.push(`${failed.join(', ')} still require attention`);
     if (skipped) parts.push(`${skipped} unavailable or not set up`);
-    setStatus(parts.join('. ') + '.', 'settings');
+    if (failed.length) setErrorStatus(parts.join('. ') + '.', 'settings');
+    else setStatus(parts.join('. ') + '.', 'settings');
   });
 }
 
@@ -3871,7 +3875,7 @@ async function setupAllSalesforceWorkers(button = null) {
       try {
         await requestSalesforceWorkerSetup(slot);
       } catch (error) {
-        setStatus(`Salesforce Worker ${slot} setup failed: ${error.message}`, 'settings');
+        setErrorStatus(`Salesforce Worker ${slot} setup failed: ${error.message}`, 'settings');
         await loadSalesforceWorkerSetupStatus(false);
         return;
       }
@@ -3887,7 +3891,7 @@ async function setupAllSalesforceWorkers(button = null) {
         const test = await requestSalesforceWorkerTest(slot);
         if (!test.connected) {
           const message = test.message || `Salesforce Worker ${slot} still requires login.`;
-          setStatus(message, 'settings');
+          setErrorStatus(message, 'settings');
           window.alert(`${message}\n\nReopen Set up for this worker and finish the Salesforce account selection before continuing.`);
           await loadSalesforceWorkerSetupStatus(false);
           return;
@@ -3895,7 +3899,7 @@ async function setupAllSalesforceWorkers(button = null) {
         setStatus(test.message || `Salesforce Worker ${slot} is connected. Opening the next worker…`, 'settings');
       } catch (error) {
         const message = `Salesforce Worker ${slot} test failed: ${error.message}`;
-        setStatus(message, 'settings');
+        setErrorStatus(message, 'settings');
         window.alert(`${message}\n\nMake sure the setup browser is fully closed, then retry Set up all.`);
         await loadSalesforceWorkerSetupStatus(false);
         return;
@@ -5937,7 +5941,7 @@ async function saveWeeklyHoursCap(button = null) {
     const input = document.getElementById('weeklyCapHoursInput');
     const capHours = Number(input && input.value);
     if (!Number.isFinite(capHours) || capHours <= 0 || capHours > 168) {
-      setStatus('Weekly cap must be a number greater than 0 and no more than 168 hours.');
+      setErrorStatus('Weekly cap must be a number greater than 0 and no more than 168 hours.');
       if (input) input.focus();
       return;
     }
@@ -5959,7 +5963,7 @@ async function saveWeeklyHoursCap(button = null) {
       await loadStatus(false);
       setStatus(`Weekly hours cap updated to ${formatWorkHoursMinutes(capHours)}. ${result.message || ''}`.trim());
     } catch (error) {
-      setStatus('Weekly cap update failed: ' + error.message);
+      setErrorStatus('Weekly cap update failed: ' + error.message);
     }
   });
 }
@@ -6767,7 +6771,7 @@ async function saveSettings(options = {}) {
   try {
     await settingsSavePromise;
   } catch (e) {
-    setStatus(e.message || 'Settings save failed.', 'settings');
+    setErrorStatus(e.message || 'Settings save failed.', 'settings');
     if (manual) throw e;
   }
 }
@@ -7404,7 +7408,7 @@ async function toggleCrmProcessingSelection(stepKey) {
   try {
     await persistCrmProcessingSelection(selectionPayload, `${label} selection updated.`);
   } catch (e) {
-    setStatus(`Automate Processing selection update failed: ${e.message}`);
+    setErrorStatus(`Automate Processing selection update failed: ${e.message}`);
   }
 }
 
@@ -7421,7 +7425,7 @@ async function toggleCrmProcessingBulkSelection() {
       enableAll ? 'All available mode-specific Automate Processing selections enabled.' : 'Mode-specific Automate Processing selections cleared.'
     );
   } catch (e) {
-    setStatus(`Automate Processing bulk selection failed: ${e.message}`);
+    setErrorStatus(`Automate Processing bulk selection failed: ${e.message}`);
   }
 }
 
@@ -7445,7 +7449,7 @@ async function setCrmProcessingFilter(nextFilter) {
   try {
     await persistCrmProcessingSelection(payload, `Automate Processing switched to ${formatCrmAddressFilterLabel(nextFilter)}.`);
   } catch (e) {
-    setStatus(`Automate Processing filter switch failed: ${e.message}`);
+    setErrorStatus(`Automate Processing filter switch failed: ${e.message}`);
   }
 }
 
@@ -7566,7 +7570,7 @@ async function toggleM6Posting() {
     m6PostingEnabled = data.enabled;
     setStatus(`Post to M6 is ${data.enabled ? 'on' : 'off'} for automation and Chrome extension tasks on this computer.`);
   } catch (error) {
-    setStatus(`Post to M6 update failed: ${error.message}`);
+    setErrorStatus(`Post to M6 update failed: ${error.message}`);
   } finally {
     m6PostingSaving = false;
     await loadM6Posting();
@@ -8017,7 +8021,7 @@ async function retryCrmMassEmailerOrder(button) {
   } catch (error) {
     button.disabled = false;
     button.textContent = 'Retry';
-    setStatus('Order retry failed: ' + error.message);
+    setErrorStatus('Order retry failed: ' + error.message);
   }
 }
 
@@ -8373,7 +8377,7 @@ async function clearCrmHistory() {
     renderCrmStatus(d);
     setStatus(d.message || 'Stock Tools history cleared.');
   } catch (e) {
-    setStatus('Stock Tools history clear failed: ' + e.message);
+    setErrorStatus('Stock Tools history clear failed: ' + e.message);
   }
 }
 
@@ -9085,7 +9089,7 @@ async function clearCrmMassEmailerHistory() {
     renderCrmMassEmailerStatus(d);
     setStatus(d.message || 'Sheets Scanner history cleared.');
   } catch (e) {
-    setStatus('Sheets Scanner history clear failed: ' + e.message);
+    setErrorStatus('Sheets Scanner history clear failed: ' + e.message);
   }
 }
 
@@ -9749,7 +9753,7 @@ async function clearCrmAddressHistory() {
     renderCrmAddressStatus(d);
     setStatus(d.message || 'Address Validator history cleared.');
   } catch (e) {
-    setStatus('Address Validator history clear failed: ' + e.message);
+    setErrorStatus('Address Validator history clear failed: ' + e.message);
   }
 }
 
@@ -9765,7 +9769,7 @@ async function toggleCrmAddressFilter() {
     renderCrmAddressStatus(d);
     setStatus(d.message || `Address Validator switched to ${formatCrmAddressFilterLabel(nextFilter)}.`);
   } catch (e) {
-    setStatus('Address Validator filter switch failed: ' + e.message);
+    setErrorStatus('Address Validator filter switch failed: ' + e.message);
   }
 }
 
@@ -10077,7 +10081,7 @@ async function loadShippingBypassMappings(showFeedback = false, button = null) {
       setShippingMappingStatus(error.message || 'Mappings could not be loaded.', 'error');
       const brandRoot = document.getElementById('shippingBrandRuleList');
       if (brandRoot) brandRoot.textContent = 'Special brand rules could not be loaded. Use Reload to try again.';
-      if (showFeedback) setStatus('Mapping load failed: ' + error.message, 'settings');
+      if (showFeedback) setErrorStatus('Mapping load failed: ' + error.message, 'settings');
       return false;
     }
   };
@@ -10105,7 +10109,7 @@ async function saveShippingBypassMappings(button = null) {
       return true;
     } catch (error) {
       setShippingMappingStatus(error.message || 'Mappings could not be saved.', 'error');
-      setStatus('Mapping save failed: ' + error.message, 'settings');
+      setErrorStatus('Mapping save failed: ' + error.message, 'settings');
       setSettingsSaveState('Mapping save failed', 'error');
       return false;
     }
@@ -10140,7 +10144,7 @@ async function loadConfig() {
     setSettingsHealth('Configuration ready', `${Object.keys(fieldMap).length} settings loaded. Changes save automatically.`);
     return true;
   } catch (e) {
-    setStatus('Config load failed: ' + e.message, 'settings');
+    setErrorStatus('Config load failed: ' + e.message, 'settings');
     setSettingsHealth('Configuration issue', e.message || 'Settings could not be loaded.', true);
     return false;
   }
@@ -10307,7 +10311,7 @@ async function saveConfig() {
     await reloadAll();
     setStatus('Settings saved and reloaded.');
   } catch (e) {
-    setStatus('Save failed: ' + e.message);
+    setErrorStatus('Save failed: ' + e.message);
   }
 }
 

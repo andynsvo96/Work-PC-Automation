@@ -306,6 +306,7 @@ class SettingsUiStructureTests(unittest.TestCase):
         self.assertNotIn(".rough-status{display:none}", self.html)
         self.assertIn("id='actionFeedback'", self.html)
         self.assertIn("function showActionFeedback(", self.html)
+        self.assertIn("function setErrorStatus(", self.html)
         self.assertIn("showActionFeedback(msg);", self.html)
 
     def test_control_target_and_cloud_queue_controls_are_removed(self):

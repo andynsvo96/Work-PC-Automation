@@ -36,6 +36,7 @@ function dashboard({ now = new Date(2026, 10, 16, 14, 0, 20), api } = {}) {
     Date: class extends Date { constructor(...args) { super(...(args.length ? args : [now.getTime()])); } },
     fmtDateTime: value => value,
     setStatus: message => messages.push(message),
+    setErrorStatus: message => messages.push(message),
     api: api || (async () => ({success: true, enabled: true})),
   });
   vm.runInContext(`${globals}\n${functions}`, context);
@@ -158,4 +159,88 @@ test('an older M6 poll cannot replace a more recent saved state', async () => {
   resolveOldPoll({success: true, enabled: true});
   await oldPoll;
   assert.equal(elements.m6PostingToggle.attributes['aria-pressed'], 'false');
+});
+
+function feedbackPanel() {
+  const ids = ['actionFeedback', 'actionFeedbackMessage', 'statusBox', 'processingStatusBox',
+    'settingsStatusBox', 'powerStatusBox', 'consoleStatusBox', 'metricsStatusBox'];
+  const elements = Object.fromEntries(ids.map(id => [id, {textContent: '', classList: {
+    values: new Set(),
+    add(...names) { names.forEach(name => this.values.add(name)); },
+    remove(...names) { names.forEach(name => this.values.delete(name)); },
+    contains(name) { return this.values.has(name); },
+  }}]));
+  const timers = new Map();
+  let nextTimer = 0;
+  const context = vm.createContext({
+    activeTab: 'processing',
+    document: {getElementById: id => elements[id]},
+    setSettingsSaveState: message => { elements.settingsStatusBox.textContent = message; },
+    setTimeout(callback, delay) { timers.set(++nextTimer, {callback, delay}); return nextTimer; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  const globals = ['actionFeedbackTimer', 'dismissedActionFeedbackMessage']
+    .map(name => source.match(new RegExp(`^let ${name} = .*;`, 'm'))[0]).join('\n');
+  const functions = ['setStatus', 'setErrorStatus', 'showActionFeedback', 'dismissActionFeedback'].map(name => {
+    const start = source.indexOf(`function ${name}(`);
+    assert.ok(start >= 0, `Missing feedback function ${name}`);
+    return source.slice(start, source.indexOf('\n}', start) + 2);
+  }).join('\n');
+  vm.runInContext(`${globals}\n${functions}`, context);
+  return {context, elements, timers};
+}
+
+test('routine confirmations and automation outcomes stay inline without popups', () => {
+  const {context, elements, timers} = feedbackPanel();
+  for (const [message, tab, target] of [
+    ['Last Automate Processing run completed successfully.', 'processing', 'processingStatusBox'],
+    ['Automate Processing stopped: Salesforce email failed.', 'processing', 'processingStatusBox'],
+    ['Stock issue needs manual review; required stock is unavailable.', 'processing', 'processingStatusBox'],
+    ['Queuing failed Sheets Scanner rows for retry.', 'processing', 'processingStatusBox'],
+    ['Work clock-in completed. Slack failed.', 'automation', 'statusBox'],
+    ['Settings saved.', 'settings', 'settingsStatusBox'],
+    ['Post to M6 is off.', 'automation', 'statusBox'],
+    ['No available Salesforce worker profiles can be tested.', 'settings', 'settingsStatusBox'],
+  ]) {
+    context.setStatus(message, tab);
+    assert.equal(elements[target].textContent, message);
+    assert.equal(elements.actionFeedback.classList.contains('active'), false);
+    assert.equal(timers.size, 0);
+  }
+});
+
+test('explicit direct-action errors show an error popup even without error keywords', () => {
+  const {context, elements, timers} = feedbackPanel();
+  context.setErrorStatus('Disk is full.', 'settings');
+  assert.equal(elements.settingsStatusBox.textContent, 'Disk is full.');
+  assert.equal(elements.actionFeedbackMessage.textContent, 'Disk is full.');
+  assert.equal(elements.actionFeedback.classList.contains('active'), true);
+  assert.equal(elements.actionFeedback.classList.contains('error'), true);
+  assert.equal([...timers.values()][0].delay, 15000);
+});
+
+test('a run update cannot replace or reset a direct-action error popup', () => {
+  const {context, elements, timers} = feedbackPanel();
+  context.setErrorStatus('Could not save settings.', 'settings');
+  const timer = [...timers.keys()][0];
+  context.setStatus('Last Automate Processing run completed successfully.');
+  context.setStatus('Automation run failed; view Queue for details.');
+  assert.equal(elements.actionFeedbackMessage.textContent, 'Could not save settings.');
+  assert.deepEqual([...timers.keys()], [timer]);
+});
+
+test('direct-action errors can be dismissed and are never reopened by run updates', () => {
+  const {context, elements, timers} = feedbackPanel();
+  context.setErrorStatus('Clipboard send failed.');
+  context.dismissActionFeedback();
+  assert.equal(elements.actionFeedback.classList.contains('active'), false);
+  assert.equal(timers.size, 0);
+  context.setStatus('Automation run failed.');
+  assert.equal(elements.actionFeedback.classList.contains('active'), false);
+  context.setErrorStatus('Could not update Headless mode.');
+  assert.equal(elements.actionFeedback.classList.contains('active'), true);
+  const timer = [...timers.values()][0];
+  timer.callback();
+  assert.equal(elements.actionFeedback.classList.contains('active'), false);
+  assert.equal(elements.actionFeedback.classList.contains('error'), false);
 });
