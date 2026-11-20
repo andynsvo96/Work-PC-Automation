@@ -99,7 +99,7 @@
     for (const block of context.details.querySelectorAll('[ng-repeat="($itemIndex, item) in design.designItems"]')) {
       const scope = window.angular.element(block).scope();
       if (scope?.item === member.item && scope.formItem?.item === member.item) return {
-        scope, form: scope.formItem,
+        scope, block, form: scope.formItem,
         input: block.querySelector('[ng-model="formItem.selectedCatalogItemStyle"]'),
         color: block.querySelector('[ng-model="formItem.selectedColor"]')
       };
@@ -120,9 +120,45 @@
     return form;
   }
 
+  function stockQuantities(group) {
+    const wrapper = element("div", "crm-all-tabs-stock-sizes");
+    const table = element("table", "crm-all-tabs-stock-size-table");
+    const caption = element("caption", "", "Combined quantities on the affected tabs");
+    table.append(caption);
+    const head = element("thead");
+    const sizes = element("tr");
+    const sizeLabel = element("th", "", "Size:");
+    sizeLabel.scope = "row";
+    sizes.append(sizeLabel);
+    const body = element("tbody");
+    const quantities = element("tr");
+    const quantityLabel = element("th", "", "Quantity:");
+    quantityLabel.scope = "row";
+    quantities.append(quantityLabel);
+    const totals = stock.summarizeSizes(group);
+    for (const { code, quantity } of totals) {
+      const size = element("th", "", code);
+      size.scope = "col";
+      size.dataset.stockSize = code;
+      sizes.append(size);
+      const cell = element("td");
+      const value = element("output", "crm-all-tabs-stock-quantity", String(quantity));
+      value.dataset.stockQuantity = code;
+      value.setAttribute("aria-label", `${code}: ${quantity}`);
+      cell.append(value);
+      quantities.append(cell);
+    }
+    if (!totals.length) return element("p", "crm-all-tabs-help", "No quantities are assigned to these items.");
+    head.append(sizes);
+    body.append(quantities);
+    table.append(head, body);
+    wrapper.append(table);
+    return wrapper;
+  }
+
   function renderStock(panel) {
     panel.append(element("h4", "crm-all-tabs-section-title", "Shared stock"));
-    panel.append(element("p", "crm-all-tabs-help", "Product/color combinations on two or more tabs. Each tab keeps its sizes, quantities, and prices."));
+    panel.append(element("p", "crm-all-tabs-help", "Product/color combinations on two or more tabs. Quantities below combine their matching items; each tab keeps its own sizes and quantities."));
     const cards = element("div", "crm-all-tabs-cards crm-all-tabs-stock-cards");
     for (const group of state.stockSession.groups) {
       const card = element("section", "crm-all-tabs-card crm-all-tabs-stock-card");
@@ -141,10 +177,25 @@
         const loadCatalog = scopeFunction(native.scope, "watchCatalogItemChange");
         const watchColor = scopeFunction(native.scope, "watchCatalogItemColorChange");
         if (!loadCatalog || !watchColor) throw new Error("CRM's native product loader is unavailable. Reopen All Tabs after it loads.");
-        const draft = state.stockDrafts[group.id] ||= { form: window.angular.copy(stockForm(group.members[0])), touched: false };
+        let draft = state.stockDrafts[group.id];
+        if (!draft) {
+          const source = stockForm(group.members[0]);
+          const form = window.angular.copy(source);
+          // Angular 1.2 copies selectedColor separately from colors. ng-options
+          // needs the actual list object, otherwise its current selection is blank.
+          const matches = form.colors.filter(color => stock.colorIdentity(color) === stock.colorIdentity(source.selectedColor));
+          if (matches.length !== 1) throw new Error("CRM's current color is still loading. Reopen All Tabs after it loads.");
+          form.selectedColor = matches[0];
+          draft = state.stockDrafts[group.id] = { form, touched: false };
+        }
         const scope = native.scope.$new();
         stockScopes.push(scope);
         scope.formItem = draft.form;
+        const previewUrl = scopeFunction(native.scope, "getCatalogFileURL");
+        const originalImage = native.block.querySelector('img[ng-src][alt="product"]');
+        scope.crmAllTabsImage = () => previewUrl ? previewUrl(draft.form) :
+          (String(draft.form.selectedCatalogItem?.id) === group.productId && stock.colorIdentity(draft.form.selectedColor) === group.colorId
+            ? originalImage?.getAttribute("src") || "" : "");
         scope.crmAllTabsBusy = busy;
         scope.crmAllTabsLoading = () => Boolean(draft.loading);
         scope.crmAllTabsInput = () => { draft.touched = true; draft.error = ""; preview(); };
@@ -182,6 +233,18 @@
           preview();
         };
         const controls = element("div", "crm-all-tabs-native-stock");
+        const imageBox = element("div", "crm-all-tabs-stock-preview");
+        const photo = element("img", "crm-all-tabs-stock-image");
+        photo.alt = "Product preview";
+        photo.setAttribute("ng-if", "crmAllTabsImage()");
+        photo.setAttribute("ng-src", "{{crmAllTabsImage()}}");
+        imageBox.append(photo);
+        const product = element("div", "crm-all-tabs-stock-product");
+        const description = element("p", "crm-all-tabs-stock-description");
+        description.setAttribute("ng-bind", "formItem.selectedCatalogItem.ourLabel || formItem.selectedCatalogItem.label");
+        product.append(description);
+        const colorAndSizes = element("div", "crm-all-tabs-stock-color-sizes");
+        controls.append(imageBox, product, colorAndSizes);
         for (const [label, template, suffix] of [["Product", native.input, "product"], ["Color", native.color, "color"]]) {
           const field = element("label", "crm-all-tabs-field");
           const control = template.cloneNode(false);
@@ -199,8 +262,18 @@
             control.setAttribute("ng-change", "crmAllTabsInput()");
           } else control.setAttribute("ng-change", "crmAllTabsColor()");
           field.append(control);
-          controls.append(field);
+          (suffix === "product" ? product : colorAndSizes).append(field);
         }
+        const note = element("p", "crm-all-tabs-stock-note");
+        note.setAttribute("ng-if", "formItem.selectedCatalogItem.note");
+        note.append(element("strong", "", "Product Note:"), element("br"));
+        const noteText = element("span");
+        noteText.setAttribute("ng-bind", "formItem.selectedCatalogItem.note");
+        note.append(noteText);
+        product.append(note);
+        // This summary reads each original item; it never binds quantity or price
+        // models to the aggregate view or copies one tab's sizes onto another.
+        colorAndSizes.append(stockQuantities(group));
         card.append(controls);
         const injector = window.angular.element(context.details).injector();
         runInAngular(() => injector.get("$compile")(controls)(scope));

@@ -272,6 +272,30 @@ var CRMAllTabsStock = (() => {
     return sizes;
   }
 
+  function summarizeSizes(group) {
+    const order = new Map();
+    const totals = new Map();
+    let unspecified = 0;
+    for (const { item } of group.members) {
+      for (const size of active(item.sizes)) {
+        const code = sizeCode(size);
+        if (code && !order.has(code)) order.set(code, Number.isFinite(Number(size.sortOrder)) ? Number(size.sortOrder) : order.size);
+      }
+      const used = sizesInUse(item);
+      for (const size of used) {
+        const code = sizeCode(size);
+        totals.set(code, (totals.get(code) || 0) + number(size.quantity));
+      }
+      if (String(item.splitIntoSizes) === "0") {
+        unspecified += Math.max(0, number(item.quantity) - used.reduce((sum, size) => sum + number(size.quantity), 0));
+      }
+    }
+    const sizes = [...totals].sort(([a], [b]) => order.get(a) - order.get(b))
+      .map(([code, quantity]) => ({ code, quantity }));
+    if (unspecified) sizes.push({ code: "Unspecified", quantity: unspecified });
+    return sizes;
+  }
+
   function sizeState(item) {
     return fingerprint({ id: item.id, split: String(item.splitIntoSizes ?? "1"),
       quantity: number(item.quantity), price: price(item.pricePerPiece),
@@ -364,5 +388,5 @@ var CRMAllTabsStock = (() => {
     }
   }
 
-  return { createSession, assertFresh, sizesInUse, plan, apply, colorIdentity, productId, colorId };
+  return { createSession, assertFresh, sizesInUse, summarizeSizes, plan, apply, colorIdentity, productId, colorId };
 })();

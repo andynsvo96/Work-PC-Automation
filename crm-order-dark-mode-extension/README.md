@@ -15,7 +15,7 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
-## All Tabs shared stock editing - 1.7.27
+## All Tabs shared stock editing - 1.7.28
 
 In **Edit Order > All Tabs**, **Shared stock** lists each native catalog
 product/color combination that appears on **two or more distinct active product
@@ -24,6 +24,16 @@ on four tabs with L, M, M, and L produces one row affecting tabs 1, 2, 3, and 4.
 G500 on tab 1, ST350 BLACK on tabs 2 and 3, and ST350 WHITE on tab 4 produces only
 the ST350 BLACK row. Duplicate items on just one tab do not qualify. Removed tabs,
 removed items, and custom Style Sub items are excluded.
+
+Version **1.7.28** uses a horizontal native-style product row with the product
+preview, description, optional product note, native product input, and color
+dropdown. The current color starts selected and stays selected when the panel
+is rebuilt. The **Size / Quantity** table shows combined, read-only quantities
+for matching items on the affected tabs, with no prices or quantity editors.
+Only sizes in use are listed. For example, L × 1 on tab 2 and XL × 2 on tab 3
+show **L: 1, XL: 2**; another color on tab 4 does not count. NF1270 BLACK/WHITE
+with L, M, M, and L shows **M: 2, L: 2**. Items without assigned sizes show their
+remaining quantity as **Unspecified**. The row stacks on narrow windows.
 
 Choose a product from **CRM's native autocomplete suggestions**, then a color
 from its native dropdown. Only that row's original matching items change. Each
@@ -52,7 +62,7 @@ Review the affected tabs, use CRM's **Save Order**, then refresh and confirm the
 saved product/color and each tab's size quantities. Apply changes does not save
 the order. CRM's normal Cancel discards applied, unsaved changes.
 
-Reload **CRM Order Assistant 1.7.27** at `chrome://extensions` and refresh open CRM
+Reload **CRM Order Assistant 1.7.28** at `chrome://extensions` and refresh open CRM
 order pages. **No local Automation app restart is needed.** The feature works
 independently of dark mode and requires no new extension permissions.
 

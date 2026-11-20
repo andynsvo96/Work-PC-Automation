@@ -59,6 +59,29 @@ test("the supplied four-tab pattern groups NF1270 BLACK/WHITE independently of L
     [["NF1270", "BLACK/WHITE", [1, 2, 3, 4]]]);
 });
 
+test("the read-only summary combines affected quantities in native size order", () => {
+  const { session, resource } = fixture();
+  const before = structuredClone(resource);
+  assert.deepEqual(plain(stock.summarizeSizes(session.groups[0])), [{ code: "M", quantity: 2 }, { code: "L", quantity: 2 }]);
+  assert.deepEqual(resource, before);
+  const second = item(2, "XL", replacement, black);
+  second.quantity = 2;
+  second.sizes.find(size => size.sizeCode === "XL").quantity = "2";
+  const mixed = fixture([item(1, "S"), item(3, "L", replacement, black), second, item(4, "L", replacement, white)]);
+  assert.deepEqual(plain(stock.summarizeSizes(mixed.session.groups[0])), [{ code: "L", quantity: 1 }, { code: "XL", quantity: 2 }]);
+});
+
+test("size totals include every matching item, exclude deleted sizes, and disclose unspecified quantities", () => {
+  const first = item(1);
+  first.sizes.push({ sizeCode: "XL", quantity: 9, crudAction: "d" });
+  const unsized = item(3);
+  unsized.splitIntoSizes = "0";
+  unsized.quantity = 3;
+  unsized.sizes.forEach(size => { size.quantity = 0; });
+  const { session } = fixture([[first, item(2)], unsized]);
+  assert.deepEqual(plain(stock.summarizeSizes(session.groups[0])), [{ code: "M", quantity: 2 }, { code: "Unspecified", quantity: 3 }]);
+});
+
 test("mixed products include only exact catalog product/color pairs shared by distinct tabs", () => {
   const other = { id: 30, style: "G500" };
   const { session } = fixture([item(1, "M", other, color(other, 300, "BLACK")), item(2, "M", replacement, black),

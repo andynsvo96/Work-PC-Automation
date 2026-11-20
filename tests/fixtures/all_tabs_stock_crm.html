@@ -67,7 +67,9 @@
 <script>
 const codes = ['S', 'M', 'L', 'XL', '2XL', '3XL'];
 const catalogs = [
-  {id: 10, style: 'NF1270'}, {id: 20, style: 'ST350'}, {id: 30, style: 'G500'}, {id: 40, style: 'LIMITED'}
+  {id: 10, style: 'NF1270', ourLabel: 'A4 Reversible Mesh Tank', note: 'Want to print on the reverse side? Call us for design help.'},
+  {id: 20, style: 'ST350', ourLabel: 'Performance T-Shirt'},
+  {id: 30, style: 'G500', ourLabel: 'Gildan Cotton T-Shirt'}, {id: 40, style: 'LIMITED', ourLabel: 'Limited Sizes Tee'}
 ];
 function shade(catalogitem_id, id, name, available = codes) {
   return {catalogitem_id, code: name, name, type: [{catalogItemColorId: id}],
@@ -120,6 +122,10 @@ module.controller('StockFixture', function($scope, $q, $filter, $injector) {
     if (window.failNativeAt === nativeChangeCalls) throw new Error('Fixture native stock failure');
   };
   $scope.getQuotes = () => {};
+  $scope.getCatalogFileURL = form => form.selectedCatalogItem && form.selectedColor ? 'data:image/svg+xml,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="90" height="120" viewBox="0 0 90 120">' +
+    '<rect width="90" height="120" fill="#f3f4f6"/><path d="M30 20 15 32 23 48 30 44 30 92 60 92 60 44 67 48 75 32 60 20 53 28 37 28Z" fill="#334155"/>' +
+    '<text x="45" y="110" text-anchor="middle" font-size="9" fill="#263244">' + form.selectedCatalogItem.style + '</text></svg>') : '';
   $scope.order = {getResource: () => resource};
   $scope.STATICS = {printAreaTemplates: ['Front', 'Back'].map((description, i) => ({id: i + 1, description, active: '1'})),
     printMethods: [{id: 1, description: 'HD Digital'}]};

@@ -135,6 +135,37 @@ class AllTabsStockBrowserTests(unittest.TestCase):
                               for size in previous["sizes"] if size["quantity"]])
             self.assertEqual(design["printAreas"], before["designs"][i]["printAreas"])
 
+    def test_current_color_is_preselected_and_sizes_total_only_the_matching_tabs(self):
+        self.show_order([{"style": "G500", "size": "S", "quantity": 10},
+                         {"style": "ST350", "color": "BLACK", "size": "L"},
+                         {"style": "ST350", "color": "BLACK", "size": "XL", "quantity": 2},
+                         {"style": "ST350", "color": "WHITE", "size": "L", "quantity": 9}])
+        before = self.resource()
+        self.assertEqual(Select(self.driver.find_element(By.ID, "crm-all-tabs-stock-color-s1")).first_selected_option.text, "BLACK")
+        card = self.driver.find_element(By.CSS_SELECTOR, "[data-stock-group='s1']")
+        self.assertEqual([cell.text for cell in card.find_elements(By.CSS_SELECTOR, "[data-stock-size]")], ["L", "XL"])
+        self.assertEqual([cell.text for cell in card.find_elements(By.CSS_SELECTOR, "[data-stock-quantity]")], ["1", "2"])
+        self.assertEqual(len(card.find_elements(By.CSS_SELECTOR, "input")), 1, "Only the native product field is editable")
+        self.assertNotIn("43.89", card.text)
+        self.assertEqual(self.resource(), before)
+        self.driver.save_screenshot(str(self.artifacts / "shared-stock-totals.png"))
+
+    def test_current_color_and_totals_survive_rerenders_and_color_only_edits(self):
+        self.show_order()
+        select = lambda: Select(self.driver.find_element(By.ID, "crm-all-tabs-stock-color-s0"))
+        self.assertEqual(select().first_selected_option.text, "BLACK/WHITE")
+        self.assertEqual([cell.text for cell in self.driver.find_elements(By.CSS_SELECTOR, "[data-stock-quantity]")], ["2", "2"])
+        self.assertIn("A4 Reversible Mesh Tank", self.driver.find_element(By.CSS_SELECTOR, ".crm-all-tabs-stock-description").text)
+        self.assertTrue(self.driver.find_element(By.CSS_SELECTOR, ".crm-all-tabs-stock-image").is_displayed())
+        select().select_by_visible_text("NAVY/WHITE")
+        self.driver.find_element(By.ID, "crm-all-tabs-remove-g0").click()
+        self.assertEqual(select().first_selected_option.text, "NAVY/WHITE")
+        self.driver.find_element(By.ID, "crm-all-tabs-remove-g0").click()
+        self.apply()
+        self.assertEqual(select().first_selected_option.text, "NAVY/WHITE")
+        self.assertEqual([cell.text for cell in self.driver.find_elements(By.CSS_SELECTOR, "[data-stock-quantity]")], ["2", "2"])
+        self.assertEqual([design["designItems"][0]["color"] for design in self.resource()["designs"]], ["NAVY/WHITE"] * 4)
+
     def test_missing_sizes_warn_with_tab_numbers_and_block_stock_and_print_changes(self):
         self.show_order()
         before = self.resource()
