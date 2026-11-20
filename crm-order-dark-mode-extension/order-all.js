@@ -123,7 +123,7 @@
         submit(target) {
           return inAngular(target.owner, () => {
             target.owner.placingOrder = true;
-            return service.orderGoodsSupplynet(target.id);
+            return service.orderGoodsSupplynet(target.design.id);
           });
         },
         finished(target, entry) {
