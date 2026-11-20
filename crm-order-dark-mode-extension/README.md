@@ -15,6 +15,17 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
+## Multi-tab controls - 1.7.26
+
+**All Tabs** and **Order All** appear only on orders with more than one active
+product tab. They stay hidden on single-tab orders, including after tabs are
+removed, and return when a second tab is added. Tabs marked for deletion do not
+count. All Tabs still requires Edit Order; Order All still requires eligible
+automatic stock outside edit mode, even when only one of several tabs needs it.
+
+Reload **CRM Order Assistant 1.7.26** at `chrome://extensions` and refresh open
+CRM order pages. No local Automation app restart is needed.
+
 ## Editing previews and Order All - 1.7.22
 
 **Design Studio Previews stay at the bottom during Edit Order.** They follow
@@ -27,7 +38,8 @@ normal preview section. Previews display the saved Design Studio artwork;
 changing a print-area label does not redraw that artwork.
 
 **Order All** appears after the last real tab in both tab bars outside Edit
-Order, when at least one tab has an enabled automatic **Order Goods** control.
+Order, on orders with multiple active product tabs when at least one tab has an
+enabled automatic **Order Goods** control.
 In **1.7.24**, one click immediately submits CRM's own **Order Goods** request
 for every eligible tab in the current order. It works with the local Automation
 app closed and creates no automation job. The extension uses the same native CRM
@@ -74,7 +86,8 @@ node --test tests/test_order_all_batch.mjs
 
 ## All Tabs print-area editing - 1.7.21
 
-In **Edit Order**, **All Tabs** appears before tab 1 in both design-tab bars.
+In **Edit Order** on orders with multiple active product tabs, **All Tabs**
+appears before tab 1 in both design-tab bars.
 Your highlighted real tab stays selected until you click All Tabs. The added
 control is a local view; the order's real tabs, numbering, and customer tab count
 stay the same. It disappears after leaving edit mode and is excluded from printing.

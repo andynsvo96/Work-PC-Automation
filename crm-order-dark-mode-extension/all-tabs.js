@@ -49,7 +49,9 @@
       }
     }
     if (!scope || !scope.editMode) return null;
-    return { orderId, details, scope, resource: scope.order.getResource() };
+    const resource = scope.order.getResource();
+    if (!Array.isArray(resource?.designs) || resource.designs.filter(design => design && model.key(design.crudAction) !== "d").length < 2) return null;
+    return { orderId, details, scope, resource };
   }
 
   function busy() {

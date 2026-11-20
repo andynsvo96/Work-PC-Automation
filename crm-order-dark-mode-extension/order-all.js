@@ -33,8 +33,13 @@
     return null;
   }
 
+  function hasMultipleDesigns(ctx) {
+    return Array.isArray(ctx?.resource?.designs) && ctx.resource.designs.filter(design =>
+      design && String(design.crudAction || "").trim().toLowerCase() !== "d").length > 1;
+  }
+
   function targets(ctx) {
-    if (!ctx?.details || ctx.scope.editMode || ctx.scope.transfersOnly || ctx.scope.savingOrder) return [];
+    if (!ctx?.details || !hasMultipleDesigns(ctx) || ctx.scope.editMode || ctx.scope.transfersOnly || ctx.scope.savingOrder) return [];
     const found = new Map();
     for (const button of ctx.details.querySelectorAll('.order-inventory button[ng-click="orderGoods(provider);"]')) {
       if (button.disabled || button.getAttribute("aria-disabled") === "true") continue;
@@ -225,7 +230,7 @@
     }
     if (ctx.scope.editMode) { clear(); return; }
     const available = batch.retryable(receipt, targets(ctx));
-    if (available.length || inFlight) {
+    if (hasMultipleDesigns(ctx) && (available.length || inFlight)) {
       const header = [...document.querySelectorAll('#main-header-design-tabs button[ng-repeat]')].at(-1);
       const detail = [...ctx.details.querySelectorAll(".nav-tabs .order-form-design-tab")].at(-1);
       for (const [id, native, tag] of [[ids[0], header, "span"], [ids[1], detail, "li"]]) {
