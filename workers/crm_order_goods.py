@@ -60,6 +60,7 @@ from crm_unlock_orders import (
     unlock_single_order_with_driver as _unlock_single_order_through_locked_report,
     wait_for_order_preview_panel as _wait_for_stock_unlock_preview_panel,
 )
+import crm_order_goods_native as native_stock
 
 configure_console_utf8()
 
@@ -2295,6 +2296,15 @@ def _order_goods_for_all_stock_tabs(
 ):
     tabs = _find_stock_tabs(driver)
     tab_count = len(tabs)
+    # Push Back relies on native feedback dialogs; dry runs retain their
+    # inspection without sending requests. Normal multi-tab Order Goods uses
+    # Order All's service, so button reloads cannot cut a batch short. Keep
+    # receipts in use if a later edit leaves only one tab.
+    if not dry_run and not wait_for_auto_order_result and (tab_count > 1 or native_stock.receipt_exists(order_id)):
+        _publish_status(f"Ordering eligible stock tabs together for order {order_id}.", stage="ordering_stock", order_id=order_id)
+        return native_stock.order_stock_tabs(
+            driver, order_id, tabs, wait_ready=lambda: _require_order_goods_page_ready(driver, order_id),
+        )
     if tab_count <= 1:
         kwargs = {
             "dry_run": dry_run,
@@ -2377,6 +2387,10 @@ def _run_order_with_driver(
     normalized_order_id = _normalize_target_order_id(order_id)
     if not normalized_order_id:
         raise RuntimeError("Order ID must be a 7-digit value or CRM order URL.")
+    blocked = native_stock.recovery_block(normalized_order_id)
+    if blocked:
+        return [{"order_id": normalized_order_id, "success": False, "outcome": "native_stock_uncertain",
+                 "message": blocked, "manual_review_required": True}]
     _publish_status(f"Opening CRM order {normalized_order_id} for Rush Order Goods.", stage="opening_order", order_id=normalized_order_id)
     _open_target_order_with_refresh(driver, normalized_order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
     _publish_status(f"Checking Order Goods page for order {normalized_order_id}.", stage="checking_order_goods", order_id=normalized_order_id)
@@ -2472,9 +2486,8 @@ def _order_goods_worker_payload(order_id, headless_mode, dry_run=False, profile_
             profile_label=f"CRM order goods worker {order_id}",
             skip_stale_chrome_check=skip_stale_chrome_check,
         )
-        # Order Goods owns only the stock-order click. Post-click Auto Ordering
-        # feedback is handled by Push Back, which deliberately waits for and
-        # classifies those results before deciding what to do next.
+        # Multi-tab Order Goods confirms the native batch directly. Push Back
+        # separately owns dialogs and automated-note classifications.
         report_items = _run_order_with_driver(
             driver,
             order_id,
@@ -3026,8 +3039,7 @@ def _run_single_with_mode(headless_mode, order_id, dry_run=False, profile_path=N
     )
     report_items = []
     try:
-        # Keep single-order behavior aligned with batch Order Goods: click the
-        # control and move on. Push Back owns post-click feedback processing.
+        # Use the same stock-tab ordering path as list-driven Order Goods.
         report_items = _run_order_with_driver(
             driver,
             normalized_order_id,

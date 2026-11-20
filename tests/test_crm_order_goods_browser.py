@@ -18,6 +18,7 @@ for path in (ROOT, ROOT / "workers"):
         sys.path.insert(0, str(path))
 
 import crm_order_goods as worker  # noqa: E402
+import crm_order_goods_native as native  # noqa: E402
 
 
 class StockOrderingBrowserTests(unittest.TestCase):
@@ -51,6 +52,11 @@ class StockOrderingBrowserTests(unittest.TestCase):
         status = mock.patch.object(worker, "_publish_status")
         status.start()
         self.addCleanup(status.stop)
+        receipts = tempfile.TemporaryDirectory(prefix="receipts-", dir=ROOT / "runtime/debug/order_goods_tests")
+        self.addCleanup(receipts.cleanup)
+        directory = mock.patch.object(native, "RECEIPT_DIR", Path(receipts.name))
+        directory.start()
+        self.addCleanup(directory.stop)
 
     def test_finds_all_designs_with_view_proofs_and_duplicate_labels(self):
         tabs = worker._find_stock_tabs(self.driver)
@@ -67,19 +73,25 @@ class StockOrderingBrowserTests(unittest.TestCase):
                     self.assertEqual(worker._active_stock_tab_has_purchase_order(self.driver), expected)
 
     def test_orders_remaining_tabs_and_revisits_new_sizes_on_a_later_run(self):
-        # CRM navigation resets the active tab, as it does on the real order.
-        with mock.patch.object(worker, "_open_target_order_with_refresh", side_effect=lambda *_a, **_k: self.driver.refresh()):
+        with mock.patch.object(worker, "_require_order_goods_page_ready"), \
+             mock.patch.object(worker, "_activate_stock_tab") as activate, \
+             mock.patch.object(self.driver, "refresh", wraps=self.driver.refresh) as refresh:
             results = worker._order_goods_for_all_stock_tabs(self.driver, "5000001")
             self.assertEqual([item["outcome"] for item in results], [
-                "already_stock_ordered", "order_goods_clicked", "order_goods_clicked", "order_goods_clicked",
+                "already_stock_ordered", "auto_order_succeeded", "auto_order_succeeded", "auto_order_succeeded",
             ])
             self.assertEqual([item["stock_tab_index"] for item in results], [1, 2, 3, 4])
             self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [2, 3, 4])
+            state = self.driver.execute_script("return stockFixtureState()")
+            self.assertEqual(state["events"][:3], ["start:2", "start:3", "start:4"])
+            self.assertEqual(state["legacyClicks"], 0)
+            activate.assert_not_called()
+            self.assertEqual(refresh.call_count, 1)
 
             self.driver.execute_script("addSizeToDesign(4)")
             results = worker._order_goods_for_all_stock_tabs(self.driver, "5000001")
             self.assertEqual([item["outcome"] for item in results], [
-                "already_stock_ordered", "already_stock_ordered", "already_stock_ordered", "order_goods_clicked",
+                "already_stock_ordered", "already_stock_ordered", "already_stock_ordered", "auto_order_succeeded",
             ])
             self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [2, 3, 4, 4])
 
@@ -89,6 +101,143 @@ class StockOrderingBrowserTests(unittest.TestCase):
             "already_stock_ordered", "order_goods_ready", "order_goods_ready", "order_goods_ready",
         ])
         self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [])
+
+    def order_native(self):
+        with mock.patch.object(worker, "_require_order_goods_page_ready"):
+            return worker._order_goods_for_all_stock_tabs(self.driver, "5000001")
+
+    def test_partial_failure_retains_successes_and_retry_orders_only_failed_tab(self):
+        self.driver.execute_script("nativeModes[3]='fail'")
+        results = self.order_native()
+        self.assertEqual([item["outcome"] for item in results], [
+            "already_stock_ordered", "auto_order_succeeded", "native_stock_failed", "auto_order_succeeded",
+        ])
+        self.assertIn("Not enough stock", results[2]["message"])
+        self.assertTrue(all(item["success"] for item in self.order_native()))
+        self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [2, 3, 4, 3])
+
+    def test_lost_response_blocks_new_worker_and_changed_stock_before_unlocking(self):
+        self.driver.execute_script("nativeModes[3]='reject'")
+        results = self.order_native()
+        self.assertEqual(results[2]["outcome"], "native_stock_uncertain")
+        self.driver.execute_script("addSizeToDesign(3)")
+        with mock.patch.object(worker, "_unlock_current_order_for_auto_ordering") as unlock, \
+             mock.patch.object(worker, "_open_target_order_with_refresh") as open_order:
+            retry = worker._run_order_with_driver(self.driver, "5000001")
+        self.assertFalse(retry[0]["success"])
+        unlock.assert_not_called()
+        open_order.assert_not_called()
+        self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [2, 3, 4])
+
+    def test_timeout_stops_without_automatic_retry(self):
+        self.driver.execute_script("nativeModes[3]='timeout'")
+        with mock.patch.object(native, "REQUEST_TIMEOUT_SECONDS", 0.1):
+            results = self.order_native()
+        self.assertEqual(results[2]["outcome"], "native_stock_uncertain")
+        self.assertIsNotNone(native.recovery_block("5000001"))
+        self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [2, 3, 4])
+
+    def test_response_without_persisted_stock_is_not_success_and_is_not_repeated(self):
+        self.driver.execute_script("nativeModes[3]='not-saved'")
+        results = self.order_native()
+        self.assertEqual(results[2]["outcome"], "native_stock_not_verified")
+        self.assertFalse(results[2]["success"])
+        self.assertFalse(self.order_native()[2]["success"])
+        self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [2, 3, 4])
+
+    def test_locked_hidden_disabled_manual_and_add_box_controls_are_excluded(self):
+        self.driver.execute_script("""
+          document.querySelector('#design-2 .order-goods').disabled=true;
+          document.querySelector('#design-3 .order-goods').classList.add('ng-hide');
+          const add=document.createElement('button'); add.setAttribute('ng-click','orderGoodsAddBox(provider);');
+          add.textContent='Add Box'; document.getElementById('design-3').append(add);
+        """)
+        results = self.order_native()
+        self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [4])
+        self.assertEqual(results[1]["outcome"], "order_goods_locked")
+        self.assertFalse(results[2]["success"])
+
+    def test_durable_receipt_is_required_before_any_native_submission(self):
+        with mock.patch.object(native, "_save", side_effect=OSError("disk full")):
+            results = self.order_native()
+        self.assertTrue(all(not item["success"] for item in results))
+        self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [])
+
+    def test_no_native_service_never_falls_back_to_serial_clicks(self):
+        self.driver.execute_script("delete inventoryService.orderGoodsSupplynet")
+        results = self.order_native()
+        self.assertTrue(all(not item["success"] for item in results[1:]))
+        self.assertTrue(all(item["outcome"] == "native_stock_not_sent" for item in results[1:]))
+        self.assertIn("service is not ready", results[1]["message"])
+        state = self.driver.execute_script("return stockFixtureState()")
+        self.assertEqual(state["clicks"], [])
+        self.assertEqual(state["legacyClicks"], 0)
+
+    def test_dropped_worker_connection_preserves_durable_reservation(self):
+        execute = self.driver.execute_script
+
+        def disconnected(script, *args):
+            if script == native._script() and args[0] == "status":
+                raise worker.TimeoutException("Simulated disconnected worker")
+            return execute(script, *args)
+
+        with mock.patch.object(self.driver, "execute_script", side_effect=disconnected):
+            results = self.order_native()
+        self.assertEqual([item["outcome"] for item in results[1:]], ["native_stock_uncertain"] * 3)
+        # A fresh worker profile has no session receipt. Disk receipts must
+        # still stop it even if CRM has since changed the quantities.
+        self.driver.execute_script("sessionStorage.removeItem('crm-order-all-native:5000001'); addSizeToDesign(3)")
+        self.assertTrue(all(not item["success"] for item in self.order_native()))
+        self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [2, 3, 4])
+
+    def test_stock_changed_after_preflight_is_not_submitted(self):
+        execute = self.driver.execute_script
+
+        def changed(script, *args):
+            if script == native._script() and args[0] == "start":
+                execute("addSizeToDesign(3)")
+            return execute(script, *args)
+
+        with mock.patch.object(self.driver, "execute_script", side_effect=changed):
+            results = self.order_native()
+        self.assertTrue(all(not item["success"] for item in results[1:]))
+        self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [])
+        self.assertIsNone(native.recovery_block("5000001"))
+
+    def test_duplicate_design_ids_or_wrong_order_stop_before_submission(self):
+        for change in ("resource.designs[2].id=resource.designs[1].id", "resource.id='5000002'"):
+            with self.subTest(change=change):
+                self.driver.refresh()
+                self.driver.execute_script(change)
+                results = self.order_native()
+                self.assertTrue(all(not item["success"] for item in results))
+                self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [])
+
+    def test_removed_designs_and_manual_stock_are_excluded(self):
+        self.driver.execute_script("""
+          resource.designs[2].crudAction='d';
+          document.querySelectorAll('#main-header-design-tabs button')[2].remove();
+        """)
+        results = self.order_native()
+        self.assertTrue(all(item["success"] for item in results))
+        self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [2, 4])
+
+    def test_missing_supplier_is_uncertain_and_cannot_be_retried_automatically(self):
+        self.driver.execute_script("nativeModes[3]='unconfirmed'")
+        results = self.order_native()
+        self.assertEqual(results[2]["outcome"], "native_stock_uncertain")
+        self.assertTrue(all(not item["success"] for item in self.order_native()))
+        self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [2, 3, 4])
+
+    def test_waits_for_all_design_inventories_before_starting_requests(self):
+        self.driver.execute_script("""
+          const providers=inventoryScopes[2].providers;
+          inventoryScopes[2].providers=[];
+          setTimeout(()=>{inventoryScopes[2].providers=providers;},100);
+        """)
+        self.assertTrue(all(item["success"] for item in self.order_native()))
+        state = self.driver.execute_script("return stockFixtureState()")
+        self.assertEqual(state["events"][:3], ["start:2", "start:3", "start:4"])
 
 
 if __name__ == "__main__":

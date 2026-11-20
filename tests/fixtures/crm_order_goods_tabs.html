@@ -6,17 +6,18 @@
   body { font: 16px Arial; padding: 24px; }
   #main-header-design-tabs { display: flex; gap: 8px; }
   #main-header-design-tabs button { width: 190px; }
-  .design { display: none; }
+  .tab-pane { display: none; }
   .design.active { display: block; }
   th, td { padding: 8px; }
   .stock-row { background: rgb(240, 240, 145); }
   .row { display: flex; gap: 24px; padding: 8px; }
 </style>
 <body>
+<div id="view-orders-index">
   <h1>Order 5000001</h1>
   <p>Stock Status: Ordered</p>
   <nav id="main-header-design-tabs"></nav>
-  <main id="designs"></main>
+  <main id="order-design-details"><div id="designs"></div></main>
   <section><h2>Production Notes</h2>
     <table><tr><th>PO</th><th>Vendor Order #</th><th>Order Date</th></tr>
       <tr><td>Sanmar</td><td>H-NoteOnly123</td><td>11/20/2026</td></tr></table>
@@ -25,12 +26,51 @@
     <tr><th>PO</th><th>Vendor Order #</th><th>Order Date</th></tr>
     <tr><td>Sanmar</td><td>H-DraftOnly123</td><td>11/20/2026</td></tr>
   </table></div>
+</div>
 </body>
 <script>
 const grid = new URLSearchParams(location.search).get('layout') === 'grid';
 let saved = JSON.parse(sessionStorage.getItem('stockFixture') || 'null');
-if (!saved) saved = { pending: [false, true, true, true], purchases: [1, 1, 0, 0], clicks: [] };
+if (!saved) saved = { pending: [false, true, true, true], purchases: [1, 1, 0, 0], quantities: [2,2,2,2], clicks: [], events: [], legacyClicks: 0 };
 const persist = () => sessionStorage.setItem('stockFixture', JSON.stringify(saved));
+window.resource = {id:'5000001', designs: saved.quantities.map((quantity, index) => ({
+  id:String(101+index), designItems:[{id:501+index, productId:10, colorId:20, quantity, sizes:[{id:1,sizeId:1,quantity}]}]
+}))};
+window.nativeModes = {};
+window.orderScope = { order:{getResource:()=>resource}, editMode:false, saveOrder(){} };
+window.inventoryScopes = resource.designs.map((design,index)=>({
+  providers:[{id:index===0?210:null,allStockOrdered:!saved.pending[index]}],
+  design:()=>design, order:()=>orderScope.order, itemCount:2, placingOrder:false,
+  isOrderingLocked:()=>Boolean(window.fixtureLocked), orderGoods(){}, $root:{$$phase:false}, $apply(fn){return fn();}
+}));
+window.inventoryService = {orderGoodsSupplynet(id){
+  const number = resource.designs.findIndex(design=>design.id===String(id))+1;
+  saved.clicks.push(number); saved.events.push('start:'+number); persist();
+  return new Promise((resolve,reject)=>{
+    const mode=nativeModes[number];
+    if(mode==='timeout') return;
+    setTimeout(()=>{
+      saved.events.push('finish:'+number);
+      if(mode==='reject') {persist();reject(new Error('Lost CRM connection'));return;}
+      if(mode==='fail') {persist();resolve({succeeded:false,errors:['Not enough stock']});return;}
+      if(mode==='unconfirmed') {persist();resolve({succeeded:true});return;}
+      if(mode!=='not-saved') {
+        saved.pending[number-1]=false; saved.purchases[number-1]++; persist(); render(number);
+      }
+      resolve({succeeded:true,supplier:'Sanmar'});
+    },40);
+  });
+}};
+window.angular = {element:node=>({
+  scope(){
+    const inventory=node.closest?.('[order-inventory]');
+    if(!inventory) return orderScope;
+    const owner=inventoryScopes[Number(inventory.dataset.designIndex)];
+    return {provider:owner.providers[0],$parent:owner};
+  },
+  isolateScope(){const inventory=node.closest?.('[order-inventory]');return inventory?inventoryScopes[Number(inventory.dataset.designIndex)]:null;},
+  injector:()=>({get:()=>inventoryService})
+})};
 function records(number) {
   const vendor = number === 1 ? 'S&S Activewear' : 'Sanmar';
   const row = saved.purchases[number - 1] ? grid
@@ -44,9 +84,11 @@ function render(number) {
   const design = document.getElementById(`design-${number}`);
   design.innerHTML = `<h2>Items on this design</h2><p>PC54 Cotton T-Shirt - Alpha Stock</p>
     <section><h2>Order Goods from Vendor${number === 1 ? ': Manual Order' : ': Sanmar / S&S Activewear'}</h2>
-      ${saved.pending[number - 1] ? '<button class="order-goods">Order Goods</button>' : ''}${records(number)}</section>`;
+      <table><tr ng-repeat="provider in providers"><th>${number===1?'Manual Order':'Sanmar / S&S Activewear'}</th><td>
+      ${saved.pending[number - 1] ? '<button class="order-goods" ng-click="orderGoods(provider);">Order Goods</button>' : ''}</td></tr></table>${records(number)}</section>`;
   const button = design.querySelector('.order-goods');
   if (button) button.onclick = () => {
+    saved.legacyClicks++;
     saved.clicks.push(number);
     saved.pending[number - 1] = false;
     saved.purchases[number - 1] += 1;
@@ -54,7 +96,13 @@ function render(number) {
     render(number);
   };
 }
-window.addSizeToDesign = (number) => { saved.pending[number - 1] = true; persist(); render(number); };
+window.addSizeToDesign = (number) => {
+  saved.pending[number - 1] = true; saved.quantities[number - 1]++;
+  resource.designs[number - 1].designItems[0].quantity++;
+  resource.designs[number - 1].designItems[0].sizes[0].quantity++;
+  inventoryScopes[number - 1].providers[0].allStockOrdered=false;
+  persist(); render(number);
+};
 window.stockFixtureState = () => saved;
 for (let number = 1; number <= 4; number++) {
   const button = document.createElement('button');
@@ -68,7 +116,10 @@ for (let number = 1; number <= 4; number++) {
   document.getElementById('main-header-design-tabs').append(button);
   const design = document.createElement('section');
   design.id = `design-${number}`;
-  design.className = `design${number === 1 ? ' active' : ''}`;
+  design.className = `design tab-pane${number === 1 ? ' active' : ''}`;
+  design.setAttribute('order-inventory','design');
+  design.classList.add('order-inventory');
+  design.dataset.designIndex=number-1;
   document.getElementById('designs').append(design);
   render(number);
 }

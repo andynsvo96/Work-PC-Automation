@@ -11537,7 +11537,7 @@ class CrmAddressServerTests(unittest.TestCase):
 
     @mock.patch.object(crm_order_goods, "_click_with_fallback")
     @mock.patch.object(crm_order_goods, "_order_goods_for_open_order")
-    def test_order_goods_continues_when_multi_tab_has_manual_order_tab(self, mock_order_goods, _mock_click):
+    def test_push_back_stock_feedback_continues_when_multi_tab_has_manual_order_tab(self, mock_order_goods, _mock_click):
         driver = mock.Mock()
         tab_element_1 = mock.Mock()
         tab_element_2 = mock.Mock()
@@ -11563,7 +11563,7 @@ class CrmAddressServerTests(unittest.TestCase):
             {"order_id": "4427569", "success": True, "outcome": "order_goods_clicked", "message": "clicked", "manual_review_required": False},
         ]
 
-        results = crm_order_goods._order_goods_for_all_stock_tabs(driver, "4427569", dry_run=False)
+        results = crm_order_goods._order_goods_for_all_stock_tabs(driver, "4427569", dry_run=False, wait_for_auto_order_result=True)
 
         self.assertEqual(len(results), 2)
         self.assertTrue(results[0]["success"])

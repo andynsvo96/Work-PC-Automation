@@ -44,6 +44,62 @@ Every worker follows the same local automation pattern:
 
 Do not build a new automation as a single giant script if it needs to run from the UI. Use the existing worker plus server wrapper pattern.
 
+## Order Goods native batch
+
+Normal Order Goods runs on orders with multiple product tabs use
+`workers/crm_order_goods_native.py` and its Selenium JavaScript adapter. The
+adapter loads the extension's `order-all-batch.js`, sharing stock fingerprints,
+concurrent submission, response timeouts, and browser-session receipts. The
+extension does not have to be installed or enabled in the worker profile.
+
+After the existing targeted stock-unlock checks, the worker identifies each
+active design by its saved ID and reads its native inventory scope. It starts
+the same `orders/inventory/InventorySrv.orderGoodsSupplynet(design.id)` action
+used by Order All for every eligible SanMar / S&S Activewear control before
+waiting for any response. Inactive product panes are included without switching
+tabs. Removed designs, hidden/disabled/locked controls, Manual Order, and Add Box
+are excluded. A stock-order request already in progress stops another batch.
+The order-wide Ordered banner does not exclude remaining stock on other tabs.
+
+Before the first request, the worker atomically saves all submission intents
+under `runtime/state/order_goods_native/<order-id>.json`. A per-order `.lock`
+prevents overlapping native batches. Browser-session receipts also retain
+individual confirmations while requests finish. After the batch settles, one
+refresh verifies the same design IDs and stock quantities, saved stock records
+or native ordered flags, and the absence of another eligible control. Both a
+successful native response with a supplier and this persistence check are
+required for success. Results retain each tab's number, label, and saved design
+ID. Successful tabs stay successful if another tab fails.
+
+A later run skips confirmed stock with unchanged contents. Newly added sizes
+or quantities can be ordered when CRM exposes an eligible control. Explicit
+unsuccessful responses without a supplier can be attempted again by a later
+run; the batch never automatically retries a request. A lost response,
+interrupted submission, unreadable receipt, or confirmed request without saved
+stock verification stops for review before another stock unlock, because CRM
+can order stock during unlocking. Confirmed purchases remain protected even
+after temporary worker profiles are removed or an order is reduced to one tab.
+Keep these receipts and resolve ambiguous entries only after reviewing CRM's
+actual stock records. An interrupted worker can leave a `.lock`; verify that
+the worker has stopped and inspect its receipt and CRM stock before resolving
+that lock. Clearing Stock Tools history does not clear purchase receipts.
+
+Dry runs continue inspecting without submitting stock or reserving purchases.
+Single-tab orders without native batch history retain their existing button
+flow. Push Back retains its sequential native-button feedback and automated-note
+classification, which it uses to decide whether to change dates or bypass
+shipping. Existing queue serialization, order targeting, worker subprocesses,
+and result handoff remain in use.
+
+The next queued worker loads this change. No app restart, extension reload, or
+page refresh is required. Offline checks use isolated profiles and local
+fixtures only:
+
+```powershell
+python -m unittest discover -s tests -p 'test_crm_order_goods*.py'
+node --test tests/test_order_all_batch.mjs
+```
+
 ## Required Local Setup On A New Computer
 
 1. Install dependencies:
