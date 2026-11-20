@@ -26,6 +26,14 @@
   .crm-all-tabs-field { display: block; font-weight: normal; margin: 12px 0; }
   .crm-all-tabs-field > span { display: block; font-weight: 600; margin-bottom: 5px; }
   .crm-all-tabs-field select { width: 100%; text-overflow: ellipsis; }
+  .crm-all-tabs-panel h4.crm-all-tabs-section-title { margin-top: 22px; }
+  .crm-all-tabs-stock-cards { grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); }
+  .crm-all-tabs-stock-card > h4 { padding-right: 0; }
+  .crm-all-tabs-native-stock .crm-all-tabs-field { position: relative; }
+  .crm-all-tabs-native-stock .form-control { width: 100%; }
+  .crm-all-tabs-native-stock .dropdown-menu { max-width: 100%; max-height: 280px; overflow: auto; z-index: 1050; }
+  .crm-all-tabs-stock-warning { margin: 10px 0 0; line-height: 1.5; overflow-wrap: anywhere; }
+  .crm-all-tabs-stock-warning:empty { display: none; }
   .crm-all-tabs-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
   .crm-all-tabs-status { line-height: 1.5; margin-bottom: 14px; }
   .crm-all-tabs-error { color: #b91c1c !important; }

@@ -209,3 +209,160 @@ var CRMAllTabsModel = (() => {
 
   return { clean, key, choices, createSession, assertFresh, plan, apply };
 })();
+
+// Native catalog colors carry their own available size codes. Group by catalog
+// identities, count distinct design tabs, and always retain each original item.
+var CRMAllTabsStock = (() => {
+  "use strict";
+  const { clean, key } = CRMAllTabsModel;
+  const active = values => (values || []).filter(value => value && key(value.crudAction) !== "d");
+  const productId = item => String(item.catalogItemId || item.itemId || "");
+  const colorId = item => String(item.catalogItemColorId || item.itemColorId || "");
+  const colorIdentity = color => String(color?.type?.[0]?.catalogItemColorId || "");
+  const fingerprint = value => JSON.stringify(value, (name, field) => name === "$$hashKey" ? undefined : field);
+  const sizeCode = size => clean(size.sizeCode || size.code);
+  const number = value => Number(value || 0);
+  const price = value => value === "" || value == null ? "" : Number(value);
+
+  function createSession(resource) {
+    const groups = new Map();
+    const session = { resource, designs: (resource.designs || []).slice(), records: [], groups: [] };
+    session.designs.forEach((design, index) => {
+      if (!design || key(design.crudAction) === "d") return;
+      const record = { design, tab: index + 1, items: (design.designItems || []).slice() };
+      session.records.push(record);
+      record.items.forEach((item, itemIndex) => {
+        if (!item || key(item.crudAction) === "d" || number(item.isStyleSub) || /^style[ _]sub(?:\b|_)/i.test(clean(item.style)) ||
+            !productId(item) || !colorId(item) || !clean(item.style) || !clean(item.color)) return;
+        const identity = JSON.stringify([productId(item), colorId(item)]);
+        if (!groups.has(identity)) groups.set(identity, { id: `s${groups.size}`, identity,
+          productId: productId(item), colorId: colorId(item), style: clean(item.style), color: clean(item.color), members: [] });
+        groups.get(identity).members.push({ record, item, itemIndex, fingerprint: fingerprint(item) });
+      });
+    });
+    session.groups = [...groups.values()].filter(group => new Set(group.members.map(member => member.record.tab)).size > 1);
+    return session;
+  }
+
+  function assertFresh(session, resource = session.resource) {
+    const fail = () => { throw new Error("The order's tabs or stock changed. Discard pending changes and read the tabs again."); };
+    if (resource !== session.resource || resource.designs.length !== session.designs.length ||
+        resource.designs.some((design, index) => design !== session.designs[index]) ||
+        active(resource.designs).length !== session.records.length) fail();
+    for (const { design, items } of session.records) {
+      if (key(design.crudAction) === "d" || (design.designItems || []).length !== items.length ||
+          items.some((item, index) => item !== design.designItems[index])) fail();
+    }
+    // Also catch a singleton being changed to/from one of the shared products.
+    if (fingerprint(createSession(resource).groups.map(group => [group.identity, group.members.map(member =>
+      [member.record.tab, member.itemIndex])])) !== fingerprint(session.groups.map(group => [group.identity,
+      group.members.map(member => [member.record.tab, member.itemIndex])]))) fail();
+    for (const group of session.groups) for (const member of group.members) {
+      if (fingerprint(member.item) !== member.fingerprint) fail();
+    }
+  }
+
+  function sizesInUse(item) {
+    const sizes = active(item.sizes).filter(size => number(size.quantity) !== 0);
+    const codes = sizes.map(sizeCode);
+    if (codes.some(code => !code) || new Set(codes).size !== codes.length ||
+        sizes.some(size => !Number.isFinite(number(size.quantity)) || number(size.quantity) < 0)) {
+      throw new Error("A stock row has ambiguous sizes or quantities. Review that tab before using All Tabs.");
+    }
+    return sizes;
+  }
+
+  function sizeState(item) {
+    return fingerprint({ id: item.id, split: String(item.splitIntoSizes ?? "1"),
+      quantity: number(item.quantity), price: price(item.pricePerPiece),
+      sizes: sizesInUse(item).map(size => ({ code: sizeCode(size), quantity: number(size.quantity),
+        price: price(size.pricePerPiece), names: size.namesList })).sort((a, b) => a.code.localeCompare(b.code)) });
+  }
+
+  function plan(session, drafts, resource = session.resource) {
+    const edits = [];
+    if (!Object.values(drafts).some(draft => draft.touched)) return { session, edits, affectedTabs: [] };
+    assertFresh(session, resource);
+    for (const group of session.groups) {
+      const draft = drafts[group.id];
+      if (!draft?.touched) continue;
+      const form = draft.form;
+      const catalog = form?.selectedCatalogItem;
+      const color = form?.selectedColor;
+      if (draft.error) throw new Error(draft.error);
+      if (!catalog || key(form.selectedCatalogItemStyle) !== key(catalog.style)) {
+        throw new Error(`Choose a product from CRM's suggestions for ${group.style} ${group.color}.`);
+      }
+      if (/^style[ _]sub(?:\b|_)/i.test(catalog.style) || number(catalog.isStyleSub)) {
+        throw new Error("Choose a catalog product. Style Sub is not supported by All Tabs stock editing.");
+      }
+      if (draft.loading || !colorIdentity(color) || !Array.isArray(color.sizes) ||
+          !form.colors.includes(color) || String(color.catalogitem_id) !== String(catalog.id)) {
+        throw new Error(`Waiting for CRM's colors and sizes for ${clean(catalog.style)}. Choose an available color.`);
+      }
+      const missing = new Map();
+      for (const member of group.members) for (const size of sizesInUse(member.item)) {
+        const code = sizeCode(size);
+        if (color.sizes.filter(available => clean(available.code) === code).length === 1) continue;
+        if (!missing.has(code)) missing.set(code, new Set());
+        missing.get(code).add(member.record.tab);
+      }
+      if (missing.size) throw new Error(`${clean(catalog.style)} ${clean(color.name)} is missing sizes: ${[...missing]
+        .map(([code, tabs]) => `${code} (tabs ${[...tabs].join(", ")})`).join("; ")}. Choose a product/color with every size in use.`);
+      if (String(catalog.id) === group.productId && colorIdentity(color) === group.colorId) continue;
+      for (const member of group.members) edits.push({ member, catalog, color, colors: form.colors, before: sizeState(member.item) });
+    }
+    return { session, edits, affectedTabs: [...new Set(edits.map(edit => edit.member.record.tab))].sort((a, b) => a - b) };
+  }
+
+  // A failed native stock/print batch restores the existing resource graph,
+  // including original arrays, nested size objects, and Angular repeat keys.
+  function checkpoint(roots) {
+    const saved = new Map();
+    function visit(value) {
+      if (!value || typeof value !== "object" || saved.has(value)) return;
+      const entries = Object.entries(value);
+      saved.set(value, { entries, length: Array.isArray(value) ? value.length : null });
+      for (const [, child] of entries) visit(child);
+    }
+    roots.forEach(visit);
+    return () => {
+      for (const [value, { entries, length }] of saved) {
+        for (const name of Object.keys(value)) delete value[name];
+        if (length !== null) value.length = length;
+        for (const [name, field] of entries) value[name] = field;
+      }
+    };
+  }
+
+  function apply(planned, adapter, applyAreas = () => {}) {
+    const { session, edits } = planned;
+    assertFresh(session);
+    const forms = edits.map(edit => adapter.formFor(edit.member));
+    if (forms.some((form, index) => !form || form.item !== edits[index].member.item) || typeof adapter.changeItem !== "function") {
+      throw new Error("CRM's native stock controls are unavailable. No changes were applied.");
+    }
+    const restore = checkpoint([session.resource, ...forms]);
+    try {
+      edits.forEach((edit, index) => {
+        const form = forms[index];
+        form.selectedCatalogItem = edit.catalog;
+        form.selectedCatalogItemStyle = edit.catalog.style;
+        form.selectedColor = edit.color;
+        form.colors = edit.colors;
+        adapter.changeItem(form);
+        if (form.item !== edit.member.item || productId(form.item) !== String(edit.catalog.id) ||
+            colorId(form.item) !== colorIdentity(edit.color) || key(form.item.style) !== key(edit.catalog.style) ||
+            key(form.item.color) !== key(edit.color.name)) throw new Error("CRM did not accept a stock change.");
+        if (sizeState(form.item) !== edit.before) throw new Error("CRM changed a stock row's sizes, quantities, names, or prices.");
+      });
+      const areas = applyAreas();
+      return { changedItems: edits.length, affectedTabs: planned.affectedTabs, areas };
+    } catch (error) {
+      restore();
+      throw new Error(`${error.message} The batch was rolled back; review the order before saving.`);
+    }
+  }
+
+  return { createSession, assertFresh, sizesInUse, plan, apply, colorIdentity, productId, colorId };
+})();

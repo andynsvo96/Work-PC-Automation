@@ -5,6 +5,8 @@
   if (window.__crmAllTabsInstalled) return;
   window.__crmAllTabsInstalled = true;
   const model = CRMAllTabsModel;
+  const stock = CRMAllTabsStock;
+  let stockScopes = [];
   let context = null;
   let state = null;
   let queued = false;
@@ -84,7 +86,148 @@
   }
 
   function pending() {
-    return Boolean(state && (state.additions.length || Object.values(state.changes).some(change => change.location || change.method || change.remove)));
+    return Boolean(state && (state.additions.length || Object.values(state.changes).some(change => change.location || change.method || change.remove) ||
+      Object.values(state.stockDrafts).some(draft => draft.touched)));
+  }
+
+  function disposeStockControls() {
+    for (const scope of stockScopes) scope.$destroy();
+    stockScopes = [];
+  }
+
+  function nativeStock(member) {
+    for (const block of context.details.querySelectorAll('[ng-repeat="($itemIndex, item) in design.designItems"]')) {
+      const scope = window.angular.element(block).scope();
+      if (scope?.item === member.item && scope.formItem?.item === member.item) return {
+        scope, form: scope.formItem,
+        input: block.querySelector('[ng-model="formItem.selectedCatalogItemStyle"]'),
+        color: block.querySelector('[ng-model="formItem.selectedColor"]')
+      };
+    }
+    throw new Error(`CRM's native stock controls on tab ${member.record.tab} are not ready. Reopen All Tabs after they load.`);
+  }
+
+  function stockForm(member) {
+    const { form, input, color } = nativeStock(member);
+    if (!input || !color || input.disabled || input.readOnly || color.disabled) {
+      throw new Error(`CRM disabled stock editing on tab ${member.record.tab}. Review that tab before changing shared stock.`);
+    }
+    if (String(form.selectedCatalogItem?.id) !== stock.productId(member.item) ||
+        stock.colorIdentity(form.selectedColor) !== stock.colorId(member.item) ||
+        model.key(form.selectedCatalogItemStyle) !== model.key(member.item.style)) {
+      throw new Error(`Apply or discard the native product selection on tab ${member.record.tab} before changing shared stock.`);
+    }
+    return form;
+  }
+
+  function renderStock(panel) {
+    panel.append(element("h4", "crm-all-tabs-section-title", "Shared stock"));
+    panel.append(element("p", "crm-all-tabs-help", "Product/color combinations on two or more tabs. Each tab keeps its sizes, quantities, and prices."));
+    const cards = element("div", "crm-all-tabs-cards crm-all-tabs-stock-cards");
+    for (const group of state.stockSession.groups) {
+      const card = element("section", "crm-all-tabs-card crm-all-tabs-stock-card");
+      card.dataset.stockGroup = group.id;
+      card.append(element("h4", "", `${group.style} — ${group.color}`));
+      const tabs = [...new Set(group.members.map(member => member.record.tab))];
+      card.append(element("p", "crm-all-tabs-affected", `Affects tabs ${tabs.join(", ")}`));
+      const warning = element("p", "crm-all-tabs-stock-warning crm-all-tabs-error");
+      warning.dataset.stockWarning = group.id;
+      warning.setAttribute("role", "status");
+      try {
+        const native = nativeStock(group.members[0]);
+        if (!native.input || !native.color || !native.form.selectedCatalogItem || !native.form.selectedColor) {
+          throw new Error("CRM's product picker is still loading. Reopen All Tabs after it loads.");
+        }
+        const loadCatalog = scopeFunction(native.scope, "watchCatalogItemChange");
+        const watchColor = scopeFunction(native.scope, "watchCatalogItemColorChange");
+        if (!loadCatalog || !watchColor) throw new Error("CRM's native product loader is unavailable. Reopen All Tabs after it loads.");
+        const draft = state.stockDrafts[group.id] ||= { form: window.angular.copy(stockForm(group.members[0])), touched: false };
+        const scope = native.scope.$new();
+        stockScopes.push(scope);
+        scope.formItem = draft.form;
+        scope.crmAllTabsBusy = busy;
+        scope.crmAllTabsLoading = () => Boolean(draft.loading);
+        scope.crmAllTabsInput = () => { draft.touched = true; draft.error = ""; preview(); };
+        scope.crmAllTabsSelect = catalog => {
+          draft.touched = true;
+          draft.error = "";
+          draft.loading = true;
+          draft.form.selectedCatalogItemStyle = catalog.style;
+          draft.form.selectedCatalogItem = catalog;
+          draft.form.selectedColor = null;
+          draft.form.colors = [];
+          // Use the native loader without its shared per-real-tab autocomplete
+          // cache. This draft never points at an item in the order resource.
+          window.clearTimeout(draft.timer);
+          try { loadCatalog(draft.form); }
+          catch (_) {
+            draft.loading = false;
+            draft.error = `CRM could not load colors and sizes for ${model.clean(catalog.style)}. Select the product again.`;
+            preview();
+            return;
+          }
+          draft.timer = window.setTimeout(() => {
+            if (draft.loading) {
+              draft.loading = false;
+              draft.error = `CRM could not load colors and sizes for ${model.clean(catalog.style)}. Select the product again.`;
+              preview();
+            }
+          }, 15000);
+          preview();
+        };
+        scope.crmAllTabsColor = () => {
+          draft.touched = true;
+          draft.error = "";
+          watchColor(draft.form);
+          preview();
+        };
+        const controls = element("div", "crm-all-tabs-native-stock");
+        for (const [label, template, suffix] of [["Product", native.input, "product"], ["Color", native.color, "color"]]) {
+          const field = element("label", "crm-all-tabs-field");
+          const control = template.cloneNode(false);
+          control.id = `crm-all-tabs-stock-${suffix}-${group.id}`;
+          field.htmlFor = control.id;
+          field.append(element("span", "", label));
+          control.removeAttribute("ng-init");
+          control.removeAttribute("name");
+          control.removeAttribute("disabled");
+          control.removeAttribute("style");
+          const nativeDisabled = control.getAttribute("ng-disabled") || "false";
+          control.setAttribute("ng-disabled", `(${nativeDisabled}) || crmAllTabsBusy()${suffix === "color" ? " || crmAllTabsLoading()" : ""}`);
+          if (suffix === "product") {
+            control.setAttribute("typeahead-on-select", "crmAllTabsSelect($item)");
+            control.setAttribute("ng-change", "crmAllTabsInput()");
+          } else control.setAttribute("ng-change", "crmAllTabsColor()");
+          field.append(control);
+          controls.append(field);
+        }
+        card.append(controls);
+        const injector = window.angular.element(context.details).injector();
+        runInAngular(() => injector.get("$compile")(controls)(scope));
+        scope.$watch(() => [draft.form.selectedCatalogItemStyle, draft.form.selectedCatalogItem?.id,
+          stock.colorIdentity(draft.form.selectedColor), draft.form.colors.length,
+          draft.form.selectedColor?.sizes?.length].join("|"), () => {
+          if (draft.form.colors.includes(draft.form.selectedColor) && Array.isArray(draft.form.selectedColor?.sizes)) {
+            draft.loading = false;
+            window.clearTimeout(draft.timer);
+          }
+          preview();
+        });
+        const reset = button("Keep original stock", "btn btn-default crm-all-tabs-stock-reset", () => {
+          window.clearTimeout(draft.timer);
+          delete state.stockDrafts[group.id];
+          render();
+        });
+        card.append(reset);
+      } catch (error) {
+        card.querySelector(".crm-all-tabs-native-stock")?.remove();
+        warning.textContent = error.message;
+      }
+      card.append(warning);
+      cards.append(card);
+    }
+    if (!state.stockSession.groups.length) cards.append(element("p", "crm-all-tabs-help", "No catalog product/color appears on more than one tab."));
+    panel.append(cards);
   }
 
   function selectField(card, label, id, values, selected, placeholder, onChange) {
@@ -116,20 +259,26 @@
   }
 
   function freshState() {
+    disposeStockControls();
+    for (const draft of Object.values(state?.stockDrafts || {})) window.clearTimeout(draft.timer);
     state = { session: model.createSession(context.resource, describeArea, describeMethod),
+      stockSession: stock.createSession(context.resource), stockDrafts: {},
       changes: {}, additions: [], open: state?.open || false, busy: busy() };
   }
 
   function render() {
+    disposeStockControls();
     const panel = document.getElementById("crm-all-tabs-panel");
     panel.replaceChildren();
     panel.append(element("h3", "", "All Tabs"));
-    panel.append(element("p", "crm-all-tabs-help", `Print areas across ${state.session.designs.length} tabs. Choose changes, apply them, then use Save Order. Notes and artwork stay with their own tabs.`));
+    panel.append(element("p", "crm-all-tabs-help", `Edit shared stock and print areas across ${state.session.designs.length} tabs. Choose changes, apply them, then use Save Order. Notes and artwork stay with their own tabs.`));
     const status = element("p", "crm-all-tabs-status");
     status.id = "crm-all-tabs-status";
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
     panel.append(status);
+    renderStock(panel);
+    panel.append(element("h4", "crm-all-tabs-section-title", "Print areas"));
     const cards = element("div", "crm-all-tabs-cards");
     const catalog = statics(context.scope);
     const templates = model.choices(catalog.printAreaTemplates, true);
@@ -208,9 +357,21 @@
     const apply = document.getElementById("crm-all-tabs-apply");
     if (!apply) return;
     let planned;
+    let stockPlan;
     let error;
     try { planned = model.plan(state.session, state.changes, state.additions, statics(context.scope), context.resource); }
     catch (failure) { error = failure; }
+    try { stockPlan = stock.plan(state.stockSession, state.stockDrafts, context.resource); }
+    catch (failure) { error ||= failure; }
+    for (const group of state.stockSession.groups) {
+      const draft = state.stockDrafts[group.id];
+      const warning = document.querySelector(`[data-stock-warning="${group.id}"]`);
+      if (!draft || !warning) continue;
+      try {
+        stock.plan(state.stockSession, { [group.id]: draft }, context.resource);
+        warning.textContent = "";
+      } catch (failure) { warning.textContent = failure.message; }
+    }
     // Even an incomplete new row shows its scope once its location is chosen.
     for (const addition of state.additions) {
       const label = document.querySelector(`[data-addition-targets="${addition.id}"]`);
@@ -226,16 +387,16 @@
       label.textContent = tabs ? (tabs.length ? `Will add to tabs ${tabs.join(", ")}; existing areas are kept.` : "Already present on every tab; no areas will be added.")
         : "Choose a location to see affected tabs.";
     }
-    const hasWork = Boolean(planned && (planned.edits.length || planned.removes.length || planned.creates.length));
+    const hasWork = Boolean(planned && (planned.edits.length || planned.removes.length || planned.creates.length || stockPlan?.edits.length));
     apply.disabled = Boolean(error || !hasWork || busy());
     document.getElementById("crm-all-tabs-discard").disabled = !pending();
-    for (const control of document.querySelectorAll("#crm-all-tabs-panel select, #crm-all-tabs-add, .crm-all-tabs-remove")) {
+    for (const control of document.querySelectorAll("#crm-all-tabs-panel select:not([ng-model]), #crm-all-tabs-add, .crm-all-tabs-remove, .crm-all-tabs-stock-reset")) {
       control.disabled = busy() || (control.tagName === "SELECT" && control.closest("[data-pending-removal]")?.dataset.pendingRemoval === "true");
     }
     if (error) setStatus(error.message, true);
-    else if (hasWork) setStatus(`Ready: ${planned.edits.length} existing areas to change, ${planned.removes.length} areas to remove, ${planned.creates.length} areas to add. Affects tabs ${planned.affectedTabs.join(", ")}.`);
+    else if (hasWork) setStatus(`Ready: ${stockPlan.edits.length} stock rows to change, ${planned.edits.length} existing areas to change, ${planned.removes.length} areas to remove, ${planned.creates.length} areas to add. Affects tabs ${[...new Set([...planned.affectedTabs, ...stockPlan.affectedTabs])].sort((a, b) => a - b).join(", ")}.`);
     else if (pending()) setStatus("No changes are needed. Discard pending changes to return to the current areas.");
-    else setStatus("Choose a location or method, or remove an area across its listed tabs.");
+    else setStatus("Choose a shared product/color, change a print area or method, or remove an area across its listed tabs.");
   }
 
   function runInAngular(fn) {
@@ -255,18 +416,25 @@
       // Re-read immediately before applying, even if the preview was valid.
       context.resource = context.scope.order.getResource();
       const planned = model.plan(state.session, state.changes, state.additions, statics(context.scope), context.resource);
-      if (!planned.edits.length && !planned.removes.length && !planned.creates.length) return;
-      const result = runInAngular(() => model.apply(planned, {
+      const stockPlan = stock.plan(state.stockSession, state.stockDrafts, context.resource);
+      if (!planned.edits.length && !planned.removes.length && !planned.creates.length && !stockPlan.edits.length) return;
+      const applyAreas = () => model.apply(planned, {
         updateAreaTemplate: scopeFunction(context.scope, "updateAreaTemplate"),
         updateAreaMethod: scopeFunction(context.scope, "updateAreaMethod"),
         addPrintArea: scopeFunction(context.scope, "addPrintArea"),
         removePrintArea: scopeFunction(context.scope, "removePrintArea"),
         copy: value => window.angular.copy(value),
         equals: window.angular.equals
-      }, context.resource));
+      }, context.resource);
+      const result = runInAngular(() => stockPlan.edits.length ? stock.apply(stockPlan, {
+        formFor: stockForm,
+        changeItem: scopeFunction(context.scope, "changeDesignItem")
+      }, applyAreas) : { changedItems: 0, areas: applyAreas() });
       freshState();
       render();
-      setStatus(`Applied ${result.changedAreas} existing-area changes, removed ${result.removedAreas} areas, and added ${result.addedAreas} areas on tabs ${result.affectedTabs.join(", ")}. Review the tabs, then Save Order to keep them.`);
+      const areas = result.areas;
+      const tabs = [...new Set([...areas.affectedTabs, ...stockPlan.affectedTabs])].sort((a, b) => a - b);
+      setStatus(`Applied ${result.changedItems} stock changes, ${areas.changedAreas} existing-area changes, removed ${areas.removedAreas} areas, and added ${areas.addedAreas} areas on tabs ${tabs.join(", ")}. Review the tabs, then Save Order to keep them.`);
     } catch (error) {
       setStatus(error.message, true);
       document.getElementById("crm-all-tabs-apply").disabled = true;
@@ -301,6 +469,8 @@
   }
 
   function clear() {
+    disposeStockControls();
+    for (const draft of Object.values(state?.stockDrafts || {})) window.clearTimeout(draft.timer);
     setOpen(false);
     for (const id of ["crm-all-tabs-header", "crm-all-tabs-detail", "crm-all-tabs-panel"]) document.getElementById(id)?.remove();
     context = null;

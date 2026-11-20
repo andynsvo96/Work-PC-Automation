@@ -1,6 +1,6 @@
 # CRM Order Assistant
 
-Private Manifest V3 extension for the Automation project's CRM pages. It provides local order-page dark mode, bulk print-area editing, queued single-order tools, list selection and rush highlighting, reliable Salesforce tab reuse, and an automatic Orders email sender default. List controls select orders and open tabs; queued tools remain scoped to individual order pages.
+Private Manifest V3 extension for the Automation project's CRM pages. It provides local order-page dark mode, bulk stock and print-area editing, queued single-order tools, list selection and rush highlighting, reliable Salesforce tab reuse, and an automatic Orders email sender default. List controls select orders and open tabs; queued tools remain scoped to individual order pages.
 
 ## Install locally
 
@@ -14,6 +14,62 @@ The preference is stored locally in that Chrome profile. Removing or reloading t
 After extension updates, reload the extension at `chrome://extensions` and refresh open CRM order/list and Salesforce pages. Updates that also change the local Automation app require an app restart as noted below.
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
+
+## All Tabs shared stock editing - 1.7.27
+
+In **Edit Order > All Tabs**, **Shared stock** lists each native catalog
+product/color combination that appears on **two or more distinct active product
+tabs in this order**. Sizes do not split a group. For example, NF1270 BLACK/WHITE
+on four tabs with L, M, M, and L produces one row affecting tabs 1, 2, 3, and 4.
+G500 on tab 1, ST350 BLACK on tabs 2 and 3, and ST350 WHITE on tab 4 produces only
+the ST350 BLACK row. Duplicate items on just one tab do not qualify. Removed tabs,
+removed items, and custom Style Sub items are excluded.
+
+Choose a product from **CRM's native autocomplete suggestions**, then a color
+from its native dropdown. Only that row's original matching items change. Each
+item keeps its own sizes in use, quantities, prices, and names; each tab keeps its
+artwork and notes. Changing only the color is supported. A replacement must be a
+native catalog product; free-text product names and Style Sub are not accepted.
+
+The replacement color's native catalog size list must include every size with a
+nonzero quantity on every affected tab. Otherwise, the row names the missing
+sizes and tab numbers, and **Apply changes** stays disabled for the entire batch,
+including pending print-area edits. Empty size options do not block a change.
+Catalog colors and sizes must finish loading before applying. A product that
+does not load within 15 seconds requires another explicit selection.
+
+Selections are staged until **Apply changes**, which calls CRM's native product
+Apply helper for each matching item and verifies the product/color and retained
+sizes, quantities, names, and prices. A native rejection or verification failure
+rolls back the combined stock/print-area batch. Resolve any pending product
+selection on a real tab first; disabled native stock controls remain blocked.
+**Keep original stock** resets one stock row;
+**Discard pending changes** resets all staged stock and print-area edits. Pending
+selections survive navigation between real tabs and All Tabs, and block Save
+Order until applied or discarded.
+
+Review the affected tabs, use CRM's **Save Order**, then refresh and confirm the
+saved product/color and each tab's size quantities. Apply changes does not save
+the order. CRM's normal Cancel discards applied, unsaved changes.
+
+Reload **CRM Order Assistant 1.7.27** at `chrome://extensions` and refresh open CRM
+order pages. **No local Automation app restart is needed.** The feature works
+independently of dark mode and requires no new extension permissions.
+
+Offline model checks:
+
+```powershell
+node --test tests/test_all_tabs.mjs tests/test_all_tabs_stock.mjs
+python -m unittest discover -s tests -p 'test_all_tabs*browser.py'
+```
+
+The native stock browser replay additionally uses local, untracked Angular 1.2,
+legacy UI Bootstrap, and native CRM product scripts under
+`runtime/debug/all_tabs_stock_vendor/` (or `ALL_TABS_STOCK_VENDOR_DIR`); see
+`tests/test_all_tabs_stock_browser.py` for the asset contract. It skips when those
+assets or a local ChromeDriver are unavailable. Catalog responses and saving are
+local fixtures; it never opens or edits a live customer order. Live CRM save
+behavior and macOS browser behavior still require verification in those environments.
 
 ## Multi-tab controls - 1.7.26
 

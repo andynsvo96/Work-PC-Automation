@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en" ng-app="ezteesCrmApp.order">
+<meta charset="utf-8">
+<title>Offline native stock editor fixture</title>
+<style>
+  body { margin: 22px; background: #f5f7fa; color: #263244; font: 14px Arial, sans-serif; }
+  #view-orders-index { max-width: 1040px; margin: auto; }
+  .btn { padding: 8px 12px; border: 1px solid #bcc8d6; border-radius: 4px; background: #fff; cursor: pointer; font: inherit; }
+  .btn-primary { background: #245888; color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  #main-header-design-tabs { margin: 20px 0; }
+  .btn-group { display: flex; gap: 4px; }
+  .nav-tabs { display: flex; list-style: none; padding: 0; border-bottom: 1px solid #cbd5e1; }
+  .nav-tabs li a { display: block; padding: 10px 15px; color: inherit; }
+  .nav-tabs li.active { background: #dce9f7; }
+  .tab-pane { display: none; background: white; padding: 18px; }
+  .tab-pane.active { display: block; }
+  .form-control { box-sizing: border-box; height: 36px; padding: 6px; border: 1px solid #a8b8cb; border-radius: 4px; font: inherit; }
+  .dropdown-menu { position: absolute; list-style: none; padding: 0; background: white; border: 1px solid #a8b8cb; }
+  .dropdown-menu a { display: block; padding: 8px; cursor: pointer; }
+  .dropdown-menu .active { background: #dce9f7; }
+  .ng-hide { display: none !important; }
+</style>
+<!-- All libraries and native CRM functions are served from ignored local
+     test assets. Catalog and persistence below are fixtures, never live CRM. -->
+<script src="/vendor/angular.js"></script>
+<script src="/vendor/ui-bootstrap.js"></script>
+<script>angular.module('ezteesCrmApp.order', ['ui.bootstrap']);</script>
+<script src="/vendor/order-design-item.js"></script>
+<script src="/vendor/native-stock-controller.js"></script>
+<main id="view-orders-index" ng-controller="StockFixture">
+  <h1>Order 1234567</h1>
+  <button type="button" class="btn btn-primary edit-btn" ng-hide="editMode" ng-click="editModeOn();">edit order</button>
+  <button type="button" class="btn btn-primary save-btn" ng-show="editMode" ng-click="saveOrder();">save order</button>
+  <button type="button" class="btn" id="cancel-edit" ng-show="editMode" ng-click="cancelEdit()">cancel</button>
+  <div id="main-header-design-tabs"><div class="btn-group">
+    <button type="button" class="btn" ng-repeat="(designIndex, design) in order.getResource().designs"
+      ng-click="onDesignTabSelect(designIndex);">{{designIndex + 1}} - QTY: {{design.designItems[0].quantity}}</button>
+  </div></div>
+  <div id="order-design-details" class="tabbable">
+    <ul class="nav nav-tabs">
+      <li class="order-form-design-tab" id="design-{{design.id}}" ng-repeat="(designIndex, design) in order.getResource().designs"
+        ng-class="{active: activeDesignIndex === designIndex}" ng-show="design.crudAction != 'd'">
+        <a ng-click="onDesignTabSelect(designIndex);">Tab {{designIndex + 1}}</a>
+      </li>
+    </ul>
+    <div class="tab-content">
+      <div class="tab-pane" ng-repeat="(designIndex, design) in order.getResource().designs" ng-class="{active: activeDesignIndex === designIndex}">
+        <div class="content" ng-form="designForm">
+          <div ng-repeat="($itemIndex, item) in design.designItems" ng-init="formItem = initItem(item)" ng-show="item.crudAction != 'd'">
+            <p>{{item.style}} {{item.color}} · Quantity {{item.quantity}}</p>
+            <input class="form-control" ng-model="formItem.selectedCatalogItemStyle"
+              typeahead="i.style as i.style for i in catalogItemTypeAhead($viewValue)"
+              typeahead-on-select="changeCatalogItemStyle($item, formItem, designIndex, $itemIndex)"
+              typeahead-template-url="../js/recordForm/views/common/typeahead-style.html" placeholder="Enter Item">
+            <select class="form-control" ng-model="formItem.selectedColor" ng-options="i as i.name for i in formItem.colors"
+              ng-change="watchCatalogItemColorChange(formItem);"></select>
+            <button type="button" ng-click="changeDesignItem(formItem)">Apply native product</button>
+            <p ng-repeat="size in item.sizes" ng-show="size.crudAction != 'd'">{{size.sizeCode}}: {{size.quantity}} @ {{size.pricePerPiece}}</p>
+          </div>
+          <div ng-repeat="(areaIndex, area) in design.printAreas" ng-show="area.crudAction != 'd'">{{area.description}}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+const codes = ['S', 'M', 'L', 'XL', '2XL', '3XL'];
+const catalogs = [
+  {id: 10, style: 'NF1270'}, {id: 20, style: 'ST350'}, {id: 30, style: 'G500'}, {id: 40, style: 'LIMITED'}
+];
+function shade(catalogitem_id, id, name, available = codes) {
+  return {catalogitem_id, code: name, name, type: [{catalogItemColorId: id}],
+    sizes: available.map((code, i) => ({code, catalogItemSizeId: id * 100 + i, price: '4.00', sortOrder: i}))};
+}
+const colors = {10: [shade(10, 100, 'BLACK/WHITE'), shade(10, 101, 'NAVY/WHITE')],
+  20: [shade(20, 200, 'BLACK'), shade(20, 201, 'WHITE')], 30: [shade(30, 300, 'BLACK')],
+  40: [shade(40, 400, 'NAVY', ['S', 'M'])]};
+function makeResource(specs) {
+  return {id: '1234567', designs: specs.map((spec, i) => {
+    const catalog = catalogs.find(value => value.style === (spec.style || 'NF1270'));
+    const color = colors[catalog.id].find(value => value.name === (spec.color || colors[catalog.id][0].name));
+    return {id: String(100 + i), PO: 'Fixture-' + i, designItems: [{id: 1000 + i,
+      catalogItemId: catalog.id, catalogItemColorId: color.type[0].catalogItemColorId,
+      style: catalog.style, color: color.name, colorCode: color.code, isStyleSub: 0,
+      splitIntoSizes: '1', pricePerPiece: '43.89', quantity: spec.quantity || 1,
+      sizes: color.sizes.map((size, index) => ({id: i * 100 + index + 1, sizeCode: size.code,
+        sortOrder: index, quantity: size.code === spec.size ? (spec.quantity || 1) : 0,
+        pricePerPiece: size.code === spec.size ? '43.89' : '0.00',
+        namesList: size.code === spec.size ? [{name: 'Fixture name ' + i}] : []}))}],
+      printAreas: [{id: 2000 + i, description: 'Front', printMethodDescription: 'HD Digital',
+        notes: [{text: 'Tab-specific note ' + i}], designFiles: [{id: 'art-' + i}]}]};
+  })};
+}
+window.fixtureDefault = [{size: 'L'}, {size: 'M'}, {size: 'M'}, {size: 'L'}];
+window.resource = JSON.parse(localStorage.getItem('all-tabs-stock-fixture') || 'null') || makeResource(fixtureDefault);
+window.saveCount = 0;
+window.nativeChangeCalls = 0;
+const module = angular.module('ezteesCrmApp.order');
+module.value('StaticsService', {});
+module.factory('catalog/ItemsSrv', function($q, $timeout) {
+  return {getItemColors(item) {
+    const result = angular.copy(colors[item.catalogItemId || item.id] || []);
+    return window.catalogDelay ? $timeout(() => result, window.catalogDelay) : $q.when(result);
+  }};
+});
+module.run(function($templateCache) {
+  $templateCache.put('../js/recordForm/views/common/typeahead-style.html', '<a>{{match.model.style}}</a>');
+});
+module.controller('StockFixture', function($scope, $q, $filter, $injector) {
+  window.orderScope = $scope;
+  const Items = $injector.get('catalog/ItemsSrv');
+  const NativeItem = $injector.get('/order/services/OrderDesignItem');
+  installNativeStockControls($scope, Items, NativeItem, $filter,
+    {autocompleteCatalogItems: search => $q.when(catalogs.filter(value => value.style.toLowerCase().includes(search.toLowerCase())))});
+  const nativeChange = $scope.changeDesignItem;
+  $scope.changeDesignItem = form => {
+    nativeChangeCalls++;
+    nativeChange(form);
+    if (window.failNativeAt === nativeChangeCalls) throw new Error('Fixture native stock failure');
+  };
+  $scope.getQuotes = () => {};
+  $scope.order = {getResource: () => resource};
+  $scope.STATICS = {printAreaTemplates: ['Front', 'Back'].map((description, i) => ({id: i + 1, description, active: '1'})),
+    printMethods: [{id: 1, description: 'HD Digital'}]};
+  $scope.editMode = false;
+  $scope.activeDesignIndex = 1;
+  $scope.isGettingShippingMethods = () => false;
+  $scope.onDesignTabSelect = index => { $scope.activeDesignIndex = index; };
+  $scope.initItem = item => {
+    const shades = angular.copy(colors[item.catalogItemId]);
+    return {item, originalItem: angular.copy(item), selectedCatalogItem: catalogs.find(value => value.id === item.catalogItemId),
+      selectedCatalogItemStyle: item.style, colors: shades, selectedColor: shades.find(value => value.name === item.color), loading: {}};
+  };
+  $scope.editModeOn = () => { $scope.editMode = true; };
+  $scope.saveOrder = () => {
+    saveCount++;
+    resource.designs.forEach(design => design.designItems.forEach(item => { item.sizes = item.sizes.filter(size => size.crudAction !== 'd'); }));
+    localStorage.setItem('all-tabs-stock-fixture', JSON.stringify(resource));
+    $scope.editMode = false;
+  };
+  $scope.cancelEdit = () => { resource = JSON.parse(localStorage.getItem('all-tabs-stock-fixture')); $scope.editMode = false; };
+  $scope.updateAreaTemplate = (area, template) => {
+    area.description = template.description;
+    area.printAreaTemplateId = template.id;
+    if (window.failArea) throw new Error('Fixture native print failure');
+  };
+  $scope.updateAreaMethod = (area, method) => { area.printMethodDescription = method.description; area.printMethodId = method.id; };
+  $scope.addPrintArea = design => { design.printAreas.push({notes: [], designFiles: [], crudAction: 'c'}); };
+  $scope.removePrintArea = area => { area.crudAction = 'd'; };
+  window.fixtureReset = specs => $scope.$apply(() => {
+    resource = makeResource(specs || fixtureDefault);
+    localStorage.setItem('all-tabs-stock-fixture', JSON.stringify(resource));
+    $scope.editMode = false;
+    $scope.activeDesignIndex = 1;
+    window.nativeChangeCalls = 0;
+    window.failNativeAt = 0;
+    window.failArea = false;
+    window.catalogDelay = 0;
+  });
+});
+</script>
+</html>
