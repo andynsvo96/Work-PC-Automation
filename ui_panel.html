@@ -868,7 +868,7 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
 <dialog id='queueTaskReportDialog' style='max-width:860px;width:min(860px, calc(100vw - 32px));border:none;border-radius:14px;padding:0;'>
   <div class='card' style='margin:0'>
     <div class='row' style='justify-content:space-between;align-items:center'>
-      <h3 id='queueTaskReportDialogTitle' style='margin:0'>Automation Errors</h3>
+      <h3 id='queueTaskReportDialogTitle' style='margin:0'>Automation Report</h3>
       <button class='secondary' onclick='closeQueueTaskReportDialog()'>Close</button>
     </div>
     <div class='muted' id='queueTaskReportDialogSummary'>No report loaded.</div>
@@ -2476,7 +2476,7 @@ function openCrmProcessingRunReport(runRef = 'latest') {
   const summary = document.getElementById('crmProcessingErrorsDialogSummary');
   const body = document.getElementById('crmProcessingErrorsDialogBody');
   if (!dialog || !title || !summary || !body) return;
-  const row = crmProcessingRunForReport(runRef);
+  const row = runRef && typeof runRef === 'object' ? runRef : crmProcessingRunForReport(runRef);
   if (!row) {
     title.textContent = 'Main Automation Run Report';
     summary.textContent = 'No main automation run is available.';
@@ -2484,8 +2484,9 @@ function openCrmProcessingRunReport(runRef = 'latest') {
   } else {
     const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
     const totals = crmProcessingRunTotals(row);
-    const steps = normalizeCrmProcessingStepList(row.selected_steps, {...state, processing_filter: row.processing_filter});
     const resultMap = new Map((Array.isArray(row.step_results) ? row.step_results : []).map((result) => [String(result && result.key || ''), result]));
+    const recordedSteps = Array.isArray(row.selected_steps) && row.selected_steps.length ? row.selected_steps : [...resultMap.keys()];
+    const steps = recordedSteps.length ? normalizeCrmProcessingStepList(recordedSteps, row) : [];
     const status = row.running ? 'Running' : row.success ? 'Completed' : 'Needs attention';
     title.textContent = `Main Automation Run Report • ${crmProcessingRunId(row.timestamp)}`;
     summary.textContent = `${fmtDateTime(row.timestamp)} • ${formatCrmAddressFilterLabel(row.processing_filter)} • ${status}`;
@@ -2505,7 +2506,7 @@ function openCrmProcessingRunReport(runRef = 'latest') {
     }).join('');
     body.innerHTML = `${metrics}${row.message ? `<div class='notice' style='margin-top:12px'>${crmOrderTextHtml(row.message)}</div>` : ''}${stepReports || "<div class='muted' style='margin-top:12px'>No tool results recorded.</div>"}`;
   }
-  if (typeof dialog.showModal === 'function') dialog.showModal();
+  if (!dialog.open && typeof dialog.showModal === 'function') dialog.showModal();
 }
 
 function openCrmProcessingErrorsDialog() {
@@ -3438,8 +3439,10 @@ function renderQueue(payload) {
     const taskReport = resultContext.report && typeof resultContext.report === 'object' ? resultContext.report : {};
     const taskReportRows = Array.isArray(taskReport.order_details) ? taskReport.order_details : [];
     const isReorder = ['crm.reorder', 'crm.reorder_batch'].includes(task.task_type);
-    const viewReportLabel = isReorder ? 'View orders' : status === 'failed' ? 'View Errors' : 'View Retry Report';
-    const viewReportControl = isReorder || status === 'failed' || (taskReportRows.length > 0 && resultContext.retry_completed)
+    const hasProcessingReport = task.task_type === 'crm.processing'
+      && (status === 'completed' || (['failed', 'canceled', 'idle'].includes(status) && Array.isArray(taskReport.step_results)));
+    const viewReportLabel = isReorder ? 'View orders' : 'View Report';
+    const viewReportControl = isReorder || hasProcessingReport || status === 'failed' || (taskReportRows.length > 0 && resultContext.retry_completed)
       ? `<button class='secondary tiny' style='margin-left:8px' onclick="event.stopPropagation();openQueueTaskReport('${esc(task.id || '')}')">${esc(viewReportLabel)}</button>`
       : '';
     const draggable = status === 'queued';
@@ -3568,6 +3571,19 @@ function openQueueTaskReport(taskId) {
   }
   const context = task && task.result_context && typeof task.result_context === 'object' ? task.result_context : {};
   const report = context.report && typeof context.report === 'object' ? context.report : {};
+  if (task.task_type === 'crm.processing') {
+    const history = Array.isArray(task.run_history) ? task.run_history : [];
+    const lastRun = history[0] || {};
+    openCrmProcessingRunReport({
+      ...report,
+      timestamp: report.timestamp || lastRun.completed_at || task.completed_at || task.started_at,
+      duration_seconds: report.duration_seconds ?? lastRun.duration_seconds ?? task.duration_seconds,
+      success: report.success ?? lastRun.success ?? task.success,
+      message: report.message || lastRun.message || task.message,
+      processing_filter: report.processing_filter || queueProcessingFilterFromTask(task),
+    });
+    return;
+  }
   let allRows = Array.isArray(report.order_details) ? report.order_details : [];
   const isReorder = ['crm.reorder', 'crm.reorder_batch'].includes(task && task.task_type);
   const isRetryReport = Boolean(context.retry_completed || report.is_retry_report);
@@ -3587,7 +3603,7 @@ function openQueueTaskReport(taskId) {
   const body = document.getElementById('queueTaskReportDialogBody');
   if (!dialog || !title || !summary || !body) return;
   dialog.dataset.taskId = String(taskId || '');
-  title.innerHTML = crmOrderTextHtml(isReorder ? `${task.label || 'Reorder Stock'} — Orders` : isRetryReport ? `${task.label || 'Automation'} Retry Report` : `${task.label || 'Automation'} Errors`);
+  title.innerHTML = crmOrderTextHtml(isReorder ? `${task.label || 'Reorder Stock'} — Orders` : isRetryReport ? `${task.label || 'Automation'} Retry Report` : `${task.label || 'Automation'} Report`);
   const failureCount = allRows.filter((row) => !Boolean(row && row.success)).length;
   summary.textContent = isReorder ? String(report.message || task.message || '') : isRetryReport
     ? `${allRows.length} original order result${allRows.length === 1 ? '' : 's'} retained; ${failureCount} currently failed.`
