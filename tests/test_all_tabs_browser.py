@@ -86,7 +86,89 @@ class AllTabsBrowserTests(unittest.TestCase):
         return self.driver.find_element(By.ID, "crm-all-tabs-status").text
 
     def locations(self):
-        return self.driver.execute_script("return resource.designs.map(d => d.printAreas.map(a => a.description));")
+        return self.driver.execute_script("return resource.designs.map(d => d.printAreas.filter(a => a.crudAction !== 'd').map(a => a.description));")
+
+    def test_red_x_stages_exact_front_removal_and_undo_restores_the_pending_edit(self):
+        self.show_order([["Front", "Front-Left Chest", "Front-Right Chest"], ["Front", "Back"]])
+        self.edit()
+        self.open_all()
+        self.select("location-g0", "side left")
+        self.driver.find_element(By.ID, "crm-all-tabs-remove-g0").click()
+        self.assertIn("Remove", self.driver.find_element(By.ID, "crm-all-tabs-remove-g1").get_attribute("aria-label"))
+        self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, "[data-source-area='front']").get_attribute("data-pending-removal"), "true")
+        self.assertIn("2 areas to remove", self.status())
+        self.assertFalse(self.driver.find_element(By.ID, "crm-all-tabs-location-g0").is_enabled())
+        self.assertEqual(self.locations(), [["Front", "Front-Left Chest", "Front-Right Chest"], ["Front", "Back"]])
+        self.driver.find_element(By.ID, "crm-all-tabs-remove-g0").click()
+        self.assertEqual(Select(self.driver.find_element(By.ID, "crm-all-tabs-location-g0")).first_selected_option.get_attribute("value"), "side left")
+        self.assertTrue(self.driver.find_element(By.ID, "crm-all-tabs-location-g0").is_enabled())
+        self.driver.find_element(By.ID, "crm-all-tabs-remove-g0").click()
+        self.driver.find_element(By.ID, "crm-all-tabs-apply").click()
+        self.assertEqual(self.locations(), [["Front-Left Chest", "Front-Right Chest"], ["Back"]])
+
+    def test_removal_save_and_reload_preserve_other_areas_notes_artwork_and_prices(self):
+        self.show_order()
+        before = self.driver.execute_script("return structuredClone(resource);")
+        self.edit()
+        self.open_all()
+        self.driver.find_element(By.ID, "crm-all-tabs-remove-g0").click()
+        self.driver.find_element(By.ID, "crm-all-tabs-apply").click()
+        self.assertEqual(self.locations(), [[], ["Back"], ["Front-Left Chest"]])
+        self.driver.find_element(By.CSS_SELECTOR, ".save-btn").click()
+        self.driver.refresh()
+        self.inject()
+        self.assertEqual(self.locations(), [[], ["Back"], ["Front-Left Chest"]])
+        after = self.driver.execute_script("return resource;")
+        for i, design in enumerate(after["designs"]):
+            self.assertEqual(design["id"], before["designs"][i]["id"])
+            self.assertEqual(design["designItems"], before["designs"][i]["designItems"])
+            expected = [area for area in before["designs"][i]["printAreas"] if area["description"] != "Front"]
+            self.assertEqual(design["printAreas"], expected)
+
+    def test_removal_pending_guard_and_discard_do_not_save_or_mutate_the_order(self):
+        self.show_order()
+        self.edit()
+        self.open_all()
+        self.driver.find_element(By.ID, "crm-all-tabs-remove-g0").click()
+        self.driver.find_elements(By.CSS_SELECTOR, "#main-header-design-tabs button[ng-repeat]")[0].click()
+        self.driver.find_element(By.CSS_SELECTOR, ".save-btn").click()
+        self.assertEqual(self.driver.execute_script("return saveCount;"), 0)
+        self.assertIn("Apply or discard", self.status())
+        self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, "[data-source-area='front']").get_attribute("data-pending-removal"), "true")
+        self.driver.find_element(By.ID, "crm-all-tabs-discard").click()
+        self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, "[data-source-area='front']").get_attribute("data-pending-removal"), "false")
+        self.driver.find_element(By.CSS_SELECTOR, ".save-btn").click()
+        self.driver.refresh()
+        self.assertEqual(self.locations(), [["Front"], ["Front", "Back"], ["Front-Left Chest"]])
+
+    def test_removing_all_groups_keeps_customer_tabs_and_new_area_targets_include_removed_locations(self):
+        self.show_order()
+        self.edit()
+        self.open_all()
+        for group in ("g0", "g1", "g2"):
+            self.driver.find_element(By.ID, "crm-all-tabs-remove-" + group).click()
+        self.driver.find_element(By.ID, "crm-all-tabs-apply").click()
+        self.assertEqual(self.locations(), [[], [], []])
+        self.assertEqual(self.driver.execute_script("return [resource.designs.length, orderScope.designTabs.length];"), [3, 3])
+        self.driver.find_element(By.ID, "crm-all-tabs-add").click()
+        addition = self.driver.find_element(By.CSS_SELECTOR, "[data-addition]").get_attribute("data-addition")
+        self.select("location-" + addition, "front")
+        self.select("method-" + addition, "embroidery")
+        self.assertIn("tabs 1, 2, 3", self.driver.find_element(By.CSS_SELECTOR, "[data-addition-targets]").text)
+        self.driver.find_element(By.ID, "crm-all-tabs-apply").click()
+        self.assertEqual(self.locations(), [["Front"], ["Front"], ["Front"]])
+
+    def test_native_removal_failure_rolls_back_before_any_save(self):
+        self.show_order()
+        self.edit()
+        self.open_all()
+        self.driver.execute_script("window.originalArea = resource.designs[0].printAreas[0]; window.originalArray = resource.designs[0].printAreas; window.originalOrder = structuredClone(resource);")
+        self.driver.find_element(By.ID, "crm-all-tabs-remove-g0").click()
+        self.driver.execute_script("nativeFailure = true;")
+        self.driver.find_element(By.ID, "crm-all-tabs-apply").click()
+        self.assertIn("rolled back", self.status())
+        self.assertTrue(self.driver.execute_script("return resource.designs[0].printAreas === originalArray && resource.designs[0].printAreas[0] === originalArea && JSON.stringify(resource) === JSON.stringify(originalOrder);"))
+        self.assertEqual(self.driver.execute_script("return saveCount;"), 0)
 
     def test_fake_tabs_precede_real_tabs_and_preserve_selection_and_native_counts(self):
         self.show_order()

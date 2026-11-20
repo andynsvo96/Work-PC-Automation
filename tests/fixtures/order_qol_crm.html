@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Offline order QOL fixture</title>
+<style>
+  body { font: 14px Arial, sans-serif; margin: 24px; color: #263244; background: #f5f7fa; }
+  #view-orders-index { max-width: 1040px; margin: auto; }
+  .btn { font: inherit; padding: 8px 12px; background: white; border: 1px solid #bcc8d6; border-radius: 4px; cursor: pointer; }
+  .btn-primary { background: #245888; color: white; }
+  .btn-success { background: #267c4a; color: white; }
+  button:disabled { opacity: .5; cursor: default; }
+  .ng-hide, .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+  .btn-group { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 22px 0; }
+  .nav-tabs { display: flex; align-items: center; flex-wrap: wrap; list-style: none; padding: 0; }
+  .nav-tabs a { display: block; padding: 9px 14px; color: inherit; }
+  .nav-tabs .active { background: #e2edff; }
+  .order-inventory { padding: 14px; background: white; border: 1px solid #cbd5e1; }
+  td { padding: 7px 12px; }
+  #native-preview { padding: 25px; text-align: center; background: #e4e8ee; margin-top: 30px; }
+</style>
+<main id="view-orders-index">
+  <h1>Order 1234567</h1>
+  <button class="btn" id="invoice">Send Invoice</button>
+  <button class="btn btn-primary edit-btn" ng-click="editModeOn();">edit order</button>
+  <button class="btn save-btn" ng-click="saveOrder();">save order</button>
+  <div id="main-header-design-tabs"><div class="btn-group" role="group"></div></div>
+  <div id="order-design-details"><ul class="nav nav-tabs"></ul><div class="tab-content"></div></div>
+  <section id="native-preview">Native Design Studio Previews</section>
+</main>
+<script>
+// Image requests are replaced with local SVGs, so testing never contacts CRM or
+// the artwork site. Keep the requested URL available for checking its parameters.
+const imageSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+Object.defineProperty(HTMLImageElement.prototype, 'src', {
+  get() { return this.dataset.requestedSrc || imageSrc.get.call(this); },
+  set(value) {
+    if (!String(value).startsWith('https://preview.example.test/')) return imageSrc.set.call(this, value);
+    this.dataset.requestedSrc = value;
+    const src = new URL(value).searchParams.get('src');
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 395 420"><rect width="395" height="420" fill="#edf0f4"/><path d="M125 40L40 85 15 165 95 190 108 360H287L300 190 380 165 355 85 270 40Q197 95 125 40Z" fill="#cbd1d9" stroke="#adb5c2" stroke-width="3"/><text x="197" y="220" text-anchor="middle" font-family="Arial" font-size="20" fill="#45556c">${src}</text></svg>`;
+    imageSrc.set.call(this, 'data:image/svg+xml,' + encodeURIComponent(svg));
+    if (src.endsWith('_t')) setTimeout(() => this.dispatchEvent(new Event('error')), 0);
+  }
+});
+window.resource = { id: '1234567', features: { approved: false, releasedToVendor: 0 },
+  designs: [0,1,2].map(index => ({ id: String(100 + index), designId: String(20000 + index), printAreas: [] })) };
+window.fixtureStock = { ordered: [true, false, false], disabled: [false, false, false], hidden: [false, false, false] };
+window.fixtureVendor = false;
+window.queueCalls = [];
+window.queueMode = 'success';
+window.nativeGoodsClicks = 0;
+window.fixtureRuntime = { runKind: 'manual', orderId: '1234567', queued: false, running: false, lastSuccess: null };
+window.orderScope = {
+  order: { getResource: () => resource }, editMode: new URLSearchParams(location.search).has('edit'), activeDesignIndex: 1, transfersOnly: false,
+  ENV_CONFIG: { rushorderteesURL: 'https://preview.example.test/' },
+  user: { isAny: role => fixtureVendor && role === 'vendor' },
+  saveOrder() { this.editMode = false; renderFixture(); },
+  editModeOn() { this.editMode = true; renderFixture(); }
+};
+window.angular = { element: () => ({ scope: () => orderScope }) };
+window.chrome = {
+  runtime: {
+    onMessage: { addListener() {} },
+    async sendMessage(message) {
+      if (message.type === 'crm-dark-mode:get-theme') return { enabled: false };
+      if (message.type === 'crm-order-automation:status') return { success: true, runtime: fixtureRuntime };
+      if (message.type === 'crm-order-automation:manual-start') {
+        queueCalls.push(structuredClone(message));
+        if (queueMode === 'uncertain') return { success: false, message: 'The task may already be queued. Check the Automation queue.' };
+        if (queueMode === 'reject') return { success: false, message: 'Local Automation app is not reachable.' };
+        if (queueMode === 'throw') throw new Error('Disconnected');
+        fixtureRuntime = { ...fixtureRuntime, queued: true };
+        return { success: true, runtime: fixtureRuntime };
+      }
+      return { success: true };
+    }
+  },
+  storage: { local: { async get() { return {}; } }, onChanged: { addListener() {} } }
+};
+function renderFixture() {
+  document.querySelector('.edit-btn').classList.toggle('ng-hide', orderScope.editMode);
+  document.querySelector('.save-btn').classList.toggle('ng-hide', !orderScope.editMode);
+  document.querySelector('#native-preview').classList.toggle('ng-hide', orderScope.editMode);
+  const header = document.querySelector('#main-header-design-tabs .btn-group');
+  const nav = document.querySelector('#order-design-details .nav-tabs');
+  const content = document.querySelector('#order-design-details .tab-content');
+  header.querySelectorAll('button[ng-repeat]').forEach(node => node.remove());
+  nav.querySelectorAll('.order-form-design-tab').forEach(node => node.remove());
+  content.replaceChildren();
+  resource.designs.forEach((design, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn' + (index === orderScope.activeDesignIndex ? ' btn-primary' : '');
+    button.setAttribute('ng-repeat', '(designIndex, design) in order.getResource().designs');
+    button.textContent = `${index + 1} - QTY: 1 Design Previews`;
+    button.onclick = () => { orderScope.activeDesignIndex = index; renderFixture(); };
+    header.append(button);
+    const tab = document.createElement('li');
+    tab.className = 'order-form-design-tab' + (index === orderScope.activeDesignIndex ? ' active' : '');
+    const link = document.createElement('a');
+    link.textContent = 'Tab ' + (index + 1);
+    link.onclick = button.onclick;
+    tab.append(link);
+    nav.append(tab);
+    const pane = document.createElement('div');
+    pane.className = 'tab-pane' + (index === orderScope.activeDesignIndex ? ' active' : '');
+    const inventory = document.createElement('div');
+    inventory.className = 'order-inventory';
+    inventory.innerHTML = `<table><tbody><tr ng-repeat="provider in providers"><td>Manual Order</td><td><button type="button" ng-click="orderGoods(provider);">Order Goods</button></td></tr><tr ng-repeat="provider in providers" class="${fixtureStock.hidden[index] ? 'ng-hide' : ''}"><td>Sanmar / S&amp;S Activewear</td><td><div class="${fixtureStock.ordered[index] ? 'ng-hide' : ''}"><button type="button" ng-click="orderGoods(provider);" ${fixtureStock.disabled[index] ? 'disabled' : ''}>Order Goods</button></div><button type="button" ng-click="orderGoodsAddBox(provider);">Add Box</button></td></tr></tbody></table>`;
+    inventory.querySelectorAll('button').forEach(button => button.onclick = () => nativeGoodsClicks++);
+    pane.append(inventory);
+    content.append(pane);
+  });
+}
+document.querySelector('.edit-btn').onclick = () => orderScope.editModeOn();
+document.querySelector('.save-btn').onclick = () => orderScope.saveOrder();
+renderFixture();
+</script></html>

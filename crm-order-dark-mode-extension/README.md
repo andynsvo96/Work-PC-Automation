@@ -15,6 +15,45 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
+## Editing previews and Order All - 1.7.22
+
+**Design Studio Previews stay at the bottom during Edit Order.** They follow
+the highlighted real tab, including while All Tabs is open, and show that tab
+number above the images. Front, Back, sleeve, and inside-tag images use the same
+artwork IDs, site configuration, and image sizes as CRM's normal previews.
+Unavailable images are hidden. Existing transfers-only, approved-order, and
+vendor-release restrictions still apply. Leaving edit mode returns to CRM's
+normal preview section. Previews display the saved Design Studio artwork;
+changing a print-area label does not redraw that artwork.
+
+**Order All** appears after the last real tab in both tab bars outside Edit
+Order, when at least one tab has an enabled automatic **Order Goods** control.
+Click it to queue the current order through the existing **Order Goods** worker.
+The local Automation app must be running. The worker visits tabs serially,
+keeps its stock checks and reload handling, and skips already-ordered tabs.
+The highlighted tab and the customer's tab count are preserved by the button.
+Use the normal queue/status display to follow the run; the order page refreshes
+when the run finishes.
+
+An order-wide **Ordered** status does not hide Order All when a tab still has
+stock available to order, such as newly added sizes. When no tab is eligible,
+including when all stock is ordered, Order All is hidden. Disabled/locked or
+hidden native controls, **Manual Order** dialogs, and **Add Box** are excluded.
+Pending and accepted requests disable both Order All buttons. An uncertain queue
+response stays disabled for review rather than posting another purchase task.
+
+Reload **CRM Order Assistant 1.7.22** at `chrome://extensions` and refresh open CRM
+order pages. **No local Automation app restart is needed** for these extension
+changes. They use the app's existing single-order queue and bridge.
+
+Offline verification uses local images, stubbed queue responses, and CRM stock
+fixtures; it never submits a real purchase:
+
+```powershell
+python -m unittest discover -s tests -p test_order_qol_browser.py
+python -m unittest discover -s tests -p "test_crm_order_goods*.py"
+```
+
 ## All Tabs print-area editing - 1.7.21
 
 In **Edit Order**, **All Tabs** appears before tab 1 in both design-tab bars.
@@ -35,6 +74,12 @@ methods remain separate until you explicitly select a method for that row.
 3. Use **Add print area** to select a new location and method. Its preview lists
    only tabs missing that location after your pending edits. Existing areas and
    their methods are kept; selecting an already-present location adds nothing.
+   In **1.7.22**, the red **×** at the top right of an existing area stages its
+   removal from exactly the listed tabs. Removing Front leaves Front-Left Chest
+   and Front-Right Chest in place. **Undo** restores that pending row; **Discard
+   pending changes** clears all staged removals. Remove several rows to remove
+   several locations, or every row to remove all areas. Removals are applied with
+   the rest of the batch, then saved with **Save Order**.
 4. Review the affected tabs and click **Apply changes**. Conflicts identify every
    tab that would have duplicate locations and block the batch. No changes are
    applied until the entire batch validates.

@@ -15,7 +15,13 @@
   .crm-all-tabs-panel h4 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
   .crm-all-tabs-help, .crm-all-tabs-affected { color: var(--all-tabs-muted); line-height: 1.5; overflow-wrap: anywhere; }
   .crm-all-tabs-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 12px; }
-  .crm-all-tabs-card { padding: 14px; min-width: 0; border: 1px solid var(--all-tabs-border); border-radius: 5px; }
+  .crm-all-tabs-card { position: relative; padding: 14px; min-width: 0; border: 1px solid var(--all-tabs-border); border-radius: 5px; }
+  .crm-all-tabs-card > h4 { padding-right: 42px; }
+  #crm-all-tabs-panel .crm-all-tabs-remove { position: absolute; top: 7px; right: 7px; min-width: 30px; min-height: 30px; padding: 2px 7px; border: 1px solid #b91c1c !important; border-radius: 4px; background: #b91c1c !important; color: #fff !important; font-size: 22px; line-height: 1; cursor: pointer; }
+  #crm-all-tabs-panel .crm-all-tabs-undo { font-size: 12px; }
+  .crm-all-tabs-removing { border-color: #b91c1c; border-style: dashed; }
+  .crm-all-tabs-removing .crm-all-tabs-field { opacity: .65; }
+  .crm-all-tabs-removal-note { color: #b91c1c !important; line-height: 1.5; }
   .crm-all-tabs-addition { border-style: dashed; }
   .crm-all-tabs-field { display: block; font-weight: normal; margin: 12px 0; }
   .crm-all-tabs-field > span { display: block; font-weight: 600; margin-bottom: 5px; }
@@ -36,6 +42,7 @@
     --all-tabs-border: #555;
   }
   html.crm-order-dark-mode .crm-all-tabs-error { color: #fca5a5 !important; }
+  html.crm-order-dark-mode .crm-all-tabs-removal-note { color: #fca5a5 !important; }
   html.crm-order-dark-mode #crm-all-tabs-header.crm-all-tabs-selected,
   html.crm-order-dark-mode #crm-all-tabs-detail.crm-all-tabs-selected > button { background: #04395e !important; color: #f0f0f0 !important; border-color: #007acc !important; }
   html.crm-order-dark-mode.crm-all-tabs-view #main-header-design-tabs button[ng-repeat] { background: #2d2d30 !important; color: #d4d4d4 !important; border-color: #555 !important; }

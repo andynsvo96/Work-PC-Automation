@@ -82,7 +82,7 @@
   }
 
   function pending() {
-    return Boolean(state && (state.additions.length || Object.values(state.changes).some(change => change.location || change.method)));
+    return Boolean(state && (state.additions.length || Object.values(state.changes).some(change => change.location || change.method || change.remove)));
   }
 
   function selectField(card, label, id, values, selected, placeholder, onChange) {
@@ -137,10 +137,24 @@
       card.dataset.sourceArea = group.sourceKey;
       card.append(element("h4", "", group.label));
       const tabs = [...new Set(group.members.map(member => member.record.tab))];
+      const change = state.changes[group.id] ||= {};
+      card.dataset.pendingRemoval = String(Boolean(change.remove));
+      card.classList.toggle("crm-all-tabs-removing", Boolean(change.remove));
+      const remove = button(change.remove ? "Undo" : "×",
+        `crm-all-tabs-remove${change.remove ? " crm-all-tabs-undo" : ""}`, () => {
+          change.remove = !change.remove;
+          render();
+          document.getElementById(`crm-all-tabs-remove-${group.id}`)?.focus();
+        });
+      remove.id = `crm-all-tabs-remove-${group.id}`;
+      remove.setAttribute("aria-label", change.remove ? `Undo removal of ${group.label}` : `Remove ${group.label} from tabs ${tabs.join(", ")}`);
+      remove.setAttribute("aria-pressed", String(Boolean(change.remove)));
+      remove.title = remove.getAttribute("aria-label");
+      card.append(remove);
       const affected = element("p", "crm-all-tabs-affected", `Affects tabs ${tabs.join(", ")}`);
       affected.title = group.members.map(member => `Tab ${member.record.tab}: ${member.method || "missing method"}`).join("; ");
       card.append(affected);
-      const change = state.changes[group.id] ||= {};
+      if (change.remove) card.append(element("p", "crm-all-tabs-removal-note", "Will remove this original print area from the listed tabs when you apply."));
       selectField(card, "Print area", `crm-all-tabs-location-${group.id}`, templates, change.location || "",
         `Keep ${group.label}`, value => { change.location = value === group.sourceKey ? "" : value; });
       const existingMethods = [...new Set(group.members.map(member => member.method))];
@@ -210,14 +224,16 @@
       label.textContent = tabs ? (tabs.length ? `Will add to tabs ${tabs.join(", ")}; existing areas are kept.` : "Already present on every tab; no areas will be added.")
         : "Choose a location to see affected tabs.";
     }
-    const hasWork = Boolean(planned && (planned.edits.length || planned.creates.length));
+    const hasWork = Boolean(planned && (planned.edits.length || planned.removes.length || planned.creates.length));
     apply.disabled = Boolean(error || !hasWork || busy());
     document.getElementById("crm-all-tabs-discard").disabled = !pending();
-    for (const control of document.querySelectorAll("#crm-all-tabs-panel select, #crm-all-tabs-add")) control.disabled = busy();
+    for (const control of document.querySelectorAll("#crm-all-tabs-panel select, #crm-all-tabs-add, .crm-all-tabs-remove")) {
+      control.disabled = busy() || (control.tagName === "SELECT" && control.closest("[data-pending-removal]")?.dataset.pendingRemoval === "true");
+    }
     if (error) setStatus(error.message, true);
-    else if (hasWork) setStatus(`Ready: ${planned.edits.length} existing areas to change, ${planned.creates.length} areas to add. Affects tabs ${planned.affectedTabs.join(", ")}.`);
+    else if (hasWork) setStatus(`Ready: ${planned.edits.length} existing areas to change, ${planned.removes.length} areas to remove, ${planned.creates.length} areas to add. Affects tabs ${planned.affectedTabs.join(", ")}.`);
     else if (pending()) setStatus("No changes are needed. Discard pending changes to return to the current areas.");
-    else setStatus("Choose a location or method to edit matching areas across their listed tabs.");
+    else setStatus("Choose a location or method, or remove an area across its listed tabs.");
   }
 
   function runInAngular(fn) {
@@ -237,17 +253,18 @@
       // Re-read immediately before applying, even if the preview was valid.
       context.resource = context.scope.order.getResource();
       const planned = model.plan(state.session, state.changes, state.additions, statics(context.scope), context.resource);
-      if (!planned.edits.length && !planned.creates.length) return;
+      if (!planned.edits.length && !planned.removes.length && !planned.creates.length) return;
       const result = runInAngular(() => model.apply(planned, {
         updateAreaTemplate: scopeFunction(context.scope, "updateAreaTemplate"),
         updateAreaMethod: scopeFunction(context.scope, "updateAreaMethod"),
         addPrintArea: scopeFunction(context.scope, "addPrintArea"),
+        removePrintArea: scopeFunction(context.scope, "removePrintArea"),
         copy: value => window.angular.copy(value),
         equals: window.angular.equals
       }, context.resource));
       freshState();
       render();
-      setStatus(`Applied ${result.changedAreas} existing-area changes and added ${result.addedAreas} areas on tabs ${result.affectedTabs.join(", ")}. Review the tabs, then Save Order to keep them.`);
+      setStatus(`Applied ${result.changedAreas} existing-area changes, removed ${result.removedAreas} areas, and added ${result.addedAreas} areas on tabs ${result.affectedTabs.join(", ")}. Review the tabs, then Save Order to keep them.`);
     } catch (error) {
       setStatus(error.message, true);
       document.getElementById("crm-all-tabs-apply").disabled = true;

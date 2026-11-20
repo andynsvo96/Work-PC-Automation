@@ -62,10 +62,13 @@ window.orderScope = {
   saveOrder() {
     saveCount++;
     if (window.rejectSave) return;
-    resource.designs.forEach(design => design.printAreas.forEach((area, i) => {
-      area.id ||= design.id + '-new-' + i;
-      delete area.crudAction;
-    }));
+    resource.designs.forEach(design => {
+      design.printAreas = design.printAreas.filter(area => area.crudAction !== 'd');
+      design.printAreas.forEach((area, i) => {
+        area.id ||= design.id + '-new-' + i;
+        delete area.crudAction;
+      });
+    });
     localStorage.setItem('all-tabs-fixture-resource', JSON.stringify(resource));
     saved = cleanCopy(resource);
     this.editMode = false;
@@ -83,7 +86,11 @@ window.orderScope = {
     if (nativeFailure) throw new Error('Fixture native helper rejected the change');
   },
   updateAreaMethod(area, method) { area.printMethodDescription = method.description; area.printMethodId = method.id; area.crudAction ||= 'u'; },
-  addPrintArea(design) { design.printAreas.push({ crudAction: 'c', notes: [], designFiles: [] }); }
+  addPrintArea(design) { design.printAreas.push({ crudAction: 'c', notes: [], designFiles: [] }); },
+  removePrintArea(area, design) {
+    area.crudAction = 'd';
+    if (nativeFailure) throw new Error('Fixture native helper rejected the removal');
+  }
 };
 window.angular = { element: () => ({ scope: () => orderScope }), copy: cleanCopy };
 function renderSelection() {
@@ -129,7 +136,7 @@ function renderNative() {
     const form = document.createElement('div');
     form.className = 'content';
     form.setAttribute('ng-form', 'designForm');
-    design.printAreas.forEach(area => {
+    design.printAreas.filter(area => area.crudAction !== 'd').forEach(area => {
       const block = document.createElement('div');
       block.className = 'printarea';
       block.setAttribute('ng-repeat', '(areaIndex, area) in design.printAreas');

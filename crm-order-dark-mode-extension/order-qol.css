@@ -1,0 +1,16 @@
+@media screen {
+  .crm-edit-previews { clear: both; margin: 22px 0; padding: 16px; box-sizing: border-box; background: #f4f5f7; color: #263244; }
+  .crm-edit-previews h4 { text-align: center; margin: 0 0 7px; font-size: 19px; }
+  .crm-edit-previews-caption { text-align: center; color: #536276; }
+  .crm-edit-previews-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; max-width: 830px; margin: auto; }
+  .crm-edit-previews-grid a[hidden] { display: none !important; }
+  .crm-edit-previews-grid img { display: block; width: 100%; height: auto; }
+  .crm-order-all-control { margin-left: 8px; vertical-align: middle; }
+  .crm-order-all-button { white-space: nowrap; }
+  .nav-tabs > .crm-order-all-control { display: flex; align-items: center; margin: 3px 0 3px 8px; }
+  html.crm-order-dark-mode .crm-edit-previews { background: #252526; color: #e2e8f0; }
+  @media (max-width: 480px) { .crm-edit-previews-grid { gap: 8px; } }
+}
+@media print {
+  .crm-edit-previews, .crm-order-all-control { display: none !important; }
+}

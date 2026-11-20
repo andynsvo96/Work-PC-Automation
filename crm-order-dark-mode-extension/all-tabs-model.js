@@ -77,9 +77,14 @@ var CRMAllTabsModel = (() => {
     const templates = choices(statics.printAreaTemplates, true);
     const methods = choices(statics.printMethods);
     const edits = [];
+    const removes = [];
     const finalAreas = new Map(session.designs.map(record => [record, []]));
     for (const group of session.groups) {
       const change = changes[group.id] || {};
+      if (change.remove) {
+        removes.push(...group.members);
+        continue;
+      }
       const template = change.location && key(change.location) !== group.sourceKey
         ? resolve(templates, change.location, "print-area location") : null;
       const method = change.method ? resolve(methods, change.method, "print method") : null;
@@ -121,15 +126,18 @@ var CRMAllTabsModel = (() => {
       }
       additionTargets.set(addition.id, targets);
     }
-    return { session, edits, creates, additionTargets,
-      affectedTabs: [...new Set([...edits.map(edit => edit.member.record.tab), ...creates.map(create => create.record.tab)])].sort((a, b) => a - b) };
+    return { session, edits, removes, creates, additionTargets,
+      affectedTabs: [...new Set([...edits.map(edit => edit.member.record.tab), ...removes.map(member => member.record.tab),
+        ...creates.map(create => create.record.tab)])].sort((a, b) => a - b) };
   }
 
   function apply(plan, adapter, resource = plan.session.resource) {
-    const { session, edits, creates } = plan;
+    const { session, edits, removes, creates } = plan;
     assertFresh(session, resource);
-    if (typeof adapter.updateAreaTemplate !== "function" || typeof adapter.updateAreaMethod !== "function" ||
-        (creates.length && typeof adapter.addPrintArea !== "function")) {
+    if (((creates.length || edits.some(edit => edit.template)) && typeof adapter.updateAreaTemplate !== "function") ||
+        ((creates.length || edits.some(edit => edit.method)) && typeof adapter.updateAreaMethod !== "function") ||
+        (creates.length && typeof adapter.addPrintArea !== "function") ||
+        (removes.length && typeof adapter.removePrintArea !== "function")) {
       throw new Error("CRM print-area controls are unavailable. No changes were applied.");
     }
     // Preserve original objects/arrays, including notes, files, deleted rows, and
@@ -138,7 +146,9 @@ var CRMAllTabsModel = (() => {
       hadAreas: Object.hasOwn(design, "printAreas"), hadCrud: Object.hasOwn(design, "crudAction"), crud: design.crudAction,
       entries: (design.printAreas || []).map(area => ({ area, saved: adapter.copy(area),
         hadHashKey: Object.hasOwn(area || {}, "$$hashKey"), hashKey: area?.$$hashKey })) }));
+    const removedAreas = new Set(removes.map(member => member.area));
     try {
+      for (const member of removes) adapter.removePrintArea(member.area, member.record.design);
       for (const edit of edits) {
         if (edit.template) adapter.updateAreaTemplate(edit.member.area, edit.template);
         if (edit.method) adapter.updateAreaMethod(edit.member.area, edit.method);
@@ -153,6 +163,14 @@ var CRMAllTabsModel = (() => {
         adapter.updateAreaTemplate(create.area, create.template);
         adapter.updateAreaMethod(create.area, create.method);
       }
+      for (const record of session.designs) {
+        const expected = record.areas.filter(member => !removedAreas.has(member.area)).map(member => member.area)
+          .concat(creates.filter(create => create.record === record).map(create => create.area));
+        const actual = active(record.design.printAreas);
+        if (actual.length !== expected.length || actual.some((area, index) => area !== expected[index])) {
+          throw new Error("CRM did not remove exactly the selected print areas or changed another area's membership.");
+        }
+      }
       const expected = [
         ...edits.map(edit => ({ area: edit.member.area, description: edit.description, method: edit.methodDescription })),
         ...creates.map(create => ({ area: create.area, description: create.template.description, method: create.method.description }))
@@ -163,7 +181,7 @@ var CRMAllTabsModel = (() => {
       }
       for (const backup of backups) {
         for (const { area, saved } of backup.entries) {
-          if (!area) continue;
+          if (!area || removedAreas.has(area)) continue;
           const before = protectedFields(saved);
           const after = protectedFields(area);
           const equal = adapter.equals ? adapter.equals(before, after) : JSON.stringify(before) === JSON.stringify(after);
@@ -186,7 +204,7 @@ var CRMAllTabsModel = (() => {
       }
       throw new Error(`${error.message} The batch was rolled back; review the order before saving.`);
     }
-    return { changedAreas: edits.length, addedAreas: creates.length, affectedTabs: plan.affectedTabs };
+    return { changedAreas: edits.length, removedAreas: removes.length, addedAreas: creates.length, affectedTabs: plan.affectedTabs };
   }
 
   return { clean, key, choices, createSession, assertFresh, plan, apply };
