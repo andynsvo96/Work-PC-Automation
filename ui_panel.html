@@ -222,6 +222,10 @@ button.icon-btn.active{background:#2563eb;border-color:#2563eb;color:#fff}
 .metric .k{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.04em}
 .metric .v{font-weight:700;font-size:16px}
 .tbl-wrap{overflow:auto}
+#crmProcessingErrorsDialog{max-height:calc(100dvh - 32px);overflow:hidden}
+#crmProcessingErrorsDialog>.card{display:flex;flex-direction:column;box-sizing:border-box;max-height:inherit}
+#crmProcessingErrorsDialog>.card>.row,#crmProcessingErrorsDialogSummary{flex-shrink:0}
+#crmProcessingErrorsDialogBody{min-height:0}
 .tbl{width:100%;border-collapse:collapse;font-size:13px}
 .tbl th,.tbl td{border-bottom:1px solid #e2e8f0;padding:6px;text-align:left}
 .tbl th{background:#f8fafc}
