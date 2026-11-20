@@ -1,5 +1,5 @@
-// Native CRM stock requests, recorded before submission so a lost response or
-// page refresh cannot silently repeat a purchase. No local-app bridge is used.
+// Native CRM stock requests with confirmation receipts. Errors may be retried
+// by another explicit click; confirmed stock is excluded from later batches.
 var CRMOrderAllBatch = (() => {
   "use strict";
   function fingerprint(design) {
@@ -39,18 +39,22 @@ var CRMOrderAllBatch = (() => {
     for (const entry of record.entries) {
       if (entry.state === "submitted") {
         entry.state = "review";
-        entry.message = "The page changed before CRM confirmed this request. Check this tab's stock before ordering again.";
+        entry.message = "The page changed before CRM confirmed this request.";
       } else if (entry.state === "prepared") entry.state = "not_sent";
     }
     record.phase = record.entries.every(entry => entry.state === "confirmed") ? "confirmed" : "review";
     return record;
   }
 
-  function blocked(record, targets) {
-    if (!record) return false;
-    if (record.entries.some(entry => entry.state !== "confirmed" && entry.state !== "not_sent")) return true;
+  function retryable(record, targets) {
+    if (!record) return targets;
     const confirmed = [...record.entries.filter(entry => entry.state === "confirmed"), ...(record.history || [])];
-    return targets.some(target => confirmed.some(entry => entry.id === String(target.id) && entry.fingerprint === target.fingerprint));
+    return targets.filter(target => !confirmed.some(entry => entry.id === String(target.id) && entry.fingerprint === target.fingerprint));
+  }
+
+  function blocked(record, targets) {
+    if (record?.entries.some(entry => entry.state === "prepared" || entry.state === "submitted")) return true;
+    return retryable(record, targets).length === 0;
   }
 
   async function run(record, targets, adapter) {
@@ -92,7 +96,7 @@ var CRMOrderAllBatch = (() => {
             entry.state = "review";
             entry.message = !uncertain && Array.isArray(response?.errors) && response.errors.length
               ? response.errors.map(String).join(", ")
-              : "No confirmed CRM response. Check this tab's stock before ordering again.";
+              : "No confirmed CRM response.";
           }
           try { adapter.finished?.(targets[index], entry); } catch (_) { /* Keep the confirmed server result. */ }
           update();
@@ -109,5 +113,5 @@ var CRMOrderAllBatch = (() => {
     return record;
   }
 
-  return { fingerprint, create, valid, resume, blocked, run };
+  return { fingerprint, create, valid, resume, retryable, blocked, run };
 })();

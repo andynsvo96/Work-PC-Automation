@@ -43,7 +43,7 @@ test("starts every native request immediately and saves each intent before submi
   assert.equal(batch.blocked(record, selected), true);
 });
 
-test("an error or absent supplier requires per-tab review and never retries a request", async () => {
+test("an error or absent supplier allows an explicit retry without repeating confirmed stock", async () => {
   for (const response of [{ succeeded: false, errors: ["No stock"] }, { succeeded: true }]) {
     const selected = targets();
     const record = batch.create("1234567", selected);
@@ -55,17 +55,26 @@ test("an error or absent supplier requires per-tab review and never retries a re
     assert.deepEqual(calls, ["101", "102"]);
     assert.equal(record.phase, "review");
     assert.deepEqual(plain(record.entries.map(entry => entry.state)), ["confirmed", "review"]);
-    assert.equal(batch.blocked(record, selected), true);
+    assert.equal(batch.blocked(record, selected), false);
+    const retry = batch.retryable(record, selected);
+    assert.deepEqual(plain(retry.map(target => target.id)), ["102"]);
+    const second = batch.create("1234567", retry, record);
+    await batch.run(second, retry, { save() {}, changed() {}, submit(target) {
+      calls.push(target.id); return Promise.resolve(success);
+    } });
+    assert.deepEqual(calls, ["101", "102", "102"]);
+    assert.equal(second.phase, "confirmed");
+    assert.equal(batch.blocked(second, selected), true);
   }
 });
 
-test("a lost or timed-out response stays blocked for review", async () => {
+test("a lost or timed-out response can be retried by another explicit click", async () => {
   for (const submit of [() => Promise.reject(new Error("lost")), () => new Promise(() => {})]) {
     const selected = targets().slice(0, 1);
     const record = batch.create("1234567", selected);
     await batch.run(record, selected, { save() {}, changed() {}, submit, timeoutMs: 5 });
     assert.equal(record.entries[0].state, "review");
-    assert.equal(batch.blocked(record, selected), true);
+    assert.equal(batch.blocked(record, selected), false);
   }
 });
 
@@ -99,8 +108,19 @@ test("refresh never resumes a submitted stock request automatically", () => {
   record.entries[0].state = "submitted";
   batch.resume(record);
   assert.deepEqual(plain(record.entries.map(entry => entry.state)), ["review", "not_sent"]);
-  assert.equal(batch.blocked(record, targets()), true);
+  assert.equal(batch.blocked(record, targets()), false);
   assert.match(record.entries[0].message, /page changed/);
+});
+
+test("pending native requests still block a second concurrent submission", () => {
+  const selected = targets();
+  const record = batch.create("1234567", selected);
+  assert.equal(batch.blocked(record, selected), true);
+  record.entries[0].state = "submitted";
+  record.entries[1].state = "review";
+  assert.equal(batch.blocked(record, selected), true);
+  record.entries[0].state = "confirmed";
+  assert.equal(batch.blocked(record, selected), false);
 });
 
 test("preserves confirmed receipts across later batches and permits new stock contents", () => {

@@ -192,7 +192,7 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.wait_for_button()
         self.edit()
 
-    def test_refresh_during_native_requests_requires_review_without_resubmission(self):
+    def test_refresh_keeps_unconfirmed_error_and_allows_manual_retry_without_auto_submission(self):
         self.show()
         self.wait_for_button().click()
         WebDriverWait(self.driver, 5).until(lambda d: d.execute_script("return nativeCalls.length;") == 2)
@@ -202,18 +202,52 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.assertEqual(self.driver.execute_script("return nativeCalls.length;"), 2)
         self.driver.refresh()
         self.inject(automation=False)
-        self.assertTrue(self.wait_for_button().get_property("disabled"))
+        self.assertFalse(self.wait_for_button().get_property("disabled"))
         self.assertIn("page changed before CRM confirmed", self.driver.find_element(By.ID, "crm-order-all-result").text)
         self.assertEqual(self.driver.execute_script("return nativeCalls.length;"), 2)
+        self.wait_for_button().click()
+        self.assertEqual(self.driver.execute_script("return nativeCalls;"), ["101", "102", "101", "102"])
 
-    def test_native_failure_reports_tab_and_prevents_duplicate_submissions(self):
+    def test_native_failure_has_bold_tab_and_manual_retry_skips_confirmed_stock(self):
         self.show()
         self.wait_for_button().click()
         self.driver.execute_script("pendingNative.get('101').resolve({succeeded:true,supplier:'Sanmar'}); pendingNative.get('102').resolve({succeeded:false,errors:['Not enough stock']});")
         WebDriverWait(self.driver, 5).until(lambda d: "Not enough stock" in d.find_element(By.ID, "crm-order-all-result").text)
-        self.assertIn("Tab 3", self.driver.find_element(By.ID, "crm-order-all-result").text)
-        self.assertTrue(self.wait_for_button().get_property("disabled"))
+        result = self.driver.find_element(By.ID, "crm-order-all-result")
+        self.assertEqual(result.find_element(By.CSS_SELECTOR, "strong").text, "Tab 3:")
+        self.assertNotIn("Check the stock on the listed tabs before ordering again.", result.text)
+        self.assertFalse(self.wait_for_button().get_property("disabled"))
+        self.assertIn("tabs 3", self.wait_for_button().get_attribute("title"))
         self.assertEqual(self.driver.execute_script("return [nativeCalls.length, queueCalls.length, nativeReloads];"), [2, 0, 0])
+        self.driver.save_screenshot(str(self.artifacts / "order-all-retry.png"))
+        self.wait_for_button().click()
+        self.assertEqual(self.driver.execute_script("return nativeCalls;"), ["101", "102", "102"])
+        self.assertTrue(self.wait_for_button().get_property("disabled"))
+        self.driver.execute_script("pendingNative.get('102').resolve({succeeded:true,supplier:'Sanmar'});")
+        WebDriverWait(self.driver, 5).until(lambda d: d.execute_script("return nativeReloads;") == 1)
+
+    def test_each_failed_tab_has_its_own_line_and_error_text_is_escaped(self):
+        self.show()
+        self.wait_for_button().click()
+        self.driver.execute_script("pendingNative.get('101').resolve({succeeded:false,errors:['Not enough stock']}); pendingNative.get('102').resolve({succeeded:false,errors:['<img src=x onerror=alert(1)>']});")
+        WebDriverWait(self.driver, 5).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#crm-order-all-result .crm-order-all-error")) == 2)
+        rows = self.driver.find_elements(By.CSS_SELECTOR, "#crm-order-all-result .crm-order-all-error")
+        self.assertEqual([row.find_element(By.CSS_SELECTOR, "strong").text for row in rows], ["Tab 2:", "Tab 3:"])
+        self.assertIn("<img src=x onerror=alert(1)>", rows[1].text)
+        self.assertEqual(self.driver.find_elements(By.CSS_SELECTOR, "#crm-order-all-result img"), [])
+        self.assertFalse(self.wait_for_button().get_property("disabled"))
+        self.wait_for_button().click()
+        self.assertEqual(self.driver.execute_script("return nativeCalls;"), ["101", "102", "101", "102"])
+
+    def test_rejected_native_requests_can_be_retried_manually(self):
+        self.show()
+        self.wait_for_button().click()
+        self.driver.execute_script("pendingNative.get('101').reject(new Error('Lost response')); pendingNative.get('102').reject(new Error('Lost response'));")
+        WebDriverWait(self.driver, 5).until(lambda d: not self.wait_for_button().get_property("disabled"))
+        self.assertIn("No confirmed CRM response.", self.driver.find_element(By.ID, "crm-order-all-result").text)
+        self.assertEqual(self.driver.execute_script("return nativeCalls.length;"), 2)
+        self.wait_for_button().click()
+        self.assertEqual(self.driver.execute_script("return nativeCalls.length;"), 4)
 
     def test_native_order_all_works_with_no_automation_content_script(self):
         self.driver.get("about:blank")
@@ -248,7 +282,7 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.driver.refresh()
         self.inject(automation=False)
         self.driver.execute_script("fixtureStock.ordered[1] = false; resource.designs[1].designItems[0].pricePerPiece = '90.00'; renderFixture();")
-        self.assertTrue(self.wait_for_button().get_property("disabled"))
+        self.assertEqual(self.driver.find_elements(By.ID, "crm-order-all-header"), [])
         self.driver.execute_script("resource.designs[1].designItems[0].quantity = 2; renderFixture();")
         WebDriverWait(self.driver, 5).until(lambda d: not self.wait_for_button().get_property("disabled"))
         self.wait_for_button().click()

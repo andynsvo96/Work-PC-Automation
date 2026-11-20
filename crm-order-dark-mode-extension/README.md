@@ -43,11 +43,14 @@ hidden native controls, **Manual Order** dialogs, and **Add Box** are excluded.
 Both Order All buttons stay disabled during requests or while native inventory
 is still loading/ordering. Locked stock remains locked; this button never applies
 an unlock status. A failed, timed-out, or interrupted request shows the affected
-tab for manual stock review and is never retried automatically. Browser-tab
+tab on its own line with a **bold tab number**. In **1.7.25**, errors no longer
+disable Order All: press it again to retry currently eligible failed tabs.
+Confirmed purchases are excluded from the retry, including when a successful
+tab's native control remains busy until refresh. Retries always require another
+click; the extension never retries automatically. Browser-tab
 session receipts are written before submission and retain confirmed results
-across refreshes. The same stock contents cannot be submitted again through Order
+across refreshes. Confirmed stock contents are not submitted again through Order
 All; new quantities/sizes may be ordered after CRM exposes an eligible button.
-Other stock changes or uncertain results should be checked on the native tab.
 If an earlier extension version already submitted an automation task for this
 order, its saved pending/uncertain request is still honored. Check that existing
 queue entry before starting direct stock ordering; updating does not cancel it.
@@ -57,7 +60,7 @@ tables. Eligibility reads the vendor's header cell as well as older data-cell
 layouts. Available stock now shows Order All after the last real tab; the same
 ordered/locked/manual-order exclusions remain in effect.
 
-Reload **CRM Order Assistant 1.7.24** at `chrome://extensions` and refresh open CRM
+Reload **CRM Order Assistant 1.7.25** at `chrome://extensions` and refresh open CRM
 order pages. **No local Automation app restart is needed** for these extension
 changes. Order All works directly in the current CRM browser session.
 

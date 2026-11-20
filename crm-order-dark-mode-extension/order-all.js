@@ -87,7 +87,13 @@
     for (const node of ctx.details.querySelectorAll("[order-inventory]")) {
       try {
         const owner = angular.element(node).isolateScope?.();
-        if (owner?.order?.()?.getResource?.() === ctx.resource && owner.design?.()?.crudAction !== "d" && owner.placingOrder) return true;
+        const design = owner?.design?.();
+        if (owner?.order?.()?.getResource?.() === ctx.resource && design?.crudAction !== "d" && owner.placingOrder) {
+          // Successful native stock requests normally remain busy until reload.
+          // They must not keep failed tabs from being retried in a partial run.
+          const confirmed = design && batch.retryable(receipt, [{ id: String(design.id), fingerprint: batch.fingerprint(design) }]).length === 0;
+          if (!confirmed) return true;
+        }
       } catch (_) { return true; }
     }
     return false;
@@ -106,7 +112,7 @@
   async function start() {
     const ctx = context();
     if (!ctx || inFlight || inventoryBusy(ctx) || priorAutomationPending(ctx.id)) return;
-    const selected = targets(ctx);
+    const selected = batch.retryable(receipt, targets(ctx));
     if (!selected.length || batch.blocked(receipt, selected)) return;
     let service;
     try {
@@ -162,7 +168,7 @@
   function renderResult(ctx) {
     const existing = document.getElementById("crm-order-all-result");
     if (!receipt && !message) { existing?.remove(); return; }
-    const result = existing || document.createElement("p");
+    const result = existing || document.createElement("div");
     result.id = "crm-order-all-result";
     result.setAttribute("role", "status");
     result.setAttribute("aria-live", "polite");
@@ -171,13 +177,31 @@
     const confirmed = entries.filter(entry => entry.state === "confirmed");
     const review = entries.filter(entry => entry.state === "review");
     const progress = inFlight ? `Ordering stock in CRM: ${confirmed.length}/${entries.length} tabs confirmed.`
-      : receipt?.phase === "confirmed" ? `CRM confirmed stock ordered on tabs ${confirmed.map(entry => entry.tab).join(", ")}.`
-      : "Check the stock on the listed tabs before ordering again.";
-    const text = message || [receipt?.message, progress,
-      ...review.map(entry => `Tab ${entry.tab}: ${entry.message}`),
-      entries.some(entry => entry.state === "not_sent") ? `Not submitted: tabs ${entries.filter(entry => entry.state === "not_sent").map(entry => entry.tab).join(", ")}.` : ""
-    ].filter(Boolean).join(" ");
-    if (result.textContent !== text) result.textContent = text;
+      : confirmed.length ? `CRM confirmed stock ordered on tabs ${confirmed.map(entry => entry.tab).join(", ")}.` : "";
+    const notSent = entries.filter(entry => entry.state === "not_sent");
+    const content = JSON.stringify([message, receipt?.message, progress, review.map(entry => [entry.tab, entry.message]), notSent.map(entry => entry.tab)]);
+    if (result.dataset.content !== content) {
+      result.replaceChildren();
+      for (const text of [message, receipt?.message, progress].filter(Boolean)) {
+        const line = document.createElement("div");
+        line.textContent = text;
+        result.append(line);
+      }
+      for (const entry of review) {
+        const line = document.createElement("div");
+        line.className = "crm-order-all-error";
+        const label = document.createElement("strong");
+        label.textContent = `Tab ${entry.tab}:`;
+        line.append(label, document.createTextNode(` ${entry.message}`));
+        result.append(line);
+      }
+      if (notSent.length) {
+        const line = document.createElement("div");
+        line.textContent = `Not submitted: tabs ${notSent.map(entry => entry.tab).join(", ")}.`;
+        result.append(line);
+      }
+      result.dataset.content = content;
+    }
     if (!existing) ctx.details.querySelector(".nav-tabs")?.after(result);
   }
 
@@ -200,7 +224,7 @@
       } catch (_) { message = "Could not read the previous stock request. Check CRM stock before ordering again."; }
     }
     if (ctx.scope.editMode) { clear(); return; }
-    const available = targets(ctx);
+    const available = batch.retryable(receipt, targets(ctx));
     if (available.length || inFlight) {
       const header = [...document.querySelectorAll('#main-header-design-tabs button[ng-repeat]')].at(-1);
       const detail = [...ctx.details.querySelectorAll(".nav-tabs .order-form-design-tab")].at(-1);
@@ -209,10 +233,10 @@
         const wrapper = document.getElementById(id) || control(id, tag);
         if (native.nextElementSibling !== wrapper) native.after(wrapper);
         const button = wrapper.querySelector("button");
-        const disabled = inFlight || inventoryBusy(ctx) || priorAutomationPending(ctx.id) || Boolean(message) || batch.blocked(receipt, available);
+        const disabled = inFlight || inventoryBusy(ctx) || priorAutomationPending(ctx.id) || batch.blocked(receipt, available);
         if (button.disabled !== disabled) button.disabled = disabled;
         button.title = priorAutomationPending(ctx.id) ? "An earlier automation request may still be active. Check that queue entry before ordering again."
-          : disabled ? "Stock is loading, requests are pending, or a previous result needs review."
+          : disabled ? "Stock is loading or requests are still pending."
           : `Press CRM Order Goods for tabs ${available.map(target => target.tab).join(", ")}.`;
       }
     } else for (const id of ids) document.getElementById(id)?.remove();
