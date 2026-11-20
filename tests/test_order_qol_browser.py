@@ -123,11 +123,15 @@ class OrderQolBrowserTests(unittest.TestCase):
 
     def test_order_all_is_after_last_real_tab_and_queues_only_current_order_once(self):
         self.show()
+        vendor = self.driver.find_element(By.CSS_SELECTOR, '.tab-pane.active tr[ng-repeat="provider in providers"] > :first-child')
+        self.assertEqual(vendor.tag_name, "th")
+        self.assertEqual(vendor.text, "Sanmar / S&S Activewear")
         button = self.wait_for_button()
         self.assertIn("tabs 2, 3", button.get_attribute("title"))
         self.assertEqual(self.driver.execute_script("return document.querySelector('#main-header-design-tabs .btn-group').lastElementChild.id;"), "crm-order-all-header")
         self.assertEqual(self.driver.execute_script("return document.querySelector('#order-design-details .nav-tabs').lastElementChild.id;"), "crm-order-all-detail")
         self.assertEqual(self.driver.execute_script("return resource.designs.length;"), 3)
+        self.driver.save_screenshot(str(self.artifacts / "order-all-available.png"))
         button.click()
         WebDriverWait(self.driver, 5).until(lambda d: d.execute_script("return queueCalls.length;") == 1)
         self.assertEqual(self.driver.execute_script("return queueCalls[0].orderId;"), "1234567")
@@ -138,6 +142,19 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.driver.execute_script("renderFixture();")
         self.assertTrue(self.wait_for_button().get_property("disabled"))
         self.assertEqual(self.driver.execute_script("return queueCalls.length;"), 1)
+
+    def test_order_all_accepts_older_vendor_data_cells_and_excludes_manual_order(self):
+        self.show()
+        self.driver.execute_script("fixtureVendorCellTag = 'td'; renderFixture();")
+        button = self.wait_for_button()
+        self.assertIn("tabs 2, 3", button.get_attribute("title"))
+        vendor = self.driver.find_element(By.CSS_SELECTOR, '.tab-pane.active tr[ng-repeat="provider in providers"] > :first-child')
+        self.assertEqual(vendor.tag_name, "td")
+        self.driver.execute_script("fixtureStock.disabled = [true,true,true]; renderFixture();")
+        WebDriverWait(self.driver, 5).until(lambda d: not d.find_elements(By.ID, "crm-order-all-header"))
+        # Manual Order remains enabled; it must not qualify as automatic stock.
+        manual = self.driver.find_elements(By.CSS_SELECTOR, '.tab-pane.active tr[ng-repeat="provider in providers"]')[-1]
+        self.assertTrue(manual.find_element(By.CSS_SELECTOR, "button").is_enabled())
 
     def test_order_all_hides_when_no_eligible_stock_and_returns_for_new_stock(self):
         self.show()

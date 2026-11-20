@@ -42,7 +42,12 @@ hidden native controls, **Manual Order** dialogs, and **Add Box** are excluded.
 Pending and accepted requests disable both Order All buttons. An uncertain queue
 response stays disabled for review rather than posting another purchase task.
 
-Reload **CRM Order Assistant 1.7.22** at `chrome://extensions` and refresh open CRM
+Version **1.7.23** fixes a missing Order All button on CRM's native inventory
+tables. Eligibility reads the vendor's header cell as well as older data-cell
+layouts. Available stock now shows Order All after the last real tab; the same
+ordered/locked/manual-order exclusions and single-order queue remain in effect.
+
+Reload **CRM Order Assistant 1.7.23** at `chrome://extensions` and refresh open CRM
 order pages. **No local Automation app restart is needed** for these extension
 changes. They use the app's existing single-order queue and bridge.
 

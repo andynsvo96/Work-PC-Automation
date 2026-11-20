@@ -14,7 +14,7 @@
   .nav-tabs a { display: block; padding: 9px 14px; color: inherit; }
   .nav-tabs .active { background: #e2edff; }
   .order-inventory { padding: 14px; background: white; border: 1px solid #cbd5e1; }
-  td { padding: 7px 12px; }
+  th, td { padding: 7px 12px; text-align: left; }
   #native-preview { padding: 25px; text-align: center; background: #e4e8ee; margin-top: 30px; }
 </style>
 <main id="view-orders-index">
@@ -44,6 +44,7 @@ Object.defineProperty(HTMLImageElement.prototype, 'src', {
 window.resource = { id: '1234567', features: { approved: false, releasedToVendor: 0 },
   designs: [0,1,2].map(index => ({ id: String(100 + index), designId: String(20000 + index), printAreas: [] })) };
 window.fixtureStock = { ordered: [true, false, false], disabled: [false, false, false], hidden: [false, false, false] };
+window.fixtureVendorCellTag = 'th';
 window.fixtureVendor = false;
 window.queueCalls = [];
 window.queueMode = 'success';
@@ -105,7 +106,19 @@ function renderFixture() {
     pane.className = 'tab-pane' + (index === orderScope.activeDesignIndex ? ' active' : '');
     const inventory = document.createElement('div');
     inventory.className = 'order-inventory';
-    inventory.innerHTML = `<table><tbody><tr ng-repeat="provider in providers"><td>Manual Order</td><td><button type="button" ng-click="orderGoods(provider);">Order Goods</button></td></tr><tr ng-repeat="provider in providers" class="${fixtureStock.hidden[index] ? 'ng-hide' : ''}"><td>Sanmar / S&amp;S Activewear</td><td><div class="${fixtureStock.ordered[index] ? 'ng-hide' : ''}"><button type="button" ng-click="orderGoods(provider);" ${fixtureStock.disabled[index] ? 'disabled' : ''}>Order Goods</button></div><button type="button" ng-click="orderGoodsAddBox(provider);">Add Box</button></td></tr></tbody></table>`;
+    // CRM uses a header cell for the vendor, followed by separate action cells.
+    // The data-cell variant checks compatibility with older table markup.
+    const cell = fixtureVendorCellTag;
+    inventory.innerHTML = `<table class="order-goods"><tbody>
+      <tr ng-repeat="provider in providers" ng-hide="provider.allStockOrdered &amp;&amp; !provider.forceDisplay" class="${fixtureStock.hidden[index] ? 'ng-hide' : ''}">
+        <${cell} class="ng-binding">Sanmar / S&amp;S Activewear</${cell}>
+        <td><div ng-hide="provider.goodsPreviouslyOrdered || pullStock || provider.stockOrdered" class="${fixtureStock.ordered[index] ? 'ng-hide' : ''}">
+          <button type="button" ng-click="orderGoods(provider);" ${fixtureStock.disabled[index] ? 'disabled' : ''}>Order Goods</button>
+        </div></td>
+        <td><button type="button" ng-click="orderGoodsAddBox(provider);">Add Box</button></td>
+      </tr>
+      <tr ng-repeat="provider in providers"><${cell}>Manual Order</${cell}><td><button type="button" ng-click="orderGoods(provider);">Order Goods</button></td></tr>
+    </tbody></table>`;
     inventory.querySelectorAll('button').forEach(button => button.onclick = () => nativeGoodsClicks++);
     pane.append(inventory);
     content.append(pane);

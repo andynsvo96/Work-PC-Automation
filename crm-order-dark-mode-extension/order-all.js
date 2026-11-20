@@ -22,7 +22,10 @@
     for (const control of details.querySelectorAll('.order-inventory button[ng-click="orderGoods(provider);"]')) {
       if (control.disabled || control.getAttribute("aria-disabled") === "true") continue;
       const row = control.closest('tr[ng-repeat="provider in providers"]');
-      const vendor = row?.querySelector("td")?.textContent || "";
+      // CRM labels provider rows with <th>; their first <td> holds Order Goods.
+      // Keep the data-cell form for older table layouts, scoped to this row.
+      const vendorCell = row?.querySelector(":scope > th") || row?.querySelector(":scope > td");
+      const vendor = vendorCell?.textContent || "";
       // Manual Order opens a vendor-entry dialog and cannot order stock itself.
       if (!/sanmar\s*\/\s*s\s*&\s*s\s+activewear/i.test(vendor)) continue;
       const pane = control.closest(".tab-pane");

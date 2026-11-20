@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CRM Order Assistant",
-  "version": "1.7.22",
+  "version": "1.7.23",
   "description": "CRM order tools, bulk print-area editing, Salesforce tab reuse, and Orders email sender selection.",
   "permissions": ["storage", "tabs", "webNavigation"],
   "host_permissions": [
