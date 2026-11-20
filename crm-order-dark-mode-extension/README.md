@@ -48,6 +48,9 @@ session receipts are written before submission and retain confirmed results
 across refreshes. The same stock contents cannot be submitted again through Order
 All; new quantities/sizes may be ordered after CRM exposes an eligible button.
 Other stock changes or uncertain results should be checked on the native tab.
+If an earlier extension version already submitted an automation task for this
+order, its saved pending/uncertain request is still honored. Check that existing
+queue entry before starting direct stock ordering; updating does not cancel it.
 
 Version **1.7.23** fixes a missing Order All button on CRM's native inventory
 tables. Eligibility reads the vendor's header cell as well as older data-cell
