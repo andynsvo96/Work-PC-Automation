@@ -7,10 +7,11 @@
   .crm-edit-previews-grid img { display: block; width: 100%; height: auto; }
   .crm-order-all-control { margin-left: 8px; vertical-align: middle; }
   .crm-order-all-button { white-space: nowrap; }
+  .crm-order-all-result { padding: 10px 14px; margin: 8px 0; border: 1px solid #cbd5e1; border-radius: 4px; line-height: 1.5; overflow-wrap: anywhere; }
   .nav-tabs > .crm-order-all-control { display: flex; align-items: center; margin: 3px 0 3px 8px; }
   html.crm-order-dark-mode .crm-edit-previews { background: #252526; color: #e2e8f0; }
   @media (max-width: 480px) { .crm-edit-previews-grid { gap: 8px; } }
 }
 @media print {
-  .crm-edit-previews, .crm-order-all-control { display: none !important; }
+  .crm-edit-previews, .crm-order-all-control, .crm-order-all-result { display: none !important; }
 }

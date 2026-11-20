@@ -1,4 +1,4 @@
-"""Preview retention and queued Order All with local markup and stubbed services."""
+"""Preview retention and native Order All with local markup and stubbed CRM services."""
 
 import http.server
 import os
@@ -59,15 +59,15 @@ class OrderQolBrowserTests(unittest.TestCase):
     def show(self, route="/order/1234567"):
         self.driver.get("about:blank")
         self.driver.get(self.url + route)
-        self.driver.execute_script("sessionStorage.clear();")
+        self.driver.execute_script("sessionStorage.clear(); fixtureResetStock();")
         self.inject()
 
-    def inject(self):
+    def inject(self, automation=True):
         for name in ("all-tabs.css", "order-qol.css", "dark-mode.css"):
             self.driver.execute_script("const style = document.createElement('style'); style.textContent = arguments[0]; document.head.append(style);",
                                        (EXTENSION / name).read_text(encoding="utf-8"))
-        self.driver.execute_script("\n".join((EXTENSION / name).read_text(encoding="utf-8")
-            for name in ("content.js", "all-tabs-model.js", "all-tabs.js", "order-all.js", "order-edit-previews.js")))
+        scripts = (["content.js"] if automation else []) + ["all-tabs-model.js", "all-tabs.js", "order-all-batch.js", "order-all.js", "order-edit-previews.js"]
+        self.driver.execute_script("\n".join((EXTENSION / name).read_text(encoding="utf-8") for name in scripts))
 
     def wait_for_button(self):
         WebDriverWait(self.driver, 5).until(lambda d: d.find_elements(By.CSS_SELECTOR, "#crm-order-all-header button"))
@@ -121,7 +121,7 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, ".crm-edit-previews-caption").text, "Highlighted tab 2")
         self.assertEqual(self.driver.execute_script("return [orderScope.activeDesignIndex, resource.designs.length];"), [1, 3])
 
-    def test_order_all_is_after_last_real_tab_and_queues_only_current_order_once(self):
+    def test_order_all_submits_all_native_requests_in_one_click_without_automation(self):
         self.show()
         vendor = self.driver.find_element(By.CSS_SELECTOR, '.tab-pane.active tr[ng-repeat="provider in providers"] > :first-child')
         self.assertEqual(vendor.tag_name, "th")
@@ -133,15 +133,25 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.assertEqual(self.driver.execute_script("return resource.designs.length;"), 3)
         self.driver.save_screenshot(str(self.artifacts / "order-all-available.png"))
         button.click()
-        WebDriverWait(self.driver, 5).until(lambda d: d.execute_script("return queueCalls.length;") == 1)
-        self.assertEqual(self.driver.execute_script("return queueCalls[0].orderId;"), "1234567")
-        self.assertEqual(self.driver.execute_script("return queueCalls[0].automation;"), "order_goods")
+        WebDriverWait(self.driver, 5).until(lambda d: d.execute_script("return nativeCalls.length;") == 2)
+        self.assertEqual(self.driver.execute_script("return nativeCalls;"), ["101", "102"])
+        self.assertEqual(self.driver.execute_script("return queueCalls;"), [])
         self.assertTrue(button.get_property("disabled"))
         self.assertTrue(self.driver.find_element(By.CSS_SELECTOR, "#crm-order-all-detail button").get_property("disabled"))
         self.assertEqual(self.driver.execute_script("return [nativeGoodsClicks, orderScope.activeDesignIndex];"), [0, 1])
         self.driver.execute_script("renderFixture();")
         self.assertTrue(self.wait_for_button().get_property("disabled"))
-        self.assertEqual(self.driver.execute_script("return queueCalls.length;"), 1)
+        self.assertEqual(self.driver.execute_script("return nativeCalls.length;"), 2)
+        self.driver.execute_script("pendingNative.get('101').resolve({succeeded:true,supplier:'Sanmar'});")
+        WebDriverWait(self.driver, 5).until(lambda d: "1/2" in d.find_element(By.ID, "crm-order-all-result").text)
+        self.assertEqual(self.driver.execute_script("return nativeReloads;"), 0)
+        self.driver.execute_script("pendingNative.get('102').resolve({succeeded:true,supplier:'Sanmar'});")
+        WebDriverWait(self.driver, 5).until(lambda d: d.execute_script("return nativeReloads;") == 1)
+        self.assertIn("confirmed stock ordered on tabs 2, 3", self.driver.find_element(By.ID, "crm-order-all-result").text)
+        self.driver.refresh()
+        self.inject(automation=False)
+        self.assertEqual(self.driver.find_elements(By.ID, "crm-order-all-header"), [])
+        self.assertEqual(self.driver.execute_script("return nativeCalls;"), ["101", "102"])
 
     def test_order_all_accepts_older_vendor_data_cells_and_excludes_manual_order(self):
         self.show()
@@ -182,31 +192,86 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.wait_for_button()
         self.edit()
 
-    def test_uncertain_queue_acceptance_blocks_repeat_clicks_after_rebuild(self):
+    def test_refresh_during_native_requests_requires_review_without_resubmission(self):
         self.show()
-        self.driver.execute_script("queueMode = 'uncertain';")
         self.wait_for_button().click()
-        WebDriverWait(self.driver, 5).until(lambda d: d.execute_script("return queueCalls.length;") == 1)
+        WebDriverWait(self.driver, 5).until(lambda d: d.execute_script("return nativeCalls.length;") == 2)
         self.assertTrue(self.wait_for_button().get_property("disabled"))
-        self.assertIn("may already be queued", self.wait_for_button().get_attribute("title"))
         self.driver.execute_script("document.querySelector('#crm-order-all-header').remove(); renderFixture();")
         self.assertTrue(self.wait_for_button().get_property("disabled"))
-        self.assertEqual(self.driver.execute_script("return queueCalls.length;"), 1)
+        self.assertEqual(self.driver.execute_script("return nativeCalls.length;"), 2)
         self.driver.refresh()
-        self.inject()
+        self.inject(automation=False)
         self.assertTrue(self.wait_for_button().get_property("disabled"))
-        self.assertIn("may already be queued", self.wait_for_button().get_attribute("title"))
+        self.assertIn("page changed before CRM confirmed", self.driver.find_element(By.ID, "crm-order-all-result").text)
+        self.assertEqual(self.driver.execute_script("return nativeCalls.length;"), 2)
 
-    def test_known_queue_rejection_shows_error_and_allows_retry(self):
+    def test_native_failure_reports_tab_and_prevents_duplicate_submissions(self):
         self.show()
-        self.driver.execute_script("queueMode = 'reject';")
         self.wait_for_button().click()
-        WebDriverWait(self.driver, 5).until(lambda d: d.execute_script("return queueCalls.length;") == 1)
+        self.driver.execute_script("pendingNative.get('101').resolve({succeeded:true,supplier:'Sanmar'}); pendingNative.get('102').resolve({succeeded:false,errors:['Not enough stock']});")
+        WebDriverWait(self.driver, 5).until(lambda d: "Not enough stock" in d.find_element(By.ID, "crm-order-all-result").text)
+        self.assertIn("Tab 3", self.driver.find_element(By.ID, "crm-order-all-result").text)
+        self.assertTrue(self.wait_for_button().get_property("disabled"))
+        self.assertEqual(self.driver.execute_script("return [nativeCalls.length, queueCalls.length, nativeReloads];"), [2, 0, 0])
+
+    def test_native_order_all_works_with_no_automation_content_script(self):
+        self.driver.get("about:blank")
+        self.driver.get(self.url + "/order/1234567")
+        self.driver.execute_script("sessionStorage.clear(); fixtureResetStock(); delete window.chrome;")
+        self.inject(automation=False)
+        self.wait_for_button().click()
+        self.assertEqual(self.driver.execute_script("return nativeCalls;"), ["101", "102"])
+        self.assertEqual(self.driver.execute_script("return typeof queueManualOrderAutomation;"), "undefined")
+
+    def test_native_locked_flag_is_respected_even_before_dom_disabled_updates(self):
+        self.show()
+        self.wait_for_button()
+        self.driver.execute_script("resource.featureFlags.stockOrderingLocked = true; document.body.classList.toggle('locked');")
+        WebDriverWait(self.driver, 5).until(lambda d: not d.find_elements(By.ID, "crm-order-all-header"))
+        self.assertEqual(self.driver.execute_script("return nativeCalls;"), [])
+
+    def test_native_ordering_waits_for_other_inventory_loading_or_requests(self):
+        self.show()
+        self.wait_for_button()
+        self.driver.execute_script("inventoryScopes[0].placingOrder = true; renderFixture();")
+        WebDriverWait(self.driver, 5).until(lambda d: self.wait_for_button().get_property("disabled"))
+        self.assertEqual(self.driver.execute_script("return nativeCalls;"), [])
+        self.driver.execute_script("inventoryScopes[0].placingOrder = false; renderFixture();")
         WebDriverWait(self.driver, 5).until(lambda d: not self.wait_for_button().get_property("disabled"))
-        self.assertIn("not reachable", self.driver.find_element(By.ID, "crm-order-automation-result").text)
-        self.driver.execute_script("queueMode = 'success';")
+
+    def test_confirmed_stock_cannot_repeat_but_new_quantities_can_be_ordered(self):
+        self.show()
+        self.driver.execute_script("nativeMode = 'success';")
         self.wait_for_button().click()
-        self.assertEqual(self.driver.execute_script("return queueCalls.length;"), 2)
+        WebDriverWait(self.driver, 5).until(lambda d: d.execute_script("return nativeReloads;") == 1)
+        self.driver.refresh()
+        self.inject(automation=False)
+        self.driver.execute_script("fixtureStock.ordered[1] = false; resource.designs[1].designItems[0].pricePerPiece = '90.00'; renderFixture();")
+        self.assertTrue(self.wait_for_button().get_property("disabled"))
+        self.driver.execute_script("resource.designs[1].designItems[0].quantity = 2; renderFixture();")
+        WebDriverWait(self.driver, 5).until(lambda d: not self.wait_for_button().get_property("disabled"))
+        self.wait_for_button().click()
+        self.assertEqual(self.driver.execute_script("return nativeCalls;"), ["101", "102", "101"])
+        self.assertEqual(self.driver.execute_script("return queueCalls;"), [])
+
+    def test_native_targets_cannot_escape_the_current_order_or_provider(self):
+        self.show()
+        self.driver.execute_script("""
+            inventoryScopes[1].order = () => ({getResource: () => ({id:'7654321'})});
+            inventoryScopes[2].providers[0].id = 210;
+            renderFixture();
+        """)
+        WebDriverWait(self.driver, 5).until(lambda d: not d.find_elements(By.ID, "crm-order-all-header"))
+        self.assertEqual(self.driver.execute_script("return nativeCalls;"), [])
+
+    def test_an_already_submitted_older_automation_cannot_be_duplicated(self):
+        self.show()
+        self.wait_for_button()
+        self.driver.execute_script("sessionStorage.setItem('crm-order-process-active:1234567','1'); document.body.classList.toggle('previous-task');")
+        WebDriverWait(self.driver, 5).until(lambda d: self.wait_for_button().get_property("disabled"))
+        self.assertIn("earlier automation", self.wait_for_button().get_attribute("title"))
+        self.assertEqual(self.driver.execute_script("return nativeCalls;"), [])
 
     def test_preview_layout_dark_mode_and_print(self):
         self.show()

@@ -41,14 +41,25 @@ Object.defineProperty(HTMLImageElement.prototype, 'src', {
     if (src.endsWith('_t')) setTimeout(() => this.dispatchEvent(new Event('error')), 0);
   }
 });
-window.resource = { id: '1234567', features: { approved: false, releasedToVendor: 0 },
-  designs: [0,1,2].map(index => ({ id: String(100 + index), designId: String(20000 + index), printAreas: [] })) };
-window.fixtureStock = { ordered: [true, false, false], disabled: [false, false, false], hidden: [false, false, false] };
+window.resource = { id: '1234567', features: { approved: false, releasedToVendor: 0 }, featureFlags: { stockOrderingLocked: false },
+  designs: [0,1,2].map(index => ({ id: String(100 + index), designId: String(20000 + index), printAreas: [],
+    designItems: [{id: String(500 + index), productId: '10', colorId: '20', quantity: 1, sizes: []}] })) };
+window.fixtureStock = JSON.parse(sessionStorage.getItem('fixture-native-stock') || 'null') ||
+  { ordered: [true, false, false], disabled: [false, false, false], hidden: [false, false, false] };
 window.fixtureVendorCellTag = 'th';
 window.fixtureVendor = false;
 window.queueCalls = [];
 window.queueMode = 'success';
 window.nativeGoodsClicks = 0;
+window.nativeCalls = JSON.parse(sessionStorage.getItem('fixture-native-calls') || '[]');
+window.pendingNative = new Map();
+window.nativeMode = 'hold';
+window.nativeReloads = 0;
+const originalTimeout = window.setTimeout.bind(window);
+window.setTimeout = (fn, delay, ...args) => {
+  if (delay === 1500) { nativeReloads++; return -1; } // Hold the final refresh for assertions.
+  return originalTimeout(fn, delay, ...args);
+};
 window.fixtureRuntime = { runKind: 'manual', orderId: '1234567', queued: false, running: false, lastSuccess: null };
 window.orderScope = {
   order: { getResource: () => resource }, editMode: new URLSearchParams(location.search).has('edit'), activeDesignIndex: 1, transfersOnly: false,
@@ -57,7 +68,46 @@ window.orderScope = {
   saveOrder() { this.editMode = false; renderFixture(); },
   editModeOn() { this.editMode = true; renderFixture(); }
 };
-window.angular = { element: () => ({ scope: () => orderScope }) };
+window.inventoryService = {
+  orderGoodsSupplynet(designId) {
+    nativeCalls.push(String(designId));
+    sessionStorage.setItem('fixture-native-calls', JSON.stringify(nativeCalls));
+    const index = resource.designs.findIndex(design => design.id === String(designId));
+    return new Promise((resolve, reject) => {
+      pendingNative.set(String(designId), { resolve(response) {
+        if (response?.succeeded && response.supplier) {
+          fixtureStock.ordered[index] = true;
+          sessionStorage.setItem('fixture-native-stock', JSON.stringify(fixtureStock));
+        }
+        resolve(response);
+      }, reject });
+      if (nativeMode === 'success') originalTimeout(() => pendingNative.get(String(designId)).resolve({succeeded:true,supplier:'Sanmar'}), 20);
+    });
+  }
+};
+window.inventoryScopes = resource.designs.map((design, index) => ({
+  providers: [{id:null,vendor:'Sanmar / S&S Activewear',allStockOrdered:false,stockOrdered:false,goodsPreviouslyOrdered:false}, {id:210,vendor:'Manual Order'}],
+  design: () => resource.designs[index], order: () => orderScope.order, itemCount: 1, placingOrder: false,
+  isOrderingLocked: provider => provider.id === null && resource.featureFlags.stockOrderingLocked,
+  orderGoods(provider) { nativeGoodsClicks++; if (provider.id === null) return inventoryService.orderGoodsSupplynet(design.id); },
+  $root: {$$phase:false}, $apply(fn) { try { return fn(); } finally { renderFixture(); } }
+}));
+window.angular = { element: node => ({
+  scope() {
+    const inventory = node?.closest?.('[order-inventory]');
+    if (!inventory) return orderScope;
+    const owner = inventoryScopes[Number(inventory.dataset.designIndex)];
+    const row = node?.closest('tr[ng-repeat="provider in providers"]');
+    return row ? {provider: owner.providers[row === inventory.querySelector('tr') ? 0 : 1], $parent:owner} : orderScope;
+  },
+  isolateScope() { const inventory = node?.closest?.('[order-inventory]'); return inventory ? inventoryScopes[Number(inventory.dataset.designIndex)] : null; },
+  injector: () => ({ get(name) { if (name !== 'orders/inventory/InventorySrv') throw new Error('Unknown service'); return inventoryService; } })
+}) };
+window.fixtureResetStock = () => {
+  nativeCalls = []; nativeReloads = 0;
+  fixtureStock = { ordered: [true,false,false], disabled:[false,false,false], hidden:[false,false,false] };
+  renderFixture();
+};
 window.chrome = {
   runtime: {
     onMessage: { addListener() {} },
@@ -106,6 +156,8 @@ function renderFixture() {
     pane.className = 'tab-pane' + (index === orderScope.activeDesignIndex ? ' active' : '');
     const inventory = document.createElement('div');
     inventory.className = 'order-inventory';
+    inventory.setAttribute('order-inventory', 'design');
+    inventory.dataset.designIndex = index;
     // CRM uses a header cell for the vendor, followed by separate action cells.
     // The data-cell variant checks compatibility with older table markup.
     const cell = fixtureVendorCellTag;
@@ -113,13 +165,14 @@ function renderFixture() {
       <tr ng-repeat="provider in providers" ng-hide="provider.allStockOrdered &amp;&amp; !provider.forceDisplay" class="${fixtureStock.hidden[index] ? 'ng-hide' : ''}">
         <${cell} class="ng-binding">Sanmar / S&amp;S Activewear</${cell}>
         <td><div ng-hide="provider.goodsPreviouslyOrdered || pullStock || provider.stockOrdered" class="${fixtureStock.ordered[index] ? 'ng-hide' : ''}">
-          <button type="button" ng-click="orderGoods(provider);" ${fixtureStock.disabled[index] ? 'disabled' : ''}>Order Goods</button>
+          <button type="button" ng-click="orderGoods(provider);" ${fixtureStock.disabled[index] || inventoryScopes[index].placingOrder ? 'disabled' : ''}>Order Goods</button>
         </div></td>
         <td><button type="button" ng-click="orderGoodsAddBox(provider);">Add Box</button></td>
       </tr>
       <tr ng-repeat="provider in providers"><${cell}>Manual Order</${cell}><td><button type="button" ng-click="orderGoods(provider);">Order Goods</button></td></tr>
     </tbody></table>`;
-    inventory.querySelectorAll('button').forEach(button => button.onclick = () => nativeGoodsClicks++);
+    inventory.querySelectorAll('button').forEach(button => button.onclick = () => inventoryScopes[index].orderGoods(
+      inventoryScopes[index].providers[button.closest('tr') === inventory.querySelector('tr') ? 0 : 1]));
     pane.append(inventory);
     content.append(pane);
   });

@@ -28,35 +28,42 @@ changing a print-area label does not redraw that artwork.
 
 **Order All** appears after the last real tab in both tab bars outside Edit
 Order, when at least one tab has an enabled automatic **Order Goods** control.
-Click it to queue the current order through the existing **Order Goods** worker.
-The local Automation app must be running. The worker visits tabs serially,
-keeps its stock checks and reload handling, and skips already-ordered tabs.
-The highlighted tab and the customer's tab count are preserved by the button.
-Use the normal queue/status display to follow the run; the order page refreshes
-when the run finishes.
+In **1.7.24**, one click immediately submits CRM's own **Order Goods** request
+for every eligible tab in the current order. It works with the local Automation
+app closed and creates no automation job. The extension uses the same native CRM
+inventory service as each individual button, keeps the highlighted tab, and
+shows per-tab results. Requests start together; the page refreshes once after
+all requests return confirmed success, so one tab's normal five-second reload
+cannot interrupt the rest. The customer's tab count stays the same.
 
 An order-wide **Ordered** status does not hide Order All when a tab still has
 stock available to order, such as newly added sizes. When no tab is eligible,
 including when all stock is ordered, Order All is hidden. Disabled/locked or
 hidden native controls, **Manual Order** dialogs, and **Add Box** are excluded.
-Pending and accepted requests disable both Order All buttons. An uncertain queue
-response stays disabled for review rather than posting another purchase task.
+Both Order All buttons stay disabled during requests or while native inventory
+is still loading/ordering. Locked stock remains locked; this button never applies
+an unlock status. A failed, timed-out, or interrupted request shows the affected
+tab for manual stock review and is never retried automatically. Browser-tab
+session receipts are written before submission and retain confirmed results
+across refreshes. The same stock contents cannot be submitted again through Order
+All; new quantities/sizes may be ordered after CRM exposes an eligible button.
+Other stock changes or uncertain results should be checked on the native tab.
 
 Version **1.7.23** fixes a missing Order All button on CRM's native inventory
 tables. Eligibility reads the vendor's header cell as well as older data-cell
 layouts. Available stock now shows Order All after the last real tab; the same
-ordered/locked/manual-order exclusions and single-order queue remain in effect.
+ordered/locked/manual-order exclusions remain in effect.
 
-Reload **CRM Order Assistant 1.7.23** at `chrome://extensions` and refresh open CRM
+Reload **CRM Order Assistant 1.7.24** at `chrome://extensions` and refresh open CRM
 order pages. **No local Automation app restart is needed** for these extension
-changes. They use the app's existing single-order queue and bridge.
+changes. Order All works directly in the current CRM browser session.
 
-Offline verification uses local images, stubbed queue responses, and CRM stock
+Offline verification uses local images, stubbed native CRM responses, and stock
 fixtures; it never submits a real purchase:
 
 ```powershell
 python -m unittest discover -s tests -p test_order_qol_browser.py
-python -m unittest discover -s tests -p "test_crm_order_goods*.py"
+node --test tests/test_order_all_batch.mjs
 ```
 
 ## All Tabs print-area editing - 1.7.21
