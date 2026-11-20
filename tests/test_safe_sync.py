@@ -99,7 +99,7 @@ class SafeSyncTests(unittest.TestCase):
         with mock.patch(
             "safe_sync._run",
             side_effect=[
-                (0, "?? workers/new_worker.py\0?? tests/test_new_worker.py\0"),
+                (0, "?? workers/new_worker.py\0?? tests/test_new_worker.py\0?? tests/test_all_tabs.mjs\0"),
                 (0, "staged new files"),
                 (0, "fetched"),
                 (0, "staged tracked files"),
@@ -112,13 +112,15 @@ class SafeSyncTests(unittest.TestCase):
         self.assertTrue(result["success"])
         calls = [call.args[1:] for call in mock_run.call_args_list]
         self.assertIn(
-            ("add", "--", "workers/new_worker.py", "tests/test_new_worker.py"),
+            ("add", "--", "workers/new_worker.py", "tests/test_new_worker.py", "tests/test_all_tabs.mjs"),
             calls,
         )
 
     def test_safe_untracked_source_path_rejects_sensitive_and_runtime_files(self):
         self.assertTrue(safe_sync._safe_untracked_source_path("workers/new_worker.py"))
         self.assertTrue(safe_sync._safe_untracked_source_path("tests/test_new_worker.py"))
+        self.assertTrue(safe_sync._safe_untracked_source_path("tests/test_all_tabs.mjs"))
+        self.assertTrue(safe_sync._safe_untracked_source_path("crm-order-dark-mode-extension/new-module.mjs"))
         self.assertTrue(
             safe_sync._safe_untracked_source_path(
                 "shipping_bypasser_product_color_mappings.json"
@@ -128,6 +130,9 @@ class SafeSyncTests(unittest.TestCase):
         self.assertFalse(safe_sync._safe_untracked_source_path("other_root_file.json"))
         self.assertFalse(safe_sync._safe_untracked_source_path("workers/session-token.json"))
         self.assertFalse(safe_sync._safe_untracked_source_path("runtime/state.json"))
+        for path in ("new-module.mjs", "tests/session-token.mjs", "runtime/debug/test_all_tabs.mjs"):
+            with self.subTest(path=path):
+                self.assertFalse(safe_sync._safe_untracked_source_path(path))
 
     @mock.patch("safe_sync.get_git_version_state")
     def test_publish_update_refuses_non_main_branch(self, mock_state):

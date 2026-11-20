@@ -1,6 +1,6 @@
 # CRM Order Assistant
 
-Private Manifest V3 extension for the Automation project's CRM pages. It provides local order-page dark mode, queued single-order tools, list selection and rush highlighting, reliable Salesforce tab reuse, and an automatic Orders email sender default. List controls select orders and open tabs; queued tools remain scoped to individual order pages.
+Private Manifest V3 extension for the Automation project's CRM pages. It provides local order-page dark mode, bulk print-area editing, queued single-order tools, list selection and rush highlighting, reliable Salesforce tab reuse, and an automatic Orders email sender default. List controls select orders and open tabs; queued tools remain scoped to individual order pages.
 
 ## Install locally
 
@@ -14,6 +14,59 @@ The preference is stored locally in that Chrome profile. Removing or reloading t
 After extension updates, reload the extension at `chrome://extensions` and refresh open CRM order/list and Salesforce pages. Updates that also change the local Automation app require an app restart as noted below.
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
+
+## All Tabs print-area editing - 1.7.21
+
+In **Edit Order**, **All Tabs** appears before tab 1 in both design-tab bars.
+Your highlighted real tab stays selected until you click All Tabs. The added
+control is a local view; the order's real tabs, numbering, and customer tab count
+stay the same. It disappears after leaving edit mode and is excluded from printing.
+
+All Tabs lists the **union of print-area locations** across available design tabs,
+with the affected tab numbers on every row. For example, Front on tabs 1 and 2,
+Back on tab 2, and Front-Left Chest on tab 3 produce three rows. Each row edits
+its original areas, so swapping Front and Front-Left Chest keeps the correct
+targets. It changes **print-area location and print method**. Each area's notes,
+artwork, dimensions, and product prices stay with their original tab. Mixed
+methods remain separate until you explicitly select a method for that row.
+
+1. Open **Edit Order**, then **All Tabs**.
+2. Choose location or method changes. Complete both sides of a swap before applying.
+3. Use **Add print area** to select a new location and method. Its preview lists
+   only tabs missing that location after your pending edits. Existing areas and
+   their methods are kept; selecting an already-present location adds nothing.
+4. Review the affected tabs and click **Apply changes**. Conflicts identify every
+   tab that would have duplicate locations and block the batch. No changes are
+   applied until the entire batch validates.
+5. Inspect the real tabs, then use CRM's **Save Order**. After saving, refresh and
+   confirm the intended locations/methods persisted. CRM's normal save validation
+   still applies. Apply changes updates the unsaved order; it does not save it.
+
+Pending edits stay available when switching between real tabs and All Tabs.
+**Discard pending changes** rereads the current order without undoing changes
+already applied to the native editor. Save Order is blocked while bulk edits are
+pending, so they cannot be silently omitted. CRM's normal Cancel discards unsaved
+native edits. If tabs or areas change after the bulk preview, applying stops;
+discard the pending bulk edits and read the tabs again. A rejected native helper
+rolls back the batch before reporting the error.
+
+This feature works independently of dark mode and the local Automation app. It
+uses CRM's existing Angular print-area controls on the current order, including
+the embedded order app, without additional extension permissions.
+
+Reload **CRM Order Assistant 1.7.21** at `chrome://extensions` and refresh open CRM
+order pages. **No local Automation app restart is needed.**
+
+Offline tests use sanitized order markup and an isolated Chrome profile. They
+verify saved values after a fixture save and reload, without editing live orders:
+
+```powershell
+node --test tests/test_all_tabs.mjs
+python -m unittest discover -s tests -p test_all_tabs_browser.py
+```
+
+Set `CHROMEDRIVER` if a local driver is not available under `.wdm/`. Live CRM saves
+and macOS browser behavior require verification on their respective environments.
 
 ## SanMar-only Reorder - 1.7.16
 

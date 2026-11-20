@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Offline All Tabs CRM fixture</title>
+<style>
+  body { margin: 22px; font: 14px Arial, sans-serif; background: #f5f7fa; color: #263244; }
+  #view-orders-index { max-width: 1040px; margin: auto; }
+  .btn { padding: 8px 12px; border: 1px solid #bcc8d6; border-radius: 4px; background: #fff; cursor: pointer; font: inherit; }
+  .btn-primary { background: #245888; color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  #main-header-design-tabs { margin: 20px 0; }
+  .btn-group { display: flex; gap: 4px; align-items: stretch; }
+  .nav-tabs { display: flex; list-style: none; padding: 0; border-bottom: 1px solid #cbd5e1; margin-bottom: 0; }
+  .nav-tabs li a { display: block; padding: 10px 15px; text-decoration: none; color: inherit; }
+  .nav-tabs li.active { background: #dce9f7; }
+  .tab-pane { display: none; background: #fff; padding: 18px; }
+  .tab-pane.active { display: block; }
+  .form-control { box-sizing: border-box; height: 36px; padding: 6px; border: 1px solid #a8b8cb; border-radius: 4px; font: inherit; }
+  .printarea { padding: 12px; margin: 8px 0; border: 1px solid #cbd5e1; }
+  .ng-hide { display: none; }
+</style>
+<main id="view-orders-index">
+  <h1>Order 1234567</h1>
+  <button type="button" class="btn btn-primary edit-btn" ng-click="editModeOn();">edit order</button>
+  <button type="button" class="btn btn-primary save-btn" ng-click="saveOrder();">save order</button>
+  <button type="button" class="btn" id="cancel-edit">cancel</button>
+  <div id="main-header-design-tabs"><div class="btn-group center-block" role="group"></div></div>
+  <!-- Structure and Angular hooks sanitized from the supplied order snapshot.
+       No customer data, network requests, or real CRM scripts are included. -->
+  <div id="order-design-details" class="row col-md-12 tabbable" tabset>
+    <ul class="nav nav-tabs"></ul>
+    <div class="tab-content"></div>
+  </div>
+</main>
+<script>
+window.STATICS = {
+  printAreaTemplates: ['Front', 'Front-Left Chest', 'Front-Right Chest', 'Back', 'Side Left', 'Side Right']
+    .map((description, i) => ({ id: i + 1, description, active: '1', sortOrder: i })),
+  printMethods: ['HD Digital', 'Embroidery', 'Screen Printing'].map((description, i) => ({ id: i + 1, description }))
+};
+window.saveCount = 0;
+window.nativeFailure = false;
+const cleanCopy = value => structuredClone(value);
+window.resource = JSON.parse(localStorage.getItem('all-tabs-fixture-resource') || 'null');
+function makeResource(layout) {
+  return { id: '1234567', designs: layout.map((locations, index) => ({ id: String(100 + index), designId: 'shared-artwork',
+    designItems: [{ pricePerPiece: '25.00', quantity: index + 1 }],
+    printAreas: locations.map((description, i) => ({ id: String(1000 + index * 10 + i),
+      description, printMethodDescription: 'HD Digital', width: '12', height: '10',
+      notes: [{ text: 'Original note for tab ' + (index + 1) }], designFiles: [{ id: 'file-' + index + '-' + i }] }))
+  })) };
+}
+if (!resource) resource = makeResource([['Front'], ['Front', 'Back'], ['Front-Left Chest']]);
+let saved = cleanCopy(resource);
+window.orderScope = {
+  order: { getResource: () => resource }, editMode: false, savingOrder: false, fileUploading: false,
+  activeDesignIndex: 1, designTabs: resource.designs.map((_, i) => i === 1), STATICS,
+  copyOrder() {}, isGettingShippingMethods: () => false,
+  $apply(fn) { try { return fn(); } finally { renderNative(); } },
+  $root: { $$phase: false },
+  editModeOn() { this.editMode = true; renderNative(); },
+  saveOrder() {
+    saveCount++;
+    if (window.rejectSave) return;
+    resource.designs.forEach(design => design.printAreas.forEach((area, i) => {
+      area.id ||= design.id + '-new-' + i;
+      delete area.crudAction;
+    }));
+    localStorage.setItem('all-tabs-fixture-resource', JSON.stringify(resource));
+    saved = cleanCopy(resource);
+    this.editMode = false;
+    renderNative();
+  },
+  onDesignTabSelect(index) {
+    this.activeDesignIndex = index;
+    this.designTabs = resource.designs.map((_, i) => i === index);
+    renderSelection();
+  },
+  updateAreaTemplate(area, template) {
+    area.description = template.description;
+    area.printAreaTemplateId = template.id;
+    area.crudAction ||= 'u';
+    if (nativeFailure) throw new Error('Fixture native helper rejected the change');
+  },
+  updateAreaMethod(area, method) { area.printMethodDescription = method.description; area.printMethodId = method.id; area.crudAction ||= 'u'; },
+  addPrintArea(design) { design.printAreas.push({ crudAction: 'c', notes: [], designFiles: [] }); }
+};
+window.angular = { element: () => ({ scope: () => orderScope }), copy: cleanCopy };
+function renderSelection() {
+  document.querySelectorAll('#main-header-design-tabs button[ng-repeat]').forEach((button, i) => {
+    button.className = 'btn ' + (i === orderScope.activeDesignIndex ? 'btn-primary' : 'btn-default');
+  });
+  document.querySelectorAll('.order-form-design-tab').forEach((tab, i) => tab.classList.toggle('active', i === orderScope.activeDesignIndex));
+  document.querySelectorAll('.tab-pane').forEach((pane, i) => pane.classList.toggle('active', i === orderScope.activeDesignIndex));
+}
+function renderNative() {
+  document.querySelector('.edit-btn').classList.toggle('ng-hide', orderScope.editMode);
+  document.querySelector('.save-btn').classList.toggle('ng-hide', !orderScope.editMode);
+  document.querySelector('#cancel-edit').classList.toggle('ng-hide', !orderScope.editMode);
+  const header = document.querySelector('#main-header-design-tabs .btn-group');
+  const nav = document.querySelector('#order-design-details .nav-tabs');
+  const content = document.querySelector('#order-design-details .tab-content');
+  // Rebuild native elements only, leaving extension-owned siblings intact.
+  header.querySelectorAll('button[ng-repeat]').forEach(node => node.remove());
+  nav.querySelectorAll('.order-form-design-tab').forEach(node => node.remove());
+  content.querySelectorAll('.tab-pane').forEach(node => node.remove());
+  resource.designs.forEach((design, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('ng-repeat', '(designIndex, design) in order.getResource().designs');
+    button.setAttribute('ng-click', 'onDesignTabSelect(designIndex);');
+    button.textContent = `${index + 1} - QTY: ${index + 1} Design Previews`;
+    button.onclick = () => orderScope.onDesignTabSelect(index);
+    header.append(button);
+    const tab = document.createElement('li');
+    tab.className = 'order-form-design-tab';
+    tab.id = 'design-' + design.id;
+    tab.setAttribute('ng-repeat', '(designIndex, design) in order.getResource().designs');
+    tab.setAttribute('active', 'designTabs[designIndex]');
+    const link = document.createElement('a');
+    link.href = '#';
+    link.textContent = 'Tab ' + (index + 1);
+    link.onclick = event => { event.preventDefault(); orderScope.onDesignTabSelect(index); };
+    tab.append(link);
+    nav.append(tab);
+    const pane = document.createElement('div');
+    pane.className = 'tab-pane';
+    pane.setAttribute('ng-repeat', 'tab in tabs');
+    const form = document.createElement('div');
+    form.className = 'content';
+    form.setAttribute('ng-form', 'designForm');
+    design.printAreas.forEach(area => {
+      const block = document.createElement('div');
+      block.className = 'printarea';
+      block.setAttribute('ng-repeat', '(areaIndex, area) in design.printAreas');
+      block.textContent = `${area.description} / ${area.printMethodDescription}`;
+      form.append(block);
+    });
+    pane.append(form);
+    content.append(pane);
+  });
+  renderSelection();
+}
+window.fixtureReset = (layout, selected = 1) => {
+  resource = makeResource(layout || [['Front'], ['Front', 'Back'], ['Front-Left Chest']]);
+  saved = cleanCopy(resource);
+  localStorage.setItem('all-tabs-fixture-resource', JSON.stringify(resource));
+  orderScope.editMode = false;
+  orderScope.activeDesignIndex = Math.min(selected, resource.designs.length - 1);
+  orderScope.designTabs = resource.designs.map((_, i) => i === orderScope.activeDesignIndex);
+  renderNative();
+};
+document.querySelector('.edit-btn').onclick = () => orderScope.editModeOn();
+document.querySelector('.save-btn').onclick = () => orderScope.saveOrder();
+document.querySelector('#cancel-edit').onclick = () => { resource = cleanCopy(saved); orderScope.editMode = false; renderNative(); };
+renderNative();
+</script>
+</html>

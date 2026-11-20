@@ -33,6 +33,7 @@ _SAFE_UNTRACKED_SOURCE_EXTENSIONS = {
     ".js",
     ".json",
     ".md",
+    ".mjs",
     ".ps1",
     ".py",
     ".sh",

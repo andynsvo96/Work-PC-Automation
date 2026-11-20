@@ -317,6 +317,9 @@ function visibleStockIssueDesignTabs() {
 }
 
 function stockIssueTabHasActiveMarker(element) {
+  // All Tabs leaves CRM's real selection intact while displaying its own view.
+  // Prefer the native marker even when the bulk view neutralizes tab colors.
+  if (element.matches?.("#main-header-design-tabs button[ng-repeat]") && element.classList?.contains("btn-primary")) return true;
   for (let current = element; current && current !== document.body; current = current.parentElement) {
     if (["active", "selected", "current", "btn-inverse"].some((name) => current.classList?.contains(name))) return true;
     if (["aria-selected", "aria-pressed", "data-active", "data-selected"].some((name) => current.getAttribute?.(name) === "true")) return true;

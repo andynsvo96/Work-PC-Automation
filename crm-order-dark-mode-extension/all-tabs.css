@@ -1,0 +1,45 @@
+@media screen {
+  .crm-all-tabs-panel[hidden] { display: none !important; }
+  .crm-all-tabs-panel {
+    --all-tabs-bg: #fff;
+    --all-tabs-text: #263244;
+    --all-tabs-muted: #526176;
+    --all-tabs-border: #cbd5e1;
+    padding: 18px;
+    color: var(--all-tabs-text);
+    background: var(--all-tabs-bg);
+    border: 1px solid var(--all-tabs-border);
+    border-radius: 5px;
+  }
+  .crm-all-tabs-panel h3 { margin: 0 0 10px; font-size: 21px; }
+  .crm-all-tabs-panel h4 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+  .crm-all-tabs-help, .crm-all-tabs-affected { color: var(--all-tabs-muted); line-height: 1.5; overflow-wrap: anywhere; }
+  .crm-all-tabs-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 12px; }
+  .crm-all-tabs-card { padding: 14px; min-width: 0; border: 1px solid var(--all-tabs-border); border-radius: 5px; }
+  .crm-all-tabs-addition { border-style: dashed; }
+  .crm-all-tabs-field { display: block; font-weight: normal; margin: 12px 0; }
+  .crm-all-tabs-field > span { display: block; font-weight: 600; margin-bottom: 5px; }
+  .crm-all-tabs-field select { width: 100%; text-overflow: ellipsis; }
+  .crm-all-tabs-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .crm-all-tabs-status { line-height: 1.5; margin-bottom: 14px; }
+  .crm-all-tabs-error { color: #b91c1c !important; }
+  .crm-all-tabs-detail-button { padding: 10px 15px; background: transparent; border: 1px solid transparent; border-radius: 4px 4px 0 0; color: inherit; }
+  .crm-all-tabs-selected, .crm-all-tabs-selected > button { background: #e3f0ff !important; color: #173c69 !important; border-color: #4085cc !important; }
+  html.crm-all-tabs-view #order-design-details > .tab-content > .tab-pane { display: none !important; }
+  html.crm-all-tabs-view #main-header-design-tabs button[ng-repeat] { background: #fff !important; color: #333 !important; border-color: #ccc !important; }
+  html.crm-all-tabs-view #order-design-details .nav-tabs > li.order-form-design-tab { background: transparent !important; }
+  html.crm-all-tabs-view #order-design-details .nav-tabs > li.order-form-design-tab > a { background: transparent !important; color: inherit !important; border-color: transparent !important; }
+  html.crm-order-dark-mode .crm-all-tabs-panel {
+    --all-tabs-bg: #252526;
+    --all-tabs-text: #e2e8f0;
+    --all-tabs-muted: #b4c1d3;
+    --all-tabs-border: #555;
+  }
+  html.crm-order-dark-mode .crm-all-tabs-error { color: #fca5a5 !important; }
+  html.crm-order-dark-mode #crm-all-tabs-header.crm-all-tabs-selected,
+  html.crm-order-dark-mode #crm-all-tabs-detail.crm-all-tabs-selected > button { background: #04395e !important; color: #f0f0f0 !important; border-color: #007acc !important; }
+  html.crm-order-dark-mode.crm-all-tabs-view #main-header-design-tabs button[ng-repeat] { background: #2d2d30 !important; color: #d4d4d4 !important; border-color: #555 !important; }
+}
+@media print {
+  .crm-all-tabs-tab, .crm-all-tabs-panel { display: none !important; }
+}
