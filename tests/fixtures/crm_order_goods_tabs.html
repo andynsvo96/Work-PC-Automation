@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Offline multi-tab Order Goods fixture</title>
+<style>
+  body { font: 16px Arial; padding: 24px; }
+  #main-header-design-tabs { display: flex; gap: 8px; }
+  #main-header-design-tabs button { width: 190px; }
+  .design { display: none; }
+  .design.active { display: block; }
+  th, td { padding: 8px; }
+  .stock-row { background: rgb(240, 240, 145); }
+  .row { display: flex; gap: 24px; padding: 8px; }
+</style>
+<body>
+  <h1>Order 5000001</h1>
+  <p>Stock Status: Ordered</p>
+  <nav id="main-header-design-tabs"></nav>
+  <main id="designs"></main>
+  <section><h2>Production Notes</h2>
+    <table><tr><th>PO</th><th>Vendor Order #</th><th>Order Date</th></tr>
+      <tr><td>Sanmar</td><td>H-NoteOnly123</td><td>11/20/2026</td></tr></table>
+  </section>
+  <div role="dialog"><table>
+    <tr><th>PO</th><th>Vendor Order #</th><th>Order Date</th></tr>
+    <tr><td>Sanmar</td><td>H-DraftOnly123</td><td>11/20/2026</td></tr>
+  </table></div>
+</body>
+<script>
+const grid = new URLSearchParams(location.search).get('layout') === 'grid';
+let saved = JSON.parse(sessionStorage.getItem('stockFixture') || 'null');
+if (!saved) saved = { pending: [false, true, true, true], purchases: [1, 1, 0, 0], clicks: [] };
+const persist = () => sessionStorage.setItem('stockFixture', JSON.stringify(saved));
+function records(number) {
+  const vendor = number === 1 ? 'S&S Activewear' : 'Sanmar';
+  const row = saved.purchases[number - 1] ? grid
+    ? `<div class="row stock-row"><span>${vendor}</span><span>H-Fixture${number}</span><span>78054065</span><span>11/20/2026</span></div>`
+    : `<tr class="stock-row"><td>${vendor}</td><td>H-Fixture${number}</td><td>78054065</td><td>11/20/2026</td></tr>` : '';
+  return grid
+    ? `<div class="records"><div class="row"><span>PO</span><span>Vendor Order #</span><span>Order Date</span></div>${row}</div>`
+    : `<table><thead><tr><th></th><th>PO</th><th>Vendor Order #</th><th>Order Date</th></tr></thead><tbody>${row}</tbody></table>`;
+}
+function render(number) {
+  const design = document.getElementById(`design-${number}`);
+  design.innerHTML = `<h2>Items on this design</h2><p>PC54 Cotton T-Shirt - Alpha Stock</p>
+    <section><h2>Order Goods from Vendor${number === 1 ? ': Manual Order' : ': Sanmar / S&S Activewear'}</h2>
+      ${saved.pending[number - 1] ? '<button class="order-goods">Order Goods</button>' : ''}${records(number)}</section>`;
+  const button = design.querySelector('.order-goods');
+  if (button) button.onclick = () => {
+    saved.clicks.push(number);
+    saved.pending[number - 1] = false;
+    saved.purchases[number - 1] += 1;
+    persist();
+    render(number);
+  };
+}
+window.addSizeToDesign = (number) => { saved.pending[number - 1] = true; persist(); render(number); };
+window.stockFixtureState = () => saved;
+for (let number = 1; number <= 4; number++) {
+  const button = document.createElement('button');
+  button.textContent = number <= 2
+    ? `H-Fixture${number} ${number} - QTY: 2 ${number === 1 ? 'Design Previews' : 'View Proofs'}`
+    : 'H-SameLabel 3 - QTY: 2';
+  button.onclick = () => {
+    document.querySelectorAll('.design').forEach(node => node.classList.remove('active'));
+    document.getElementById(`design-${number}`).classList.add('active');
+  };
+  document.getElementById('main-header-design-tabs').append(button);
+  const design = document.createElement('section');
+  design.id = `design-${number}`;
+  design.className = `design${number === 1 ? ' active' : ''}`;
+  document.getElementById('designs').append(design);
+  render(number);
+}
+const hiddenDuplicate = document.querySelector('#main-header-design-tabs button').cloneNode(true);
+hiddenDuplicate.style.display = 'none';
+document.getElementById('main-header-design-tabs').append(hiddenDuplicate);
+persist();
+</script>
+</html>

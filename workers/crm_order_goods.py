@@ -7,7 +7,6 @@ Usage:
 """
 
 import argparse
-import json
 import os
 import re
 import shutil
@@ -61,7 +60,6 @@ from crm_unlock_orders import (
     unlock_single_order_with_driver as _unlock_single_order_through_locked_report,
     wait_for_order_preview_panel as _wait_for_stock_unlock_preview_panel,
 )
-from runtime_paths import state_file
 
 configure_console_utf8()
 
@@ -69,7 +67,6 @@ AUTOMATION_NAME = "crm.order_goods"
 PROFILE_PATH = os.path.join(SCRIPT_DIR, CRM_PROFILE_DIR)
 RUSH_FILTER = "rush"
 CONTINUOUS_ORDER_FETCH_LIMIT = 25
-CRM_STATE_PATH = state_file("crm_state.json")
 STOCK_UNLOCK_STATUS = "Stock Auto Ordering Unlocked"
 ORDER_OPEN_REFRESH_ATTEMPTS = 2
 ORDER_OPEN_REFRESH_DELAY_SECONDS = 2.0
@@ -142,45 +139,6 @@ def _validate_runtime_config(list_url=None):
     if "shippingcharges%5blow%5d=1" not in lowered_url and "shippingcharges[low]=1" not in lowered_url:
         raise RuntimeError("The default Order Goods list must be a Rush CRM list.")
     return target_url
-
-
-def _normalize_order_ids(raw_ids):
-    cleaned = []
-    seen = set()
-    values = raw_ids if isinstance(raw_ids, list) else []
-    for raw in values:
-        text = "".join(ch for ch in str(raw or "") if ch.isdigit())
-        if len(text) != 7 or text in seen:
-            continue
-        seen.add(text)
-        cleaned.append(text)
-    return cleaned
-
-
-def _load_historical_order_goods_order_ids(state_path=CRM_STATE_PATH):
-    try:
-        with open(state_path, "r", encoding="utf-8-sig") as handle:
-            state = json.load(handle)
-    except FileNotFoundError:
-        return set()
-    except Exception as exc:
-        print(f"Warning: could not read previous Order Goods history for skip list: {exc}")
-        return set()
-
-    history = state.get("run_history") if isinstance(state, dict) else []
-    if not isinstance(history, list):
-        return set()
-
-    skipped_order_ids = set()
-    for entry in history:
-        if not isinstance(entry, dict):
-            continue
-        automation_key = str(entry.get("automation_key") or "").strip().lower()
-        automation_label = str(entry.get("automation_label") or "").strip().lower()
-        if automation_key != "order_goods" and "order goods" not in automation_label:
-            continue
-        skipped_order_ids.update(_normalize_order_ids(entry.get("order_ids")))
-    return skipped_order_ids
 
 
 def _find_sanmar_order_goods_button(driver, timeout=None):
@@ -516,6 +474,57 @@ return normalize(parts.join('\n'));
     return _text_indicates_stock_already_ordered(text)
 
 
+def _active_stock_tab_has_purchase_order(driver):
+    """Read saved vendor/PO rows on the visible design, including Manual Order."""
+    try:
+        return driver.execute_script(
+            r"""
+const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+function isVisible(node) {
+  const rect = node.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  for (let current = node; current; current = current.parentElement) {
+    const style = window.getComputedStyle(current);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+  }
+  return true;
+}
+const vendorPo = /^(sanmar(?:\s*\(bulk\))?|s\s*&\s*s(?:\s+activewear)?|ssactivewear|s\s+and\s+s(?:\s+activewear)?|local\s+inventory)\s*:?\s+([a-z0-9][a-z0-9._/-]{1,89})(?:\s|$)/i;
+for (const row of document.querySelectorAll('tr,[role="row"],.row')) {
+  if (!isVisible(row) || row.closest('.modal,[role="dialog"]')) continue;
+  const text = normalize(row.innerText);
+  if (!vendorPo.test(text) || !/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/.test(text)) continue;
+  let hasRecordHeader = false;
+  for (let node = row.parentElement; node && node !== document.body; node = node.parentElement) {
+    const section = normalize(node.innerText);
+    if (/production notes|sales notes/i.test(section) && !/items on this design|order goods from vendor/i.test(section)) {
+      hasRecordHeader = false;
+      break;
+    }
+    if (/\bPO\b/i.test(section) && /vendor\s+order\s*#/i.test(section) && /order\s+date/i.test(section)) hasRecordHeader = true;
+    if (/items on this design|order goods from vendor/i.test(section)) break;
+  }
+  if (hasRecordHeader) return true;
+}
+return false;
+"""
+        ) is True
+    except Exception:
+        return False
+
+
+def _stock_tab_has_ordered_stock(driver, ignore_order_status=False):
+    if _active_stock_tab_has_purchase_order(driver):
+        return True
+    # The order header can say Ordered after only one design has been stocked.
+    # It can only stand in for a tab's PO on a single-design order.
+    return (
+        not ignore_order_status
+        and len(_find_stock_tabs(driver)) <= 1
+        and _page_indicates_stock_already_ordered(driver)
+    )
+
+
 def _page_indicates_stock_unavailable(driver):
     try:
         text = driver.execute_script(
@@ -546,7 +555,7 @@ def _stock_already_ordered_result(order_id, message=None):
         "order_id": order_id,
         "success": True,
         "outcome": "already_stock_ordered",
-        "message": message or "Skipped because stock is already ordered for this order.",
+        "message": message or "Skipped this stock tab because stock is already ordered and no Order Goods button is present.",
         "manual_review_required": False,
     }
 
@@ -1424,11 +1433,13 @@ def _wait_after_stock_unlock(driver, order_id, timeout=None, stock_tab_index=Non
         _wait_for_order_goods_page_ready(driver, order_id, timeout=4)
         if stock_tab_index is not None:
             try:
-                _activate_stock_tab(driver, int(stock_tab_index))
+                if _activate_stock_tab(driver, int(stock_tab_index)) is None:
+                    return "timeout"
                 time.sleep(0.3)
             except Exception:
-                pass
-        if _page_indicates_stock_already_ordered(driver):
+                return "timeout"
+        button = _find_sanmar_order_goods_button(driver, timeout=1)
+        if button is None and _stock_tab_has_ordered_stock(driver):
             return "ordered"
         # A rendered Order Goods button alone is not enough: CRM keeps the
         # button in the page while the order is still locked.  Do not report
@@ -1438,7 +1449,6 @@ def _wait_after_stock_unlock(driver, order_id, timeout=None, stock_tab_index=Non
             stock_remained_locked = True
             time.sleep(1.0)
             continue
-        button = _find_sanmar_order_goods_button(driver, timeout=1)
         if button is not None:
             try:
                 if bool(button.is_enabled()):
@@ -1555,10 +1565,11 @@ def _refresh_order_after_stock_unlock(driver, order_id, stock_tab_index=None):
     _require_order_goods_page_ready(driver, order_id)
     if stock_tab_index is not None:
         try:
-            _activate_stock_tab(driver, int(stock_tab_index))
+            if _activate_stock_tab(driver, int(stock_tab_index)) is None:
+                return "timeout"
             time.sleep(0.3)
         except Exception:
-            pass
+            return "timeout"
     return _wait_after_stock_unlock(driver, order_id, stock_tab_index=stock_tab_index)
 
 
@@ -1591,11 +1602,9 @@ def _recover_missing_order_goods_button_once(driver, order_id, stock_tab_index=N
 
     _wait_for_order_goods_page_ready(driver, order_id, timeout=max(10, CRM_ACTION_TIMEOUT))
     if stock_tab_index is not None:
-        try:
-            _activate_stock_tab(driver, int(stock_tab_index))
-            time.sleep(0.5)
-        except Exception:
-            pass
+        if _activate_stock_tab(driver, int(stock_tab_index)) is None:
+            raise TimeoutException("Could not restore the requested stock tab after the automatic CRM refresh.")
+        time.sleep(0.5)
     return _find_sanmar_order_goods_button(driver, timeout=10)
 
 
@@ -1607,7 +1616,7 @@ def _page_indicates_non_vendor_stock_tab(driver):
     except Exception:
         text = ""
     normalized = " ".join(str(text or "").lower().split())
-    return "order goods from vendor: manual order" in normalized or "vendor order #" in normalized
+    return "order goods from vendor: manual order" in normalized
 
 
 AUTO_ORDER_NO_PURCHASE_PLAN = "failed to auto order stock: no purchase plan available for products"
@@ -1897,6 +1906,7 @@ def _wait_for_auto_order_feedback(
     timeout=None,
     refresh_once_on_timeout=True,
     refresh_recheck_seconds=None,
+    stock_tab_index=None,
 ):
     """Wait for CRM's Auto Ordering response, with one post-timeout re-check."""
     timeout = max(1, int(timeout or max(CRM_ACTION_TIMEOUT, 30)))
@@ -1931,9 +1941,19 @@ def _wait_for_auto_order_feedback(
                 "refresh_succeeded": False,
             }
 
-        # A completed order often loses its transient growl/modal during a
-        # refresh. The persistent stock status is therefore also definitive.
-        if _page_indicates_stock_already_ordered(driver):
+        # Refresh selects the first design again. Verify the submitted design,
+        # and don't let an older PO confirm newly added stock still orderable.
+        if stock_tab_index is not None and _activate_stock_tab(driver, stock_tab_index) is None:
+            return {
+                "kind": "timeout",
+                "text": "Could not restore the submitted stock tab after the automatic CRM refresh; review its purchase state.",
+                "refresh_attempted": True,
+                "refresh_succeeded": True,
+            }
+        if (
+            _find_sanmar_order_goods_button(driver, timeout=1) is None
+            and _stock_tab_has_ordered_stock(driver)
+        ):
             return {
                 "kind": "ordered",
                 "text": "Verified stock ordered after one automatic CRM refresh.",
@@ -1976,8 +1996,11 @@ def _order_goods_for_open_order(
     ignore_already_ordered=False,
     wait_for_auto_order_result=False,
 ):
-    if not ignore_already_ordered and _page_indicates_stock_already_ordered(driver):
-        return _stock_already_ordered_result(order_id)
+    button = None
+    if _stock_tab_has_ordered_stock(driver, ignore_order_status=ignore_already_ordered):
+        button = _find_sanmar_order_goods_button(driver, timeout=1)
+        if button is None:
+            return _stock_already_ordered_result(order_id)
     # CRM sometimes leaves the disabled Order Goods control in the DOM and
     # Selenium can report it as enabled.  The visible stock-status banner is
     # authoritative, so unlock first whenever it still says Locked.
@@ -2014,11 +2037,12 @@ def _order_goods_for_open_order(
             wait_for_auto_order_result=wait_for_auto_order_result,
         )
         return _mark_result_stock_unlocked(result, unlock_result)
-    button = _find_sanmar_order_goods_button(driver)
+    if button is None:
+        button = _find_sanmar_order_goods_button(driver)
     if button is None:
         button = _recover_missing_order_goods_button_once(driver, order_id, stock_tab_index=stock_tab_index)
     if button is None:
-        if not ignore_already_ordered and _page_indicates_stock_already_ordered(driver):
+        if _stock_tab_has_ordered_stock(driver, ignore_order_status=ignore_already_ordered):
             return _stock_already_ordered_result(
                 order_id,
                 "Skipped because stock showed as already ordered after the automatic CRM refresh.",
@@ -2119,7 +2143,8 @@ def _order_goods_for_open_order(
     _click_with_fallback(driver, button)
     time.sleep(0.5)
     if wait_for_auto_order_result:
-        feedback = _wait_for_auto_order_feedback(driver)
+        feedback_kwargs = {"stock_tab_index": stock_tab_index} if stock_tab_index is not None else {}
+        feedback = _wait_for_auto_order_feedback(driver, **feedback_kwargs)
         feedback_kind = str(feedback.get("kind") or "")
         if feedback_kind == "no_purchase_plan":
             feedback["automated_notes"] = _read_automated_notes_after_no_purchase_plan(driver, order_id)
@@ -2167,7 +2192,7 @@ function looksLikeStockTab(node) {
   const text = tabText(node);
   if (!text || text.length > 500) return false;
   const lower = text.toLowerCase();
-  return lower.includes('design previews') && /\bqty\s*:/i.test(text);
+  return (lower.includes('design previews') || lower.includes('view proofs')) && /\bqty\s*:/i.test(text);
 }
 function clickableFor(node) {
   let best = node;
@@ -2201,14 +2226,13 @@ for (const node of Array.from(document.querySelectorAll('body *'))) {
 const seen = new Set();
 const tabs = [];
 const headerButtons = Array.from(document.querySelectorAll('#main-header-design-tabs button'))
-  .filter((node) => isVisible(node) && looksLikeStockTab(node));
+  .filter((node) => isVisible(node) && /\bqty\s*:/i.test(tabText(node)));
 if (headerButtons.length) {
   for (const element of headerButtons) {
     const rect = element.getBoundingClientRect();
     const label = tabText(element);
-    const key = label.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
+    if (seen.has(element)) continue;
+    seen.add(element);
     tabs.push({ element, label, top: rect.top || 0, left: rect.left || 0 });
   }
 }
@@ -2217,9 +2241,8 @@ for (const node of minimal) {
   const element = clickableFor(node);
   const rect = element.getBoundingClientRect();
   const label = tabText(element) || tabText(node);
-  const key = [Math.round(rect.top), Math.round(rect.left), label].join('|');
-  if (seen.has(key)) continue;
-  seen.add(key);
+  if (seen.has(element)) continue;
+  seen.add(element);
   tabs.push({ element, label, top: rect.top || 0, left: rect.left || 0 });
 }
 }
@@ -2236,7 +2259,7 @@ def _stock_tab_summary_label(label):
     text = " ".join(str(label or "").split())
     if not text:
         return ""
-    prefix = text.split("Design Previews", 1)[0].strip()
+    prefix = re.split(r"design previews|view proofs", text, maxsplit=1, flags=re.IGNORECASE)[0].strip()
     parts = [part.strip() for part in prefix.splitlines() if part.strip()]
     if parts:
         return " | ".join(parts[:2])
@@ -2371,7 +2394,6 @@ def _run_order_with_driver(
         _publish_status(f"Reloading CRM order {normalized_order_id} after stock unlock.", stage="reloading_order", order_id=normalized_order_id)
         _open_target_order_with_refresh(driver, normalized_order_id, shipping_filter=RUSH_FILTER, list_url_override=None)
         _require_order_goods_page_ready(driver, normalized_order_id)
-        unlocked_message = unlock_result.get("message") or "Applied Stock Auto Ordering Unlocked before Order Goods."
         post_unlock_state = _wait_after_stock_unlock(driver, normalized_order_id)
         if post_unlock_state == "locked":
             retry_unlock_result, post_unlock_state = _retry_stock_unlock_via_preview_panel(
@@ -2380,16 +2402,9 @@ def _run_order_with_driver(
             )
             if retry_unlock_result and retry_unlock_result.get("success"):
                 unlock_result = retry_unlock_result
-        if post_unlock_state == "ordered":
-            unlock_result["verified"] = True
-            result = _stock_already_ordered_result(
-                normalized_order_id,
-                "Skipped because stock was already ordered after applying Stock Auto Ordering Unlocked.",
-            )
-            result["stock_unlocked_before_order_goods"] = True
-            result["warnings"] = [unlocked_message]
-            return [result]
-        if post_unlock_state != "orderable":
+        # Unlocking may auto-order only the selected design. Inspect every tab
+        # even when that first design has already finished ordering.
+        if post_unlock_state not in {"orderable", "ordered"}:
             failure = _stock_unlock_not_confirmed_result(normalized_order_id, post_unlock_state)
             if post_unlock_state == "locked":
                 retry_message = str((retry_unlock_result or {}).get("message") or "").strip()
@@ -2571,19 +2586,12 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
 
     report_items = []
     attempted_order_ids = []
-    historical_order_id_set = _load_historical_order_goods_order_ids()
-    attempted_order_id_set = set(historical_order_id_set)
+    # Deduplicate within this run only; history must not hide changed orders.
+    attempted_order_id_set = set()
     refresh_passes = 0
     completed_order_count = 0
     total_scanned_count = 0
     stage_timings = []
-    if historical_order_id_set:
-        print(
-            "Skipping "
-            f"{len(historical_order_id_set)} previously logged Rush Order Goods order(s) from shared history. "
-            "Clear Stock Tools history to make them eligible again."
-        )
-
     while not _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
         refresh_passes += 1
         remaining = _batch_collection_limit(
@@ -2751,18 +2759,12 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
         print("Finished Rush Order Goods list pass; reopening the list to look for more eligible orders...")
 
     success = all(bool(item.get("success")) for item in report_items) if report_items else True
-    skipped_historical_count = len(historical_order_id_set)
     message = _summary_message(
         report_items,
         refresh_passes=refresh_passes,
         order_count=len(attempted_order_ids),
         row_description=row_options.get("allowed_row_description"),
     )
-    if skipped_historical_count:
-        message = (
-            f"{message} Skipped {skipped_historical_count} previously logged Rush Order Goods order(s); "
-            "clear Stock Tools history to make them eligible again."
-        )
     return {
         "action": "order_goods_batch",
         "success": success,
@@ -2781,7 +2783,7 @@ def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None,
         "stage_timings": stage_timings,
         "manual_review_required": any(bool(item.get("manual_review_required")) for item in report_items),
         "resolution": "batch" if attempted_order_ids else "no_orders",
-        "skipped_historical_order_count": skipped_historical_count,
+        "skipped_historical_order_count": 0,
     }
 
 
@@ -2812,18 +2814,11 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
     )
     report_items = []
     attempted_order_ids = []
-    historical_order_id_set = _load_historical_order_goods_order_ids()
-    attempted_order_id_set = set(historical_order_id_set)
+    attempted_order_id_set = set()
     refresh_passes = 0
     completed_order_count = 0
     total_scanned_count = 0
     stage_timings = []
-    if historical_order_id_set:
-        print(
-            "Skipping "
-            f"{len(historical_order_id_set)} previously logged Rush Order Goods order(s) from shared history. "
-            "Clear Stock Tools history to make them eligible again."
-        )
     try:
         while not _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
             refresh_passes += 1
@@ -2933,18 +2928,12 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
         safe_driver_quit(driver, profile_path=resolved_profile_path)
 
     success = all(bool(item.get("success")) for item in report_items) if report_items else True
-    skipped_historical_count = len(historical_order_id_set)
     message = _summary_message(
         report_items,
         refresh_passes=refresh_passes,
         order_count=len(attempted_order_ids),
         row_description=row_options.get("allowed_row_description"),
     )
-    if skipped_historical_count:
-        message = (
-            f"{message} Skipped {skipped_historical_count} previously logged Rush Order Goods order(s); "
-            "clear Stock Tools history to make them eligible again."
-        )
     return {
         "action": "order_goods_batch",
         "success": success,
@@ -2963,7 +2952,7 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
         "stage_timings": stage_timings,
         "manual_review_required": any(bool(item.get("manual_review_required")) for item in report_items),
         "resolution": "batch" if attempted_order_ids else "no_orders",
-        "skipped_historical_order_count": skipped_historical_count,
+        "skipped_historical_order_count": 0,
     }
 
 
