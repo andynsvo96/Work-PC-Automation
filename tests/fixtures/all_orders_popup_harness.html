@@ -1,6 +1,6 @@
 <!doctype html>
 <html><meta charset="utf-8"><title>Offline All Orders popup harness</title>
-<style>body{margin:0;background:#15191d}.order-frame{position:absolute;left:-3000px;width:1100px;height:900px}#popup{border:0;width:760px;height:570px}</style>
+<style>body{margin:0;background:#15191d}.order-frame{position:absolute;left:-3000px;width:1100px;height:900px}#popup{border:0;width:760px;height:600px}.expanded-frame{border:0;display:block}</style>
 <iframe id="tab-1" class="order-frame" src="/order/1000001"></iframe>
 <iframe id="tab-2" class="order-frame" src="/order/1000002"></iframe>
 <iframe id="tab-3" class="order-frame" src="/order/1000003"></iframe>
@@ -10,25 +10,43 @@ import {AllOrdersController} from '/extension/all-orders.mjs';
 const listeners = [];
 const storage = {};
 const tabs = [1,2,3].map(id => ({id,windowId:id===3?22:11,index:id,active:id===1,status:'complete',url:'https://crm2.legacy.printfly.com/order/100000'+id,doc:'doc-'+id}));
+const windows = new Map([[11,{id:11,width:1200,height:900}], [22,{id:22}]]);
+window.fixtureScreen = {width:1600,height:1000,left:0,top:0};
 const frame = id => document.getElementById('tab-'+id);
 await Promise.all(tabs.map(tab => new Promise(resolve => {
   const ready = () => { if(frame(tab.id).contentWindow.fixtureScope) resolve(); else setTimeout(ready,30); }; ready();
 })));
 const api = {
   runtime:{id:'fixture',getURL:path=>'chrome-extension://fixture/'+path},
-  windows:{get:async id=>({id})},
+  windows:{
+    get:async id=>{if(!windows.has(id))throw Error('Window closed');return {...windows.get(id)};},
+    create:async options=>{
+      const id=30+windows.size,tabId=100+tabs.length;
+      const tab={id:tabId,windowId:id,active:true,status:'complete',url:options.url};tabs.push(tab);
+      const view=document.createElement('iframe');view.id='editor-'+id;view.className='expanded-frame';
+      view.style.width=options.width+'px';view.style.height=options.height+'px';document.body.append(view);
+      windows.set(id,{...options,id});return {...options,id,tabs:[tab]};
+    },
+    update:async(id,values)=>{window.fixtureFocusedWindow=id;Object.assign(windows.get(id),values);},
+    remove:async id=>{document.getElementById('editor-'+id)?.remove();windows.delete(id);}
+  },
   storage:{onChanged:{addListener:fn=>listeners.push(fn)},session:{
     get:async name=>structuredClone(name===null?storage:{[name]:storage[name]}),
     set:async values=>{
       const changes = Object.fromEntries(Object.entries(values).map(([key,value])=>[key,{newValue:structuredClone(value),oldValue:storage[key]}]));
       Object.assign(storage,structuredClone(values));
       listeners.forEach(fn=>{try{fn(changes,'session');}catch(_){}});
-    }
+    },
+    remove:async key=>{delete storage[key];}
   }},
   tabs:{
     query:async options=>tabs.filter(tab=>(options.windowId===undefined||tab.windowId===options.windowId)&&(!options.active||tab.active)),
     get:async id=>({...tabs.find(tab=>tab.id===id)}),
-    update:async (id,values)=>Object.assign(tabs.find(tab=>tab.id===id),values),
+    update:async (id,values)=>{
+      const tab=tabs.find(tab=>tab.id===id);Object.assign(tab,values);
+      if(values.url?.startsWith('chrome-extension:'))document.getElementById('editor-'+tab.windowId).src='/extension/popup.html'+new URL(values.url).search;
+      return {...tab};
+    },
     sendMessage:async()=>({isOrderDocument:true,active:false}),
     reload:async id=>{
       const tab=tabs.find(tab=>tab.id===id);tab.doc+='-reload';
@@ -44,15 +62,26 @@ const api = {
   }}
 };
 const controller=new AllOrdersController(api);
-api.runtime.sendMessage=async message=>{
+api.runtime.sendMessage=async (message,sender={id:api.runtime.id,url:api.runtime.getURL('popup.html')})=>{
   if(message.type==='crm-all-orders'){
-    try{return {success:true,state:await controller.handle(message,{id:api.runtime.id,url:api.runtime.getURL('popup.html')})};}
+    try{return {success:true,state:await controller.handle(message,sender)};}
     catch(error){return {success:false,message:error.message};}
   }
   if(message.type==='crm-dark-mode:get-bridge-status')return {connected:false,message:'Offline fixture; editor works without the local app.'};
   return {enabled:false};
 };
 window.fixtureApi=api;
+window.fixtureApiFor=view=>{
+  for(const [name,key] of [['availWidth','width'],['availHeight','height'],['availLeft','left'],['availTop','top']]){
+    Object.defineProperty(view.screen,name,{configurable:true,get:()=>fixtureScreen[key]});
+  }
+  return {...api,runtime:{...api.runtime,sendMessage:message=>{
+    const params=new URLSearchParams(view.location.search);
+    const url=params.has('editor')?api.runtime.getURL('popup.html?editor='+params.get('editor')+'&sourceWindow='+params.get('sourceWindow')):api.runtime.getURL('popup.html');
+    const tab=tabs.find(tab=>tab.url===url);
+    return api.runtime.sendMessage(message,{id:api.runtime.id,url,...(tab?{tab:{id:tab.id,windowId:tab.windowId}}:{})});
+  }}};
+};
 window.fixtureController=controller;
 window.fixtureTabs=tabs;
 window.reopenPopup=()=>{document.getElementById('popup').src='/extension/popup.html?instance='+Date.now();};

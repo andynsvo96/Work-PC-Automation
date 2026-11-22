@@ -15,6 +15,35 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
+## All Orders apply, discard, and larger editor - 1.8.2
+
+**Apply changes** validates all included orders before applying edits; the
+separate Preview changes button is removed. Inspect the actual CRM order pages
+before using **Save All & Refresh**. The footer has one row: **Discard pending
+changes**, **Cancel unsaved edits**, and **Check saved orders** on the left;
+**Apply changes** and **Save All & Refresh** on the right. Very narrow windows
+wrap controls when necessary to keep them accessible.
+
+**Cancel unsaved edits** uses native Cancel and automatically chooses **No** only
+on CRM's exact "Some changes were made to the form, do you want to review and
+save them?" warning for an unchanged, batch-owned editor. It never chooses Yes.
+Unrelated dialogs, multiple dialogs, ambiguous buttons, and disabled No controls
+stop for review. After discarding, the original print areas, products, artwork,
+and saved note histories must match the pre-edit baseline, including when CRM
+reloads during cancellation. No save or note submission is retried.
+
+The toolbar popup now uses Chrome's full 600-pixel maximum height when the screen
+allows it, with tighter spacing and a single-row footer. For more room, choose
+**Expand editor**. It opens the same batch in a taller, resizable Chrome window
+sized to the available monitor space. Its drafts and results remain bound to the
+original window's orders; the new window is never used as the order source.
+Clicking Expand again focuses the existing expanded window. Order links bring
+the original order window forward for manual inspection. Closing either editor
+view does not discard the batch or interrupt an initiated operation.
+
+Reload **CRM Order Assistant 1.8.2** at `chrome://extensions` and refresh open CRM
+pages. No app restart or additional extension permission is needed.
+
 ## Popup header - 1.8.1
 
 The popup shows the local Automation app bridge status at the top left and the
@@ -59,11 +88,10 @@ top right, and the local-app connection status is at the top left.
    nothing; new draft text remains editable until applied. A requested native
    add-note input that is disabled, unavailable, or ambiguous blocks the batch;
    the extension does not change Art Note options to bypass that restriction.
-5. **Preview changes** validates every included order without applying edits.
-   Review its affected tabs and per-order counts, then **Apply changes** to update
-   the unsaved native editors. Both actions check the current order state again.
-   **Discard pending changes** clears the popup draft before Apply. After Apply,
-   inspect the native pages or continue with **Save All & Refresh**.
+5. **Apply changes** validates every included order before updating the unsaved
+   native editors. Conflicts block the batch before mutation. **Discard pending
+   changes** clears the popup draft before Apply. After Apply, inspect the actual
+   order pages, then use **Save All & Refresh** to keep the changes.
 6. **Save All & Refresh** uses native **Save Order** one order at a time, retaining
    CRM's validation and warning dialogs. After the save attempts settle, successful
    orders reload and their persisted areas, methods, products, quantities, prices,
@@ -83,8 +111,9 @@ verification; it never submits notes or saves. Review unknown outcomes in CRM
 before starting a new batch. Each new scan starts with an empty draft.
 
 **Cancel unsaved edits** invokes CRM's native Cancel only for batch-owned editors
-whose contents still match the batch. It cannot undo a completed save or discard
-unrelated manual edits. Resolve remaining errors on the affected order pages.
+whose contents still match the batch and chooses **No** on its exact discard
+warning. It cannot undo a completed save or discard unrelated manual edits.
+Resolve remaining errors on the affected order pages.
 Tabs are rechecked for their order ID, original window, and document before each
 action; closing, moving, or navigating a tab stops work on that target. The same
 order cannot join unfinished All Orders batches in two open windows.

@@ -52,6 +52,25 @@ var CRMAllOrdersPage = (() => {
     if (found.length !== 1 || found[0].disabled || found[0].getAttribute("aria-disabled") === "true") throw Error("CRM's native " + name + " control is unavailable or disabled.");
     return found[0];
   }
+  function discardWarning() {
+    const dialogs = [...document.querySelectorAll('.modal, [role="dialog"], .modal-dialog, .modal-content, .ngdialog-content')].filter(visible);
+    const roots = dialogs.filter(dialog => !dialogs.some(other => other !== dialog && other.contains(dialog)));
+    if (!roots.length) return null;
+    if (roots.length !== 1) throw Error("Multiple CRM dialogs are open. Review them before discarding this order's edits.");
+    const dialog = roots[0];
+    const message = model.clean((dialog.querySelector(".modal-body") || dialog).textContent);
+    if (!/some changes were made to the form,\s*do you want to review and save them\?/i.test(message)) {
+      throw Error("An unrelated CRM dialog is open. It was left unchanged for review.");
+    }
+    const buttons = [...dialog.querySelectorAll('button, a, input[type="button"], input[type="submit"]')].filter(visible);
+    const named = name => buttons.filter(button => model.key(button.textContent || button.value) === name);
+    const no = named("no"), yes = named("yes");
+    if (no.length !== 1 || yes.length !== 1 || no[0].disabled || no[0].hasAttribute("disabled") ||
+        no[0].classList.contains("disabled") || no[0].getAttribute("aria-disabled") === "true") {
+      throw Error("CRM's discard warning is ambiguous or its No button is disabled. Review this order.");
+    }
+    return no[0];
+  }
   function noteInput(kind) {
     const inputs = [...document.querySelectorAll(`#order-notes-${kind}-notes textarea`)]
       .filter(node => node.getAttribute("ng-model") === `order.getResource().${field(kind)}` && visible(node) && !node.disabled && !node.readOnly);
@@ -102,7 +121,7 @@ var CRMAllOrdersPage = (() => {
   function inspect(orderId) {
     const ctx = context(orderId);
     if (!ctx) return null;
-    return { success: true, orderId: ctx.orderId, editMode: Boolean(ctx.scope.editMode), busy: busy(ctx),
+    return { success: true, adapterVersion: 2, orderId: ctx.orderId, editMode: Boolean(ctx.scope.editMode), busy: busy(ctx),
       pending: kinds.some(kind => String(ctx.resource[field(kind)] || "").trim()) || Boolean(window.__crmAllTabsHasPendingChanges?.()), snapshot: snapshot(ctx) };
   }
   async function stable(orderId, predicate, timeout = 15000) {
@@ -191,7 +210,7 @@ var CRMAllOrdersPage = (() => {
         assertNoDrafts(ctx);
         session = { batchId: command.batchId, model: createModel(ctx), phase: "prepared", version: serialize(ctx.resource),
           before: histories(ctx.resource), savedNotes: serialize(savedNoteFields(ctx.resource)) };
-        return { success: true, snapshot: snapshot(ctx) };
+        return { success: true, snapshot: snapshot(ctx), original: expected(ctx, { sales: "", production: "", art: "" }, session.before) };
       }
       if (command.op === "preview" || command.op === "apply") {
         const ctx = owned(command, "prepared");
@@ -241,11 +260,23 @@ var CRMAllOrdersPage = (() => {
         return verify(ctx, command.expected);
       }
       if (command.op === "cancel") {
-        const ctx = owned(command);
+        owned(command);
+        // Only the explicit Cancel action may answer this exact warning. Never
+        // choose Yes, dismiss another dialog, or bypass a disabled native control.
+        const existing = discardWarning();
+        session.phase = "canceling";
+        if (existing) { existing.click(); return { success: true }; }
         nativeButton("editModeOff").click();
-        await stable(command.orderId, value => !value.scope.editMode && !busy(value));
-        session = null;
-        return { success: true };
+        const until = Date.now() + 15000;
+        while (Date.now() < until) {
+          const ctx = context(command.orderId);
+          if (ctx && !ctx.scope.editMode && !busy(ctx)) return { success: true };
+          owned(command);
+          const no = discardWarning();
+          if (no) { no.click(); return { success: true }; }
+          await wait(100);
+        }
+        throw Error("CRM did not confirm discarding the edits. Review this order; no save was submitted.");
       }
       throw Error("Unknown All Orders action.");
     } finally { writing = false; }

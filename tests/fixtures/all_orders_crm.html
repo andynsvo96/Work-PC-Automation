@@ -4,6 +4,7 @@
 <title>Offline native All Orders CRM fixture</title>
 <style>
 body{font:14px Arial;margin:20px}button{padding:8px}textarea{display:block;width:260px;height:70px}.ng-hide{display:none!important}
+.modal{position:fixed;top:20px;left:20px;z-index:1000;background:#ddd;padding:15px;border:1px solid #777}.modal-footer{text-align:right}
 </style>
 <script src="/vendor/angular.js"></script>
 <main id="view-orders-index" ng-controller="OrderFixture">
@@ -45,6 +46,8 @@ window.fixtureResource = JSON.parse(localStorage.getItem(storageKey) || 'null') 
 };
 window.fixtureSaveCount = 0;
 window.fixtureChangeCount = 0;
+window.fixtureDiscardNoCount = 0;
+window.fixtureDiscardYesCount = 0;
 angular.module('allOrdersFixture', []).controller('OrderFixture', function($scope, $timeout) {
   window.fixtureScope = $scope;
   $scope.STATICS = {
@@ -54,6 +57,7 @@ angular.module('allOrdersFixture', []).controller('OrderFixture', function($scop
   $scope.order = {getResource: () => fixtureResource};
   $scope.editMode = false; $scope.savingOrder = false; $scope.activeDesignIndex = 0;
   $scope.isGettingShippingMethods = () => false;
+  let saved = angular.copy(fixtureResource);
   $scope.onDesignTabSelect = index => {$scope.activeDesignIndex = index;};
   $scope.editModeOn = () => {
     // Real CRM can replace the resource when Edit Order initializes.
@@ -61,7 +65,21 @@ angular.module('allOrdersFixture', []).controller('OrderFixture', function($scop
     kinds.forEach(kind => {fixtureResource['add'+kind[0].toUpperCase()+kind.slice(1)+'Notes'] = '';});
     $scope.editMode = true;
   };
-  $scope.editModeOff = () => { location.reload(); };
+  $scope.editModeOff = () => {
+    const open = () => {
+      const modal = document.createElement('div');
+      modal.className = 'modal'; modal.setAttribute('role','dialog');
+      modal.innerHTML = '<div class="modal-header">Warning</div><div class="modal-body"></div><div class="modal-footer"><button class="yes">yes</button><button class="no">no</button></div>';
+      modal.querySelector('.modal-body').textContent = window.fixtureOtherWarning ? 'This is an unrelated warning.' : 'Some changes were made to the form, do you want to review and save them?';
+      modal.querySelector('.yes').onclick = () => {fixtureDiscardYesCount++;$scope.$apply(()=>$scope.saveOrder());modal.remove();};
+      const no = modal.querySelector('.no');
+      no.disabled = !!window.fixtureDisableDiscard;
+      no.onclick = () => {fixtureDiscardNoCount++;$scope.$apply(()=>{fixtureResource=angular.copy(saved);$scope.editMode=false;});modal.remove();};
+      if (window.fixtureAmbiguousDiscard) no.after(no.cloneNode(true));
+      document.body.append(modal);
+    };
+    if (window.fixtureDelayedDiscard) $timeout(open,100); else open();
+  };
   $scope.saveOrder = () => {
     fixtureSaveCount++;
     if (window.fixtureRejectSave) return;
@@ -77,6 +95,7 @@ angular.module('allOrdersFixture', []).controller('OrderFixture', function($scop
         design.printAreas.forEach((area,i) => {area.id ||= design.id+'-new-'+i; delete area.crudAction;});
       });
       localStorage.setItem(storageKey, JSON.stringify(fixtureResource));
+      saved = angular.copy(fixtureResource);
       $scope.savingOrder = false; $scope.editMode = false;
     }, 100);
   };

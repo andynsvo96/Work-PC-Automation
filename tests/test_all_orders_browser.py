@@ -41,7 +41,7 @@ class AllOrdersBrowserTests(unittest.TestCase):
                     data = path.read_bytes()
                     mime = "text/css" if name.endswith(".css") else "application/javascript" if name.endswith((".js", ".mjs")) else mime
                     if name == "popup.html":
-                        data = data.replace(b"<script src=\"popup.js\">", b"<script>window.chrome=parent.fixtureApi;</script><script src=\"popup.js\">")
+                        data = data.replace(b"<script src=\"popup.js\">", b"<script>window.chrome=parent.fixtureApiFor(window);</script><script src=\"popup.js\">")
                 elif route == "/vendor/angular.js":
                     data = angular.read_bytes()
                     mime = "application/javascript"
@@ -78,6 +78,7 @@ class AllOrdersBrowserTests(unittest.TestCase):
 
     def setUp(self):
         self.driver.switch_to.default_content()
+        self.driver.set_window_size(1100, 900)
         self.driver.get(self.url + "/order/1000001")
         self.driver.execute_script("localStorage.clear();")
         self.driver.refresh()
@@ -156,6 +157,28 @@ class AllOrdersBrowserTests(unittest.TestCase):
         self.assertFalse(response["success"])
         self.assertIn("notes could not be verified", response["message"])
 
+    def test_cancel_chooses_no_on_the_exact_native_warning_and_preserves_saved_notes(self):
+        prepared = self.execute("begin")
+        self.assertTrue(self.execute("apply", draft=self.draft())["success"])
+        self.driver.execute_script("window.fixtureDelayedDiscard=true;")
+        canceled = self.execute("cancel")
+        self.assertTrue(canceled["success"], canceled)
+        self.assertTrue(self.execute("verify", expected=prepared["original"])["success"])
+        self.assertEqual(self.driver.execute_script("return [fixtureDiscardNoCount,fixtureDiscardYesCount,fixtureSaveCount];"), [1, 0, 0])
+
+    def test_cancel_does_not_answer_unrelated_or_ambiguous_dialogs(self):
+        for flag in ("fixtureOtherWarning", "fixtureAmbiguousDiscard", "fixtureDisableDiscard"):
+            with self.subTest(flag=flag):
+                self.driver.refresh()
+                self.wait.until(lambda d: d.execute_script("return !!window.fixtureScope;"))
+                self.execute("begin")
+                self.execute("apply", draft=self.draft())
+                self.driver.execute_script("window[arguments[0]]=true;", flag)
+                canceled = self.execute("cancel")
+                self.assertFalse(canceled["success"], canceled)
+                self.assertEqual(self.driver.execute_script("return [fixtureDiscardNoCount,fixtureDiscardYesCount,fixtureSaveCount];"), [0, 0, 0])
+                self.assertTrue(self.driver.find_elements(By.CSS_SELECTOR, ".modal"))
+
     def test_embedded_order_uses_every_active_internal_tab_and_preserves_back(self):
         self.driver.get(self.url + "/framed")
         self.driver.switch_to.frame("crm")
@@ -189,8 +212,8 @@ class AllOrdersBrowserTests(unittest.TestCase):
         self.popup()
         self.assertEqual(self.driver.find_element(By.ID, "orders-note-sales").get_attribute("value"), "Shared sales note")
         self.assertEqual(Select(self.driver.find_element(By.ID, "orders-location-0")).first_selected_option.text, "Front-Left Chest")
-        self.click_wait("orders-preview", "Every included order validates")
-        self.driver.save_screenshot(str(self.artifacts / "popup-preview.png"))
+        self.assertFalse(self.driver.find_elements(By.ID, "orders-preview"))
+        self.driver.save_screenshot(str(self.artifacts / "popup-draft.png"))
         self.click_wait("orders-apply", "Changes are applied")
         self.driver.find_element(By.ID, "orders-save").click()
         # Close the popup while the background coordinator owns the save.
@@ -228,6 +251,70 @@ class AllOrdersBrowserTests(unittest.TestCase):
         self.driver.switch_to.default_content()
         for tab in (1, 2):
             self.assertEqual(self.driver.execute_script("return document.getElementById('tab-'+arguments[0]).contentWindow.fixtureChangeCount;", tab), 0)
+
+    def test_footer_is_one_row_with_small_actions_left_and_main_actions_right(self):
+        self.driver.get(self.url + "/harness")
+        self.wait.until(lambda d: d.execute_script("return !!window.fixtureApi;"))
+        self.popup()
+        positions = self.driver.execute_script("""
+          return ['discard','cancel','verify','apply','save'].map(name=>{
+            const r=document.getElementById('orders-'+name).getBoundingClientRect();return {x:r.x,center:r.y+r.height/2};
+          });
+        """)
+        self.assertEqual(sorted(item['x'] for item in positions), [item['x'] for item in positions])
+        self.assertLess(max(item['center'] for item in positions) - min(item['center'] for item in positions), 2)
+        self.assertEqual(self.driver.execute_script("return document.querySelector('main').getBoundingClientRect().height;"), 600)
+        self.assertFalse(self.driver.find_elements(By.ID, "orders-preview"))
+
+    def test_expanded_editor_preserves_scope_and_drafts_and_fills_a_taller_resizable_view(self):
+        self.driver.get(self.url + "/harness")
+        self.wait.until(lambda d: d.execute_script("return !!window.fixtureApi;"))
+        self.popup()
+        self.click_wait("orders-edit", "Choose your shared edits")
+        self.driver.find_element(By.ID, "orders-note-sales").send_keys("Keep this expanded draft")
+        self.driver.find_element(By.ID, "orders-expand").click()
+        self.driver.switch_to.default_content()
+        self.wait.until(lambda d: d.find_elements(By.CSS_SELECTOR, ".expanded-frame"))
+        expanded = self.driver.find_element(By.CSS_SELECTOR, ".expanded-frame")
+        self.driver.execute_script("document.getElementById('popup').style.display='none';")
+        self.driver.switch_to.frame(expanded)
+        self.wait.until(lambda d: d.find_element(By.ID, "orders-note-sales").get_attribute("value") == "Keep this expanded draft")
+        self.assertEqual(len(self.driver.find_elements(By.CSS_SELECTOR, ".order-row")), 2)
+        self.assertFalse(self.driver.find_element(By.ID, "orders-expand").is_displayed())
+        self.assertGreater(self.driver.execute_script("return document.querySelector('main').getBoundingClientRect().height;"), 900)
+        self.driver.set_window_size(1100, 1200)
+        self.driver.save_screenshot(str(self.artifacts / "expanded-editor.png"))
+        self.click_wait("orders-apply", "Changes are applied")
+        self.click_wait("orders-cancel", "Unsaved batch edits were canceled")
+        self.driver.switch_to.default_content()
+        for tab in (1, 2):
+            self.assertEqual(self.driver.execute_script("return document.getElementById('tab-'+arguments[0]).contentWindow.fixtureDiscardNoCount;", tab), 1)
+        self.assertEqual(self.driver.execute_script("return document.getElementById('tab-3').contentWindow.fixtureSaveCount;"), 0)
+        self.driver.execute_script("document.querySelector('.expanded-frame').style.height='700px';")
+        self.driver.switch_to.frame(expanded)
+        self.wait.until(lambda d: d.execute_script("return document.querySelector('main').getBoundingClientRect().height;") == 700)
+
+    def test_popup_shrinks_to_a_smaller_screen_and_keeps_its_footer_visible(self):
+        self.driver.get(self.url + "/harness")
+        self.wait.until(lambda d: d.execute_script("return !!window.fixtureApi;"))
+        self.popup()
+        for width in (640, 500):
+            with self.subTest(width=width):
+                self.driver.switch_to.default_content()
+                self.driver.execute_script("""
+                  fixtureScreen={width:arguments[0],height:600,left:0,top:0};
+                  const view=document.getElementById('popup');view.style.width=(arguments[0]-32)+'px';view.style.height='460px';
+                  view.contentWindow.dispatchEvent(new Event('resize'));
+                """, width)
+                self.popup()
+                layout = self.driver.execute_script("""
+                  return {height:document.querySelector('main').getBoundingClientRect().height,
+                    bottom:document.querySelector('footer').getBoundingClientRect().bottom,
+                    width:document.documentElement.scrollWidth,viewport:innerWidth};
+                """)
+                self.assertEqual(layout['height'], 460)
+                self.assertLessEqual(layout['bottom'], 460)
+                self.assertLessEqual(layout['width'], layout['viewport'])
 
 
 if __name__ == "__main__":

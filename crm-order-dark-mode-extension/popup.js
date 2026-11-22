@@ -4,7 +4,8 @@ const bridgeStatus = document.getElementById("bridge-status");
 function setStatus(message) { toggle.closest(".toggle").title = `${message} Print output stays light.`; }
 
 async function getActiveTab() {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  const source = new URLSearchParams(location.search).get("sourceWindow");
+  const tabs = await chrome.tabs.query({ active: true, ...(source !== null && /^\d+$/.test(source) ? { windowId: Number(source) } : { currentWindow: true }) });
   return tabs[0];
 }
 

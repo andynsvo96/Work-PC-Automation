@@ -24,6 +24,7 @@
         <button id="orders-scan" type="button">Scan this window</button>
         <button id="orders-edit" class="primary" type="button" disabled>Edit All Orders</button>
         <span id="orders-count"></span>
+        <button id="orders-expand" type="button" title="Open a taller, resizable editor for these same orders">Expand editor</button>
       </div>
       <div class="orders-scroll">
         <section aria-label="Orders in this window"><div id="orders-list"></div></section>
@@ -42,15 +43,14 @@
         </section>
       </div>
       <footer class="orders-actions">
-        <div>
-          <button id="orders-preview" type="button" disabled>Preview changes</button>
-          <button id="orders-apply" type="button" disabled>Apply changes</button>
-          <button id="orders-save" class="primary" type="button" disabled>Save All &amp; Refresh</button>
-        </div>
         <div class="secondary-actions">
           <button id="orders-discard" type="button" disabled>Discard pending changes</button>
           <button id="orders-cancel" type="button" disabled>Cancel unsaved edits</button>
           <button id="orders-verify" type="button" disabled>Check saved orders</button>
+        </div>
+        <div class="primary-actions">
+          <button id="orders-apply" type="button" disabled>Apply changes</button>
+          <button id="orders-save" class="primary" type="button" disabled>Save All &amp; Refresh</button>
         </div>
       </footer>
     </main>

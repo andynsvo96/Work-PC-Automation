@@ -1,5 +1,16 @@
 import { SESSION_PREFIX, emptyDraft, normalizeDraft, hasChanges, orderIdFromUrl } from "./all-orders-model.mjs";
 
+export const EDITOR_PREFIX = "crm-all-orders-editor:";
+
+export function editorBounds(screen = {}, source = {}) {
+  const number = (value, fallback) => Number.isFinite(value) ? Math.round(value) : fallback;
+  const availableWidth = Math.max(240, Math.min(16384, number(screen.width, source.width || 960)));
+  const availableHeight = Math.max(240, Math.min(16384, number(screen.height, source.height || 900)));
+  const width = Math.min(920, availableWidth - 32), height = availableHeight - 32;
+  return { width, height, left: number(screen.left, source.left || 0) + Math.round((availableWidth - width) / 2),
+    top: number(screen.top, source.top || 0) + 16 };
+}
+
 // A popup action owns a bounded, journaled operation in the extension worker.
 // There is no worker subprocess, Flask queue, CRM HTTP write, or automatic retry.
 export class AllOrdersController {
@@ -15,6 +26,55 @@ export class AllOrdersController {
 
   authorized(sender) {
     return sender?.id === this.api.runtime.id && sender.url === this.api.runtime.getURL("popup.html") && !sender.tab;
+  }
+
+  async sourceWindow(message, sender) {
+    if (this.authorized(sender)) return message.windowId;
+    const denied = () => Error("All Orders actions are available only from this extension's popup or its bound expanded editor.");
+    if (sender?.id !== this.api.runtime.id) throw denied();
+    let url;
+    try { url = new URL(sender.url); } catch (_) { throw denied(); }
+    const editor = url.searchParams.get("editor");
+    if (!editor || !/^[a-zA-Z0-9-]+$/.test(editor)) throw denied();
+    const values = await this.api.storage.session.get(EDITOR_PREFIX + editor);
+    const binding = values[EDITOR_PREFIX + editor];
+    if (!binding || binding.url !== sender.url || (message.action !== "editor-source" && message.windowId !== binding.sourceWindowId) ||
+        (sender.tab && sender.tab.id !== binding.tabId)) throw denied();
+    const tab = await this.api.tabs.get(binding.tabId);
+    if (tab.windowId !== binding.windowId || tab.url !== binding.url) throw denied();
+    return binding.sourceWindowId;
+  }
+
+  async expand(state, screen) {
+    const stored = await this.api.storage.session.get(null);
+    for (const [key, binding] of Object.entries(stored)) {
+      if (!key.startsWith(EDITOR_PREFIX) || binding.sourceWindowId !== state.windowId) continue;
+      try {
+        const tab = await this.api.tabs.get(binding.tabId);
+        if (tab.windowId !== binding.windowId || tab.url !== binding.url) continue;
+        const window = await this.api.windows.get(binding.windowId);
+        await this.api.windows.update(binding.windowId, { focused: true, ...(window.state === "minimized" ? { state: "normal" } : {}) });
+        return structuredClone(state);
+      } catch (_) { /* A closed expanded editor can be replaced. */ }
+    }
+    const source = await this.api.windows.get(state.windowId);
+    const editor = `${state.windowId}-${this.id()}`;
+    const url = this.api.runtime.getURL(`popup.html?editor=${editor}&sourceWindow=${state.windowId}`);
+    const window = await this.api.windows.create({ url: "about:blank", type: "popup", focused: true,
+      incognito: source.incognito === true, ...editorBounds(screen, source) });
+    try {
+      const [tab] = window.tabs?.length ? window.tabs : await this.api.tabs.query({ windowId: window.id });
+      if (!Number.isInteger(tab?.id)) throw Error("Chrome did not create an editor tab.");
+      // Bind the new window before loading its UI, so it cannot accidentally
+      // scan its own window or accept a different source-window parameter.
+      await this.api.storage.session.set({ [EDITOR_PREFIX + editor]: { sourceWindowId: state.windowId, windowId: window.id, tabId: tab.id, url } });
+      await this.api.tabs.update(tab.id, { url });
+      return structuredClone(state);
+    } catch (error) {
+      await this.api.storage.session.remove(EDITOR_PREFIX + editor).catch(() => {});
+      await this.api.windows.remove(window.id).catch(() => {});
+      throw error;
+    }
   }
 
   async persist(state) {
@@ -52,12 +112,13 @@ export class AllOrdersController {
   }
 
   async dispatch(message, sender) {
-    if (!this.authorized(sender)) throw Error("All Orders actions are available only from this extension's popup.");
-    if (!Number.isInteger(message.windowId) || message.windowId < 0) throw Error("The source Chrome window is unavailable.");
-    await this.api.windows.get(message.windowId);
-    const state = await this.load(message.windowId);
+    const windowId = await this.sourceWindow(message, sender);
+    if (!Number.isInteger(windowId) || windowId < 0) throw Error("The source Chrome window is unavailable.");
+    await this.api.windows.get(windowId);
+    const state = await this.load(windowId);
     const action = message.action;
-    if (action === "get") return structuredClone(state);
+    if (action === "get" || action === "editor-source") return structuredClone(state);
+    if (action === "expand") return this.expand(state, message.screen);
     if (state.busy) throw Error("Wait for the current All Orders action to finish.");
     if (action === "draft") {
       if (!["scanned", "prepared", "previewed"].includes(state.phase)) throw Error("Read the orders before editing the draft.");
@@ -139,15 +200,19 @@ export class AllOrdersController {
     if (discover) target.allFrames = true;
     else if (order.documentId) target.documentIds = [order.documentId];
     else target.frameIds = [order.frameId];
-    const results = await this.api.scripting.executeScript({ target, world: "MAIN",
-      func: command => globalThis.CRMAllOrdersPage?.execute(command) ?? null,
-      args: [{ ...command, orderId: order.orderId, batchId: state.batchId }] });
+    let results;
+    try {
+      results = await this.api.scripting.executeScript({ target, world: "MAIN",
+        func: command => globalThis.CRMAllOrdersPage?.execute(command) ?? null,
+        args: [{ ...command, orderId: order.orderId, batchId: state.batchId }] });
+    } catch (error) { error.transportLost = true; throw error; }
     const matches = results.filter(result => result.result && result.result.orderId === order.orderId);
     // begin/apply results may omit orderId; the document has already been pinned.
     const found = discover ? matches : results.filter(result => result.result);
     if (found.length !== 1) throw Error("The CRM order frame is missing or ambiguous. Reload the extension, refresh the order page, and scan again.");
     const response = found[0].result;
     if (response.success !== true) throw Error(response.message || "CRM rejected the action. Review this order.");
+    if (discover && response.adapterVersion !== 2) throw Error("Refresh this CRM order page to load the updated All Orders controls, then scan again.");
     if (discover) { order.frameId = found[0].frameId; order.documentId = found[0].documentId; }
     return response;
   }
@@ -247,6 +312,25 @@ export class AllOrdersController {
     throw lastError || Error("The refreshed order could not be verified.");
   }
 
+  async confirmCanceled(order, state) {
+    const until = Date.now() + 15000;
+    let lastError;
+    while (Date.now() < until) {
+      try {
+        const read = await this.inspect(order, state);
+        if (read.editMode || read.busy || read.pending) throw Error("CRM has not finished discarding this order's edits.");
+        if (!order.original) throw Error("This older batch has no discard baseline. Check the order manually before starting a new batch.");
+        await this.execute(order, state, { op: "verify", expected: order.original });
+        return;
+      } catch (error) {
+        if (/moved to another window|navigated away|older batch/.test(error.message)) throw error;
+        lastError = error;
+        await this.sleep(150);
+      }
+    }
+    throw lastError || Error("CRM could not confirm discarding the unsaved edits.");
+  }
+
   async run(state, action) {
     if (action === "scan") return this.scan(state);
     const orders = this.selected(state);
@@ -264,6 +348,7 @@ export class AllOrdersController {
           await this.persist(state);
           const result = await this.execute(order, state, { op: "begin" });
           order.snapshot = result.snapshot;
+          order.original = result.original;
           order.status = "prepared";
           order.message = "Native editor ready.";
         } catch (error) { order.status = "error"; order.message = error.message; }
@@ -337,7 +422,13 @@ export class AllOrdersController {
         try {
           const read = await this.inspect(order, state);
           if (read.busy) throw Error("CRM is still saving. Wait and review this order.");
-          if (read.editMode) await this.execute(order, state, { op: "cancel" });
+          if (read.editMode) {
+            order.status = "canceling";
+            await this.persist(state);
+            try { await this.execute(order, state, { op: "cancel" }); }
+            catch (error) { if (!error.transportLost) throw error; }
+            await this.confirmCanceled(order, state);
+          }
           order.status = "canceled";
           order.message = "Native editor closed. Previously saved changes are retained.";
         } catch (error) { order.status = "review"; order.message = error.message; }

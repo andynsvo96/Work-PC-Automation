@@ -270,6 +270,13 @@ survives a dormant service worker but clears when Chrome or the extension
 session ends. See the [All Orders guide](../crm-order-dark-mode-extension/README.md#all-orders-popup-editor---180)
 for the workflow, permission/reload requirements, and local fixture checks.
 
+In 1.8.2, Apply performs the validation without a separate Preview button.
+Native Cancel answers **No** only on the exact review-and-save discard warning
+for an unchanged, batch-owned editor, then verifies the pre-edit baseline.
+Unrelated or ambiguous dialogs remain for review. The optional expanded editor
+is registered to its source Chrome window in extension session storage; its
+commands cannot switch to another order window or scan the editor window itself.
+
 Use this recipe when the task says something like "edit the CRM order and save it."
 
 ### 1. Open The Order

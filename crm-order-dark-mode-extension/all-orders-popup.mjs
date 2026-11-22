@@ -2,6 +2,14 @@ import { SESSION_PREFIX, CRM_ORIGIN, noteKinds, emptyDraft, editorGroups, common
 
 const byId = id => document.getElementById("orders-" + id);
 const colors = { "hd digital": "#ff5686", "screen printing": "#5bbad3", embroidery: "#69bd45", "direct to garment": "#7e51a1" };
+const expanded = new URLSearchParams(location.search).has("editor");
+document.documentElement.classList.toggle("expanded-editor", expanded);
+function fitPopup() {
+  document.documentElement.style.setProperty("--popup-height", Math.max(200, Math.min(600, screen.availHeight - 140)) + "px");
+  document.documentElement.style.setProperty("--popup-width", Math.max(240, Math.min(760, screen.availWidth - 32)) + "px");
+}
+fitPopup();
+window.addEventListener("resize", fitPopup);
 let windowId;
 let state;
 let revision = 0;
@@ -51,7 +59,7 @@ async function action(name) {
   let failure;
   try {
     await pendingDraft;
-    receive(await send(name));
+    receive(await send(name, name === "expand" ? { screen: { left: screen.availLeft, top: screen.availTop, width: screen.availWidth, height: screen.availHeight } } : {}));
   } catch (cause) { failure = cause.message; }
   finally {
     localRequest = false;
@@ -136,12 +144,13 @@ function renderButtons() {
   const editable = ["prepared", "previewed"].includes(state.phase);
   byId("scan").disabled = busy;
   byId("edit").disabled = busy || !selected.length || !["scanned", "prepared"].includes(state.phase) || selected.every(order => order.status === "prepared");
-  byId("preview").disabled = byId("apply").disabled = busy || !selected.length || !editable || !hasChanges(state.draft) || selected.some(order => order.status !== "prepared");
+  byId("apply").disabled = busy || !selected.length || !editable || !hasChanges(state.draft) || selected.some(order => order.status !== "prepared");
   byId("save").disabled = busy || state.phase !== "applied";
   byId("discard").disabled = busy || !editable || !hasChanges(state.draft);
   byId("cancel").disabled = busy || !selected.length || !["prepared", "previewed", "applied", "review"].includes(state.phase);
   byId("verify").disabled = busy || !selected.some(order => order.expected && order.status !== "verified");
   byId("add").disabled = busy || !selected.length || !editable;
+  byId("expand").disabled = localRequest;
   for (const kind of noteKinds) byId("note-" + kind).disabled = busy || !selected.length || !editable;
 }
 function render() {
@@ -168,6 +177,10 @@ function render() {
         const tab = await chrome.tabs.get(order.tabId);
         if (tab.windowId !== windowId || orderIdFromUrl(tab.url) !== order.orderId) throw Error("This order tab moved or navigated away. Scan this window again after resolving unsaved edits.");
         await chrome.tabs.update(order.tabId, { active: true });
+        if (expanded) {
+          const source = await chrome.windows.get(windowId);
+          await chrome.windows.update(windowId, { focused: true, ...(source.state === "minimized" ? { state: "normal" } : {}) });
+        }
       } catch (cause) { error(cause.message); }
     });
     if (order.duplicates.length) link.append(node("span", `${order.duplicates.length} duplicate tab${order.duplicates.length === 1 ? "" : "s"}`, "duplicate-label"));
@@ -183,7 +196,7 @@ function render() {
   document.querySelector(".orders-scroll").scrollTop = scroll;
 }
 
-for (const [id, name] of Object.entries({ scan: "scan", edit: "prepare", preview: "preview", apply: "apply", save: "save", cancel: "cancel", verify: "verify" })) {
+for (const [id, name] of Object.entries({ scan: "scan", edit: "prepare", expand: "expand", apply: "apply", save: "save", cancel: "cancel", verify: "verify" })) {
   byId(id).addEventListener("click", () => action(name));
 }
 byId("add").addEventListener("click", () => {
@@ -197,9 +210,16 @@ chrome.storage.onChanged.addListener((values, area) => {
   if (area === "session" && windowId !== undefined && values[SESSION_PREFIX + windowId]?.newValue) receive(values[SESSION_PREFIX + windowId].newValue);
 });
 try {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !Number.isInteger(tab.windowId)) throw Error("No Chrome window is available.");
-  windowId = tab.windowId;
-  receive(await send("get"));
+  if (expanded) {
+    const response = await chrome.runtime.sendMessage({ type: "crm-all-orders", action: "editor-source" });
+    if (!response?.success) throw Error(response?.message || "The original Chrome window is unavailable.");
+    windowId = response.state.windowId;
+    receive(response.state);
+  } else {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !Number.isInteger(tab.windowId)) throw Error("No Chrome window is available.");
+    windowId = tab.windowId;
+    receive(await send("get"));
+  }
   if (state.phase === "idle") await action("scan");
 } catch (cause) { error(cause.message); }
