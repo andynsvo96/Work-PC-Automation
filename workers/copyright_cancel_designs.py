@@ -18,7 +18,8 @@ from runtime_paths import STATE_DIR
 
 
 ROOT = Path(__file__).resolve().parents[1]
-READER = (ROOT / "crm-order-dark-mode-extension/copyright-design-reader.js").read_text(encoding="utf-8")
+READER = "\n".join((ROOT / "crm-order-dark-mode-extension" / name).read_text(encoding="utf-8")
+                   for name in ("order-scan-reader.js", "copyright-design-reader.js"))
 
 
 class CopyrightSelectionError(ValueError):
@@ -132,6 +133,12 @@ def scan_designs(driver, order_id):
     identities = (metadata or {}).get("designs") or []
     if str((metadata or {}).get("order_id")) != str(order_id) or not identities:
         raise CopyrightSelectionError("Could not verify the copyright order and every design ID.")
+    if metadata.get("loaded_designs") is not None:
+        after = driver.execute_script(READER + "\nreturn readCopyrightDesignIds();")
+        if after != metadata:
+            raise CopyrightSelectionError("The order designs changed while scanning. Select the copyright designs again.")
+        return normalize_selection({"order_id": str(order_id), "all_designs": metadata["loaded_designs"],
+                                    "selected_design_ids": [selection_id(row) for row in identities]})["all_designs"]
     designs = []
     for identity in identities:
         number = identity["tab_number"]

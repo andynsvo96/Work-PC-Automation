@@ -14,6 +14,8 @@ import complicated_emb
 import oversize_emb
 
 ROOT = Path(__file__).resolve().parents[1]
+READER = '\n'.join((ROOT / 'crm-order-dark-mode-extension' / name).read_text(encoding='utf-8')
+                   for name in ('order-scan-reader.js', 'emb-design-reader.js'))
 
 
 class ComplicatedEmbBrowserTests(unittest.TestCase):
@@ -187,12 +189,12 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
         choices = source[source.index('const REACHOUT_ORDER_AUTOMATIONS'):source.index('const STOCK_ISSUE_AUTOMATIONS')]
         helpers = source[source.index('function stockIssueCleanText'):source.index('const EXTRA_PRINT_AREAS')]
         scan_and_popup = source[source.index('function readComplicatedEmbMethods'):source.index('function createOrderProcessMenuControl')]
-        reader = (ROOT / 'crm-order-dark-mode-extension/emb-design-reader.js').read_text(encoding='utf-8')
+        reader = READER
         bridge = (ROOT / 'crm-order-dark-mode-extension/emb-design-bridge.js').read_text(encoding='utf-8')
         self.driver.execute_script('''
           document.body.innerHTML = '<button>1 - QTY: 12 View Proofs</button><p>Design Name: Omc | admin</p>';
           const designs = [{printAreas: [{description: 'Back', printMethodDescription: 'HD Digital'}]}];
-          const scope = {copyOrder() {}, order: {getResource: () => ({designs})}};
+          const scope = {copyOrder() {}, order: {getResource: () => ({id: '1234567', designs})}};
           window.angular = {element: () => ({scope: () => scope})};
           window.queued = [];
           window.queueManualOrderAutomation = (...args) => window.queued.push({key: args[0].key, data: args[4]});
@@ -219,29 +221,69 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
         self.assertEqual(self.driver.find_element(By.TAG_NAME, 'a').get_attribute('href'), 'https://example.com/')
         self.assertFalse(self.driver.find_elements(By.TAG_NAME, 'hat'))
 
+    def test_loaded_embroidery_scans_and_worker_checks_preserve_the_active_tab(self):
+        self.driver.get('about:blank')
+        source = (ROOT / 'crm-order-dark-mode-extension/content.js').read_text(encoding='utf-8')
+        helpers = source[source.index('function stockIssueCleanText'):source.index('const EXTRA_PRINT_AREAS')]
+        scan = source[source.index('function readComplicatedEmbMethods'):source.index('function showOrderAutomationConfirmation')]
+        bridge = (ROOT / 'crm-order-dark-mode-extension/emb-design-bridge.js').read_text(encoding='utf-8')
+        self.driver.execute_script('''
+          document.body.innerHTML = '<div id="main-header-design-tabs"><button aria-selected="false">1 - QTY: 1 Design Previews</button>'
+            + '<button aria-selected="true">2 - QTY: 2 View Proofs</button></div>';
+          window.scanResource = {id: '1234567', designs: [
+            {name: 'Team Logo', printAreas: [{description: 'Back', printMethodDescription: 'HD Digital'}]},
+            {name: 'Crest', printAreas: [{description: 'Front-left Chest', printMethodDescription: 'Embroidery'}]}
+          ]};
+          const scope = {copyOrder() {}, order: {getResource: () => scanResource}};
+          window.angular = {element: () => ({scope: () => scope})};
+        ''' + READER + bridge + helpers + scan + '''
+          window.clickStockIssueDesignTab = () => {throw new Error('Unexpected tab click');};
+          window.stockIssueDelay = () => {throw new Error('Unexpected fixed wait');};
+          window.runLoadedScan = scanComplicatedEmbPrintDesigns;
+        ''')
+        result = self.driver.execute_async_script('''
+          const done = arguments[0], started = performance.now();
+          runLoadedScan(() => {}).then(designs => done({designs, milliseconds: performance.now() - started}),
+            error => done({error: error.message}));
+        ''')
+        self.assertNotIn('error', result)
+        self.assertEqual(result['designs'], [
+            {'tab_number': 1, 'design_name': 'Team Logo', 'print_areas': ['Back']},
+            {'tab_number': 2, 'design_name': 'Crest', 'print_areas': ['Front-left Chest']},
+        ])
+        self.assertLess(result['milliseconds'], 750)
+        import crm_auto_splitter as splitter
+        from unittest import mock
+        with mock.patch.object(splitter, '_click_design_tab', side_effect=AssertionError('Unexpected tab click')):
+            self.assertEqual(complicated_emb.resolve_print_designs(self.driver, result['designs']), result['designs'])
+        self.assertIn('2 - QTY:', self.driver.find_element(By.CSS_SELECTOR, 'button[aria-selected="true"]').text)
+        self.driver.execute_script("scanResource.designs[1].name = 'Changed';")
+        with self.assertRaisesRegex(ValueError, 'Design Name changed'):
+            complicated_emb.resolve_print_designs(self.driver, result['designs'])
+
     def test_method_reader_includes_other_and_mixed_methods(self):
         self.driver.get('about:blank')
-        reader = (ROOT / 'crm-order-dark-mode-extension/emb-design-reader.js').read_text(encoding='utf-8')
+        reader = READER
         rows = self.driver.execute_script('''
           const designs = ['Embroidery', 'HDD', 'EMB', '', 'Screen Printing', 'HD Digital'].map(method => ({printAreas: [{printMethodDescription: method}]}));
           designs.push({printAreas: [{printMethodDescription: 'Embroidery'}, {printMethodDescription: 'Screen Printing'}]});
           designs.push({crudAction: 'd', printAreas: [{printMethodDescription: 'Embroidery'}]});
           designs.push({printAreas: [{crudAction: 'd', printMethodDescription: 'Embroidery'}]});
           designs.push({printAreas: []});
-          const scope = {copyOrder() {}, order: {getResource: () => ({designs})}};
+          const scope = {copyOrder() {}, order: {getResource: () => ({id: '1234567', designs})}};
           window.angular = {element: () => ({scope: () => scope})};
         ''' + reader + '\nreturn readEmbDesignMethods();')
         self.assertEqual([row['tab_number'] for row in rows if row['eligible']], [1, 2, 3, 5, 6, 7])
 
     def test_area_reader_uses_crm_labels_and_ignores_deleted_areas(self):
         self.driver.get('about:blank')
-        reader = (ROOT / 'crm-order-dark-mode-extension/emb-design-reader.js').read_text(encoding='utf-8')
+        reader = READER
         rows = self.driver.execute_script('''
           const areas = [{description: ' Back '}, {printAreaDescription: 'Front-left Chest'},
                          {printArea: {description: 'Left Sleeve'}}, {printAreaTemplate: {description: 'Right Sleeve'}},
                          {fallback: 'Front'}, {description: 'Deleted', crudAction: 'd'}];
           for (const area of areas) area.printMethodDescription = 'HDD';
-          const scope = {copyOrder() {}, order: {getResource: () => ({designs: [{printAreas: areas}]})},
+          const scope = {copyOrder() {}, order: {getResource: () => ({id: '1234567', designs: [{printAreas: areas}]})},
                          $parent: {setPrintAreaTemplateDescription: area => area.fallback}};
           window.angular = {element: () => ({scope: () => scope})};
         ''' + reader + '\nreturn readEmbDesignMethods();')
@@ -253,7 +295,7 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
         source = (ROOT / 'crm-order-dark-mode-extension/content.js').read_text(encoding='utf-8')
         helpers = source[source.index('function stockIssueCleanText'):source.index('const EXTRA_PRINT_AREAS')]
         scan = source[source.index('function readComplicatedEmbMethods'):source.index('function showOrderAutomationConfirmation')]
-        reader = (ROOT / 'crm-order-dark-mode-extension/emb-design-reader.js').read_text(encoding='utf-8')
+        reader = READER
         bridge = (ROOT / 'crm-order-dark-mode-extension/emb-design-bridge.js').read_text(encoding='utf-8')
         self.driver.execute_script('''
           document.body.innerHTML = '<div id="main-header-design-tabs"></div><p id="design-detail">Design Name: Hat 2 | admin</p>';
@@ -271,7 +313,7 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
           const designs = ['Embroidery', 'HDD', 'Embroidery'].map(method => ({printAreas: [{printMethodDescription: method}]}));
           for (const design of designs) design.printAreas[0].description = 'Back';
           designs[2].printAreas.push({description: 'Front-left Chest', printMethodDescription: 'Screen Printing'});
-          const scope = {copyOrder() {}, order: {getResource: () => ({designs})}};
+          const scope = {copyOrder() {}, order: {getResource: () => ({id: '1234567', designs})}};
           window.angular = {element: () => ({scope: () => scope})};
         ''' + reader + bridge + helpers + scan + '''
           window.scanResult = null;

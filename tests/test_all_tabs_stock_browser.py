@@ -103,6 +103,42 @@ class AllTabsStockBrowserTests(unittest.TestCase):
     def status(self):
         return self.driver.find_element(By.ID, "crm-all-tabs-status").text
 
+    def test_stock_picker_reads_native_inactive_product_scopes_without_clicks_or_waits(self):
+        self.driver.get(self.base_url + '/order/1234567')
+        WebDriverWait(self.driver, 5).until(lambda d: d.execute_script("return typeof fixtureReset === 'function';"))
+        self.driver.execute_script("""
+          fixtureReset();
+          for (const button of document.querySelectorAll('#main-header-design-tabs button')) {
+            button.append(document.createTextNode(' Design Previews'));
+          }
+          window.scanClicks = 0;
+          const original = orderScope.onDesignTabSelect;
+          orderScope.onDesignTabSelect = index => { scanClicks++; original(index); };
+        """)
+        source = (EXTENSION / 'content.js').read_text(encoding='utf-8')
+        scan = (source[source.index('function stockIssueCleanText'):source.index('const EXTRA_PRINT_AREAS')]
+                + source[source.index('function stockIssueDetectedSizes'):source.index('function createStockIssueDialogShell')])
+        self.driver.execute_script('\n'.join((EXTENSION / name).read_text(encoding='utf-8')
+                                             for name in ('order-scan-reader.js', 'order-scan-bridge.js')) + scan + """
+          window.stockIssueDelay = () => {throw new Error('Unexpected fixed wait');};
+          window.runLoadedScan = scanAllStockIssueProducts;
+        """)
+        result = self.driver.execute_async_script("""
+          const done = arguments[0], started = performance.now();
+          runLoadedScan().then(products => done({products, milliseconds: performance.now() - started}),
+            error => done({error: error.message}));
+        """)
+        self.assertNotIn('error', result)
+        self.assertEqual(len(result['products']), 1)
+        row = result['products'][0]
+        self.assertEqual(row['style'], 'NF1270')
+        self.assertEqual(row['description'], 'A4 Reversible Mesh Tank')
+        self.assertEqual(row['available_sizes'], ['L', 'M'])
+        self.assertEqual(row['total_quantity'], 4)
+        self.assertEqual(row['tab_numbers'], [1, 2, 3, 4])
+        self.assertEqual(self.driver.execute_script('return [scanClicks, orderScope.activeDesignIndex];'), [0, 1])
+        self.assertLess(result['milliseconds'], 750)
+
     def resource(self):
         return self.driver.execute_script("return angular.copy(resource);")
 

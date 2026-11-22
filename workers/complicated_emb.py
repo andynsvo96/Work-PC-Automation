@@ -28,7 +28,9 @@ def normalize_designs(designs):
 def resolve_designs(driver, selections=None):
     import crm_auto_splitter as splitter
 
-    script = (Path(__file__).resolve().parents[1] / "crm-order-dark-mode-extension/emb-design-reader.js").read_text(encoding="utf-8")
+    folder = Path(__file__).resolve().parents[1] / "crm-order-dark-mode-extension"
+    script = "\n".join((folder / name).read_text(encoding="utf-8")
+                       for name in ("order-scan-reader.js", "emb-design-reader.js"))
     methods = driver.execute_script(script + "\nreturn readEmbDesignMethods();") or []
     eligible = {row["tab_number"] for row in methods if row.get("eligible")}
     if selections is None:
@@ -42,23 +44,28 @@ def resolve_designs(driver, selections=None):
         number = selected["tab_number"]
         if number not in eligible:
             raise ValueError(f"Tab {number} is no longer available with readable print methods.")
-        if not splitter._click_design_tab(driver, number):
-            raise ValueError(f"Could not open design tab {number}.")
-        time.sleep(0.75)
-        previous = ""
-        name = ""
-        for _ in range(30):
-            name = splitter._scan_current_design_detail(driver, number).get("design_name", "")
-            if name and name == previous:
-                break
-            previous = name
-            name = ""
-            time.sleep(0.2)
+        metadata = next(row for row in methods if row["tab_number"] == number)
+        name = metadata.get("design_name", "")
+        if not name:
+            if not splitter._click_design_tab(driver, number):
+                raise ValueError(f"Could not open design tab {number}.")
+            time.sleep(0.75)
+            previous = ""
+            for _ in range(30):
+                name = splitter._scan_current_design_detail(driver, number).get("design_name", "")
+                if name and name == previous:
+                    break
+                previous = name
+                name = ""
+                time.sleep(0.2)
         if not name:
             raise ValueError(f"Could not read Design Name for design tab {number}.")
         if selected["design_name"] and name != selected["design_name"]:
             raise ValueError(f"Design Name changed for tab {number}. Reopen Complicated EMB and select the designs again.")
         resolved.append({"tab_number": number, "design_name": name})
+    after = driver.execute_script(script + "\nreturn readEmbDesignMethods();") or []
+    if after != methods:
+        raise ValueError("The order designs or print areas changed while scanning. Select the designs again.")
     return normalize_designs(resolved)
 
 

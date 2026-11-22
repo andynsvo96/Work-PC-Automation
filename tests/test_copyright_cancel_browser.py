@@ -95,6 +95,30 @@ class CopyrightCancelBrowserTests(unittest.TestCase):
         self.driver.find_element(By.XPATH, '//button[text()="Back"]').click()
         self.assertEqual(self.driver.execute_script("return queued"), [])
 
+    def test_loaded_copyright_scan_and_worker_verification_do_not_click_or_wait(self):
+        self.use_shared_artwork()
+        self.driver.execute_script(copyright.READER + self.ui + """
+          document.addEventListener('crm-copyright-designs-request', event => {
+            document.dispatchEvent(new CustomEvent('crm-copyright-designs-response', {
+              detail: JSON.stringify({id: event.detail, scan: readCopyrightDesignIds()})
+            }));
+          });
+          window.clickStockIssueDesignTab = () => {throw new Error('Unexpected tab click');};
+          window.stockIssueDelay = () => {throw new Error('Unexpected fixed wait');};
+          window.runLoadedScan = scanCopyrightDesigns;
+        """)
+        result = self.driver.execute_async_script("""
+          const done = arguments[0], started = performance.now();
+          runLoadedScan().then(scan => done({scan, milliseconds: performance.now() - started}),
+            error => done({error: error.message}));
+        """)
+        self.assertNotIn('error', result)
+        self.assertEqual([row['order_design_id'] for row in result['scan']['all_designs']], ['900', '901'])
+        self.assertLess(result['milliseconds'], 750)
+        self.assertEqual(self.driver.execute_script('return active'), 901)
+        with mock.patch.object(copyright, 'click_design_tab', side_effect=AssertionError('Unexpected tab click')):
+            self.assertEqual(copyright.scan_designs(self.driver, '5451301'), result['scan']['all_designs'])
+
     def use_shared_artwork(self):
         self.driver.execute_script("""
           resource.designs.forEach((design, index) => {

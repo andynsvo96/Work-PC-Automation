@@ -366,6 +366,26 @@ function stockIssueDelay(milliseconds) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
+function readStockIssueProductSnapshot() {
+  return new Promise((resolve, reject) => {
+    const id = `${Date.now()}-${Math.random()}`;
+    const receive = event => {
+      let response;
+      try { response = JSON.parse(event.detail); } catch (_) { return; }
+      if (response.id !== id) return;
+      clearTimeout(timer);
+      document.removeEventListener('crm-stock-products-response', receive);
+      if (response.error) reject(new Error(response.error)); else resolve(response.scan);
+    };
+    const timer = setTimeout(() => {
+      document.removeEventListener('crm-stock-products-response', receive);
+      reject(new Error('Reload CRM Order Assistant and refresh this order to scan stock products.'));
+    }, 5000);
+    document.addEventListener('crm-stock-products-response', receive);
+    document.dispatchEvent(new CustomEvent('crm-stock-products-request', { detail: id }));
+  });
+}
+
 const EXTRA_PRINT_AREAS = { left: "Sleeve Left", right: "Sleeve Right", side_left: "Side Left", side_right: "Side Right" };
 
 function sleevePrintCurrency(value) {
@@ -799,6 +819,25 @@ function deduplicateStockIssueProducts(products) {
 }
 
 async function scanAllStockIssueProducts(onProgress = () => {}) {
+  onProgress('Reading loaded order products…');
+  const loaded = await readStockIssueProductSnapshot();
+  if (loaded !== null) {
+    const orderId = `${location.pathname}${location.hash}`.match(/\/order\/(\d{7})\b/)?.[1];
+    const tabs = visibleStockIssueDesignTabs();
+    if (!loaded || !/^\d{7}$/.test(loaded.order_id) || (orderId && loaded.order_id !== orderId) ||
+        !Array.isArray(loaded.tabs) || !Array.isArray(loaded.products) ||
+        loaded.tabs.length !== tabs.length || loaded.tabs.some(tab =>
+          !tabs.some(visible => visible.tabNumber === tab.tab_number && visible.quantity === tab.quantity))) {
+      throw new Error('The order tabs or quantities are still updating. Wait for the order to finish loading and try again.');
+    }
+    const after = await readStockIssueProductSnapshot();
+    if (JSON.stringify(after) !== JSON.stringify(loaded)) {
+      throw new Error('The order products changed during the scan. Refresh the order and try again.');
+    }
+    return deduplicateStockIssueProducts(loaded.products);
+  }
+  // Older/unavailable product fields retain the visible scan. Never treat a
+  // partial resource as a complete list or silently omit an unreadable item.
   const initialTabs = visibleStockIssueDesignTabs();
   const originalTabNumber = activeStockIssueDesignTabNumber(initialTabs);
   if (initialTabs.length > 1 && originalTabNumber === null) {
@@ -1336,6 +1375,14 @@ async function scanCopyrightDesigns(onProgress = () => {}) {
         !tabs.some(tab => tab.tabNumber === design.tab_number))) {
     throw new Error('Could not identify every design tab. Refresh the order and try again.');
   }
+  if (metadata.loaded_designs) {
+    onProgress('Reading loaded design names and totals…');
+    const after = await readCopyrightDesignMetadata();
+    if (JSON.stringify(after) !== JSON.stringify(metadata)) {
+      throw new Error('The order designs changed during the scan. Refresh and select them again.');
+    }
+    return { order_id: metadata.order_id, all_designs: metadata.loaded_designs };
+  }
   const allDesigns = [];
   try {
     for (const design of metadata.designs) {
@@ -1493,23 +1540,27 @@ async function scanComplicatedEmbDesigns(onProgress, includePrintAreas = false) 
   if (!tabs.length || original === null) throw new Error('Could not identify the order design tabs. Refresh the order and try again.');
   const methods = await readComplicatedEmbMethods();
   const found = [];
+  let changedTabs = false;
   try {
     for (const tab of tabs) {
       const metadata = methods.find(item => item.tab_number === tab.tabNumber);
       if (metadata?.available === false) continue;
       onProgress(`Reading design tab ${tab.tabNumber} of ${tabs.length}...`);
-      clickStockIssueDesignTab(tab.tabNumber);
-      await stockIssueDelay(750);
-      let previous = '';
-      let name = '';
-      for (let attempt = 0; attempt < 30; attempt++) {
-        const text = document.body.innerText || '';
-        const match = text.match(/Design Name:\s*([^|\n\r]+)/i);
-        name = stockIssueCleanText(match?.[1]);
-        if (name && name === previous && activeStockIssueDesignTabNumber(visibleStockIssueDesignTabs()) === tab.tabNumber) break;
-        previous = name;
-        name = '';
-        await stockIssueDelay(200);
+      let name = stockIssueCleanText(metadata?.design_name);
+      if (!name) {
+        changedTabs = true;
+        clickStockIssueDesignTab(tab.tabNumber);
+        await stockIssueDelay(750);
+        let previous = '';
+        for (let attempt = 0; attempt < 30; attempt++) {
+          const text = document.body.innerText || '';
+          const match = text.match(/Design Name:\s*([^|\n\r]+)/i);
+          name = stockIssueCleanText(match?.[1]);
+          if (name && name === previous && activeStockIssueDesignTabNumber(visibleStockIssueDesignTabs()) === tab.tabNumber) break;
+          previous = name;
+          name = '';
+          await stockIssueDelay(200);
+        }
       }
       if (!metadata || !metadata.methods.length || metadata.methods.some(method => !method)) {
         throw new Error(`Could not determine the print method for tab ${tab.tabNumber}.`);
@@ -1527,9 +1578,15 @@ async function scanComplicatedEmbDesigns(onProgress, includePrintAreas = false) 
         found.push(design);
       }
     }
+    const after = await readComplicatedEmbMethods();
+    if (JSON.stringify(after) !== JSON.stringify(methods)) {
+      throw new Error('The order designs or print areas changed during the scan. Refresh and select them again.');
+    }
   } finally {
-    clickStockIssueDesignTab(original);
-    await stockIssueDelay(750);
+    if (changedTabs) {
+      clickStockIssueDesignTab(original);
+      await stockIssueDelay(750);
+    }
   }
   if (!found.length) throw new Error('No available design tabs were found on this order.');
   return found;

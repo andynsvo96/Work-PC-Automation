@@ -45,7 +45,9 @@ def normalize_designs(designs, workflow="Oversize EMB"):
 
 
 def _read_methods(driver):
-    script = (Path(__file__).resolve().parents[1] / "crm-order-dark-mode-extension/emb-design-reader.js").read_text(encoding="utf-8")
+    folder = Path(__file__).resolve().parents[1] / "crm-order-dark-mode-extension"
+    script = "\n".join((folder / name).read_text(encoding="utf-8")
+                       for name in ("order-scan-reader.js", "emb-design-reader.js"))
     return driver.execute_script(script + "\nreturn readEmbDesignMethods();") or []
 
 

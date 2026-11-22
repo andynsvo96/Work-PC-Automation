@@ -303,6 +303,22 @@ class ComplicatedEmbTests(unittest.TestCase):
             complicated_emb.resolve_designs(driver)
         click.assert_not_called()
 
+    def test_loaded_names_are_rechecked_without_changing_tabs_and_stale_data_stops(self):
+        import crm_auto_splitter as splitter
+        metadata = [{'tab_number': 2, 'eligible': True, 'design_name': 'Schuti Hats', 'methods': ['HDD']}]
+        driver = mock.Mock()
+        driver.execute_script.side_effect = [metadata, metadata]
+        with mock.patch.object(splitter, '_click_design_tab') as click, \
+             mock.patch.object(complicated_emb.time, 'sleep') as sleep:
+            self.assertEqual(complicated_emb.resolve_designs(driver, DESIGNS), DESIGNS)
+        click.assert_not_called()
+        sleep.assert_not_called()
+        driver.execute_script.side_effect = [metadata, [{**metadata[0], 'design_name': 'Changed'}]]
+        with mock.patch.object(splitter, '_click_design_tab') as click, \
+             self.assertRaisesRegex(ValueError, 'changed while scanning'):
+            complicated_emb.resolve_designs(driver, DESIGNS)
+        click.assert_not_called()
+
     def test_selection_reaches_worker_command_and_order_processing(self):
         with mock.patch.object(server, "_run_script", return_value=(True, "Done", {})) as run:
             server._execute_crm_mass_emailer_worker(action="process_order", order_id="1234567", process="complicated_emb_feedback", designs=PRINT_DESIGNS)

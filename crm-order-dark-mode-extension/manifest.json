@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CRM Order Assistant",
-  "version": "1.8.3",
+  "version": "1.8.4",
   "minimum_chrome_version": "111",
   "description": "CRM order tools, native All Orders and All Tabs editors, Salesforce tab reuse, and Orders email sender selection.",
   "permissions": ["storage", "tabs", "webNavigation", "scripting"],
@@ -52,7 +52,7 @@
     },
     {
       "matches": ["https://crm2.legacy.printfly.com/*"],
-      "js": ["emb-design-reader.js", "emb-design-bridge.js", "copyright-design-reader.js", "copyright-design-bridge.js"],
+      "js": ["order-scan-reader.js", "order-scan-bridge.js", "emb-design-reader.js", "emb-design-bridge.js", "copyright-design-reader.js", "copyright-design-bridge.js"],
       "world": "MAIN",
       "run_at": "document_start",
       "all_frames": true

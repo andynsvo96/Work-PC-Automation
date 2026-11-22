@@ -26,6 +26,23 @@ CONTACT = {"email": "customer@example.test", "salesforce_label": "Salesforce Acc
 
 
 class CopyrightSelectionTests(unittest.TestCase):
+    def test_loaded_scan_rechecks_current_data_without_clicking_tabs(self):
+        metadata = {'order_id': '5451301', 'designs': [
+            {key: value for key, value in row.items() if key in ('tab_number', 'design_id')}
+            for row in DESIGNS], 'loaded_designs': DESIGNS}
+        driver = mock.Mock()
+        driver.execute_script.side_effect = [metadata, deepcopy(metadata)]
+        with mock.patch.object(copyright, 'click_design_tab') as click:
+            self.assertEqual(copyright.scan_designs(driver, '5451301'), DESIGNS)
+        click.assert_not_called()
+        changed = deepcopy(metadata)
+        changed['loaded_designs'][1]['subtotal'] = '81.00'
+        driver.execute_script.side_effect = [metadata, changed]
+        with mock.patch.object(copyright, 'click_design_tab') as click, \
+             self.assertRaisesRegex(ValueError, 'changed while scanning'):
+            copyright.scan_designs(driver, '5451301')
+        click.assert_not_called()
+
     def test_partial_and_full_are_decided_from_the_complete_original_scan(self):
         self.assertTrue(copyright.is_partial(copyright.normalize_selection(SELECTION)))
         full = copyright.normalize_selection({**SELECTION, "selected_design_ids": ["202", "101"]})

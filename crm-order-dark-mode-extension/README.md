@@ -15,6 +15,44 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
+## On-demand order scans - 1.8.4
+
+Stock Issue, Copyright - Cancel, Complicated EMB, and Oversize EMB read CRM's
+already-loaded order data when you open their selection dialog. When the required
+fields are available, they collect every active product/design tab together,
+leave the highlighted tab untouched, and skip the old per-tab waits. Stock keeps
+each product's saved item IDs, color, positive size quantities, and tab membership;
+copyright keeps distinct saved tab IDs even when artwork is shared. Removed tabs,
+removed products, and zero-quantity stock are excluded from stock selection.
+
+The reader performs no background scan, network request, prefetch, or timer on
+order opening. It does not cache selections across orders. Each scan reads the
+current resource again before returning and stops if the data changed. Missing
+required fields retain the existing visible-tab scan, which restores the original
+tab. Conflicting totals, wrong orders, unsaved edits, and active saves stop for
+review. A missing/old reader requests an extension reload and page refresh.
+
+Copyright and embroidery workers use the same read-only helpers for fresh
+verification during their existing queued workflows. Save/reload verification,
+payment checks, email/Slack receipts, retry rules, and queue serialization retain
+their existing behavior. This change speeds up reading order data; it does not
+remove CRM saves or external-service waits.
+
+Reload **CRM Order Assistant 1.8.4** at `chrome://extensions` and refresh open CRM
+order pages. No app restart or new permission is needed; workers load the change
+on their next queued run. Offline regression checks include:
+
+```powershell
+node --test tests/test_order_scan_reader.mjs tests/test_extension_bridge.mjs tests/test_salesforce_tabs.mjs
+python -m unittest discover -s tests -p 'test_copyright_cancel*.py'
+python -m unittest discover -s tests -p 'test_complicated_emb*.py'
+python -m unittest discover -s tests -p 'test_all_tabs_stock_browser.py'
+```
+
+The local Chrome fixtures check that complete scans make no tab clicks or fixed
+waits, and cover fallback scans and saved-value/retry verification. Live CRM
+timing, installed-extension behavior, and macOS remain unverified.
+
 ## Native Save All without refresh - 1.8.3
 
 **Save All** starts the native **Save Order** action on every included unique
@@ -528,8 +566,9 @@ The sales note is `Additional embroidery area`, `$15.00 each` (or the custom pri
 ## Copyright cancellation by design
 
 Choose **Cancel → Copyright - Cancel** to scan every order design tab and list
-its **Design Name**, tab number, and quantity. The scan returns to the previously
-open tab. Select the affected designs and enter the required copyright reason.
+its **Design Name**, tab number, and quantity. Loaded data is read without changing
+tabs; a visible-tab fallback returns to the previously open tab. Select the
+affected designs and enter the required copyright reason.
 Tabs can share the same artwork **Design ID** and Design Name. Each remains
 individually selectable using its persisted order-tab ID, including after another
 tab is removed and the remaining tabs are renumbered.
