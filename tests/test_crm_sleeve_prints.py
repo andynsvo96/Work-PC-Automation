@@ -259,7 +259,7 @@ process.stdout.write(JSON.stringify(sleevePrintSelectionSummary(selections,tabs,
         self.assertIn('key: "sleeve_prints", label: "Extra Print Areas"', content[manual_start:reachout_start])
         self.assertNotIn('key: "sleeve_prints", label: "Extra Print Areas"', content[reachout_start:content.index("const STOCK_ISSUE_AUTOMATIONS")])
         self.assertIn("const priceWrap = document.createElement", content)
-        self.assertIn("Price per area — calculated from", content)
+        self.assertIn('priceCaption.textContent = `Tabs: ${tabNumbers}`', content)
         self.assertIn("priceInput.value = Number(price ??", content)
         self.assertNotIn("const pricing = document.createElement", content)
 

@@ -86,7 +86,8 @@ class ComplicatedEmbBrowserTests(unittest.TestCase):
                     showOrderAutomationConfirmation(REACHOUT_ORDER_AUTOMATIONS.find(a => a.key === 'stock_swap'), null, null);
                 ''')
                 dialog = self.driver.find_element(By.CSS_SELECTOR, '[role="dialog"]')
-                self.assertIn("one email covering every stock swap", dialog.text)
+                self.assertIn("Queue Stock Swap?", dialog.text)
+                self.assertFalse(dialog.find_elements(By.TAG_NAME, "p"))
                 self.assertFalse(dialog.find_elements(By.CSS_SELECTOR, "input, textarea"))
                 dialog.find_element(By.XPATH, f'.//button[text()="{button}"]').click()
                 self.assertEqual(self.driver.execute_script("return window.queued"),

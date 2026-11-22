@@ -447,10 +447,8 @@ function showSleevePrintsDialog(automation, triggerButton, statusButton) {
     padding: "20px", borderRadius: "7px", color: "#0f172a", background: "#fff", boxShadow: "0 20px 45px rgba(15,23,42,.34)" });
   const title = document.createElement("div");
   title.textContent = "Extra Print Areas";
-  title.style.font = "700 17px system-ui, sans-serif";
-  const explanation = document.createElement("p");
-  explanation.textContent = "Select tabs and one category per tab. Ink pricing uses the combined garment quantity of selected ink and reversible-print tabs.";
-  dialog.append(title, explanation);
+  Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "12px" });
+  dialog.append(title);
   const choices = [];
   const priceOverrides = { ink: null, embroidery: null, reverse: null };
   const priceErrors = { ink: "", embroidery: "", reverse: "" };
@@ -503,13 +501,7 @@ function showSleevePrintsDialog(automation, triggerButton, statusButton) {
     choice.method = selectControl(`Print method for tab ${tab.tabNumber}`, [["ink", "Ink print"], ["embroidery", "Embroidery"]], areaOptions);
     choice.location = selectControl(`Print location for tab ${tab.tabNumber}`, [["", "Select left, right, or both"], ["left", "Left"], ["right", "Right"], ["both", "Both"]], areaOptions);
     choice.areaOptions = areaOptions;
-    const reverseHint = document.createElement("p");
-    reverseHint.textContent = "Ink only. One charge per garment for a front or back area; two charges for both.";
-    choice.reverseHint = reverseHint;
-    const embroideryHint = document.createElement("p");
-    embroideryHint.textContent = "Sets up left and right chest embroidery. One additional-area charge per garment; the existing area is included. Existing chest areas are reused and pricing still applies.";
-    choice.embroideryHint = embroideryHint;
-    details.append(areaOptions, reverseHint, embroideryHint);
+    details.append(areaOptions);
     include.addEventListener("change", () => {
       if (!include.checked) { choice.category = ""; choice.location.value = ""; }
       refresh();
@@ -581,12 +573,10 @@ function showSleevePrintsDialog(automation, triggerButton, statusButton) {
     const summary = sleevePrintSelectionSummary(selected, tabs, { value: priceOverrides.ink }, { value: priceOverrides.embroidery }, { value: priceOverrides.reverse });
     const used = { ink: summary.inkTabs.length, embroidery: summary.embroideryTabs.length, reverse: summary.reverseTabs.length };
     for (const choice of choices) {
-      const { include, category, checks, details, areaOptions, reverseHint, embroideryHint } = choice;
+      const { include, category, checks, details, areaOptions } = choice;
       details.style.setProperty("display", include.checked ? "block" : "none", "important");
       for (const [key, check] of Object.entries(checks)) { check.checked = category === key; check.disabled = submitting; }
       areaOptions.style.setProperty("display", category && !["reverse", "extra_emb"].includes(category) ? "grid" : "none", "important");
-      reverseHint.style.setProperty("display", category === "reverse" ? "block" : "none", "important");
-      embroideryHint.style.setProperty("display", category === "extra_emb" ? "block" : "none", "important");
       include.disabled = submitting;
       choice.method.disabled = submitting;
       choice.location.disabled = submitting;
@@ -596,8 +586,7 @@ function showSleevePrintsDialog(automation, triggerButton, statusButton) {
       const applicableTabs = key === "reverse" ? summary.reverseTabs : key === "ink" ? summary.inkTabs : summary.embroideryTabs;
       const tabNumbers = applicableTabs.map((selection) => selection.tab_number).join(", ");
       const price = key === "reverse" ? summary.reversePrice : key === "ink" ? summary.inkPrice : summary.embroideryPrice;
-      priceCaption.textContent = key === "embroidery" ? `Price per area — applies to tabs ${tabNumbers}.`
-        : `Price per area — calculated from ${summary.inkQuantity} selected ink-print garments; applies to tabs ${tabNumbers}.`;
+      priceCaption.textContent = `Tabs: ${tabNumbers}`;
       if (priceInput !== sourcePriceInput && !priceErrors[key]) priceInput.value = Number(price ?? (key === "embroidery" ? 15 : sleevePrintInkPrice(summary.inkQuantity))).toFixed(2);
       priceInput.disabled = submitting;
     }
@@ -984,15 +973,8 @@ function showStockIssueProductDialog(products, automation, triggerButton, status
   const { overlay, dialog } = createStockIssueDialogShell(`Configure Stock Issue ${dialogName}`);
   const title = document.createElement("div");
   title.textContent = dialogName;
-  Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "6px" });
-  const explanation = document.createElement("p");
-  explanation.textContent = isItemSuggestion
-    ? "Check each affected CRM item, choose its affected sizes, and enter its replacement underneath. All detected sizes start selected; use Clear to choose specific sizes. Every checked item needs at least one size and its own replacement. This emails the customer, saves a production note, notifies Slack, and applies Issue - Stock."
-    : isSuggestion
-    ? `Select each out-of-stock product/color, then list the available replacement ${suggestionLabel}s separated by commas.`
-    : "Select each product/color that needs an extension, then enter the number of days. All order sizes start selected; use Clear to choose specific sizes.";
-  Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
-  dialog.append(title, explanation);
+  Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "12px" });
+  dialog.append(title);
 
   const table = document.createElement("table");
   Object.assign(table.style, { width: "100%", borderCollapse: "collapse", marginBottom: "16px" });
@@ -1468,7 +1450,7 @@ function showCopyrightCancelConfirmation(automation, triggerButton, statusButton
     if (!scan) return;
     summary.textContent = `${count} of ${scan.all_designs.length} tabs selected.`;
     if (count === scan.all_designs.length) summary.append(' ', fullCancellation);
-    else if (count) summary.append(' Partial cancellation: only these designs will be removed and refunded. The remaining order will continue.');
+    else if (count) summary.append(' Partial cancellation');
   };
   reason.addEventListener('input', refresh);
   queue.addEventListener('click', () => {
@@ -1630,14 +1612,7 @@ function showOrderAutomationConfirmation(automation, triggerButton, statusButton
   const title = document.createElement("div");
   title.textContent = asksFeedback ? "Feedback required?" : `Queue ${automation.label}?`;
   Object.assign(title.style, { font: "700 17px system-ui, sans-serif", marginBottom: "8px" });
-  const explanation = document.createElement("p");
-  explanation.textContent = asksFeedback
-    ? "Yes: request embroidery feedback. No: use the existing EMB to HDD process."
-    : automation.key === "stock_swap"
-      ? "This will compare the original quote with the saved order and send one email covering every stock swap."
-      : `This will queue ${automation.label} for the currently open order.`;
-  Object.assign(explanation.style, { margin: "0 0 14px", lineHeight: "1.45" });
-  dialog.append(title, explanation);
+  dialog.append(title);
   let embroideryDesigns = null;
   const selectedDesigns = () => {
     if (!selectsPrintAreas) return Array.from(dialog.querySelectorAll('input[data-emb-tab]:checked'))
@@ -1734,7 +1709,7 @@ function showOrderAutomationConfirmation(automation, triggerButton, statusButton
     scan(message => { designPicker.textContent = message; }).then(designs => {
       if (!overlay.isConnected) return;
       embroideryDesigns = designs;
-      designPicker.textContent = selectsPrintAreas ? 'Select the affected print area(s) for each design:' : 'Select the design(s) for Complicated EMB:';
+      designPicker.replaceChildren();
       for (const design of designs) {
         if (selectsPrintAreas) {
           const heading = document.createElement('div');

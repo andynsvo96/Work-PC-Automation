@@ -15,6 +15,16 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
+## Compact automation dialogs - 1.8.5
+
+Order-page automation dialogs omit workflow descriptions and explanatory hints.
+They retain titles, product details, selection controls, field labels, selected-tab
+and cancellation-scope indicators, scan status, and validation/error messages.
+Shared price inputs show their affected tabs without the pricing explanation.
+
+Reload **CRM Order Assistant 1.8.5** at `chrome://extensions` and refresh open CRM
+order pages. No app restart or new permission is needed.
+
 ## On-demand order scans - 1.8.4
 
 Stock Issue, Copyright - Cancel, Complicated EMB, and Oversize EMB read CRM's

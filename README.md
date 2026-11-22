@@ -36,6 +36,8 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 
 ## CRM Order Assistant and Newer Workflows
 
+- **Compact automation dialogs:** CRM Order Assistant **1.8.5** removes workflow descriptions and explanatory hints from order-page automation popups. Titles, controls, product details, field labels, selection/scope indicators, and validation/error messages remain. Reload the extension at `chrome://extensions` and refresh open CRM order pages; no app restart is needed.
+
 - **Faster on-demand tab scans:** CRM Order Assistant **1.8.4** reads already-loaded products, design names, totals, and print areas when you open Stock Issue, Copyright - Cancel, Complicated EMB, or Oversize EMB. Complete data is read without switching design tabs or waiting per tab. There is no background scan or extra order-opening request. Missing fields retain the existing visible-tab fallback; changed or ambiguous data stops for review. Copyright and embroidery workers also use fresh loaded-data reads during verification. Reload the extension at `chrome://extensions` and refresh open CRM order pages; no app restart or new permission is needed.
 
 - **Native Save All without refresh:** CRM Order Assistant **1.8.3** replaces Save All & Refresh with **Save All**. It starts every included order's native Save Order action together, records per-order outcomes, and never refreshes order or duplicate tabs. Slow or failed orders do not delay starting the other saves. **Check save status** only reads the current pages and never reloads or resubmits. Inspect the actual orders for confirmation. Reload the extension and reopen its popup; no app restart or new permission is needed.
