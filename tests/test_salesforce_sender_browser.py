@@ -28,7 +28,7 @@ class SalesforceSenderManifestTests(unittest.TestCase):
                    if "salesforce-email-sender.js" in entry["js"]]
         self.assertEqual(sender["matches"], ["https://*.salesforce.com/*", "https://*.force.com/*"])
         self.assertTrue(sender["all_frames"])
-        self.assertEqual(manifest["permissions"], ["storage", "tabs", "webNavigation"])
+        self.assertEqual(manifest["permissions"], ["storage", "tabs", "webNavigation", "scripting"])
         for entry in manifest["content_scripts"]:
             if "content.js" in entry["js"]:
                 self.assertEqual(entry["matches"], ["https://crm2.legacy.printfly.com/*"])

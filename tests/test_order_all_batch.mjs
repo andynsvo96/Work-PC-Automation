@@ -178,5 +178,5 @@ test("native ordering runs in MAIN with existing CRM access and no Automation br
   assert.equal(entry.world, "MAIN");
   assert.deepEqual(entry.js, ["order-all-batch.js", "order-all.js"]);
   assert.deepEqual(entry.matches, ["https://crm2.legacy.printfly.com/*"]);
-  assert.deepEqual(manifest.permissions, ["storage", "tabs", "webNavigation"]);
+  assert.deepEqual(manifest.permissions, ["storage", "tabs", "webNavigation", "scripting"]);
 });

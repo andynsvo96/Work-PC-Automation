@@ -252,6 +252,24 @@ function runInAngular(scope, fn) {
 
 ## Core Recipe: Edit Order And Save Order
 
+### Extension All Orders editor
+
+CRM Order Assistant 1.8.0 also exposes a user-operated **All Orders editor** in
+its toolbar popup. `all-orders.mjs` coordinates only CRM order browser tabs in
+the originating window, and `all-orders-page.js` reuses `all-tabs-model.js` with
+the native Angular edit, print-area, add-note, save, and cancel controls. This
+path does not start Selenium workers or enqueue local Automation tasks.
+
+All included orders enter Edit Order before applying shared changes. Notes use
+only the three native append inputs; saved history cannot be edited through the
+popup. A save is journaled before submission, followed by a reload and comparison
+of persisted areas, retained products/artwork, and appended notes in the new
+document. Failed or uncertain submissions stop for review. **Check saved orders**
+never resubmits writes. Popup state lives in extension session storage, which
+survives a dormant service worker but clears when Chrome or the extension
+session ends. See the [All Orders guide](../crm-order-dark-mode-extension/README.md#all-orders-popup-editor---180)
+for the workflow, permission/reload requirements, and local fixture checks.
+
 Use this recipe when the task says something like "edit the CRM order and save it."
 
 ### 1. Open The Order

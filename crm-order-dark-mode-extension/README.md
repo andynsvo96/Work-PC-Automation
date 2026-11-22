@@ -1,19 +1,109 @@
 # CRM Order Assistant
 
-Private Manifest V3 extension for the Automation project's CRM pages. It provides local order-page dark mode, bulk stock and print-area editing, queued single-order tools, list selection and rush highlighting, reliable Salesforce tab reuse, and an automatic Orders email sender default. List controls select orders and open tabs; queued tools remain scoped to individual order pages.
+Private Manifest V3 extension for the Automation project's CRM pages. It provides local order-page dark mode, native editing across orders in one Chrome window, bulk stock and print-area editing within an order, queued single-order tools, list selection and rush highlighting, reliable Salesforce tab reuse, and an automatic Orders email sender default. List controls select orders and open tabs; queued tools remain scoped to individual order pages.
 
 ## Install locally
 
 1. Open the dedicated CRM Chrome profile. From the Automation app, use the CRM Chrome-profile setup action if needed.
 2. Visit `chrome://extensions` in that profile and enable **Developer mode**.
 3. Choose **Load unpacked** and select this `crm-order-dark-mode-extension` folder.
-4. Pin **CRM Order Assistant**, open a CRM order, and use **Enable dark mode** in its toolbar popup. The order page also provides single-order Manual Process, Cancel, Reachout, and Stock Issue controls.
+4. Pin **CRM Order Assistant** and open its toolbar popup. Use **Edit All Orders** for CRM orders in that window, or **Extension settings > Enable dark mode** for styling. The order page also provides single-order Manual Process, Cancel, Reachout, and Stock Issue controls.
 
 The preference is stored locally in that Chrome profile. Removing or reloading the extension keeps the preference unless Chrome extension data is cleared.
 
 After extension updates, reload the extension at `chrome://extensions` and refresh open CRM order/list and Salesforce pages. Updates that also change the local Automation app require an app restart as noted below.
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
+
+## All Orders popup editor - 1.8.0
+
+Click the extension icon to open **All Orders editor** directly in the toolbar
+popup. It reads CRM order tabs in that Chrome window, including single-product-tab
+orders, multi-product-tab orders, and embedded `/app#/order/…` pages. Reports,
+other websites, and other windows are excluded. One order open in several browser
+tabs appears once, with its duplicate-tab count. The existing dark-mode control
+and local-app connection status are under **Extension settings**.
+
+1. Use **Scan this window**, review the order list, and select the orders to
+   include. The first popup opening in a window scans automatically without
+   editing anything. An already-editing, loading, frozen, discarded, or ambiguous
+   order is excluded with its reason. Activate sleeping tabs and finish loading,
+   or resolve their existing edits, before scanning again.
+2. Click **Edit All Orders**. Each included page's enabled native **Edit Order**
+   action starts together. Shared edits require every included order's editor to
+   be ready. Resolve an entry failure or uncheck that failed order to continue.
+   A duplicate tab with unsaved edits blocks that order as well.
+3. Set print-area locations or methods in the All Tabs-style cards. Each card
+   lists the exact order numbers and internal product-tab numbers it affects.
+   Mixed methods stay unchanged until explicitly selected. Location swaps,
+   **Add print area**, and removal with **× / Undo** use the existing All Tabs
+   model: additions fill only missing locations; duplicate final locations block
+   the batch. Artwork, dimensions, existing area notes, stock, sizes, and prices
+   remain with their original tabs. Changing a location does not redraw or resize
+   Design Studio artwork.
+4. Optionally enter **Add Sales Note**, **Add Production Note**, or **Add Art
+   Note**. These are order-level additions, submitted once per included order
+   through its native `addSalesNotes`, `addProductionNotes`, and `addArtNotes`
+   inputs. They do not replace, edit, or remove saved notes. Blank inputs add
+   nothing; new draft text remains editable until applied. A requested native
+   add-note input that is disabled, unavailable, or ambiguous blocks the batch;
+   the extension does not change Art Note options to bypass that restriction.
+5. **Preview changes** validates every included order without applying edits.
+   Review its affected tabs and per-order counts, then **Apply changes** to update
+   the unsaved native editors. Both actions check the current order state again.
+   **Discard pending changes** clears the popup draft before Apply. After Apply,
+   inspect the native pages or continue with **Save All & Refresh**.
+6. **Save All & Refresh** uses native **Save Order** one order at a time, retaining
+   CRM's validation and warning dialogs. After the save attempts settle, successful
+   orders reload and their persisted areas, methods, products, quantities, prices,
+   artwork, and note histories are checked in the new documents. Clean duplicate
+   tabs also refresh. Successful tabs remain open for manual inspection; clicking
+   an order number focuses its existing tab. Failed or uncertain saves are listed
+   individually and their open editors are not refreshed.
+
+The popup draft and batch results survive closing/reopening the popup, and an
+initiated operation runs in the extension service worker after the popup closes.
+State uses extension-only `chrome.storage.session`; it is kept in browser memory,
+is not synced or sent to the local app, and clears on browser shutdown or
+extension reload/disable/update. A service-worker interruption marks unfinished
+work for review instead of resuming edits, appending notes, or repeating saves.
+**Check saved orders** performs only inspection, safe refresh, and persistence
+verification; it never submits notes or saves. Review unknown outcomes in CRM
+before starting a new batch. Each new scan starts with an empty draft.
+
+**Cancel unsaved edits** invokes CRM's native Cancel only for batch-owned editors
+whose contents still match the batch. It cannot undo a completed save or discard
+unrelated manual edits. Resolve remaining errors on the affected order pages.
+Tabs are rechecked for their order ID, original window, and document before each
+action; closing, moving, or navigating a tab stops work on that target. The same
+order cannot join unfinished All Orders batches in two open windows.
+
+This feature uses the logged-in Chrome session and CRM's native Angular controls
+and helpers. It requires no Selenium/Python worker, automation queue, or running
+local Automation app. Version **1.8.0** adds Chrome's **scripting** permission to
+invoke the adapter in the selected CRM document; it adds no host access and no
+page-event or local-server write channel. It does not order stock, send messages,
+or alter the existing single-order queued workflows.
+
+Reload **CRM Order Assistant 1.8.0** at `chrome://extensions`, accept Chrome's
+permission prompt if shown, and refresh open CRM order pages before using it.
+**No local Automation app restart is needed.**
+
+Offline checks use sanitized fixtures and local Angular, with all persistence
+on loopback. The popup harness simulates the extension transport and a second
+window; it never opens live customer orders. Live CRM saves, installed-extension
+behavior, and macOS remain unverified. This environment's Chrome debugging API
+does not permit loading an unpacked extension for the additional installation
+smoke check; the popup/transport replay uses the actual shipped modules instead.
+
+```powershell
+node --test tests/test_all_orders.mjs tests/test_all_tabs.mjs tests/test_all_tabs_stock.mjs tests/test_extension_bridge.mjs tests/test_salesforce_tabs.mjs
+python -m unittest discover -s tests -p test_all_orders_browser.py
+```
+
+The browser replay needs a local ChromeDriver and the existing ignored Angular
+asset at `runtime/debug/all_tabs_stock_vendor/angular.js`. Screenshots are kept
+under ignored `runtime/debug/all_orders_tests/`.
 
 ## All Tabs print-area title colors - 1.7.29
 

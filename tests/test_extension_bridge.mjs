@@ -8,7 +8,7 @@ const bridge = await import(`data:text/javascript;base64,${Buffer.from(source).t
 test("extension no longer requests supplier website access or installs a supplier worker", async () => {
   const folder = new URL("../crm-order-dark-mode-extension/", import.meta.url);
   const manifest = JSON.parse(await readFile(new URL("manifest.json", folder), "utf8"));
-  assert.deepEqual(manifest.permissions, ["storage", "tabs", "webNavigation"]);
+  assert.deepEqual(manifest.permissions, ["storage", "tabs", "webNavigation", "scripting"]);
   assert.deepEqual(manifest.optional_permissions || [], []);
   assert.deepEqual(manifest.optional_host_permissions || [], []);
   assert.ok(manifest.host_permissions.every(host => !host.includes("ssactivewear")));

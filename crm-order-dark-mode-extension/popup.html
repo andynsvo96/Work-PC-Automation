@@ -8,17 +8,58 @@
   </head>
   <body>
     <main>
-      <h1>CRM Order Assistant</h1>
-      <p id="page-status" role="status">Checking this tab…</p>
-      <p id="bridge-status" class="bridge-status" role="status">Checking local app bridge...</p>
-      <label class="toggle" for="theme-toggle">
-        <input id="theme-toggle" type="checkbox">
-        <span class="track" aria-hidden="true"><span class="thumb"></span></span>
-        <span>Enable dark mode</span>
-      </label>
-      <p class="hint">Only CRM order pages are styled. Print output stays light.</p>
-      <p class="hint">Salesforce links reuse your existing Salesforce tab, even when it is in another browser window.</p>
+      <header class="orders-header">
+        <div><p class="eyebrow">CRM Order Assistant</p><h1>All Orders editor</h1></div>
+        <span class="window-label">This Chrome window only</span>
+      </header>
+      <p id="orders-status" role="status" aria-live="polite">Reading this window…</p>
+      <div class="orders-toolbar">
+        <button id="orders-scan" type="button">Scan this window</button>
+        <button id="orders-edit" class="primary" type="button" disabled>Edit All Orders</button>
+        <span id="orders-count"></span>
+      </div>
+      <div class="orders-scroll">
+        <section aria-label="Orders in this window"><div id="orders-list"></div></section>
+        <section id="orders-editor" hidden>
+          <h2>Print areas</h2>
+          <p class="hint">Edits affect each location's listed orders and product tabs. Artwork, dimensions, and prices stay with their original tabs.</p>
+          <div id="orders-areas"></div>
+          <button id="orders-add" type="button">Add print area</button>
+          <h2>Add notes</h2>
+          <p class="hint">Added once per order using CRM's native add-note fields. Existing notes are preserved. Leave a field blank to add nothing.</p>
+          <div class="notes-grid">
+            <label for="orders-note-sales">Add Sales Note<textarea id="orders-note-sales" rows="3" placeholder="New sales note"></textarea></label>
+            <label for="orders-note-production">Add Production Note<textarea id="orders-note-production" rows="3" placeholder="New production note"></textarea></label>
+            <label for="orders-note-art">Add Art Note<textarea id="orders-note-art" rows="3" placeholder="New art note"></textarea></label>
+          </div>
+        </section>
+        <details class="settings">
+          <summary>Extension settings</summary>
+          <p id="page-status" role="status">Checking this tab…</p>
+          <p id="bridge-status" class="bridge-status" role="status">Checking local app bridge...</p>
+          <label class="toggle" for="theme-toggle">
+            <input id="theme-toggle" type="checkbox">
+            <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+            <span>Enable dark mode</span>
+          </label>
+          <p class="hint">Only CRM order pages are styled. Print output stays light.</p>
+          <p class="hint">Salesforce links reuse your existing Salesforce tab, even when it is in another browser window.</p>
+        </details>
+      </div>
+      <footer class="orders-actions">
+        <div>
+          <button id="orders-preview" type="button" disabled>Preview changes</button>
+          <button id="orders-apply" type="button" disabled>Apply changes</button>
+          <button id="orders-save" class="primary" type="button" disabled>Save All &amp; Refresh</button>
+        </div>
+        <div class="secondary-actions">
+          <button id="orders-discard" type="button" disabled>Discard pending changes</button>
+          <button id="orders-cancel" type="button" disabled>Cancel unsaved edits</button>
+          <button id="orders-verify" type="button" disabled>Check saved orders</button>
+        </div>
+      </footer>
     </main>
     <script src="popup.js"></script>
+    <script type="module" src="all-orders-popup.mjs"></script>
   </body>
 </html>

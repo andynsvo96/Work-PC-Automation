@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
   "name": "CRM Order Assistant",
-  "version": "1.7.29",
-  "description": "CRM order tools, bulk stock and print-area editing, Salesforce tab reuse, and Orders email sender selection.",
-  "permissions": ["storage", "tabs", "webNavigation"],
+  "version": "1.8.0",
+  "minimum_chrome_version": "111",
+  "description": "CRM order tools, native All Orders and All Tabs editors, Salesforce tab reuse, and Orders email sender selection.",
+  "permissions": ["storage", "tabs", "webNavigation", "scripting"],
   "host_permissions": [
     "https://crm2.legacy.printfly.com/*",
     "*://*.salesforce.com/*",
@@ -38,6 +39,13 @@
       "matches": ["https://crm2.legacy.printfly.com/*"],
       "js": ["all-tabs-model.js", "all-tabs.js"],
       "css": ["all-tabs.css"],
+      "world": "MAIN",
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://crm2.legacy.printfly.com/*"],
+      "js": ["all-orders-page.js"],
       "world": "MAIN",
       "run_at": "document_start",
       "all_frames": true

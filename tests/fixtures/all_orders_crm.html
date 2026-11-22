@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en" ng-app="allOrdersFixture">
+<meta charset="utf-8">
+<title>Offline native All Orders CRM fixture</title>
+<style>
+body{font:14px Arial;margin:20px}button{padding:8px}textarea{display:block;width:260px;height:70px}.ng-hide{display:none!important}
+</style>
+<script src="/vendor/angular.js"></script>
+<main id="view-orders-index" ng-controller="OrderFixture">
+  <h1>Order {{order.getResource().id}}</h1>
+  <button class="edit-btn" ng-click="editModeOn();" ng-hide="editMode">Edit Order</button>
+  <button class="save-btn" ng-click="saveOrder();" ng-show="editMode" ng-disabled="savingOrder">Save Order</button>
+  <button class="cancel-btn" ng-click="editModeOff();" ng-show="editMode">Cancel</button>
+  <div id="main-header-design-tabs"><div class="btn-group">
+    <button ng-repeat="(designIndex, design) in order.getResource().designs" ng-click="onDesignTabSelect(designIndex);">Tab {{designIndex+1}}</button>
+  </div></div>
+  <div id="order-design-details"><ul class="nav nav-tabs">
+    <li class="order-form-design-tab" ng-repeat="design in order.getResource().designs"><a>Tab {{$index+1}}</a></li>
+  </ul><div class="tab-content">
+    <div class="tab-pane" ng-repeat="design in order.getResource().designs">
+      <p ng-repeat="area in design.printAreas" ng-show="area.crudAction != 'd'">{{area.description}} / {{area.printMethodDescription}}</p>
+    </div>
+  </div></div>
+  <section id="order-notes-sales-notes"><h2>Sales Notes</h2><pre>{{order.getResource().salesNotes}}</pre>
+    <textarea ng-model="order.getResource().addSalesNotes" ng-disabled="!editMode"></textarea></section>
+  <section id="order-notes-production-notes"><h2>Production Notes</h2><pre>{{order.getResource().productionNotes}}</pre>
+    <textarea ng-model="order.getResource().addProductionNotes" ng-disabled="!editMode"></textarea></section>
+  <section id="order-notes-art-notes"><h2>Art Notes</h2><pre>{{order.getResource().artNotes}}</pre>
+    <textarea ng-model="order.getResource().addArtNotes" ng-disabled="!editMode || disableArt"></textarea>
+    <textarea ng-model="order.getResource().addArtNotes" ng-disabled="true" disabled></textarea></section>
+</main>
+<script>
+const route = location.pathname === '/app' ? location.hash : location.pathname;
+const orderId = route.match(/order\/(\d{7})/)?.[1] || '1000001';
+const storageKey = 'offline-all-orders:' + orderId;
+const kinds = ['sales', 'production', 'art'];
+window.fixtureResource = JSON.parse(localStorage.getItem(storageKey) || 'null') || {
+  id: orderId, salesNotes: 'Keep original Sales Note', productionNotes: 'Keep original Production Note', artNotes: 'Keep original Art Note',
+  designs: (orderId === '1000001' ? [['Front']] : [['Front'], ['Front', 'Back']]).map((locations, i) => ({
+    id: String(100 + i), designId: 'artwork-' + i,
+    designItems: [{id: 500+i, color: i ? 'WHITE' : 'BLACK', sizes: [{sizeCode:'L', quantity:i+1, pricePerPiece:'25.00'}]}],
+    printAreas: locations.map((description, j) => ({id:String(1000+i*10+j), description, printMethodDescription:'HD Digital',
+      width:'12', height:'10', notes:[{text:'Keep area note '+i}], designFiles:[{id:'file-'+i+'-'+j}]}))
+  }))
+};
+window.fixtureSaveCount = 0;
+window.fixtureChangeCount = 0;
+angular.module('allOrdersFixture', []).controller('OrderFixture', function($scope, $timeout) {
+  window.fixtureScope = $scope;
+  $scope.STATICS = {
+    printAreaTemplates: ['Front','Front-Left Chest','Front-Right Chest','Back','Side Left'].map((description,i) => ({id:i+1,description,active:'1'})),
+    printMethods: ['HD Digital','Embroidery','Screen Printing','Direct To Garment'].map((description,i) => ({id:i+1,description}))
+  };
+  $scope.order = {getResource: () => fixtureResource};
+  $scope.editMode = false; $scope.savingOrder = false; $scope.activeDesignIndex = 0;
+  $scope.isGettingShippingMethods = () => false;
+  $scope.onDesignTabSelect = index => {$scope.activeDesignIndex = index;};
+  $scope.editModeOn = () => {
+    // Real CRM can replace the resource when Edit Order initializes.
+    fixtureResource = angular.copy(fixtureResource);
+    kinds.forEach(kind => {fixtureResource['add'+kind[0].toUpperCase()+kind.slice(1)+'Notes'] = '';});
+    $scope.editMode = true;
+  };
+  $scope.editModeOff = () => { location.reload(); };
+  $scope.saveOrder = () => {
+    fixtureSaveCount++;
+    if (window.fixtureRejectSave) return;
+    $scope.savingOrder = true;
+    $timeout(() => {
+      kinds.forEach(kind => {
+        const field = 'add'+kind[0].toUpperCase()+kind.slice(1)+'Notes';
+        if (fixtureResource[field] && !window.fixtureDropNotes) fixtureResource[kind+'Notes'] += '\n'+fixtureResource[field];
+        fixtureResource[field] = '';
+      });
+      fixtureResource.designs.forEach(design => {
+        design.printAreas = design.printAreas.filter(area => area.crudAction !== 'd');
+        design.printAreas.forEach((area,i) => {area.id ||= design.id+'-new-'+i; delete area.crudAction;});
+      });
+      localStorage.setItem(storageKey, JSON.stringify(fixtureResource));
+      $scope.savingOrder = false; $scope.editMode = false;
+    }, 100);
+  };
+  $scope.updateAreaTemplate = (area, template) => {
+    fixtureChangeCount++; area.description = template.description; area.printAreaTemplateId = template.id; area.crudAction = 'u';
+    if (window.fixtureFailHelper) throw Error('Native fixture helper rejected the change');
+  };
+  $scope.updateAreaMethod = (area, method) => {area.printMethodDescription=method.description;area.printMethodId=method.id;area.crudAction='u';};
+  $scope.addPrintArea = design => design.printAreas.push({crudAction:'c',notes:[],designFiles:[]});
+  $scope.removePrintArea = area => {area.crudAction='d';};
+});
+</script>
+<script src="/extension/all-tabs-model.js"></script>
+<script src="/extension/all-orders-page.js"></script>
+</html>

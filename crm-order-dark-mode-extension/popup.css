@@ -1,6 +1,6 @@
 :root { color-scheme: dark; background: #1e1e1e; color: #d4d4d4; font-family: "Segoe UI", system-ui, sans-serif; }
-body { width: 270px; margin: 0; }
-main { padding: 16px; }
+body { width: 760px; margin: 0; }
+main { padding: 16px; height: 570px; display: flex; flex-direction: column; box-sizing: border-box; }
 h1 { margin: 0 0 10px; color: #f0f0f0; font-size: 16px; }
 p { margin: 0; }
 #page-status { min-height: 18px; color: #9d9d9d; font-size: 12px; }
@@ -13,3 +13,48 @@ p { margin: 0; }
 .toggle input:checked + .track .thumb { transform: translateX(16px); background: #fff; }
 .toggle input:focus-visible + .track { outline: 2px solid #4fc1ff; outline-offset: 2px; }
 .hint { color: #9d9d9d; font-size: 12px; line-height: 1.4; }
+[hidden] { display: none !important; }
+* { box-sizing: border-box; }
+.orders-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.orders-header h1 { font-size: 20px; margin: 3px 0 10px; }
+.eyebrow { color: #a8b6c5; font-size: 11px; letter-spacing: .04em; }
+.window-label { border: 1px solid #4c5965; color: #afc8df; padding: 5px 8px; border-radius: 4px; font-size: 11px; }
+#orders-status { min-height: 33px; margin-bottom: 9px; color: #bdcfdf; font-size: 12px; line-height: 1.4; }
+#orders-status.error { color: #ffaaa4; }
+.orders-toolbar { display: flex; align-items: center; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid #3f454c; }
+#orders-count { margin-left: auto; color: #aab9c8; font-size: 12px; }
+button { border: 1px solid #555f69; background: #30363c; color: #eef3f8; border-radius: 4px; padding: 7px 10px; cursor: pointer; font: 12px "Segoe UI", system-ui, sans-serif; }
+button:hover:enabled { background: #404c58; }
+button.primary { background: #0e639c; border-color: #2388cb; font-weight: 600; }
+button.primary:hover:enabled { background: #117bbd; }
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid #75beff; outline-offset: 2px; }
+.orders-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 4px 12px 0; }
+.order-row { display: grid; grid-template-columns: 20px 84px 1fr; align-items: start; gap: 6px; padding: 7px 5px; border-bottom: 1px solid #303940; font-size: 12px; line-height: 1.4; }
+.order-row a { color: #8fcbff; text-decoration: none; font-weight: 600; }
+.order-row a:hover { text-decoration: underline; }
+.order-row input { margin: 2px 0 0; }
+.order-row.review, .order-row.error { color: #ffb6ae; }
+.order-row.verified { color: #96d5af; }
+.duplicate-label { display: block; font-size: 10px; font-weight: normal; color: #9dabb8; }
+h2 { font-size: 14px; margin: 17px 0 7px; color: #eff5fa; }
+#orders-areas { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+.area-card { border: 1px solid #4e5964; border-radius: 5px; overflow: hidden; }
+.area-title { display: flex; align-items: center; justify-content: space-between; min-height: 32px; padding: 5px 8px; font-size: 13px; font-weight: 600; color: white; background: #3c4751; }
+.area-title button { padding: 0 6px; color: #fff; background: #a33838; border-color: #dc6868; line-height: 21px; }
+.area-body { padding: 9px; }
+.area-body p { margin-bottom: 8px; color: #b6c9db; font-size: 11px; line-height: 1.5; }
+.area-body label { display: grid; grid-template-columns: 60px 1fr; align-items: center; margin: 6px 0; color: #d0dce7; font-size: 12px; }
+select, textarea { width: 100%; min-width: 0; border: 1px solid #667380; border-radius: 3px; color: #f0f4f8; background: #252c33; font: 12px "Segoe UI", system-ui, sans-serif; padding: 6px; }
+select:disabled, textarea:disabled { opacity: .65; }
+.area-card.removed { border-color: #b15f5f; }
+.area-card.removed .area-body { opacity: .6; }
+.notes-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 9px; }
+.notes-grid label { font-size: 12px; color: #d4e0eb; }
+textarea { margin-top: 5px; resize: vertical; min-height: 70px; }
+.settings { margin-top: 16px; padding-top: 10px; border-top: 1px solid #3f454c; }
+.settings summary { color: #a8b6c5; font-size: 12px; cursor: pointer; margin-bottom: 10px; }
+.orders-actions { border-top: 1px solid #3f454c; padding-top: 10px; }
+.orders-actions > div { display: flex; gap: 8px; flex-wrap: wrap; }
+.orders-actions .secondary-actions { margin-top: 8px; }
+.secondary-actions button { font-size: 11px; padding: 5px 8px; background: transparent; }

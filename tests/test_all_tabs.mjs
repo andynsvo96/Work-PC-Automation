@@ -221,14 +221,14 @@ test("rollback retains Angular repeat identities when angular.copy omits hash ke
   assert.deepEqual(resource, before);
 });
 
-test("all-tabs assets use MAIN only on the CRM host without adding permissions", async () => {
+test("all-tabs assets stay scoped to CRM alongside the popup's scripting permission", async () => {
   const manifest = JSON.parse(await readFile(new URL("../crm-order-dark-mode-extension/manifest.json", import.meta.url), "utf8"));
   const content = manifest.content_scripts.find(script => script.js.includes("all-tabs.js"));
   assert.equal(content.world, "MAIN");
   assert.equal(content.all_frames, true);
   assert.deepEqual(content.matches, ["https://crm2.legacy.printfly.com/*"]);
   assert.deepEqual(content.js, ["all-tabs-model.js", "all-tabs.js"]);
-  assert.deepEqual(manifest.permissions, ["storage", "tabs", "webNavigation"]);
+  assert.deepEqual(manifest.permissions, ["storage", "tabs", "webNavigation", "scripting"]);
 });
 
 test("removal targets the exact original location without removing either chest area", () => {

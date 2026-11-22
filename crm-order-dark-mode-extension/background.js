@@ -5,6 +5,9 @@ import {
 } from "./bridge.js";
 import { isSalesforceUrl, rankSalesforceTabs } from "./salesforce-tabs.mjs";
 import { openApplicableCRMOrders } from "./crm-list-tabs.mjs";
+import { AllOrdersController } from "./all-orders.mjs";
+
+let allOrders = null;
 
 export const THEME_STORAGE_KEY = "crmOrderDarkModeEnabled";
 
@@ -97,6 +100,12 @@ async function setThemeEnabled(enabled) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || typeof message.type !== "string") return false;
+  if (message.type === "crm-all-orders") {
+    allOrders ||= new AllOrdersController(chrome);
+    allOrders.handle(message, _sender).then(state => sendResponse({ success: true, state }))
+      .catch(error => sendResponse({ success: false, message: error.message || "Could not update All Orders." }));
+    return true;
+  }
   if (message.type === "crm-list:open-applicable") {
     openApplicableCRMOrders(message.orderIds, _sender)
       .then(sendResponse)

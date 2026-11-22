@@ -18,6 +18,8 @@
   let state = null;
   let queued = false;
   let additionId = 0;
+  // Read-only coordination with the popup editor. No page-event write bridge.
+  window.__crmAllTabsHasPendingChanges = () => pending();
 
   function routeOrderId() {
     const direct = location.pathname.match(/^\/order\/(\d{7})\/?$/);
