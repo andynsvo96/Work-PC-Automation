@@ -36,7 +36,7 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-
 .order-row a:hover { text-decoration: underline; }
 .order-row input { margin: 2px 0 0; }
 .order-row.review, .order-row.error { color: #ffb6ae; }
-.order-row.verified { color: #96d5af; }
+.order-row.saved, .order-row.verified { color: #96d5af; }
 .duplicate-label { display: block; font-size: 10px; font-weight: normal; color: #9dabb8; }
 h2 { font-size: 14px; margin: 17px 0 7px; color: #eff5fa; }
 #orders-areas { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }

@@ -215,6 +215,10 @@ class AllOrdersBrowserTests(unittest.TestCase):
         self.assertFalse(self.driver.find_elements(By.ID, "orders-preview"))
         self.driver.save_screenshot(str(self.artifacts / "popup-draft.png"))
         self.click_wait("orders-apply", "Changes are applied")
+        self.assertEqual(self.driver.find_element(By.ID, "orders-save").text, "Save All")
+        self.driver.switch_to.default_content()
+        self.driver.execute_script("fixtureApi.tabs.reload=async()=>{throw Error('The extension must not refresh any order');};")
+        self.popup()
         self.driver.find_element(By.ID, "orders-save").click()
         # Close the popup while the background coordinator owns the save.
         self.driver.switch_to.default_content()
@@ -222,11 +226,12 @@ class AllOrdersBrowserTests(unittest.TestCase):
         self.wait.until(lambda d: d.execute_script("return fixtureController.states.get(11)?.phase === 'complete';"))
         self.driver.execute_script("reopenPopup();")
         self.popup()
-        self.assertEqual(len(self.driver.find_elements(By.CSS_SELECTOR, ".order-row.verified")), 2)
+        self.assertEqual(len(self.driver.find_elements(By.CSS_SELECTOR, ".order-row.saved")), 2)
         self.driver.save_screenshot(str(self.artifacts / "popup-complete.png"))
         self.driver.switch_to.default_content()
         self.assertEqual(self.driver.execute_script("return document.getElementById('tab-3').contentWindow.fixtureResource.salesNotes;"), "Keep original Sales Note")
         for tab in (1, 2):
+            self.assertEqual(self.driver.execute_script("return document.getElementById('tab-'+arguments[0]).contentWindow.fixtureSaveCount;", tab), 1)
             result = self.driver.execute_script("return document.getElementById('tab-'+arguments[0]).contentWindow.fixtureResource;", tab)
             for kind in ("sales", "production", "art"):
                 self.assertTrue(result[kind + "Notes"].endswith("Shared " + kind + " note"))
@@ -251,6 +256,26 @@ class AllOrdersBrowserTests(unittest.TestCase):
         self.driver.switch_to.default_content()
         for tab in (1, 2):
             self.assertEqual(self.driver.execute_script("return document.getElementById('tab-'+arguments[0]).contentWindow.fixtureChangeCount;", tab), 0)
+
+    def test_save_all_starts_other_native_saves_while_one_order_is_still_waiting(self):
+        self.driver.get(self.url + "/harness")
+        self.wait.until(lambda d: d.execute_script("return !!window.fixtureApi;"))
+        self.popup()
+        self.click_wait("orders-edit", "Choose your shared edits")
+        self.driver.find_element(By.ID, "orders-note-sales").send_keys("Concurrent native save")
+        self.click_wait("orders-apply", "Changes are applied")
+        self.driver.switch_to.default_content()
+        self.driver.execute_script("document.getElementById('tab-1').contentWindow.fixtureSaveDelay=1500;")
+        self.popup()
+        self.driver.find_element(By.ID, "orders-save").click()
+        self.driver.switch_to.default_content()
+        self.wait.until(lambda d: d.execute_script("""
+          const first=document.getElementById('tab-1').contentWindow;
+          const second=document.getElementById('tab-2').contentWindow;
+          return first.fixtureScope.savingOrder && second.fixtureSaveCount===1 && !second.fixtureScope.editMode;
+        """))
+        self.wait.until(lambda d: d.execute_script("return fixtureController.states.get(11)?.phase==='complete';"))
+        self.assertEqual(self.driver.execute_script("return fixtureTabs.filter(tab=>tab.windowId===11).map(tab=>tab.doc);"), ['doc-1', 'doc-2'])
 
     def test_footer_is_one_row_with_small_actions_left_and_main_actions_right(self):
         self.driver.get(self.url + "/harness")

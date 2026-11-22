@@ -65,6 +65,7 @@ function fixture() {
       if (command.op === "check") { if (page.changed) throw Error("The order changed after preview"); result = { success: true }; }
       if (command.op === "save") {
         page.saved++;
+        if (page.saveWait) await page.saveWait;
         if (page.failSave) throw Error("Save rejected; inspect CRM");
         page.editMode = false;
         if (page.lostResponse) throw Error("Response lost");
@@ -131,16 +132,36 @@ test("one action enters the native editors in parallel and waits for every respo
   assert.ok((await f.request("get")).orders.every(order => order.status === "prepared"));
 });
 
-test("native save, refresh, and verification retain all per-order results and never edit duplicates", async () => {
+test("Save All keeps native save results without refreshing orders or duplicates", async () => {
   const f = fixture(); await f.run("scan"); await f.run("prepare"); await f.draft();
   await f.run("preview"); await f.run("apply");
   assert.equal(f.events.filter(([op]) => op === "save").length, 0);
   const state = await f.run("save");
   assert.equal(state.phase, "complete");
-  assert.ok(state.orders.every(order => order.status === "verified"));
-  assert.equal(f.pages.get(4).saved, 0); assert.equal(f.pages.get(4).reloads, 1);
+  assert.ok(state.orders.every(order => order.status === "saved"));
+  assert.equal(f.pages.get(4).saved, 0); assert.equal(f.pages.get(4).reloads, 0);
   assert.equal(f.pages.get(3).saved + f.pages.get(3).reloads, 0);
-  assert.ok(f.events.findIndex(([op]) => op === "reload") > f.events.findLastIndex(([op]) => op === "save"));
+  assert.equal(f.events.filter(([op]) => ["reload", "verify"].includes(op)).length, 0);
+});
+
+test("all native saves start before waiting for any order, with every intent recorded first", async () => {
+  const f = fixture(); await f.run("scan"); await f.run("prepare"); await f.draft(); await f.run("apply");
+  let finish;
+  f.pages.get(1).saveWait = new Promise(resolve => { finish = resolve; });
+  const execute = f.api.scripting.executeScript;
+  f.api.scripting.executeScript = async options => {
+    if (options.args[0].op === "save" && options.target.tabId === 1) {
+      assert.ok(f.storage[SESSION_PREFIX + 11].orders.every(order => order.status === "saving"));
+    }
+    return execute(options);
+  };
+  await f.request("save");
+  for (let i = 0; i < 30 && !f.events.some(([op, id]) => op === "save" && id === 2); i++) await new Promise(resolve => setImmediate(resolve));
+  assert.ok(f.events.some(([op, id]) => op === "save" && id === 2), "the second order must not wait for the first save response");
+  assert.equal((await f.request("get")).busy, true);
+  finish(); await f.controller.running.get(11);
+  assert.equal((await f.request("get")).phase, "complete");
+  assert.ok([...f.pages.values()].every(page => !page.reloads));
 });
 
 test("one conflict blocks the entire batch before mutation", async () => {
@@ -161,14 +182,15 @@ test("moved tabs and changed native editors stop saves before the first submissi
   }
 });
 
-test("a rejected save preserves its editor, while other saved orders refresh", async () => {
+test("a rejected save preserves its editor while other native saves finish without refreshing", async () => {
   const f = fixture(); await f.run("scan"); await f.run("prepare"); await f.draft(); await f.run("apply");
   f.pages.get(2).failSave = true;
   const state = await f.run("save");
-  assert.equal(state.orders[0].status, "verified"); assert.equal(state.orders[1].status, "review");
+  assert.equal(state.orders[0].status, "saved"); assert.equal(state.orders[1].status, "review");
   assert.equal(f.pages.get(2).reloads, 0); assert.equal(f.pages.get(2).editMode, true);
   await f.run("verify");
   assert.equal(f.pages.get(2).saved, 1); assert.equal(f.pages.get(2).reloads, 0);
+  assert.ok([...f.pages.values()].every(page => !page.reloads));
 });
 
 test("lost save responses recover through read-only verification without adding notes or saving twice", async () => {
@@ -180,14 +202,14 @@ test("lost save responses recover through read-only verification without adding 
   assert.equal(f.events.filter(([op, id]) => op === "apply" && id === 1).length, 1);
 });
 
-test("verification waits for a new document instead of accepting the page before reload", async () => {
+test("Check save status reads the existing documents without refresh or repeated submission", async () => {
   const f = fixture(); await f.run("scan"); await f.run("prepare"); await f.draft(); await f.run("apply");
-  const reload = f.api.tabs.reload;
-  let waited = 0;
-  f.api.tabs.reload = async id => { if (id !== 1) await reload(id); };
-  f.controller.sleep = async () => { waited++; await reload(1); };
+  const originalDoc = f.pages.get(1).doc;
+  f.api.tabs.reload = async () => { assert.fail("All Orders must not request a tab refresh"); };
   assert.equal((await f.run("save")).phase, "complete");
-  assert.ok(waited > 0);
+  assert.equal((await f.run("verify")).phase, "complete");
+  assert.equal(f.pages.get(1).doc, originalDoc);
+  assert.equal(f.pages.get(1).saved, 1); assert.equal(f.pages.get(2).saved, 1);
 });
 
 test("closing/reopening the popup retains literal note drafts and rejects stale revisions", async () => {
@@ -250,6 +272,16 @@ test("cancel uses only native cancel and protects previously saved work", async 
   assert.equal(state.phase, "complete");
   assert.ok(state.orders.every(order => order.status === "canceled"));
   assert.equal(f.events.filter(([op]) => op === "save").length, 0);
+});
+
+test("cancel after a partial save leaves confirmed saved orders untouched", async () => {
+  const f = fixture(); await f.run("scan"); await f.run("prepare"); await f.draft(); await f.run("apply");
+  f.pages.get(2).failSave = true;
+  await f.run("save");
+  const state = await f.run("cancel");
+  assert.equal(state.orders[0].status, "saved"); assert.equal(state.orders[1].status, "canceled");
+  assert.equal(f.events.filter(([op, id]) => op === "cancel" && id === 1).length, 0);
+  assert.equal(f.pages.get(1).saved, 1);
 });
 
 test("cancel confirms original values even when the native No button navigates and loses its response", async () => {

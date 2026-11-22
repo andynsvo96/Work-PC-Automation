@@ -15,13 +15,34 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
+## Native Save All without refresh - 1.8.3
+
+**Save All** starts the native **Save Order** action on every included unique
+order together, after checking that all included editors still match the batch
+and belong to the originating window. It records the entire submission intent
+before starting any save, then waits for per-order native completion. A slow or
+failed order does not delay submitting the others. Saved orders are shown
+individually; failed, blocked, or uncertain saves remain for CRM review without
+automatic retries.
+
+The extension no longer refreshes saved order tabs or duplicate tabs. CRM keeps
+its own normal Save Order behavior and validation dialogs. **Check save status**
+only inspects values already loaded in the current pages; it never reloads,
+saves, or adds notes. It does not perform a fresh server read. Inspect the actual
+order pages to confirm the result. Cancel unsaved edits skips orders with a
+confirmed native save completion.
+
+Reload **CRM Order Assistant 1.8.3** at `chrome://extensions` and reopen the popup.
+No app restart or new permission is needed. This release does not change the
+CRM page adapter; refresh an order page only if it requests updated controls.
+
 ## All Orders apply, discard, and larger editor - 1.8.2
 
 **Apply changes** validates all included orders before applying edits; the
 separate Preview changes button is removed. Inspect the actual CRM order pages
-before using **Save All & Refresh**. The footer has one row: **Discard pending
-changes**, **Cancel unsaved edits**, and **Check saved orders** on the left;
-**Apply changes** and **Save All & Refresh** on the right. Very narrow windows
+before using **Save All**. The footer has one row: **Discard pending
+changes**, **Cancel unsaved edits**, and **Check save status** on the left;
+**Apply changes** and **Save All** on the right. Very narrow windows
 wrap controls when necessary to keep them accessible.
 
 **Cancel unsaved edits** uses native Cancel and automatically chooses **No** only
@@ -91,14 +112,13 @@ top right, and the local-app connection status is at the top left.
 5. **Apply changes** validates every included order before updating the unsaved
    native editors. Conflicts block the batch before mutation. **Discard pending
    changes** clears the popup draft before Apply. After Apply, inspect the actual
-   order pages, then use **Save All & Refresh** to keep the changes.
-6. **Save All & Refresh** uses native **Save Order** one order at a time, retaining
-   CRM's validation and warning dialogs. After the save attempts settle, successful
-   orders reload and their persisted areas, methods, products, quantities, prices,
-   artwork, and note histories are checked in the new documents. Clean duplicate
-   tabs also refresh. Successful tabs remain open for manual inspection; clicking
-   an order number focuses its existing tab. Failed or uncertain saves are listed
-   individually and their open editors are not refreshed.
+   order pages, then use **Save All** to keep the changes.
+6. **Save All** starts every included order's native **Save Order** action
+   together, retaining CRM's validation and warning dialogs. It waits for each
+   native save to finish and lists each result. The extension does not refresh
+   any tabs afterward. Clicking an order number focuses its existing tab for
+   manual inspection. Failed or uncertain saves stay listed for review and are
+   never retried automatically.
 
 The popup draft and batch results survive closing/reopening the popup, and an
 initiated operation runs in the extension service worker after the popup closes.
@@ -106,8 +126,8 @@ State uses extension-only `chrome.storage.session`; it is kept in browser memory
 is not synced or sent to the local app, and clears on browser shutdown or
 extension reload/disable/update. A service-worker interruption marks unfinished
 work for review instead of resuming edits, appending notes, or repeating saves.
-**Check saved orders** performs only inspection, safe refresh, and persistence
-verification; it never submits notes or saves. Review unknown outcomes in CRM
+**Check save status** only inspects the values already loaded in the current
+pages; it never refreshes, submits notes, or saves. Review unknown outcomes in CRM
 before starting a new batch. Each new scan starts with an empty draft.
 
 **Cancel unsaved edits** invokes CRM's native Cancel only for batch-owned editors

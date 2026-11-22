@@ -97,7 +97,7 @@ angular.module('allOrdersFixture', []).controller('OrderFixture', function($scop
       localStorage.setItem(storageKey, JSON.stringify(fixtureResource));
       saved = angular.copy(fixtureResource);
       $scope.savingOrder = false; $scope.editMode = false;
-    }, 100);
+    }, window.fixtureSaveDelay ?? 100);
   };
   $scope.updateAreaTemplate = (area, template) => {
     fixtureChangeCount++; area.description = template.description; area.printAreaTemplateId = template.id; area.crudAction = 'u';

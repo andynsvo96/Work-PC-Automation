@@ -93,8 +93,8 @@ export class AllOrdersController {
       if (state.busy) {
         state.busy = false;
         state.phase = "review";
-        state.message = "The batch was interrupted. Review the order pages or use Check saved orders. No edits or saves will be repeated automatically.";
-        for (const order of state.orders.filter(order => order.selected && !["verified", "canceled"].includes(order.status))) {
+        state.message = "The batch was interrupted. Review the order pages or use Check save status. No edits or saves will be repeated automatically.";
+        for (const order of state.orders.filter(order => order.selected && !["saved", "verified", "canceled"].includes(order.status))) {
           order.status = "review";
           order.message = "Interrupted; review this order before starting another batch.";
         }
@@ -271,45 +271,12 @@ export class AllOrdersController {
     return valid;
   }
 
-  async refreshAndVerify(order, state) {
+  async checkSaveStatus(order, state) {
     const read = await this.inspect(order, state);
-    if (read.editMode || read.busy || read.pending) throw Error("The native editor is still open or busy. Its unsaved work was not refreshed.");
-    const previousDocumentId = order.documentId;
-    order.status = "refreshing";
-    await this.persist(state);
-    await this.tab(order, state.windowId);
-    await this.api.tabs.reload(order.tabId);
-    const until = Date.now() + 20000;
-    let lastError;
-    while (Date.now() < until) {
-      try {
-        await this.inspect(order, state);
-        if (previousDocumentId && order.documentId === previousDocumentId) {
-          await this.sleep(200);
-          continue;
-        }
-        await this.execute(order, state, { op: "verify", expected: order.expected });
-        order.status = "verified";
-        order.message = "Saved, refreshed, and verified. Ready for manual inspection.";
-        // Duplicate browser tabs are never edited or saved by the batch.
-        for (const tabId of order.duplicates) {
-          const duplicate = { ...order, tabId };
-          try {
-            const duplicateRead = await this.inspect(duplicate, state);
-            if (duplicateRead.editMode || duplicateRead.busy || duplicateRead.pending) throw Error("unsaved edits");
-            await this.tab(duplicate, state.windowId);
-            await this.api.tabs.reload(tabId);
-          } catch (_) { order.message += " A duplicate tab needs manual review and was left untouched."; }
-        }
-        return;
-      } catch (error) {
-        lastError = error;
-        // A ready page with mismatching persisted data is a definitive review.
-        if (/Saved |saved .*notes|moved to another window|navigated away/.test(error.message)) throw error;
-        await this.sleep(200);
-      }
-    }
-    throw lastError || Error("The refreshed order could not be verified.");
+    if (read.editMode || read.busy || read.pending) throw Error("The native editor is still open or busy. Review this order's save status in CRM.");
+    await this.execute(order, state, { op: "verify", expected: order.expected });
+    order.status = "verified";
+    order.message = "Current page values match the applied changes. No refresh was requested.";
   }
 
   async confirmCanceled(order, state) {
@@ -387,38 +354,49 @@ export class AllOrdersController {
         }
       }
       state.phase = "applied";
-      state.message = "Changes are applied to all included native editors. Save All & Refresh to keep them.";
+      state.message = "Changes are applied to all included native editors. Save All to keep them.";
       return;
     }
     if (action === "save") {
       // Check every page again before the first save, including window membership.
-      for (const order of orders) await this.execute(order, state, { op: "check" });
+      await Promise.all(orders.map(order => this.execute(order, state, { op: "check" })));
+      // Journal the whole batch before any save, then start every native action
+      // without waiting for another order's response. Never replay a lost save.
       for (const order of orders) {
         order.status = "saving";
-        await this.persist(state);
+        order.message = "Saving through CRM's native Save Order…";
+      }
+      await this.persist(state);
+      const outcomes = await Promise.allSettled(orders.map(async order => {
         try {
           await this.execute(order, state, { op: "save" });
           order.status = "saved";
-          order.message = "Native save completed; waiting to refresh.";
+          order.message = "Native Save Order completed. Inspect the order page.";
         } catch (error) { order.status = "review"; order.message = error.message; }
         await this.persist(state);
-      }
+      }));
+      const recordingFailure = outcomes.find(outcome => outcome.status === "rejected");
+      if (recordingFailure) throw recordingFailure.reason;
+      const success = orders.every(order => order.status === "saved");
+      state.phase = success ? "complete" : "review";
+      state.message = success ? "All included orders completed native Save Order. No refresh was requested." :
+        "Some native saves need review. Check the affected orders in CRM. No saves were retried and no refreshes were requested.";
+      return;
     }
-    if (action === "save" || action === "verify") {
+    if (action === "verify") {
       for (const order of orders.filter(order => order.expected && order.status !== "verified")) {
-        if (action === "save" && order.status !== "saved") continue;
-        try { await this.refreshAndVerify(order, state); }
+        try { await this.checkSaveStatus(order, state); }
         catch (error) { order.status = "review"; order.message = error.message; }
         await this.persist(state);
       }
-      const success = orders.every(order => order.status === "verified");
+      const success = orders.every(order => ["saved", "verified"].includes(order.status));
       state.phase = success ? "complete" : "review";
-      state.message = success ? "All included orders were saved, refreshed, and verified. Their tabs remain open for manual inspection." :
-        "Some orders need review. Successful orders were refreshed; unsaved editors were preserved. Check saved orders never repeats a save or adds notes.";
+      state.message = success ? "Current order pages checked. No saves or refreshes were requested." :
+        "Some orders need review in CRM. Check save status only reads the current pages; it never saves or refreshes them.";
       return;
     }
     if (action === "cancel") {
-      for (const order of orders.filter(order => !["verified", "canceled"].includes(order.status))) {
+      for (const order of orders.filter(order => !["saved", "verified", "canceled"].includes(order.status))) {
         try {
           const read = await this.inspect(order, state);
           if (read.busy) throw Error("CRM is still saving. Wait and review this order.");
@@ -433,7 +411,7 @@ export class AllOrdersController {
           order.message = "Native editor closed. Previously saved changes are retained.";
         } catch (error) { order.status = "review"; order.message = error.message; }
       }
-      state.phase = orders.every(order => ["verified", "canceled"].includes(order.status)) ? "complete" : "review";
+      state.phase = orders.every(order => ["saved", "verified", "canceled"].includes(order.status)) ? "complete" : "review";
       state.message = "Unsaved batch edits were canceled where CRM could confirm ownership. Review any remaining order errors.";
     }
   }

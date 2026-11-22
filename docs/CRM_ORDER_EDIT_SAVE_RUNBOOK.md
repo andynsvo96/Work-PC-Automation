@@ -262,10 +262,14 @@ path does not start Selenium workers or enqueue local Automation tasks.
 
 All included orders enter Edit Order before applying shared changes. Notes use
 only the three native append inputs; saved history cannot be edited through the
-popup. A save is journaled before submission, followed by a reload and comparison
-of persisted areas, retained products/artwork, and appended notes in the new
-document. Failed or uncertain submissions stop for review. **Check saved orders**
-never resubmits writes. Popup state lives in extension session storage, which
+popup. In 1.8.3, **Save All** journals the whole submission batch and starts all
+included native Save Order actions together. Per-order completion and failures
+remain visible. The extension does not reload tabs after saving, as explicitly
+requested for this user-operated workflow. **Check save status** only reads
+values already loaded in the current pages and never resubmits writes or
+refreshes; persisted values are left for manual CRM inspection. Worker workflows
+retain their existing save/reload-verification contracts. Popup state lives in
+extension session storage, which
 survives a dormant service worker but clears when Chrome or the extension
 session ends. See the [All Orders guide](../crm-order-dark-mode-extension/README.md#all-orders-popup-editor---180)
 for the workflow, permission/reload requirements, and local fixture checks.
