@@ -3,14 +3,21 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>CRM Order Assistant</title>
+    <title>All Orders editor</title>
     <link rel="stylesheet" href="popup.css">
   </head>
   <body>
     <main>
       <header class="orders-header">
-        <div><p class="eyebrow">CRM Order Assistant</p><h1>All Orders editor</h1></div>
-        <span class="window-label">This Chrome window only</span>
+        <div class="orders-heading">
+          <p id="bridge-status" class="bridge-status" role="status">Checking local app bridge...</p>
+          <h1>All Orders editor</h1>
+        </div>
+        <label class="toggle" for="theme-toggle" title="Only CRM order pages are styled. Print output stays light.">
+          <input id="theme-toggle" type="checkbox">
+          <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+          <span>Dark mode</span>
+        </label>
       </header>
       <p id="orders-status" role="status" aria-live="polite">Reading this window…</p>
       <div class="orders-toolbar">
@@ -33,18 +40,6 @@
             <label for="orders-note-art">Add Art Note<textarea id="orders-note-art" rows="3" placeholder="New art note"></textarea></label>
           </div>
         </section>
-        <details class="settings">
-          <summary>Extension settings</summary>
-          <p id="page-status" role="status">Checking this tab…</p>
-          <p id="bridge-status" class="bridge-status" role="status">Checking local app bridge...</p>
-          <label class="toggle" for="theme-toggle">
-            <input id="theme-toggle" type="checkbox">
-            <span class="track" aria-hidden="true"><span class="thumb"></span></span>
-            <span>Enable dark mode</span>
-          </label>
-          <p class="hint">Only CRM order pages are styled. Print output stays light.</p>
-          <p class="hint">Salesforce links reuse your existing Salesforce tab, even when it is in another browser window.</p>
-        </details>
       </div>
       <footer class="orders-actions">
         <div>

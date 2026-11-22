@@ -7,7 +7,7 @@ Private Manifest V3 extension for the Automation project's CRM pages. It provide
 1. Open the dedicated CRM Chrome profile. From the Automation app, use the CRM Chrome-profile setup action if needed.
 2. Visit `chrome://extensions` in that profile and enable **Developer mode**.
 3. Choose **Load unpacked** and select this `crm-order-dark-mode-extension` folder.
-4. Pin **CRM Order Assistant** and open its toolbar popup. Use **Edit All Orders** for CRM orders in that window, or **Extension settings > Enable dark mode** for styling. The order page also provides single-order Manual Process, Cancel, Reachout, and Stock Issue controls.
+4. Pin **CRM Order Assistant** and open its toolbar popup. Use **Edit All Orders** for CRM orders in that window, or the **Dark mode** toggle at the top right for styling. The order page also provides single-order Manual Process, Cancel, Reachout, and Stock Issue controls.
 
 The preference is stored locally in that Chrome profile. Removing or reloading the extension keeps the preference unless Chrome extension data is cleared.
 
@@ -15,14 +15,25 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
+## Popup header - 1.8.1
+
+The popup shows the local Automation app bridge status at the top left and the
+**Dark mode** toggle at the top right, above the All Orders editor. The separate
+CRM Order Assistant title, window badge, and Extension settings section are
+removed. Hover over the dark-mode toggle for the current page's styling status.
+Order selection remains limited to the originating Chrome window.
+
+Reload **CRM Order Assistant 1.8.1** at `chrome://extensions` and refresh open CRM
+pages. No local Automation app restart is needed.
+
 ## All Orders popup editor - 1.8.0
 
 Click the extension icon to open **All Orders editor** directly in the toolbar
 popup. It reads CRM order tabs in that Chrome window, including single-product-tab
 orders, multi-product-tab orders, and embedded `/app#/order/…` pages. Reports,
 other websites, and other windows are excluded. One order open in several browser
-tabs appears once, with its duplicate-tab count. The existing dark-mode control
-and local-app connection status are under **Extension settings**.
+tabs appears once, with its duplicate-tab count. The dark-mode control is at the
+top right, and the local-app connection status is at the top left.
 
 1. Use **Scan this window**, review the order list, and select the orders to
    include. The first popup opening in a window scans automatically without

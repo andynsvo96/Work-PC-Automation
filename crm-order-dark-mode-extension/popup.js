@@ -1,8 +1,7 @@
 const toggle = document.getElementById("theme-toggle");
-const pageStatus = document.getElementById("page-status");
 const bridgeStatus = document.getElementById("bridge-status");
 
-function setStatus(message) { pageStatus.textContent = message; }
+function setStatus(message) { toggle.closest(".toggle").title = `${message} Print output stays light.`; }
 
 async function getActiveTab() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
