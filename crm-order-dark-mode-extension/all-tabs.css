@@ -17,6 +17,14 @@
   .crm-all-tabs-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 12px; }
   .crm-all-tabs-card { position: relative; padding: 14px; min-width: 0; border: 1px solid var(--all-tabs-border); border-radius: 5px; }
   .crm-all-tabs-card > h4 { padding-right: 42px; }
+  #crm-all-tabs-panel .crm-all-tabs-card > .crm-all-tabs-method-title {
+    margin: -14px -14px 12px;
+    padding: 12px 56px 12px 14px;
+    border-radius: 4px 4px 0 0;
+    background-color: var(--all-tabs-method-color);
+    color: #fff !important;
+    -webkit-text-fill-color: #fff !important;
+  }
   #crm-all-tabs-panel .crm-all-tabs-remove { position: absolute; top: 7px; right: 7px; min-width: 30px; min-height: 30px; padding: 2px 7px; border: 1px solid #b91c1c !important; border-radius: 4px; background: #b91c1c !important; color: #fff !important; font-size: 22px; line-height: 1; cursor: pointer; }
   #crm-all-tabs-panel .crm-all-tabs-undo { font-size: 12px; }
   .crm-all-tabs-removing { border-color: #b91c1c; border-style: dashed; }

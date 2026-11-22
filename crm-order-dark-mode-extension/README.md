@@ -15,6 +15,21 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
+## All Tabs print-area title colors - 1.7.29
+
+In **Edit Order > All Tabs**, print-area titles use CRM's native method colors:
+**HD Digital** pink (`#ff5686`), **Screen Printing** blue (`#5bbad3`),
+**Embroidery** green (`#69bd45`), and **Direct To Garment** purple (`#7e51a1`).
+The full title bar uses the same color in light and dark mode, with white text.
+Other methods and rows keeping mixed methods retain their uncolored titles.
+
+Titles follow staged method selections, including new print areas. Choosing
+**Keep** restores the original single-method color or uncolored mixed title;
+discarding pending changes also restores the current order's colors.
+
+Reload **CRM Order Assistant 1.7.29** at `chrome://extensions` and refresh open
+CRM order pages. **No local Automation app restart is needed.**
+
 ## All Tabs shared stock editing - 1.7.28
 
 In **Edit Order > All Tabs**, **Shared stock** lists each native catalog

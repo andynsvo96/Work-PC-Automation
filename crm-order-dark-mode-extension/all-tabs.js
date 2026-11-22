@@ -6,6 +6,13 @@
   window.__crmAllTabsInstalled = true;
   const model = CRMAllTabsModel;
   const stock = CRMAllTabsStock;
+  // Match CRM's native print-area headings in recordForm/styles/orders.css.
+  const printMethodColors = new Map([
+    ["hd digital", "#ff5686"],
+    ["screen printing", "#5bbad3"],
+    ["embroidery", "#69bd45"],
+    ["direct to garment", "#7e51a1"]
+  ]);
   let stockScopes = [];
   let context = null;
   let state = null;
@@ -83,6 +90,21 @@
     node.type = "button";
     node.addEventListener("click", handler);
     return node;
+  }
+
+  function areaTitle(id, label) {
+    const title = element("h4", "", label);
+    title.id = `crm-all-tabs-title-${id}`;
+    return title;
+  }
+
+  function updateAreaTitle(id, methods) {
+    const title = document.getElementById(`crm-all-tabs-title-${id}`);
+    const unique = [...new Set(methods.map(model.key))];
+    const color = unique.length === 1 && printMethodColors.get(unique[0]);
+    title.classList.toggle("crm-all-tabs-method-title", Boolean(color));
+    if (color) title.style.setProperty("--all-tabs-method-color", color);
+    else title.style.removeProperty("--all-tabs-method-color");
   }
 
   function pending() {
@@ -359,7 +381,7 @@
     for (const group of state.session.groups) {
       const card = element("section", "crm-all-tabs-card");
       card.dataset.sourceArea = group.sourceKey;
-      card.append(element("h4", "", group.label));
+      card.append(areaTitle(group.id, group.label));
       const tabs = [...new Set(group.members.map(member => member.record.tab))];
       const change = state.changes[group.id] ||= {};
       card.dataset.pendingRemoval = String(Boolean(change.remove));
@@ -391,7 +413,7 @@
     for (const addition of state.additions) {
       const card = element("section", "crm-all-tabs-card crm-all-tabs-addition");
       card.dataset.addition = addition.id;
-      card.append(element("h4", "", "New print area"));
+      card.append(areaTitle(addition.id, "New print area"));
       selectField(card, "Print area", `crm-all-tabs-location-${addition.id}`, templates, addition.location || "",
         "Choose a location", value => { addition.location = value; });
       selectField(card, "Print method", `crm-all-tabs-method-${addition.id}`, methods, addition.method || "",
@@ -436,6 +458,9 @@
     catch (failure) { error = failure; }
     try { stockPlan = stock.plan(state.stockSession, state.stockDrafts, context.resource); }
     catch (failure) { error ||= failure; }
+    for (const group of state.session.groups) {
+      updateAreaTitle(group.id, group.members.map(member => state.changes[group.id]?.method || member.method));
+    }
     for (const group of state.stockSession.groups) {
       const draft = state.stockDrafts[group.id];
       const warning = document.querySelector(`[data-stock-warning="${group.id}"]`);
@@ -447,6 +472,7 @@
     }
     // Even an incomplete new row shows its scope once its location is chosen.
     for (const addition of state.additions) {
+      updateAreaTitle(addition.id, [addition.method]);
       const label = document.querySelector(`[data-addition-targets="${addition.id}"]`);
       let tabs = planned?.additionTargets.get(addition.id);
       if (!tabs && addition.location) {
