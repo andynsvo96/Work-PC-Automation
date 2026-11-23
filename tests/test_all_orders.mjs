@@ -173,6 +173,67 @@ test("one conflict blocks the entire batch before mutation", async () => {
   assert.equal(f.events.filter(([op]) => ["apply", "save"].includes(op)).length, 0);
 });
 
+test("excluding a validation conflict retains the draft and only applies and saves the remaining orders", async () => {
+  const f = fixture(); await f.run("scan"); await f.run("prepare"); await f.draft();
+  f.pages.get(2).failPreview = true;
+  const blocked = await f.run("apply");
+  const before = f.events.length;
+  const state = await f.request("select", { orderId: "1000002", selected: false });
+  assert.equal(f.events.length, before, "exclusion must not touch a native editor");
+  assert.equal(state.phase, "prepared");
+  assert.equal(state.validationError, false);
+  assert.deepEqual(state.draft, blocked.draft);
+  assert.deepEqual(editorGroups(state.orders)[0].targets.map(target => target.orderId), ["1000001"]);
+  assert.ok(state.orders.every(order => !order.preview));
+  const restarted = new AllOrdersController(f.api);
+  const restored = await f.request("get", {}, restarted);
+  assert.equal(restored.orders[1].selected, false);
+  assert.deepEqual(restored.draft, blocked.draft);
+  assert.equal((await f.run("apply", {}, restarted)).phase, "applied");
+  assert.equal((await f.run("save", {}, restarted)).phase, "complete");
+  assert.equal(f.pages.get(1).saved, 1);
+  assert.equal(f.pages.get(2).applied, undefined);
+  assert.equal(f.pages.get(2).saved, 0);
+  assert.equal(f.pages.get(2).editMode, true);
+  assert.ok(f.events.slice(before).every(([, id]) => id !== 2));
+});
+
+test("an order can be excluded after a failed rescan without losing the editable batch", async () => {
+  const f = fixture(); await f.run("scan"); await f.run("prepare"); await f.draft();
+  const blocked = await f.run("scan");
+  assert.equal(blocked.phase, "review");
+  assert.match(blocked.message, /unsaved edits/);
+  const state = await f.request("select", { orderId: "1000002", selected: false });
+  assert.equal(state.phase, "prepared");
+  assert.deepEqual(state.draft, blocked.draft);
+  assert.equal((await f.run("apply")).phase, "applied");
+  await f.run("cancel");
+  assert.equal(f.pages.get(1).editMode, false);
+  assert.equal(f.pages.get(2).editMode, true, "Cancel must leave an excluded editor untouched");
+});
+
+test("excluding a prepared order invalidates previews and cannot add it back to an active batch", async () => {
+  const f = fixture(); await f.run("scan"); await f.run("prepare"); await f.draft(); await f.run("preview");
+  const state = await f.request("select", { orderId: "1000002", selected: false });
+  assert.equal(state.phase, "prepared");
+  assert.ok(state.orders.every(order => !order.preview));
+  await assert.rejects(f.request("select", { orderId: "1000002", selected: true }), /only be excluded/);
+  await f.request("select", { orderId: "1000001", selected: false });
+  await assert.rejects(f.request("apply"), /Select at least one/);
+  assert.equal(f.events.filter(([op]) => ["apply", "save", "cancel"].includes(op)).length, 0);
+});
+
+test("orders cannot be unticked while an action is running", async () => {
+  const f = fixture(); await f.run("scan");
+  let finish;
+  f.pages.get(1).beginWait = new Promise(resolve => { finish = resolve; });
+  await f.request("prepare");
+  try {
+    await assert.rejects(f.request("select", { orderId: "1000002", selected: false }), /Wait for the current/);
+    assert.equal((await f.request("get")).orders[1].selected, true);
+  } finally { finish(); await f.controller.running.get(11); }
+});
+
 test("moved tabs and changed native editors stop saves before the first submission", async () => {
   for (const change of [page => { page.windowId = 22; }, page => { page.changed = true; }]) {
     const f = fixture(); await f.run("scan"); await f.run("prepare"); await f.draft(); await f.run("apply");
@@ -180,6 +241,30 @@ test("moved tabs and changed native editors stop saves before the first submissi
     assert.equal((await f.run("save")).phase, "review");
     assert.equal(f.events.filter(([op]) => op === "save").length, 0);
   }
+});
+
+test("a pre-save conflict can be excluded without reapplying notes or saving the excluded order", async () => {
+  const f = fixture(); await f.run("scan"); await f.run("prepare"); await f.draft(); await f.run("apply");
+  f.pages.get(2).changed = true;
+  assert.equal((await f.run("save")).phase, "review");
+  const state = await f.request("select", { orderId: "1000002", selected: false });
+  assert.equal(state.phase, "applied");
+  assert.equal((await f.run("save")).phase, "complete");
+  assert.equal(f.pages.get(1).saved, 1); assert.equal(f.pages.get(2).saved, 0);
+  assert.equal(f.events.filter(([op, id]) => op === "apply" && id === 1).length, 1);
+  assert.equal(f.pages.get(2).editMode, true);
+});
+
+test("excluding an order cannot resume an interrupted or uncertain save", async () => {
+  const f = fixture(); await f.run("scan"); await f.run("prepare"); await f.draft(); await f.run("apply");
+  f.storage[SESSION_PREFIX + 11].busy = true;
+  const restarted = new AllOrdersController(f.api);
+  await f.request("get", {}, restarted);
+  const state = await f.request("select", { orderId: "1000002", selected: false }, restarted);
+  assert.equal(state.phase, "review");
+  await assert.rejects(f.request("save", {}, restarted), /Apply and review/);
+  await assert.rejects(f.request("apply", {}, restarted), /Enter Edit Order/);
+  assert.equal(f.events.filter(([op]) => op === "save").length, 0);
 });
 
 test("a rejected save preserves its editor while other native saves finish without refreshing", async () => {
@@ -264,6 +349,20 @@ test("unfinished batches in other windows reserve the same order", async () => {
   const page = f.pages.get(3); page.orderId = "1000001"; page.url = CRM_ORIGIN + "/order/1000001";
   await f.run("scan", { windowId: 22 });
   await assert.rejects(f.request("prepare", { windowId: 22 }), /unfinished.*another window/);
+});
+
+test("excluded native editors retain their reservation after the included orders finish", async () => {
+  const f = fixture(); await f.run("scan"); await f.run("prepare"); await f.draft();
+  await f.request("select", { orderId: "1000002", selected: false });
+  await f.run("apply"); assert.equal((await f.run("save")).phase, "complete");
+  const duplicate = f.pages.get(3); duplicate.orderId = "1000002"; duplicate.url = CRM_ORIGIN + "/order/1000002";
+  await f.run("scan", { windowId: 22 });
+  await assert.rejects(f.request("prepare", { windowId: 22 }), /unfinished.*another window/);
+  assert.match((await f.run("scan")).message, /Order 1000002 has unsaved edits/);
+  assert.equal((await f.request("get")).orders[1].selected, false);
+  f.pages.get(2).editMode = false; // User resolves the excluded editor in CRM.
+  await f.run("scan");
+  assert.equal((await f.run("prepare", { windowId: 22 })).phase, "prepared");
 });
 
 test("cancel uses only native cancel and protects previously saved work", async () => {

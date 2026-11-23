@@ -41,6 +41,12 @@ export function hasChanges(draft) {
     draft.additions.length > 0 || noteKinds.some(kind => draft.notes[kind].trim());
 }
 
+export function canChangeOrderSelection(state, order, selected) {
+  if (state.busy || !order) return false;
+  return state.phase === "scanned" || (order.selected && selected === false &&
+    ["prepared", "previewed", "applied", "review"].includes(state.phase));
+}
+
 export function editorGroups(orders) {
   const groups = new Map();
   for (const order of orders.filter(order => order.selected && order.snapshot)) {

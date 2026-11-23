@@ -257,6 +257,90 @@ class AllOrdersBrowserTests(unittest.TestCase):
         for tab in (1, 2):
             self.assertEqual(self.driver.execute_script("return document.getElementById('tab-'+arguments[0]).contentWindow.fixtureChangeCount;", tab), 0)
 
+    def test_popup_can_untick_a_conflict_after_a_failed_rescan_and_save_only_the_other_order(self):
+        self.driver.get(self.url + "/harness")
+        self.wait.until(lambda d: d.execute_script("return !!window.fixtureApi;"))
+        self.popup()
+        self.click_wait("orders-edit", "Choose your shared edits")
+        Select(self.driver.find_element(By.ID, "orders-location-0")).select_by_visible_text("Front-Left Chest")
+        self.driver.find_element(By.ID, "orders-note-sales").send_keys("Save only included orders")
+        self.driver.switch_to.default_content()
+        self.driver.execute_script("""
+          const win=document.getElementById('tab-2').contentWindow;
+          win.fixtureScope.$apply(()=>win.fixtureResource.addProductionNotes='Keep this manual conflict');
+        """)
+        self.popup()
+        self.click_wait("orders-apply", "batch is blocked")
+        self.assertTrue(self.driver.find_element(By.CSS_SELECTOR, '[aria-label="Include order 1000002"]').is_enabled())
+        self.click_wait("orders-scan", "has unsaved edits")
+        self.driver.find_element(By.CSS_SELECTOR, '[aria-label="Include order 1000002"]').click()
+        self.wait.until(lambda d: d.find_element(By.ID, "orders-count").text == "1 of 2 orders included")
+        self.assertEqual(self.driver.find_element(By.ID, "orders-note-sales").get_attribute("value"), "Save only included orders")
+        self.assertNotIn("#1000002", self.driver.find_element(By.ID, "orders-areas").text)
+        self.assertFalse(self.driver.find_element(By.CSS_SELECTOR, '[aria-label="Include order 1000002"]').is_enabled())
+        self.driver.switch_to.default_content()
+        self.driver.execute_script("reopenPopup();")
+        self.popup()
+        self.assertFalse(self.driver.find_element(By.CSS_SELECTOR, '[aria-label="Include order 1000002"]').is_selected())
+        self.click_wait("orders-apply", "Changes are applied")
+        self.click_wait("orders-save", "completed native Save Order")
+        self.driver.save_screenshot(str(self.artifacts / "popup-excluded-conflict.png"))
+        self.driver.switch_to.default_content()
+        self.assertEqual(self.driver.execute_script("""
+          const win=document.getElementById('tab-2').contentWindow;
+          return [win.fixtureSaveCount,win.fixtureChangeCount,win.fixtureDiscardNoCount,
+            win.fixtureScope.editMode,win.fixtureResource.addProductionNotes];
+        """), [0, 0, 0, True, "Keep this manual conflict"])
+        self.driver.execute_script("document.getElementById('tab-1').contentWindow.location.reload();")
+        self.wait.until(lambda d: d.execute_script("return !!document.getElementById('tab-1').contentWindow.fixtureScope;"))
+        saved = self.driver.execute_script("return document.getElementById('tab-1').contentWindow.fixtureResource;")
+        self.assertEqual(saved["designs"][0]["printAreas"][0]["description"], "Front-Left Chest")
+        self.assertEqual(saved["salesNotes"], "Keep original Sales Note\nSave only included orders")
+
+    def test_popup_can_untick_a_pre_save_conflict_and_save_the_remaining_applied_order(self):
+        self.driver.get(self.url + "/harness")
+        self.wait.until(lambda d: d.execute_script("return !!window.fixtureApi;"))
+        self.popup()
+        self.click_wait("orders-edit", "Choose your shared edits")
+        self.driver.find_element(By.ID, "orders-note-sales").send_keys("Apply this note once")
+        self.click_wait("orders-apply", "Changes are applied")
+        self.driver.switch_to.default_content()
+        self.driver.execute_script("""
+          const win=document.getElementById('tab-2').contentWindow;
+          win.fixtureScope.$apply(()=>win.fixtureResource.addArtNotes='Preserve manual art note');
+        """)
+        self.popup()
+        self.click_wait("orders-save", "changed after it was read")
+        self.driver.find_element(By.CSS_SELECTOR, '[aria-label="Include order 1000002"]').click()
+        self.wait.until(lambda d: d.find_element(By.ID, "orders-save").is_enabled())
+        self.click_wait("orders-save", "completed native Save Order")
+        self.driver.switch_to.default_content()
+        self.assertEqual(self.driver.execute_script("""
+          const first=document.getElementById('tab-1').contentWindow;
+          const second=document.getElementById('tab-2').contentWindow;
+          return [first.fixtureSaveCount,first.fixtureResource.salesNotes,second.fixtureSaveCount,
+            second.fixtureScope.editMode,second.fixtureResource.addSalesNotes,second.fixtureResource.addArtNotes];
+        """), [1, "Keep original Sales Note\nApply this note once", 0, True, "Apply this note once", "Preserve manual art note"])
+
+    def test_unticking_every_applied_order_disables_save_and_preserves_native_editors(self):
+        self.driver.get(self.url + "/harness")
+        self.wait.until(lambda d: d.execute_script("return !!window.fixtureApi;"))
+        self.popup()
+        self.click_wait("orders-edit", "Choose your shared edits")
+        self.driver.find_element(By.ID, "orders-note-sales").send_keys("Keep unsaved")
+        self.click_wait("orders-apply", "Changes are applied")
+        for order_id, count in (("1000002", 1), ("1000001", 0)):
+            self.driver.find_element(By.CSS_SELECTOR, f'[aria-label="Include order {order_id}"]').click()
+            self.wait.until(lambda d: d.find_element(By.ID, "orders-count").text == f"{count} of 2 orders included")
+        for action in ("apply", "save", "cancel", "verify"):
+            self.assertFalse(self.driver.find_element(By.ID, "orders-" + action).is_enabled())
+        self.driver.switch_to.default_content()
+        for tab in (1, 2):
+            self.assertEqual(self.driver.execute_script("""
+              const win=document.getElementById('tab-'+arguments[0]).contentWindow;
+              return [win.fixtureSaveCount,win.fixtureScope.editMode,win.fixtureResource.addSalesNotes];
+            """, tab), [0, True, "Keep unsaved"])
+
     def test_save_all_starts_other_native_saves_while_one_order_is_still_waiting(self):
         self.driver.get(self.url + "/harness")
         self.wait.until(lambda d: d.execute_script("return !!window.fixtureApi;"))

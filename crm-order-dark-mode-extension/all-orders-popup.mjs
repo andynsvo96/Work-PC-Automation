@@ -1,4 +1,4 @@
-import { SESSION_PREFIX, CRM_ORIGIN, noteKinds, emptyDraft, editorGroups, commonChoices, hasChanges, orderIdFromUrl } from "./all-orders-model.mjs";
+import { SESSION_PREFIX, CRM_ORIGIN, noteKinds, emptyDraft, editorGroups, commonChoices, hasChanges, orderIdFromUrl, canChangeOrderSelection } from "./all-orders-model.mjs";
 
 const byId = id => document.getElementById("orders-" + id);
 const colors = { "hd digital": "#ff5686", "screen printing": "#5bbad3", embroidery: "#69bd45", "direct to garment": "#7e51a1" };
@@ -52,14 +52,14 @@ function persistDraft() {
   // silently apply an older set of edits. Also handle it when no action follows.
   void pendingDraft.catch(cause => error(cause.message));
 }
-async function action(name) {
+async function action(name, extra = {}) {
   if (localRequest) return;
   localRequest = true;
   render();
   let failure;
   try {
     await pendingDraft;
-    receive(await send(name, name === "expand" ? { screen: { left: screen.availLeft, top: screen.availTop, width: screen.availWidth, height: screen.availHeight } } : {}));
+    receive(await send(name, name === "expand" ? { screen: { left: screen.availLeft, top: screen.availTop, width: screen.availWidth, height: screen.availHeight } } : extra));
   } catch (cause) { failure = cause.message; }
   finally {
     localRequest = false;
@@ -145,7 +145,7 @@ function renderButtons() {
   byId("scan").disabled = busy;
   byId("edit").disabled = busy || !selected.length || !["scanned", "prepared"].includes(state.phase) || selected.every(order => order.status === "prepared");
   byId("apply").disabled = busy || !selected.length || !editable || !hasChanges(state.draft) || selected.some(order => order.status !== "prepared");
-  byId("save").disabled = busy || state.phase !== "applied";
+  byId("save").disabled = busy || !selected.length || state.phase !== "applied";
   byId("discard").disabled = busy || !editable || !hasChanges(state.draft);
   byId("cancel").disabled = busy || !selected.length || !["prepared", "previewed", "applied", "review"].includes(state.phase);
   byId("verify").disabled = busy || !selected.some(order => order.expected && order.status !== "verified");
@@ -164,11 +164,8 @@ function render() {
     const row = node("div", undefined, "order-row " + order.status + (order.validationError ? " error" : ""));
     const check = node("input"); check.type = "checkbox"; check.checked = order.selected;
     check.setAttribute("aria-label", "Include order " + order.orderId);
-    check.disabled = state.busy || localRequest || !(state.phase === "scanned" || (state.phase === "prepared" && order.status === "error" && order.selected));
-    check.addEventListener("change", async () => {
-      try { receive(await send("select", { orderId: order.orderId, selected: check.checked })); }
-      catch (cause) { error(cause.message); check.checked = order.selected; }
-    });
+    check.disabled = localRequest || !canChangeOrderSelection(state, order, !order.selected);
+    check.addEventListener("change", () => action("select", { orderId: order.orderId, selected: check.checked }));
     const link = node("a", "#" + order.orderId);
     link.href = `${CRM_ORIGIN}/order/${order.orderId}`;
     link.addEventListener("click", async event => {

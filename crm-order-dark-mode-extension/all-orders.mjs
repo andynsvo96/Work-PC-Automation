@@ -1,6 +1,7 @@
-import { SESSION_PREFIX, emptyDraft, normalizeDraft, hasChanges, orderIdFromUrl } from "./all-orders-model.mjs";
+import { SESSION_PREFIX, emptyDraft, normalizeDraft, hasChanges, orderIdFromUrl, canChangeOrderSelection } from "./all-orders-model.mjs";
 
 export const EDITOR_PREFIX = "crm-all-orders-editor:";
+const ownsUnfinishedEditor = order => Boolean(order.original || order.expected) && !["saved", "verified", "canceled"].includes(order.status);
 
 export function editorBounds(screen = {}, source = {}) {
   const number = (value, fallback) => Number.isFinite(value) ? Math.round(value) : fallback;
@@ -132,10 +133,27 @@ export class AllOrdersController {
     }
     if (action === "select") {
       const order = state.orders.find(order => order.orderId === message.orderId);
-      if (!order || !(state.phase === "scanned" || (state.phase === "prepared" && order.status === "error" && message.selected === false))) {
-        throw Error("Cancel unsaved edits before changing the batch's orders.");
+      if (!canChangeOrderSelection(state, order, message.selected)) {
+        throw Error("Orders can only be excluded after editing starts. Resolve their native editors and scan again to include them in a new batch.");
       }
       order.selected = message.selected === true;
+      if (state.phase !== "scanned") {
+        const included = this.selected(state);
+        // Only known, unsubmitted editors may continue. Interrupted or mixed
+        // apply/save outcomes remain for review; no write is replayed here.
+        if (state.phase === "previewed") state.phase = "prepared";
+        if (state.phase === "review" && included.length) {
+          if (included.every(row => ["prepared", "error"].includes(row.status))) state.phase = "prepared";
+          else if (included.every(row => row.status === "applied")) state.phase = "applied";
+          else if (!state.batchId && included.every(row => ["scanned", "error"].includes(row.status))) state.phase = "scanned";
+          else if (included.every(row => ["saved", "verified", "canceled"].includes(row.status))) state.phase = "complete";
+        }
+        delete state.preview;
+        for (const row of state.orders) delete row.preview;
+        state.validationError = included.some(row => row.validationError === true);
+        state.message = `Order ${order.orderId} excluded. Its native editor is unchanged. ` +
+          (!included.length ? "No orders are included." : state.phase === "review" ? "Review the remaining order errors in CRM." : "Continue with the remaining included orders.");
+      }
       await this.persist(state);
       return structuredClone(state);
     }
@@ -174,10 +192,11 @@ export class AllOrdersController {
   async checkOtherBatches(state) {
     const stored = await this.api.storage.session.get(null);
     for (const [name, other] of Object.entries(stored)) {
-      if (!name.startsWith(SESSION_PREFIX) || other.windowId === state.windowId || other.phase === "complete") continue;
+      if (!name.startsWith(SESSION_PREFIX) || other.windowId === state.windowId) continue;
       try { await this.api.windows.get(other.windowId); } catch (_) { continue; }
-      const overlap = this.selected(state).find(order => other.orders.some(row => row.selected && row.orderId === order.orderId &&
-        (other.busy || ["entering", "prepared", "applying", "applied", "saving", "saved", "refreshing", "review"].includes(row.status))));
+      const overlap = this.selected(state).find(order => other.orders.some(row => row.orderId === order.orderId &&
+        (ownsUnfinishedEditor(row) || (row.selected && other.phase !== "complete" &&
+          (other.busy || ["entering", "prepared", "applying", "applied", "saving", "saved", "refreshing", "review"].includes(row.status))))));
       if (overlap) throw Error(`Order ${overlap.orderId} has an unfinished All Orders batch in another window. Resolve that batch first.`);
     }
   }
@@ -220,7 +239,7 @@ export class AllOrdersController {
   async inspect(order, state) { return this.execute(order, state, { op: "inspect" }, true); }
 
   async assertClosedEditors(state) {
-    for (const order of state.orders.filter(order => order.selected)) {
+    for (const order of state.orders.filter(order => order.selected || ownsUnfinishedEditor(order))) {
       let tab;
       try { tab = await this.api.tabs.get(order.tabId); } catch (_) { continue; }
       if (tab.windowId !== state.windowId || orderIdFromUrl(tab.url) !== order.orderId) continue;
@@ -322,13 +341,13 @@ export class AllOrdersController {
       }));
       state.phase = "prepared";
       state.message = orders.every(order => order.status === "prepared") ? "All included orders are in Edit Order. Choose your shared edits." :
-        "Some orders could not enter Edit Order. Resolve them or exclude the failed orders before previewing.";
+        "Some orders could not enter Edit Order. Resolve them or uncheck the failed orders before applying changes.";
       return;
     }
     if (action === "preview" || action === "apply") {
       if (!await this.validate(state)) {
         state.phase = "prepared";
-        state.message = "The batch is blocked. Resolve the listed conflicts; no changes were applied.";
+        state.message = "The batch is blocked. Resolve or uncheck the conflicted orders, then Apply changes. No changes were applied.";
         return;
       }
       if (action === "preview") {

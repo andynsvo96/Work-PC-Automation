@@ -15,6 +15,28 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
+## Exclude orders during batch editing - 1.8.6
+
+Uncheck an included order while editing to continue with the other orders. This
+also works after an Apply validation conflict, a blocked rescan, or a conflict
+detected before Save All starts. The shared draft stays intact, and print-area
+cards and counts update to include only the remaining orders. Apply validates
+those orders again; Save All and Cancel unsaved edits also skip excluded orders.
+Selection is locked while an action is running.
+
+Excluding an order leaves its native editor and any existing edits untouched.
+Use its order link to resolve that editor manually. An excluded order cannot be
+checked again in the active batch; resolve open native editors and scan again
+to start a new selection. Batch-owned excluded editors retain their reservation
+against another window's batch until they are resolved and the source window is
+scanned again. Interrupted or uncertain saves remain for review and are never
+retried by changing selection.
+
+Reload **CRM Order Assistant 1.8.6** at `chrome://extensions` and reopen the popup
+or expanded editor. Extension reload clears the current in-memory batch, so
+resolve any existing native edits first. No app restart, order-page refresh, or
+new permission is needed for this update.
+
 ## Compact automation dialogs - 1.8.5
 
 Order-page automation dialogs omit workflow descriptions and explanatory hints.
@@ -141,7 +163,9 @@ top right, and the local-app connection status is at the top left.
 2. Click **Edit All Orders**. Each included page's enabled native **Edit Order**
    action starts together. Shared edits require every included order's editor to
    be ready. Resolve an entry failure or uncheck that failed order to continue.
-   A duplicate tab with unsaved edits blocks that order as well.
+   A duplicate tab with unsaved edits blocks that order as well. Orders may also
+   be unchecked later during editing, including after a validation conflict.
+   Their native editors stay untouched; the remaining shared draft is retained.
 3. Set print-area locations or methods in the All Tabs-style cards. Each card
    lists the exact order numbers and internal product-tab numbers it affects.
    Mixed methods stay unchanged until explicitly selected. Location swaps,
@@ -158,7 +182,8 @@ top right, and the local-app connection status is at the top left.
    add-note input that is disabled, unavailable, or ambiguous blocks the batch;
    the extension does not change Art Note options to bypass that restriction.
 5. **Apply changes** validates every included order before updating the unsaved
-   native editors. Conflicts block the batch before mutation. **Discard pending
+   native editors. Conflicts block the batch before mutation; resolve or uncheck
+   the affected orders, then apply to the remaining orders. **Discard pending
    changes** clears the popup draft before Apply. After Apply, inspect the actual
    order pages, then use **Save All** to keep the changes.
 6. **Save All** starts every included order's native **Save Order** action
