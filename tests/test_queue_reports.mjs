@@ -27,7 +27,7 @@ const constants = [
 
 function dashboard(tasks, state = {}) {
   const elements = Object.fromEntries([
-    'queueList', 'crmProcessingErrorsDialog', 'crmProcessingErrorsDialogTitle',
+    'queueList', 'queueSummaryText', 'crmProcessingErrorsDialog', 'crmProcessingErrorsDialogTitle',
     'crmProcessingErrorsDialogSummary', 'crmProcessingErrorsDialogBody',
     'queueTaskReportDialog', 'queueTaskReportDialogTitle',
     'queueTaskReportDialogSummary', 'queueTaskReportDialogBody',
@@ -195,4 +195,16 @@ test('latest and indexed Processing reports still select their original history 
   assert.match(elements.crmProcessingErrorsDialogTitle.textContent, /RUN-1120-1600$/);
   context.openCrmProcessingRunReport(1);
   assert.match(elements.crmProcessingErrorsDialogTitle.textContent, /RUN-1120-1517$/);
+});
+
+test('parallel queue keeps every running order and shows its shared worker limit', () => {
+  const tasks = [1, 2].map(index => ({ id: `task-${index}`, status: 'running', worker_slot: index,
+    label: `Copyright Cancel Order 100000${index}`, category: 'Processing' }));
+  const { context, elements } = dashboard(tasks);
+  context.renderQueue({ tasks, running: tasks[0], running_tasks: tasks, running_count: 2, queued_count: 3, parallel_worker_limit: 8 });
+  assert.match(elements.queueSummaryText.innerHTML, /2 \/ 8 workers running/);
+  assert.match(elements.queueList.innerHTML, /Worker 1/);
+  assert.match(elements.queueList.innerHTML, /Worker 2/);
+  assert.match(elements.queueList.innerHTML, /cancelQueueTask\('task-1'\)/);
+  assert.match(elements.queueList.innerHTML, /cancelQueueTask\('task-2'\)/);
 });

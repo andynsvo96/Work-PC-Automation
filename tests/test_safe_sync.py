@@ -117,6 +117,10 @@ class SafeSyncTests(unittest.TestCase):
         )
 
     def test_safe_untracked_source_path_rejects_sensitive_and_runtime_files(self):
+        self.assertTrue(safe_sync._safe_untracked_source_path("queue_order_work.py"))
+        self.assertTrue(safe_sync._safe_untracked_source_path("process_locks.py"))
+        self.assertFalse(safe_sync._safe_untracked_source_path("queue_order_work.local.py"))
+        self.assertFalse(safe_sync._safe_untracked_source_path("process_locks.backup.py"))
         self.assertTrue(safe_sync._safe_untracked_source_path("workers/new_worker.py"))
         self.assertTrue(safe_sync._safe_untracked_source_path("tests/test_new_worker.py"))
         self.assertTrue(safe_sync._safe_untracked_source_path("tests/test_all_tabs.mjs"))

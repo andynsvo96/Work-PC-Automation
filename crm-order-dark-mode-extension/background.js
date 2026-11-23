@@ -6,6 +6,7 @@ import {
 import { isSalesforceUrl, rankSalesforceTabs } from "./salesforce-tabs.mjs";
 import { openApplicableCRMOrders } from "./crm-list-tabs.mjs";
 import { AllOrdersController } from "./all-orders.mjs";
+import { canRefreshOrderPage } from "./order-refresh.mjs";
 
 let allOrders = null;
 
@@ -142,9 +143,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message.type === "crm-order-automation:status") {
-    getLocalOrderProcessingStatus()
+    getLocalOrderProcessingStatus(message.orderId, message.taskId)
       .then(sendResponse)
       .catch((error) => sendResponse({ success: false, message: error.message || "Could not load processing status." }));
+    return true;
+  }
+  if (message.type === "crm-order-automation:can-refresh" && Number.isInteger(_sender.tab?.id)) {
+    chrome.scripting.executeScript({
+      target: { tabId: _sender.tab.id, frameIds: [_sender.frameId || 0] }, world: "MAIN",
+      func: canRefreshOrderPage, args: [String(message.orderId || "")]
+    }).then(results => sendResponse({ success: true, safe: results[0]?.result === true }))
+      .catch(() => sendResponse({ success: false, safe: false }));
     return true;
   }
   if (message.type === "crm-salesforce:open-link") {

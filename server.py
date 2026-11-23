@@ -27,6 +27,7 @@ import uuid
 import webbrowser
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -59,6 +60,7 @@ import config as config_module
 from m6_posting import M6PostingError, get_m6_posting_enabled, set_m6_posting_enabled
 from node_preferences import load_node_preferences, update_node_preferences
 from platform_runtime import get_platform_snapshot, normalize_os_name, resolve_worker_count
+from queue_order_work import parallel_order_request, SCANNER_WORKFLOWS
 from profile_setup_autofill import (
     ChromeProfileInUseError,
     open_and_prefill_setup_profile,
@@ -141,6 +143,7 @@ CRM_REORDER_SCRIPT = os.path.join(WORKERS_DIR, "crm_reorder.py")
 CRM_PUSH_BACK_SCRIPT = os.path.join(WORKERS_DIR, "crm_push_back.py")
 CRM_AUTO_SPLITTER_SCRIPT = os.path.join(WORKERS_DIR, "crm_auto_splitter.py")
 CRM_MASS_EMAILER_SCRIPT = os.path.join(WORKERS_DIR, "crm_copyright_cancel.py")
+CRM_QUEUE_ORDER_SCRIPT = os.path.join(WORKERS_DIR, "crm_queue_order.py")
 CRM_STOCK_ISSUE_EXTENSION_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_extension.py")
 CRM_STOCK_ISSUE_COLOR_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_color.py")
 CRM_STOCK_ISSUE_SIZE_SCRIPT = os.path.join(WORKERS_DIR, "crm_stock_issue_size.py")
@@ -162,6 +165,7 @@ BROWSER_WORKER_FILENAMES = frozenset(
         os.path.basename(CRM_PUSH_BACK_SCRIPT),
         os.path.basename(CRM_AUTO_SPLITTER_SCRIPT),
         os.path.basename(CRM_MASS_EMAILER_SCRIPT),
+        os.path.basename(CRM_QUEUE_ORDER_SCRIPT),
         os.path.basename(CRM_STOCK_ISSUE_EXTENSION_SCRIPT),
         os.path.basename(CRM_STOCK_ISSUE_COLOR_SCRIPT),
         os.path.basename(CRM_STOCK_ISSUE_SIZE_SCRIPT),
@@ -2016,6 +2020,23 @@ def _automation_queue_progress_from_status_payload(payload):
 
 
 def _automation_queue_live_status(task):
+    if task.get("status") == "running" and task.get("worker_status_file"):
+        try:
+            with open(task["worker_status_file"], "r", encoding="utf-8-sig") as handle:
+                status = json.load(handle)
+            if not isinstance(status, dict):
+                return None
+            live = {"message": str(status.get("message") or task.get("message") or "")}
+            if status.get("stage"):
+                live["stage"] = str(status["stage"])
+            progress = _crm_processing_order_progress(status.get("current"), status.get("total"))
+            if progress:
+                live["progress"] = progress
+            return live
+        except (OSError, ValueError):
+            return None
+    if task.get("status") == "running" and task.get("worker_slot"):
+        return None
     status_fn = task.get("status_fn")
     if str(task.get("status") or "").lower() != "running" or not callable(status_fn):
         return None
@@ -2249,13 +2270,15 @@ def _automation_queue_result_context(task, ok, message):
             "report": latest_report,
         }
     if task_type != "crm.mass_emailer":
-        if existing.get("retrying") and task_type != "crm.reorder":
+        if existing.get("retrying") and task_type != "crm.reorder" and "worker_result_payload" not in task:
             return {
                 **existing,
                 "retrying": False,
                 "retry_completed": True,
             }
         status_fn = (task or {}).get("status_fn")
+        if "worker_result_payload" in task:
+            status_fn = lambda: {"runtime": {"payload": task["worker_result_payload"]}}
         try:
             status_payload = status_fn() if callable(status_fn) else {}
         except Exception:
@@ -2315,6 +2338,8 @@ def _automation_queue_result_context(task, ok, message):
             order_details = _build_crm_push_back_order_results(result_payload)
         elif task_type == "crm.address_validator":
             order_details = _extract_crm_address_report(result_payload)
+        elif task_type == "crm.sheet_scanner_order":
+            order_details = _crm_mass_emailer_order_details_from_payload(result_payload)
         elif task_type == "crm.auto_splitter":
             order_details = result_payload.get("order_results") if isinstance(result_payload.get("order_results"), list) else []
         elif task_type == "crm.reorder":
@@ -2323,7 +2348,7 @@ def _automation_queue_result_context(task, ok, message):
         if result_payload or order_details:
             return {
                 **existing,
-                **({"retrying": False, "retry_completed": bool(existing.get("retrying"))} if task_type == "crm.reorder" else {}),
+                "retrying": False, "retry_completed": bool(existing.get("retrying")),
                 "report": {
                     "success": bool(ok),
                     "message": str(message or result_payload.get("message") or ""),
@@ -2531,7 +2556,7 @@ _AUTOMATION_QUEUE_STATE_FIELDS = frozenset("""
     repeat_interval_minutes scheduled_for automation_signature advanced_summary
     run_count run_history activated_at started_at completed_at duration_seconds
     message success cancel_requested requested_client_os task_type task_arguments
-    result_context execution_descriptor restart_interrupted restore_error
+    result_context execution_descriptor restart_interrupted restore_error worker_slot
 """.split())
 
 
@@ -2716,6 +2741,14 @@ def _automation_queue_task_is_retryable_order(task):
     return bool(_QUEUE_ORDER_LABEL_RE.search(searchable))
 
 
+def _automation_queue_order_id(task):
+    descriptor = task.get("execution_descriptor") or {}
+    arguments = descriptor.get("arguments") if isinstance(descriptor, dict) else None
+    arguments = arguments if isinstance(arguments, dict) else task.get("task_arguments") or {}
+    order_id = str(arguments.get("order_id") or arguments.get("order_target") or "")
+    return order_id if re.fullmatch(r"\d{7}", order_id) else None
+
+
 def _automation_queue_task_payload(task):
     next_run_at = task.get("next_run_at")
     run_history = task.get("run_history") if isinstance(task.get("run_history"), list) else []
@@ -2750,6 +2783,8 @@ def _automation_queue_task_payload(task):
         "cancel_requested": bool(task.get("cancel_requested")),
         "position": task.get("position"),
         "task_type": task.get("task_type"),
+        "order_id": _automation_queue_order_id(task),
+        "worker_slot": task.get("worker_slot"),
         "result_context": dict(task.get("result_context") or {}),
         "restart_interrupted": bool(task.get("restart_interrupted")),
         "restore_error": task.get("restore_error"),
@@ -2792,14 +2827,14 @@ def _automation_queue_duration_seconds(task):
 
 
 def _automation_queue_snapshot_locked():
-    running = None
+    running_tasks = []
     queued = []
     idle = []
     history = []
     for task in automation_queue_tasks:
         payload = _automation_queue_task_payload(task)
         if task.get("status") == "running":
-            running = payload
+            running_tasks.append(payload)
         elif task.get("status") == "queued":
             queued.append(payload)
         elif task.get("status") == "idle":
@@ -2812,14 +2847,15 @@ def _automation_queue_snapshot_locked():
         task["position"] = len(queued) + index
     return {
         "success": True,
-        "running": running,
+        "running": running_tasks[0] if running_tasks else None,
+        "running_tasks": running_tasks,
         "queued": queued,
         "idle": idle,
         "history": history,
-        "tasks": ([running] if running else []) + queued + idle + history,
+        "tasks": running_tasks + queued + idle + history,
         "queued_count": len(queued),
         "idle_count": len(idle),
-        "running_count": 1 if running else 0,
+        "running_count": len(running_tasks),
     }
 
 
@@ -2828,6 +2864,7 @@ def get_automation_queue_payload():
         payload = _enrich_automation_queue_reports(_automation_queue_snapshot_locked())
         payload["mode"] = "local"
         payload["persistence_error"] = automation_queue_persistence_error
+        payload["parallel_worker_limit"] = _saved_crm_automation_parallel_workers(default=1)
         return payload
 
 
@@ -2908,8 +2945,207 @@ def _normalize_automation_repeat_interval_minutes(value, default=5):
     return max(0, int(number))
 
 
-def _automation_queue_worker_loop():
+def _start_automation_queue_task_locked(task, worker_slot=None):
     global automation_queue_current_task_id
+    before_start = dict(task)
+    task.update(status="running", started_at=_automation_queue_now_iso(), completed_at=None,
+                run_count=max(0, int(_safe_float(task.get("run_count"), 0))) + 1,
+                message=f"Starting {task.get('label') or 'queued task'}.")
+    task.pop("worker_result_payload", None)
+    task.pop("worker_status_file", None)
+    if worker_slot:
+        task["worker_slot"] = worker_slot
+    else:
+        task.pop("worker_slot", None)
+    # Checkpoint before submission: an interrupted action is never replayed.
+    if not _persist_automation_queue_locked():
+        task.clear()
+        task.update(before_start)
+        return False
+    if not automation_queue_current_task_id:
+        automation_queue_current_task_id = task["id"]
+    return True
+
+
+def _finish_automation_queue_task(next_task, ok, message):
+    global automation_queue_current_task_id
+    with automation_queue_condition:
+        task = next((item for item in automation_queue_tasks if item.get("id") == next_task.get("id")), None)
+        canceled = bool(task and task.get("cancel_requested"))
+        if task:
+            started_at = task.get("started_at")
+            completed_at = _automation_queue_now_iso()
+            task.update(completed_at=completed_at, success=bool(ok), message=str(message))
+            task["duration_seconds"] = _automation_queue_duration_seconds(task)
+            try:
+                task["result_context"] = _automation_queue_result_context(task, ok, message)
+            except Exception:
+                logger.exception("Could not build the queue report")
+                task["result_context"] = {"report": {"success": bool(ok), "message": str(message)}}
+            if task.get("worker_slot"):
+                context = task.get("result_context") or {}
+                report = context.setdefault("report", {"success": bool(ok), "message": str(message)})
+                if not report.get("order_details"):
+                    report["order_details"] = [{"order_id": _automation_queue_order_id(task), "success": bool(ok),
+                                               "status": "Success" if ok else "Failed", "message": str(message)}]
+                task["result_context"] = context
+            task.pop("worker_result_payload", None)
+            task.pop("worker_status_file", None)
+            _automation_queue_append_run_history(task, ok, message, started_at, completed_at, task["duration_seconds"])
+            if canceled:
+                task.update(status="canceled", success=False, cancel_requested=False)
+            elif str(task.get("queue_mode") or "").strip().lower() == "repeat" and not (
+                not ok and _automation_queue_result_requires_review(task, message)
+            ):
+                interval_minutes = _normalize_automation_repeat_interval_minutes(task.get("repeat_interval_minutes"))
+                now = datetime.now()
+                next_run_at = now + timedelta(minutes=interval_minutes)
+                anchor = _automation_queue_parse_datetime(task.get("scheduled_for"))
+                if anchor and interval_minutes > 0:
+                    interval = timedelta(minutes=interval_minutes)
+                    next_run_at = anchor + (max(0, (now - anchor) // interval) + 1) * interval
+                task.update(status="idle", idle_reason="repeat_wait", next_run_at=next_run_at.isoformat(),
+                            started_at=None, completed_at=None)
+                task["message"] = _automation_queue_idle_message(task)
+            else:
+                task["status"] = "completed" if ok else "failed"
+        automation_queue_current_task_id = next((item["id"] for item in automation_queue_tasks if item.get("status") == "running"), None)
+        _persist_automation_queue_locked()
+        automation_queue_condition.notify_all()
+    log_automation_event("automation.queue", "CANCELED" if canceled else ("COMPLETED" if ok else "FAILED"),
+                         f"{next_task.get('label')}: {message}", source="server.py")
+
+
+def _queue_order_profiles(request_data, slot):
+    if WORKERS_DIR not in sys.path:
+        sys.path.insert(0, WORKERS_DIR)
+    from crm_validate_address import _clone_profile_for_worker, _worker_profile_path
+    scanner = request_data["automation_key"] in SCANNER_WORKFLOWS
+    base = getattr(config_module, "PROCESSOR_PROFILE_DIR" if scanner else "CRM_PROFILE_DIR")
+    base = resolve_existing_automation_profile_path(os.path.join(SCRIPT_DIR, base))
+    _root, crm_profile = _clone_profile_for_worker(base, f"queue_{slot}", worker_slot=slot,
+                                                  pool_name="sheet_scanner_crm" if scanner else "queue_crm")
+    slack_base = resolve_existing_automation_profile_path(os.path.join(SCRIPT_DIR, "slack_chrome_profile"))
+    slack_pool = "sheet_scanner_slack" if scanner else "queue_slack"
+    slack_profile = _worker_profile_path(slack_pool, slot)
+    if os.path.isdir(slack_base):
+        _root, slack_profile = _clone_profile_for_worker(slack_base, f"queue_slack_{slot}",
+                                                       worker_slot=slot, pool_name=slack_pool)
+    return crm_profile, slack_profile
+
+
+def _persist_queue_order_result(task, request_data, ok, message, payload):
+    automation = request_data["automation_key"]
+    dry_run = bool(request_data.get("dry_run"))
+    if automation in SCANNER_WORKFLOWS:
+        _persist_crm_mass_emailer_run_result(ok, message, payload, dry_run=dry_run)
+    elif automation == "address_validator":
+        _persist_crm_address_run_result(ok, message, payload, request_data["order_id"],
+                                       request_data.get("shipping_filter") or "free", dry_run=dry_run)
+    else:
+        persist = {"product_separator": _persist_crm_product_separator_run_result,
+                   "order_goods": _persist_crm_order_goods_run_result,
+                   "push_back": _persist_crm_push_back_run_result}[automation]
+        persist(ok, message, payload, dry_run=dry_run)
+
+
+def _run_queue_order_worker(task, request_data, slot):
+    """The pool owns crm_lock; each subprocess owns its profiles and handoff files."""
+    started = time.monotonic()
+    stem = f"queue_{uuid.uuid4().hex}"
+    result_path = result_file(f"{stem}.json")
+    helper_path = result_file(f"{stem}_helper.json")
+    status_path = state_file(f"{stem}_status.json")
+    ok, message, payload = False, "Order worker did not run.", {}
+    with automation_queue_condition:
+        task["worker_status_file"] = status_path
+    try:
+        log_automation_event("automation.queue", "STARTED", str(task.get("label")), source="server.py")
+        crm_profile, slack_profile = _queue_order_profiles(request_data, slot)
+        def run_worker():
+            return _run_script(
+                CRM_QUEUE_ORDER_SCRIPT,
+                ["--request-json", json.dumps(request_data), "--profile-dir", crm_profile, "--result-file", result_path],
+                f"QueueWorker{slot}_{request_data['order_id']}", timeout=CRM_MASS_EMAILER_TIMEOUT_SECONDS,
+                require_result=True, result_path=result_path, status_path=status_path, task_id=task["id"],
+                stop_requested_after=datetime.fromisoformat(task["started_at"]).timestamp(),
+                env_overrides={"SLACK_PROFILE_DIR": slack_profile, "SALESFORCE_WORKER_SLOT": str(slot),
+                               "SALESFORCE_INTERACTIVE_VERIFICATION": "1",
+                               "SALESFORCE_VERIFICATION_ORDER_ID": request_data["order_id"],
+                               "AUTOMATION_RESULT_FILE": helper_path},
+            )
+        ok, message, payload = run_worker()
+        if request_data["automation_key"] == "product_separator" and _crm_product_separator_payload_retryable(ok, message, payload):
+            first_message = str(message)
+            ok, message, payload = run_worker()
+            payload.update(retried_after_transient_error=True, first_attempt_message=first_message)
+        ok, message, payload = _report_salesforce_email_result(ok, message, payload)
+    except Exception as exc:
+        logger.exception("Queue order worker failed")
+        message = str(exc)
+    finally:
+        payload = dict(payload or {})
+        payload.setdefault("order_id", request_data["order_id"])
+        payload.setdefault("duration_seconds", round(time.monotonic() - started, 2))
+        payload.update(success=bool(ok), message=str(message))
+        try:
+            _persist_queue_order_result(task, request_data, ok, message, payload)
+        except Exception:
+            logger.exception("Could not update order workflow history; retaining the queue result")
+        with automation_queue_condition:
+            task["worker_result_payload"] = payload
+        _finish_automation_queue_task(task, ok, message)
+        for path in (() if automation_queue_persistence_error else (result_path, helper_path, status_path)):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def _run_automation_queue_order_pool():
+    """Continuously fill slots from the queue head, stopping at every barrier."""
+    if not crm_lock.acquire(blocking=False):
+        with automation_queue_condition:
+            automation_queue_condition.wait(timeout=0.25)
+        return
+    active = {}
+    started_at = time.time()
+    try:
+        with ThreadPoolExecutor(max_workers=CRM_SHARED_MAX_PARALLEL_WORKERS) as executor:
+            while True:
+                with automation_queue_condition:
+                    for slot, (future, _order_id, task) in list(active.items()):
+                        if not future.done():
+                            continue
+                        try:
+                            future.result()
+                        except Exception as exc:
+                            logger.exception("Queue worker exited unexpectedly")
+                            if task.get("status") == "running":
+                                task["worker_result_payload"] = {"order_id": _automation_queue_order_id(task), "success": False, "message": str(exc)}
+                                _finish_automation_queue_task(task, False, str(exc))
+                        del active[slot]
+                    _automation_queue_promote_due_idle_locked()
+                    limit = _saved_crm_automation_parallel_workers(default=1)
+                    next_task = next((task for task in automation_queue_tasks if task.get("status") == "queued"), None)
+                    request_data = parallel_order_request(next_task) if next_task else None
+                    free_slot = next((slot for slot in range(1, limit + 1) if slot not in active), None)
+                    allowed = (not _automation_version_block_reason() and not automation_queue_persistence_error
+                               and not _automation_stop_is_blocking() and not _automation_stop_requested_since(started_at))
+                    if (allowed and request_data and free_slot and len(active) < limit
+                            and request_data["order_id"] not in {item[1] for item in active.values()}):
+                        if _start_automation_queue_task_locked(next_task, free_slot):
+                            future = executor.submit(_run_queue_order_worker, next_task, request_data, free_slot)
+                            active[free_slot] = (future, request_data["order_id"], next_task)
+                            continue
+                    if not active:
+                        return
+                    automation_queue_condition.wait(timeout=0.2)
+    finally:
+        crm_lock.release()
+
+
+def _automation_queue_worker_loop():
     while True:
         with automation_queue_condition:
             while True:
@@ -2922,85 +3158,22 @@ def _automation_queue_worker_loop():
                 next_task = next((task for task in automation_queue_tasks if task.get("status") == "queued"), None)
                 if next_task:
                     break
-                wait_seconds = _automation_queue_next_idle_wait_seconds_locked()
-                automation_queue_condition.wait(timeout=wait_seconds)
-            before_start = dict(next_task)
-            next_task["status"] = "running"
-            next_task["started_at"] = _automation_queue_now_iso()
-            next_task["completed_at"] = None
-            next_task["run_count"] = max(0, int(_safe_float(next_task.get("run_count"), 0))) + 1
-            next_task["message"] = f"Starting {next_task.get('label') or 'queued task'}."
-            # A crash after this checkpoint is an interrupted run, never an
-            # apparently unstarted task that could repeat a purchase or send.
-            if not _persist_automation_queue_locked():
-                next_task.clear()
-                next_task.update(before_start)
+                automation_queue_condition.wait(timeout=_automation_queue_next_idle_wait_seconds_locked())
+            parallel = parallel_order_request(next_task) is not None
+            if not parallel and not _start_automation_queue_task_locked(next_task):
                 automation_queue_condition.wait(timeout=5.0)
                 continue
-            automation_queue_current_task_id = next_task.get("id")
-            fn = next_task.get("fn")
-
-        ok = False
-        message = "Task did not run."
+        if parallel:
+            _run_automation_queue_order_pool()
+            continue
+        ok, message = False, "Task did not run."
         try:
-            log_automation_event(
-                "automation.queue",
-                "STARTED",
-                str(next_task.get("label") or "Queued task"),
-                source="server.py",
-            )
-            ok, message = _automation_queue_coerce_result(fn())
+            log_automation_event("automation.queue", "STARTED", str(next_task.get("label") or "Queued task"), source="server.py")
+            ok, message = _automation_queue_coerce_result(next_task["fn"]())
         except Exception as exc:
             logger.exception("Queued automation task failed unexpectedly")
-            ok = False
             message = str(exc)
-
-        with automation_queue_condition:
-            task = next((item for item in automation_queue_tasks if item.get("id") == next_task.get("id")), None)
-            canceled = bool(task and task.get("cancel_requested"))
-            if task:
-                started_at = task.get("started_at")
-                completed_at = _automation_queue_now_iso()
-                task["completed_at"] = completed_at
-                task["duration_seconds"] = _automation_queue_duration_seconds(task)
-                task["success"] = bool(ok)
-                task["message"] = str(message)
-                task["result_context"] = _automation_queue_result_context(task, ok, message)
-                _automation_queue_append_run_history(task, ok, message, started_at, completed_at, task.get("duration_seconds"))
-                if canceled:
-                    task["status"] = "canceled"
-                    task["success"] = False
-                    task["cancel_requested"] = False
-                elif str(task.get("queue_mode") or "").strip().lower() == "repeat" and not (
-                    not ok and _automation_queue_result_requires_review(task, message)
-                ):
-                    interval_minutes = _normalize_automation_repeat_interval_minutes(
-                        task.get("repeat_interval_minutes")
-                    )
-                    now = datetime.now()
-                    next_run_at = now + timedelta(minutes=interval_minutes)
-                    anchor = _automation_queue_parse_datetime(task.get("scheduled_for"))
-                    if anchor and interval_minutes > 0:
-                        interval = timedelta(minutes=interval_minutes)
-                        elapsed_intervals = max(0, (now - anchor) // interval)
-                        next_run_at = anchor + (elapsed_intervals + 1) * interval
-                    task["status"] = "idle"
-                    task["idle_reason"] = "repeat_wait"
-                    task["next_run_at"] = next_run_at.isoformat()
-                    task["started_at"] = None
-                    task["completed_at"] = None
-                    task["message"] = _automation_queue_idle_message(task)
-                else:
-                    task["status"] = "completed" if ok else "failed"
-            automation_queue_current_task_id = None
-            _persist_automation_queue_locked()
-            automation_queue_condition.notify_all()
-        log_automation_event(
-            "automation.queue",
-            "CANCELED" if canceled else ("COMPLETED" if ok else "FAILED"),
-            f"{next_task.get('label')}: {message}",
-            source="server.py",
-        )
+        _finish_automation_queue_task(next_task, ok, message)
 
 
 def _ensure_automation_queue_worker():
@@ -3133,6 +3306,8 @@ def cancel_automation_queue_task(task_id):
         else:
             return False, "Only queued, idle, or running tasks can be canceled."
     if running_cancel:
+        if task.get("worker_slot"):
+            return _stop_queue_task_processes(task_id)
         ok, msg = force_stop_automation()
         return ok, f"Cancel requested for running task. {msg}"
     return False, "Queue task could not be canceled."
@@ -3374,11 +3549,11 @@ def _automation_stop_requested_since(started_at):
         return automation_stop_requested_at >= started_at
 
 
-def _register_automation_process(proc, label):
+def _register_automation_process(proc, label, task_id=None):
     if not proc or not getattr(proc, "pid", None):
         return
     with automation_process_lock:
-        active_automation_processes[int(proc.pid)] = {"proc": proc, "label": str(label)}
+        active_automation_processes[int(proc.pid)] = {"proc": proc, "label": str(label), "task_id": task_id}
 
 
 def _unregister_automation_process(proc):
@@ -3429,6 +3604,16 @@ def _kill_process_tree(pid):
     except Exception as e:
         logger.warning("Could not force-stop process tree %s: %s", pid, e)
         return False
+
+
+def _stop_queue_task_processes(task_id):
+    """Stop only this order; a cancellation flag also blocks a late launch."""
+    with automation_process_lock:
+        active_items = [(pid, info) for pid, info in active_automation_processes.items() if info.get("task_id") == task_id]
+        force_stopped_process_pids.update(pid for pid, _info in active_items)
+    for pid, _info in active_items:
+        _kill_process_tree(pid)
+    return True, "Cancel requested for this order's worker. Other workers continue."
 
 
 def force_stop_automation():
@@ -3493,8 +3678,9 @@ def force_stop_automation():
     return True, msg
 
 
-def _run_script(script_path, args, label, timeout=120, show_terminal=False, require_result=False):
-    started_at = time.time()
+def _run_script(script_path, args, label, timeout=120, show_terminal=False, require_result=False,
+                result_path=None, status_path=None, env_overrides=None, task_id=None, stop_requested_after=None):
+    started_at = time.time() if stop_requested_after is None else stop_requested_after
     # macOS LaunchAgents write the server's inherited stderr to a broad
     # launchd log.  When a worker fails during import/startup it cannot write
     # last_result.json, which previously reduced the control-panel error to
@@ -3503,6 +3689,15 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False, requ
     worker_log_path = None
     worker_output = None
     worker_args = list(args)
+    worker_result_file = result_path or RESULT_FILE
+    worker_status_file = status_path or AUTOMATION_STATUS_FILE
+    def read_worker_result():
+        return _read_result_file_with_retry(path=result_path) if result_path else _read_result_file_with_retry()
+    def canceled():
+        if not task_id:
+            return False
+        with automation_queue_lock:
+            return any(task.get("id") == task_id and task.get("cancel_requested") for task in automation_queue_tasks)
     headless = bool(load_node_preferences().get("headless", True))
     worker_filename = os.path.basename(str(script_path or ""))
     if (
@@ -3511,18 +3706,19 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False, requ
         and "--visible" not in worker_args
     ):
         worker_args.append("--visible")
-    if _automation_stop_is_blocking():
+    if (_automation_stop_is_blocking() or canceled()
+            or (task_id and _automation_stop_requested_since(started_at))):
         msg = _force_stop_message(label)
         return False, msg, {"success": False, "message": msg, "stopped": True}
     try:
-        if os.path.exists(RESULT_FILE):
+        if os.path.exists(worker_result_file):
             try:
-                os.remove(RESULT_FILE)
+                os.remove(worker_result_file)
             except OSError:
                 pass
-        if os.path.exists(AUTOMATION_STATUS_FILE):
+        if os.path.exists(worker_status_file):
             try:
-                os.remove(AUTOMATION_STATUS_FILE)
+                os.remove(worker_status_file)
             except OSError:
                 pass
         creation_flags = (
@@ -3531,7 +3727,8 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False, requ
             else getattr(subprocess, "CREATE_NO_WINDOW", 0)
         )
         env = os.environ.copy()
-        env["AUTOMATION_STATUS_FILE"] = AUTOMATION_STATUS_FILE
+        env.update(env_overrides or {})
+        env["AUTOMATION_STATUS_FILE"] = worker_status_file
         env["AUTOMATION_HEADLESS"] = "1" if headless else "0"
         # A visible browser is required for some human verification steps, but
         # it should still close when the worker finishes.  Keep a browser open
@@ -3553,19 +3750,41 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False, requ
             [_resolve_console_python(), script_path] + worker_args,
             **popen_kwargs,
         )
-        _register_automation_process(proc, label)
+        if task_id:
+            _register_automation_process(proc, label, task_id=task_id)
+            # Close the cancel-before-registration race without stopping peers.
+            if canceled() or _automation_stop_requested_since(started_at):
+                _stop_queue_task_processes(task_id)
+        else:
+            _register_automation_process(proc, label)
         try:
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            if task_id:
+                _kill_process_tree(proc.pid)
+            else:
+                proc.kill()
             try:
                 proc.wait(timeout=5)
             except Exception:
                 pass
 
+            # Retain the order, profile and slot until the isolated worker exits,
+            # including when the OS refuses a process-tree kill.
+            if task_id:
+                while proc.poll() is None:
+                    with automation_queue_condition:
+                        task = next((item for item in automation_queue_tasks if item.get("id") == task_id), None)
+                        if task:
+                            task["message"] = "Worker timed out and is still stopping. Its order and slot remain reserved."
+                    try:
+                        proc.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        continue
+
             # If the child wrote last_result.json before hanging in cleanup,
             # prefer that payload over a generic timeout failure.
-            payload = _read_result_file_with_retry()
+            payload = read_worker_result()
             if isinstance(payload, dict):
                 try:
                     base_msg = payload.get("message", "Unknown result")
@@ -3587,7 +3806,7 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False, requ
             msg = _force_stop_message(label)
             return False, msg, {"success": False, "message": msg, "stopped": True}
 
-        payload = _read_result_file_with_retry()
+        payload = read_worker_result()
         if isinstance(payload, dict):
             return bool(payload.get("success")), payload.get("message", "Unknown result"), payload
 
@@ -3614,19 +3833,20 @@ def _run_script(script_path, args, label, timeout=120, show_terminal=False, requ
             worker_output.close()
 
 
-def _read_result_file_with_retry(retries=8, delay=0.25):
-    if not os.path.exists(RESULT_FILE):
+def _read_result_file_with_retry(retries=8, delay=0.25, path=None):
+    target_file = path or RESULT_FILE
+    if not os.path.exists(target_file):
         return None
     last_error = None
     for attempt in range(max(1, int(retries or 1))):
         try:
-            with open(RESULT_FILE, "r", encoding="utf-8-sig") as f:
+            with open(target_file, "r", encoding="utf-8-sig") as f:
                 loaded = json.load(f)
             return loaded if isinstance(loaded, dict) else None
         except Exception as exc:
             last_error = exc
             time.sleep(float(delay or 0) * (attempt + 1))
-    logger.warning("Could not read %s after retries: %s", RESULT_FILE, last_error)
+    logger.warning("Could not read %s after retries: %s", target_file, last_error)
     return None
 
 
@@ -12224,7 +12444,28 @@ def _crm_extension_order_runtime_snapshot():
         return dict(crm_extension_order_runtime)
 
 
-def get_crm_extension_order_status_payload():
+def get_crm_extension_order_status_payload(order_id=None, task_id=None):
+    if order_id:
+        with automation_queue_lock:
+            matches = [task for task in automation_queue_tasks
+                       if _automation_queue_order_id(task) == order_id
+                       and (task.get("execution_descriptor") or {}).get("kind") == "crm.extension_manual"
+                       and (not task_id or task.get("id") == task_id)]
+            active = [task for task in matches if task.get("status") in {"running", "queued"}]
+            task = next((task for task in active if task["status"] == "running"), None)
+            task = task or (active[0] if active else None)
+            task = task or (max(matches, key=lambda item: item.get("completed_at") or item.get("activated_at") or "") if matches else None)
+            runtime = {"runKind": "manual", "orderId": order_id, "queued": False, "running": False,
+                       "lastSuccess": None, "completedAt": None, "lastMessage": "", "taskId": None}
+            if task:
+                live = _automation_queue_live_status(task) or {}
+                descriptor = task["execution_descriptor"]["arguments"]
+                runtime.update(queued=task["status"] == "queued", running=task["status"] == "running",
+                               startedAt=task.get("started_at"), completedAt=task.get("completed_at"),
+                               lastSuccess=task.get("success"), lastMessage=live.get("message") or task.get("message") or "",
+                               currentStep=descriptor["automation_key"], taskId=task["id"],
+                               attempt=task.get("run_count", 0), workerSlot=task.get("worker_slot"))
+            return {"success": True, "queued": runtime["queued"], "running": runtime["running"], "runtime": runtime}
     runtime = _crm_extension_order_runtime_snapshot()
     if runtime.get("runKind") == "manual" and runtime.get("currentStep") == "stock_swap":
         runtime = _merge_live_automation_status(runtime, "crm.stock_swap")
@@ -13284,6 +13525,8 @@ def run_crm_extension_manual_order_run_queued(order_id, automation_key, reason="
                 {
                     "queued": False,
                     "running": False,
+                    "orderId": order_id,
+                    "runKind": "manual",
                     "completedAt": datetime.now().isoformat(),
                     "currentStep": None,
                     "lastMessage": str(message),
@@ -13292,6 +13535,11 @@ def run_crm_extension_manual_order_run_queued(order_id, automation_key, reason="
                     "payload": result_payload if isinstance(result_payload, dict) else {},
                 }
             )
+        with automation_queue_lock:
+            for task in automation_queue_tasks:
+                if task.get("id") == automation_queue_current_task_id and _automation_queue_order_id(task) == order_id:
+                    task["worker_result_payload"] = result_payload if isinstance(result_payload, dict) else {}
+                    break
 
 
 def queue_crm_extension_manual_order_run(order_id, automation_key, reason="", request_payload=None):
@@ -14755,7 +15003,10 @@ def api_chrome_extension_bridge_process_order_status():
         return _extension_bridge_response({"success": True})
     if not _extension_bridge_request_is_local_extension():
         return _extension_bridge_response({"success": False, "message": "Chrome extension requests must use loopback."}, 403)
-    return _extension_bridge_response(get_crm_extension_order_status_payload())
+    order_id = request.args.get("order_id")
+    if order_id is not None and not re.fullmatch(r"\d{7}", order_id):
+        return _extension_bridge_response({"success": False, "message": "A seven-digit order ID is required."}, 409)
+    return _extension_bridge_response(get_crm_extension_order_status_payload(order_id, request.args.get("task_id")))
 
 
 @app.route("/api/extension/bridge/process-order/manual", methods=["POST", "OPTIONS"])
@@ -14774,7 +15025,7 @@ def api_chrome_extension_bridge_manual_process_order():
         data.get("reason"),
         data,
     )
-    payload = get_crm_extension_order_status_payload()
+    payload = get_crm_extension_order_status_payload(_normalize_crm_single_order_id(data.get("order_id")))
     payload.update(
         {
             "success": ok,

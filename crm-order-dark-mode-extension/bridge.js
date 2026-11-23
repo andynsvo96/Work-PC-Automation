@@ -104,8 +104,12 @@ export async function startLocalManualOrderProcessing(orderId, automation, reaso
   }
 }
 
-export async function getLocalOrderProcessingStatus() {
-  return bridgeFetch(LOCAL_ORDER_PROCESS_STATUS_ENDPOINT, {
+export async function getLocalOrderProcessingStatus(orderId = "", taskId = "") {
+  const query = new URLSearchParams();
+  if (orderId) query.set("order_id", String(orderId));
+  if (taskId) query.set("task_id", String(taskId));
+  const endpoint = LOCAL_ORDER_PROCESS_STATUS_ENDPOINT + (query.size ? `?${query}` : "");
+  return bridgeFetch(endpoint, {
     method: "GET"
   });
 }

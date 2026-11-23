@@ -3417,6 +3417,9 @@ function renderQueue(payload) {
     let summaryText = running
       ? `Running: ${running.label || 'Automation'}${runningDetail ? ` | ${runningDetail}` : ''} | ${queuedCount} waiting | ${idleCount} idle`
       : (queuedCount || idleCount ? `${queuedCount} waiting | ${idleCount} idle` : 'No waiting tasks');
+    if (Number(queuePayload.running_count || 0) > 1 || (running && running.worker_slot)) {
+      summaryText = `${Number(queuePayload.running_count || 0)} / ${Number(queuePayload.parallel_worker_limit || 1)} workers running | ${queuedCount} waiting | ${idleCount} idle`;
+    }
     if (queuePayload.persistence_error) summaryText += ` | ${queuePayload.persistence_error}`;
     summary.innerHTML = crmOrderTextHtml(summaryText);
   }
@@ -3446,7 +3449,7 @@ function renderQueue(payload) {
     const hasProcessingReport = task.task_type === 'crm.processing'
       && (status === 'completed' || (['failed', 'canceled', 'idle'].includes(status) && Array.isArray(taskReport.step_results)));
     const viewReportLabel = isReorder ? 'View orders' : 'View Report';
-    const viewReportControl = isReorder || hasProcessingReport || status === 'failed' || (taskReportRows.length > 0 && resultContext.retry_completed)
+    const viewReportControl = isReorder || hasProcessingReport || status === 'failed' || (taskReportRows.length > 0 && (resultContext.retry_completed || task.worker_slot))
       ? `<button class='secondary tiny' style='margin-left:8px' onclick="event.stopPropagation();openQueueTaskReport('${esc(task.id || '')}')">${esc(viewReportLabel)}</button>`
       : '';
     const draggable = status === 'queued';
@@ -3461,6 +3464,7 @@ function renderQueue(payload) {
     const runnerVisual = task.claimed_by_node && !sameSourceAndRunnerOS
       ? ` | ${platformIconHtml(task.runner_os || task.runner_icon, task.claimed_by_node)} Running on ${esc(task.claimed_by_node)}` : '';
     const advanced = task.advanced_summary ? ` | ${task.advanced_summary}` : '';
+    const worker = task.worker_slot ? ` | Worker ${Number(task.worker_slot)}` : '';
     const isProcessingTask = String(task.label || '').toLowerCase().includes('processing');
     const orderProgressLabel = isProcessingTask ? currentCrmProcessingOrderProgressLabel() : '';
     const rawMessageText = isProcessingTask
@@ -3487,7 +3491,7 @@ function renderQueue(payload) {
         <div class='queue-drag'>${dragGlyph}</div>
         <div ${canExpand ? `onclick="toggleQueueRunHistory('${esc(task.id || '')}')" style='cursor:pointer' title='Open repeat run history'` : ''}>
           <div class='queue-title' style='display:flex;align-items:center'><span class='queue-title-text'>${esc(pos)}${crmOrderTextHtml(task.label || 'Automation Task')}</span>${viewReportControl}</div>
-          <div class='queue-meta'>${esc(task.category || 'Automation')}${esc(details)}${esc(advanced)}${sourceVisual}${runnerVisual} | ${esc(queueTimeText(task))}${esc(progressText)}${esc(msg)}</div>
+          <div class='queue-meta'>${esc(task.category || 'Automation')}${esc(details)}${esc(advanced)}${esc(worker)}${sourceVisual}${runnerVisual} | ${esc(queueTimeText(task))}${esc(progressText)}${esc(msg)}</div>
         </div>
         <div class='queue-status ${esc(status)}'>${esc(queueStatusLabel(status))}</div>
         <div class='queue-actions'>${canCancel ? `<button class='danger queue-cancel-btn' title='Cancel task' aria-label='Cancel task' onclick="cancelQueueTask('${esc(task.id || '')}')">X</button>` : finishedControl}</div>

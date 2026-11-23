@@ -19,6 +19,9 @@ from _bootstrap import ensure_project_root_on_path
 
 ensure_project_root_on_path()
 
+from process_locks import exclusive_process_lock
+from runtime_paths import state_file
+
 from automation_runtime import (
     SCRIPT_DIR,
     configure_console_utf8,
@@ -312,7 +315,7 @@ def _wait_for_push_back_stock_confirmation(driver, order_id, timeout=None):
 def _run_shipping_bypasser_with_current_crm_driver(driver, order_id, dry_run=False):
     sanmar_driver = None
     report_items = []
-    with _shipping_bypasser_lock:
+    with _shipping_bypasser_lock, exclusive_process_lock(state_file("sanmar_cart.lock")):
         try:
             _publish_status(
                 f"Starting Shipping Bypasser for CRM order {order_id} after the shipment-cost Auto Ordering failure.",

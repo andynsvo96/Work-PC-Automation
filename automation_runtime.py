@@ -32,7 +32,7 @@ from automation_audit import log_automation_result
 from runtime_paths import SCREENSHOTS_DIR, result_file, state_file
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-RESULT_FILE = result_file("last_result.json")
+RESULT_FILE = os.environ.get("AUTOMATION_RESULT_FILE") or result_file("last_result.json")
 STATUS_FILE = state_file("automation_status.json")
 PLATFORM_PROFILE_ROOT = os.path.join(SCRIPT_DIR, "runtime", "browser_profiles")
 LEGACY_PROFILE_FALLBACK_ENV = "AUTOMATION_USE_LEGACY_PROFILES"

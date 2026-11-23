@@ -854,6 +854,35 @@ access and adds no permissions or local-app requests.
 
 ## Local app bridge and order tools
 
+### Parallel order workers — 1.8.7
+
+Supported single-order actions share the local app's existing 1–8 worker setting
+in **Settings > System & workers**: all five Cancel choices, Copyright Removal
+and Copyright Reachout, Complicated EMB (both routes), Oversize EMB, Address
+Validator, Product Separator, Order Goods, and Push Back. An arriving order can
+take a free slot while earlier orders are still working. Each order keeps its
+own queue entry, progress, report, cancellation, and receipt-preserving Retry.
+Only different orders run together. Work stops admitting new orders at an
+intervening unsupported queue entry, so it runs after the current workers drain.
+Stock Issue, Stock Swap, Extra Print Areas, Auto Splitter, Shipping Bypasser,
+Reorder Stock, dry runs, list runs, and scheduled/repeating tasks retain their existing
+queue execution. Push Back's vendor-cart fallback remains serialized.
+
+Cancellation/reachout slots reuse the existing Salesforce Worker Setup/Test
+profiles; sign in to any newly enabled slots there. Saved queue requests retain
+their exact reason and design/area selections. Restart recovery never replays an
+interrupted running action automatically; review it and use its original Retry.
+
+Order-page status is now scoped to its own queued request. Matching open order
+tabs, including duplicate tabs, refresh once after completion. Native edits,
+unsaved notes, staged All Tabs edits, and open dialogs defer the refresh until
+they close. Lost app connections are checked again automatically. Native All
+Orders Save All keeps its existing no-refresh behavior.
+
+Restart the local app and refresh the dashboard, reload **CRM Order Assistant
+1.8.7** at `chrome://extensions`, and refresh open CRM order pages. No new
+extension permission is needed. QGT spreadsheet support is unchanged.
+
 The extension checks `http://127.0.0.1:5123/api/extension/bridge/status` when its popup opens, so it can confirm the local Automation app is running. It never asks for, reads, or stores the Automation app PIN. The control bridge accepts only loopback Chrome-extension requests.
 
 The **Manual Process** menu beside **Send Invoice** lets you choose one automation for the open order: Address Validator, Product Separator, Auto Splitter, Order Goods, Shipping Bypasser, Push Back, or Extra Print Areas. Cancel, Reachout, and Stock Issue provide their own workflow menus. Each request targets only the current order and enters the local Automation queue, waiting for any active task. The order page shows queued, working, and review status beside Manual Process and refreshes after a task started from that page completes.

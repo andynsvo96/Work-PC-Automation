@@ -5,6 +5,9 @@ const ROOT_ATTRIBUTE = "data-crm-order-dark-mode";
 let themeEnabled = false;
 let refreshQueued = false;
 let orderProcessorPollTimer = null;
+let orderProcessorPollBusy = false;
+let orderProcessorRefreshPending = false;
+const orderProcessorDocumentOpenedAt = Date.now();
 
 function isSalesforceLink(value) {
   try {
@@ -123,12 +126,22 @@ function refreshOrderAfterProcessorCompletion(runtime) {
   const completedAt = String(runtime.completedAt || "");
   if (!orderId || !completedAt || String(runtime.orderId || "") !== orderId) return;
   const activeRunKey = `crm-order-process-active:${orderId}`;
-  if (!sessionStorage.getItem(activeRunKey)) return;
-  const refreshKey = `crm-order-process-refresh:${orderId}:${completedAt}`;
+  const active = sessionStorage.getItem(activeRunKey);
+  if (!active && (!runtime.taskId || Date.parse(completedAt) < orderProcessorDocumentOpenedAt)) return;
+  const refreshKey = `crm-order-process-refresh:${orderId}:${runtime.taskId || "legacy"}:${runtime.attempt || 0}:${completedAt}`;
   if (sessionStorage.getItem(refreshKey)) return;
-  sessionStorage.setItem(refreshKey, "1");
-  sessionStorage.removeItem(activeRunKey);
-  window.setTimeout(() => window.location.reload(), 300);
+  if (orderProcessorRefreshPending) return;
+  orderProcessorRefreshPending = true;
+  void chrome.runtime.sendMessage({ type: "crm-order-automation:can-refresh", orderId }).then(response => {
+    if (currentOrderId() !== orderId) return;
+    if (!response?.safe) {
+      setOrderProcessorResult(manualOrderProcessorButton(), "Automation finished. Refresh pending until current edits or dialogs are closed.", "progress");
+      return;
+    }
+    sessionStorage.setItem(refreshKey, "1");
+    sessionStorage.removeItem(activeRunKey);
+    window.location.reload();
+  }).catch(() => {}).finally(() => { orderProcessorRefreshPending = false; });
 }
 
 function setOrderProcessorResult(button, text, tone) {
@@ -182,24 +195,29 @@ function renderOrderProcessorStatus(button, response) {
 function beginOrderProcessorPolling(button) {
   stopOrderProcessorPolling();
   const poll = async () => {
+    if (!currentOrderId()) { stopOrderProcessorPolling(); return; }
+    if (orderProcessorPollBusy) return;
+    orderProcessorPollBusy = true;
     try {
-      const response = await chrome.runtime.sendMessage({ type: "crm-order-automation:status" });
+      const response = await chrome.runtime.sendMessage({ type: "crm-order-automation:status", orderId: currentOrderId() });
       if (!response || !response.success) {
         setOrderProcessorControlsDisabled(false);
+        if (!sessionStorage.getItem(`crm-order-process-active:${currentOrderId()}`)
+            && !/Queued|Working/.test(button.textContent)) return;
         button.textContent = "Manual Process: Review";
         button.title = (response && response.message) || "Could not read the local Automation app status.";
         setOrderProcessorResult(button, button.title, "error");
-        stopOrderProcessorPolling();
         return;
       }
-      if (!renderOrderProcessorStatus(button, response)) stopOrderProcessorPolling();
+      renderOrderProcessorStatus(button, response);
     } catch (_error) {
       setOrderProcessorControlsDisabled(false);
+      if (!sessionStorage.getItem(`crm-order-process-active:${currentOrderId()}`)
+          && !/Queued|Working/.test(button.textContent)) return;
       button.textContent = "Manual Process: Review";
       button.title = "Could not read the local Automation app status. Confirm the local app is running, then try again.";
       setOrderProcessorResult(button, button.title, "error");
-      stopOrderProcessorPolling();
-    }
+    } finally { orderProcessorPollBusy = false; }
   };
   void poll();
   orderProcessorPollTimer = setInterval(() => { void poll(); }, 2000);
@@ -207,13 +225,12 @@ function beginOrderProcessorPolling(button) {
 
 async function loadOrderProcessorStatus(button) {
   try {
-    const response = await chrome.runtime.sendMessage({ type: "crm-order-automation:status" });
-    if (response && response.success && renderOrderProcessorStatus(button, response)) {
-      beginOrderProcessorPolling(button);
-    }
+    const response = await chrome.runtime.sendMessage({ type: "crm-order-automation:status", orderId: currentOrderId() });
+    if (response && response.success) renderOrderProcessorStatus(button, response);
   } catch (_error) {
     // The local app may not be running yet; the menu remains available.
   }
+  beginOrderProcessorPolling(button);
 }
 
 function closeOrderProcessMenu(control) {

@@ -36,6 +36,25 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 
 ## CRM Order Assistant and Newer Workflows
 
+- **Parallel single-order Queue:** compatible live orders submitted one at a time can
+  start immediately in free worker slots, up to the existing **1–8 worker**
+  setting in **Settings > System & workers**. The pool supports Copyright,
+  Content Violation, Existing Designs, Outside Limit, and Unresponsive
+  cancellations; Copyright Removal/Reachout; both Complicated EMB routes;
+  Oversize EMB; Address Validator; Product Separator; Order Goods; and Push Back.
+  Different supported workflows share the same limit. Each order retains its
+  own Queue row, live progress, report, Cancel, and Retry. Requests for the same
+  order wait, and an intervening unsupported task drains the pool before running;
+  list runs and existing purchasing workflows retain their queue boundaries.
+  Push Back's SanMar fallback serializes cart access across workers. Cancellation
+  and reachout slots reuse the profiles in Salesforce Worker Setup/Test.
+  **CRM Order Assistant 1.8.7** polls each order independently and refreshes open
+  matching order tabs after completion, including partial failures. Refreshes
+  wait for native edits, draft notes, and dialogs to close; native Save All keeps
+  its existing behavior. Restart the local app, refresh the dashboard, reload the
+  extension at `chrome://extensions`, and refresh open CRM pages. QGT support and
+  existing workflow recovery receipts remain available.
+
 - **Exclude orders during editing:** CRM Order Assistant **1.8.6** lets you uncheck an order during All Orders editing, including after validation, rescan, or pre-save conflicts, and continue with the remaining orders and the same draft. Apply, Save All, and Cancel skip excluded orders, leaving their native editors untouched for manual review. Interrupted saves retain their review safeguards. Resolve existing native edits before reloading the extension at `chrome://extensions`, then reopen the popup or expanded editor. No app restart or order-page refresh is needed. See the [exclusion guide](crm-order-dark-mode-extension/README.md#exclude-orders-during-batch-editing---186).
 
 - **Compact automation dialogs:** CRM Order Assistant **1.8.5** removes workflow descriptions and explanatory hints from order-page automation popups. Titles, controls, product details, field labels, selection/scope indicators, and validation/error messages remain. Reload the extension at `chrome://extensions` and refresh open CRM order pages; no app restart is needed.

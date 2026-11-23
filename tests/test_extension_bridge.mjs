@@ -155,3 +155,15 @@ test("status checks retain their short timeout", async (t) => {
   assert.equal(result.connected, false);
   assert.match(result.message, /in time/);
 });
+
+test("order status queries identify the exact order and optional queue task", async (t) => {
+  const urls = [];
+  t.mock.method(globalThis, "fetch", async url => {
+    urls.push(url);
+    return { ok: true, json: async () => ({ success: true }) };
+  });
+  await bridge.getLocalOrderProcessingStatus("1000001", "task-a");
+  await bridge.getLocalOrderProcessingStatus("1000002");
+  assert.equal(urls[0], `${bridge.LOCAL_ORDER_PROCESS_STATUS_ENDPOINT}?order_id=1000001&task_id=task-a`);
+  assert.equal(urls[1], `${bridge.LOCAL_ORDER_PROCESS_STATUS_ENDPOINT}?order_id=1000002`);
+});

@@ -77,6 +77,21 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.driver.find_element(By.CSS_SELECTOR, ".edit-btn").click()
         WebDriverWait(self.driver, 5).until(lambda d: d.find_elements(By.ID, "crm-edit-design-previews"))
 
+    def test_automation_refresh_guard_preserves_native_edits_notes_and_dialogs(self):
+        self.show()
+        script = (EXTENSION / "order-refresh.mjs").read_text(encoding="utf-8").replace("export function", "function")
+        def safe():
+            return self.driver.execute_script(script + "\nreturn canRefreshOrderPage('1234567');")
+        self.assertTrue(safe())
+        self.edit()
+        self.assertFalse(safe())
+        self.driver.execute_script("orderScope.saveOrder(); resource.addSalesNotes = 'Keep this draft';")
+        self.assertFalse(safe())
+        self.driver.execute_script("resource.addSalesNotes = ''; const dialog = document.createElement('div'); dialog.id = 'refresh-dialog'; dialog.setAttribute('role', 'dialog'); dialog.textContent = 'Open input'; document.body.append(dialog);")
+        self.assertFalse(safe())
+        self.driver.execute_script("document.getElementById('refresh-dialog').remove();")
+        self.assertTrue(safe())
+
     def test_previews_remain_at_bottom_and_follow_highlighted_design_without_model_edits(self):
         self.show()
         original = self.driver.execute_script("return structuredClone(resource);")

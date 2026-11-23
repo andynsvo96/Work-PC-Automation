@@ -23,6 +23,8 @@ _SAFE_UNTRACKED_SOURCE_ROOTS = (
     "crm-order-dark-mode-extension/",
 )
 _SAFE_UNTRACKED_SOURCE_PATHS = {
+    "queue_order_work.py",
+    "process_locks.py",
     "shipping_bypasser_product_color_mappings.json",
 }
 _SAFE_UNTRACKED_SOURCE_EXTENSIONS = {
