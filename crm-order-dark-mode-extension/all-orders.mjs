@@ -1,4 +1,5 @@
 import { SESSION_PREFIX, emptyDraft, normalizeDraft, hasChanges, orderIdFromUrl, canChangeOrderSelection } from "./all-orders-model.mjs";
+import { assertStockIdle, runWindowOrderAll } from "./window-order-all.mjs";
 
 export const EDITOR_PREFIX = "crm-all-orders-editor:";
 const ownsUnfinishedEditor = order => Boolean(order.original || order.expected) && !["saved", "verified", "canceled"].includes(order.status);
@@ -93,12 +94,22 @@ export class AllOrdersController {
       // A restarted service worker must never resume a write whose response was lost.
       if (state.busy) {
         state.busy = false;
-        state.phase = "review";
-        state.message = "The batch was interrupted. Review the order pages or use Check save status. No edits or saves will be repeated automatically.";
-        for (const order of state.orders.filter(order => order.selected && !["saved", "verified", "canceled"].includes(order.status))) {
-          order.status = "review";
-          order.message = "Interrupted; review this order before starting another batch.";
+        if (state.operation === "order-all") {
+          state.stock.phase = "review";
+          state.stock.message = "Window stock ordering was interrupted. Review CRM stock before retrying; no requests will be repeated automatically.";
+          for (const order of state.stock.orders.filter(order => ["reading", "ready", "submitting"].includes(order.status))) {
+            order.status = "review";
+            order.message = "Interrupted; check this order's stock in CRM.";
+          }
+        } else {
+          state.phase = "review";
+          state.message = "The batch was interrupted. Review the order pages or use Check save status. No edits or saves will be repeated automatically.";
+          for (const order of state.orders.filter(order => order.selected && !["saved", "verified", "canceled"].includes(order.status))) {
+            order.status = "review";
+            order.message = "Interrupted; review this order before starting another batch.";
+          }
         }
+        delete state.operation;
         await this.persist(state);
       }
       this.states.set(windowId, state);
@@ -157,30 +168,38 @@ export class AllOrdersController {
       await this.persist(state);
       return structuredClone(state);
     }
-    if (!["scan", "prepare", "preview", "apply", "save", "verify", "cancel"].includes(action)) throw Error("Unknown All Orders action.");
+    if (!["scan", "prepare", "preview", "apply", "save", "verify", "cancel", "order-all"].includes(action)) throw Error("Unknown All Orders action.");
+    if (action === "order-all") {
+      await assertStockIdle(this, state);
+      state.stock = { id: this.id(), phase: "ordering", orders: [], message: "Reading stock on all orders in this window…" };
+    }
     if (action === "prepare") {
       if (!["scanned", "prepared"].includes(state.phase)) throw Error("Scan this window before entering Edit Order.");
+      await assertStockIdle(this, state);
       await this.checkOtherBatches(state);
       state.batchId ||= this.id();
     }
     if (["preview", "apply"].includes(action) && !["prepared", "previewed"].includes(state.phase)) throw Error("Enter Edit Order on every included order first.");
     if (["preview", "apply"].includes(action) && !hasChanges(state.draft)) throw Error("Choose a print-area change or enter a new note.");
     if (action === "save" && state.phase !== "applied") throw Error("Apply and review the changes before Save All.");
-    if (action !== "scan" && !state.orders.some(order => order.selected)) throw Error("Select at least one CRM order.");
+    if (!["scan", "order-all"].includes(action) && !state.orders.some(order => order.selected)) throw Error("Select at least one CRM order.");
     state.busy = true;
-    state.message = ({ scan: "Reading orders in this window…", prepare: "Opening native Edit Order on the included orders…",
+    state.operation = action;
+    if (action !== "order-all") state.message = ({ scan: "Reading orders in this window…", prepare: "Opening native Edit Order on the included orders…",
       preview: "Validating every order…", apply: "Applying changes to the native editors…", save: "Saving orders through CRM…",
       verify: "Checking saved orders without submitting any changes…", cancel: "Canceling unsaved edits through CRM…" })[action];
     await this.persist(state);
     const task = Promise.resolve().then(() => this.run(state, action)).catch(error => {
-      state.phase = "review";
-      state.message = error.message;
+      if (action === "order-all") { state.stock.phase = "review"; state.stock.message = error.message; }
+      else { state.phase = "review"; state.message = error.message; }
     }).finally(async () => {
       state.busy = false;
+      delete state.operation;
       try { await this.persist(state); } finally { this.running.delete(state.windowId); }
     }).catch(error => {
-      state.phase = "review";
-      state.message = `The batch needs review because its status could not be retained: ${error.message}`;
+      const message = `The batch needs review because its status could not be retained: ${error.message}`;
+      if (action === "order-all") { state.stock.phase = "review"; state.stock.message = message; }
+      else { state.phase = "review"; state.message = message; }
     });
     this.running.set(state.windowId, task);
     // Reply now: the operation belongs to the service worker, not the popup.
@@ -193,6 +212,7 @@ export class AllOrdersController {
     const stored = await this.api.storage.session.get(null);
     for (const [name, other] of Object.entries(stored)) {
       if (!name.startsWith(SESSION_PREFIX) || other.windowId === state.windowId) continue;
+      if (other.busy && other.operation === "order-all") throw Error("Wait for Order All in the other Chrome window to finish before editing orders.");
       try { await this.api.windows.get(other.windowId); } catch (_) { continue; }
       const overlap = this.selected(state).find(order => other.orders.some(row => row.orderId === order.orderId &&
         (ownsUnfinishedEditor(row) || (row.selected && other.phase !== "complete" &&
@@ -318,6 +338,7 @@ export class AllOrdersController {
   }
 
   async run(state, action) {
+    if (action === "order-all") return runWindowOrderAll(this, state);
     if (action === "scan") return this.scan(state);
     const orders = this.selected(state);
     if (action === "prepare") {

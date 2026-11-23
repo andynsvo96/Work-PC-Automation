@@ -143,6 +143,7 @@ function renderButtons() {
   const selected = state.orders.filter(order => order.selected);
   const editable = ["prepared", "previewed"].includes(state.phase);
   byId("scan").disabled = busy;
+  byId("order-all").disabled = busy;
   byId("edit").disabled = busy || !selected.length || !["scanned", "prepared"].includes(state.phase) || selected.every(order => order.status === "prepared");
   byId("apply").disabled = busy || !selected.length || !editable || !hasChanges(state.draft) || selected.some(order => order.status !== "prepared");
   byId("save").disabled = busy || !selected.length || state.phase !== "applied";
@@ -152,6 +153,37 @@ function renderButtons() {
   byId("add").disabled = busy || !selected.length || !editable;
   byId("expand").disabled = localRequest;
   for (const kind of noteKinds) byId("note-" + kind).disabled = busy || !selected.length || !editable;
+}
+function orderLink(order) {
+  const link = node("a", "#" + order.orderId);
+  link.href = `${CRM_ORIGIN}/order/${order.orderId}`;
+  link.addEventListener("click", async event => {
+    event.preventDefault();
+    try {
+      const tab = await chrome.tabs.get(order.tabId);
+      if (tab.windowId !== windowId || orderIdFromUrl(tab.url) !== order.orderId) throw Error("This order tab moved or navigated away. Review the order in its current window.");
+      await chrome.tabs.update(order.tabId, { active: true });
+      if (expanded) {
+        const source = await chrome.windows.get(windowId);
+        await chrome.windows.update(windowId, { focused: true, ...(source.state === "minimized" ? { state: "normal" } : {}) });
+      }
+    } catch (cause) { error(cause.message); }
+  });
+  return link;
+}
+function renderStock() {
+  byId("stock").hidden = !state.stock;
+  if (!state.stock) return;
+  byId("stock-status").textContent = state.stock.message;
+  byId("stock-status").classList.toggle("error", state.stock.phase === "review");
+  const list = byId("stock-list"); list.replaceChildren();
+  for (const order of state.stock.orders) {
+    const row = node("div", undefined, "stock-row " + order.status);
+    const details = node("div", order.message);
+    for (const entry of order.entries || []) details.append(node("p", `Tab ${entry.tab}: ${entry.message}`, entry.state === "review" ? "error" : ""));
+    row.append(orderLink(order), details);
+    list.append(row);
+  }
 }
 function render() {
   if (!state) return;
@@ -166,23 +198,11 @@ function render() {
     check.setAttribute("aria-label", "Include order " + order.orderId);
     check.disabled = localRequest || !canChangeOrderSelection(state, order, !order.selected);
     check.addEventListener("change", () => action("select", { orderId: order.orderId, selected: check.checked }));
-    const link = node("a", "#" + order.orderId);
-    link.href = `${CRM_ORIGIN}/order/${order.orderId}`;
-    link.addEventListener("click", async event => {
-      event.preventDefault();
-      try {
-        const tab = await chrome.tabs.get(order.tabId);
-        if (tab.windowId !== windowId || orderIdFromUrl(tab.url) !== order.orderId) throw Error("This order tab moved or navigated away. Scan this window again after resolving unsaved edits.");
-        await chrome.tabs.update(order.tabId, { active: true });
-        if (expanded) {
-          const source = await chrome.windows.get(windowId);
-          await chrome.windows.update(windowId, { focused: true, ...(source.state === "minimized" ? { state: "normal" } : {}) });
-        }
-      } catch (cause) { error(cause.message); }
-    });
+    const link = orderLink(order);
     if (order.duplicates.length) link.append(node("span", `${order.duplicates.length} duplicate tab${order.duplicates.length === 1 ? "" : "s"}`, "duplicate-label"));
     row.append(check, link, node("span", order.message)); list.append(row);
   }
+  renderStock();
   byId("editor").hidden = !["prepared", "previewed", "applied", "review"].includes(state.phase) || !state.orders.some(order => order.snapshot && order.selected);
   renderAreas();
   for (const kind of noteKinds) {
@@ -193,7 +213,7 @@ function render() {
   document.querySelector(".orders-scroll").scrollTop = scroll;
 }
 
-for (const [id, name] of Object.entries({ scan: "scan", edit: "prepare", expand: "expand", apply: "apply", save: "save", cancel: "cancel", verify: "verify" })) {
+for (const [id, name] of Object.entries({ scan: "scan", edit: "prepare", "order-all": "order-all", expand: "expand", apply: "apply", save: "save", cancel: "cancel", verify: "verify" })) {
   byId(id).addEventListener("click", () => action(name));
 }
 byId("add").addEventListener("click", () => {

@@ -49,6 +49,27 @@ function fixture() {
       assert.equal(typeof func, "function");
       const page = pages.get(target.tabId);
       if (target.documentIds) assert.deepEqual(target.documentIds, [page.doc]);
+      if (func.toString().includes("CRMOrderAllPage")) {
+        events.push(["stock-" + command.op, page.id]);
+        const skipReason = page.editMode ? "In Edit Order; stock was skipped." : page.stockSkipReason || "";
+        const targets = page.stockTargets || Array.from({ length: page.snapshot.tabCount }, (_, i) => ({ id: String(100 + i), tab: i + 1, fingerprint: "stock-" + i }));
+        if (command.op === "order") {
+          assert.ok(command.targets.every(target => Object.values(storage).some(state => state.stockReceipts?.some(entry =>
+            entry.orderId === page.orderId && entry.id === target.id && entry.fingerprint === target.fingerprint && entry.state === "submitted"))), "journal every stock intent before native submission");
+          if (page.stockWait) await page.stockWait;
+          if (page.stockLostResponse) throw Error("Stock response lost");
+          if (skipReason || command.targets.some(expected => !targets.some(target => target.id === expected.id && target.fingerprint === expected.fingerprint))) {
+            return [{ frameId: 0, documentId: page.doc, result: { success: false, orderId: page.orderId, notSubmitted: true, message: skipReason || "Stock changed" } }];
+          }
+          page.stockCalls = (page.stockCalls || 0) + 1;
+        }
+        const result = { success: true, adapterVersion: 1, orderId: page.orderId, skipReason, targets, confirmed: page.stockConfirmed || [],
+          designs: (page.stockDesigns || targets).map(({ id, fingerprint }) => ({ id, fingerprint })),
+          phase: page.stockFailure ? "review" : "confirmed", entries: command.targets?.map(target => ({ ...target,
+            state: page.stockFailure && target.tab === 1 ? "review" : "confirmed", message: page.stockFailure && target.tab === 1 ? "No stock available" : "CRM confirmed stock ordered." })) };
+        const reply = { frameId: page.frameId || 0, documentId: page.doc, result: page.stockAdapterMissing ? null : result };
+        return page.ambiguous && target.allFrames ? [reply, { ...reply, frameId: 9 }] : [reply];
+      }
       events.push([command.op, page.id]);
       let result;
       if (command.op === "inspect") result = { success: true, adapterVersion: page.legacy ? 1 : 2, orderId: page.orderId, editMode: page.editMode, pending: false, busy: false, snapshot: page.snapshot };
@@ -436,6 +457,181 @@ test("the new adapter is CRM-scoped and exposes no page-event or local-app comma
   const adapter = manifest.content_scripts.find(entry => entry.js.includes("all-orders-page.js"));
   assert.deepEqual(adapter.matches, [CRM_ORIGIN + "/*"]);
   assert.equal(adapter.world, "MAIN"); assert.equal(adapter.all_frames, true);
-  const sources = await Promise.all(["all-orders-page.js", "all-orders.mjs"].map(name => readFile(new URL(name, base), "utf8")));
+  const sources = await Promise.all(["all-orders-page.js", "all-orders.mjs", "window-order-all.mjs", "order-all.js"].map(name => readFile(new URL(name, base), "utf8")));
   assert.doesNotMatch(sources.join("\n"), /(?:fetch\s*\(|XMLHttpRequest|addEventListener\s*\(\s*["']message|127\.0\.0\.1|startLocalManualOrderProcessing)/);
+});
+
+test("window Order All includes unchecked and single-product orders once, without changing the editor draft", async () => {
+  const f = fixture(); await f.run("scan");
+  await f.request("select", { orderId: "1000002", selected: false });
+  await f.draft();
+  const before = await f.request("get");
+  const state = await f.run("order-all");
+  assert.equal(state.stock.phase, "complete");
+  assert.deepEqual(state.stock.orders.map(order => order.orderId), ["1000001", "1000002"]);
+  assert.equal(f.pages.get(1).stockCalls, 1); assert.equal(f.pages.get(2).stockCalls, 1);
+  assert.equal(f.pages.get(3).stockCalls, undefined); assert.equal(f.pages.get(4).stockCalls, undefined);
+  for (const field of ["phase", "orders", "draft", "revision", "message"]) assert.deepEqual(state[field], before[field]);
+  assert.equal(state.stockReceipts.length, 4);
+  assert.equal(f.events.filter(([op]) => ["save", "begin", "reload"].includes(op)).length, 0);
+});
+
+test("window stock skips primary and duplicate editors while preserving an active editing batch", async () => {
+  for (const editingTab of [1, 4]) {
+    const f = fixture(); await f.run("scan"); await f.run("prepare"); await f.draft();
+    f.pages.get(1).editMode = false; f.pages.get(2).editMode = false; f.pages.get(editingTab).editMode = true;
+    const before = await f.request("get");
+    const state = await f.run("order-all");
+    assert.equal(state.stock.orders[0].status, "skipped");
+    assert.match(state.stock.orders[0].message, /Edit Order/);
+    assert.equal(state.stock.orders[1].status, "confirmed");
+    assert.equal(f.pages.get(editingTab).editMode, true);
+    assert.deepEqual(state.draft, before.draft); assert.deepEqual(state.orders, before.orders);
+    assert.equal(state.phase, "prepared");
+  }
+});
+
+test("window stock starts every ready order before waiting and journals the whole batch first", async () => {
+  const f = fixture();
+  let finish;
+  f.pages.get(1).stockWait = new Promise(resolve => { finish = resolve; });
+  await f.request("order-all");
+  for (let i = 0; i < 30 && !f.pages.get(2).stockCalls; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.pages.get(2).stockCalls, 1);
+  const state = await f.request("get");
+  assert.equal(state.busy, true); assert.equal(state.stockReceipts.length, 4);
+  await assert.rejects(f.request("order-all"), /Wait for/);
+  await assert.rejects(f.request("order-all", { windowId: 22 }), /other Chrome window/);
+  finish(); await f.controller.running.get(11);
+  assert.equal((await f.request("get")).stock.phase, "complete");
+});
+
+test("window receipts protect changed duplicate-tab choices, other windows, and allow newly added quantities", async () => {
+  const f = fixture(); await f.run("order-all");
+  f.pages.get(1).active = false; f.pages.get(4).active = true;
+  assert.ok((await f.run("order-all")).stock.orders.every(order => order.status === "skipped"));
+  assert.equal(f.pages.get(4).stockCalls, undefined);
+  const other = f.pages.get(3); other.orderId = "1000001"; other.url = CRM_ORIGIN + "/order/1000001";
+  assert.equal((await f.run("order-all", { windowId: 22 })).stock.orders[0].status, "skipped");
+  f.pages.get(4).stockTargets = [{ id: "100", tab: 1, fingerprint: "new-quantity" }];
+  f.pages.get(1).stockTargets = structuredClone(f.pages.get(4).stockTargets);
+  const state = await f.run("order-all");
+  assert.equal(state.stock.orders[0].status, "confirmed");
+  assert.equal(f.pages.get(4).stockCalls, 1);
+});
+
+test("window stock honors an earlier per-order purchase recorded in another duplicate tab", async () => {
+  const f = fixture();
+  f.pages.get(4).stockConfirmed = [{ id: "100", fingerprint: "stock-0" }];
+  const state = await f.run("order-all");
+  assert.equal(state.stock.orders[0].status, "skipped");
+  assert.equal(f.pages.get(1).stockCalls, undefined);
+  assert.equal(f.pages.get(2).stockCalls, 1);
+  const other = f.pages.get(3); other.orderId = "1000001"; other.url = CRM_ORIGIN + "/order/1000001";
+  assert.equal((await f.run("order-all", { windowId: 22 })).stock.orders[0].status, "skipped");
+  assert.equal(other.stockCalls, undefined);
+});
+
+test("conflicting duplicate stock and a purchase completed after scanning stop before submission", async () => {
+  const f = fixture();
+  f.pages.get(4).stockTargets = [{ id: "100", tab: 1, fingerprint: "different-quantity" }];
+  assert.match((await f.run("order-all")).stock.orders[0].message, /Stock differs between duplicate tabs/);
+  assert.equal(f.pages.get(1).stockCalls, undefined);
+  const g = fixture(); const save = g.api.storage.session.set;
+  g.api.storage.session.set = async values => {
+    await save(values);
+    if (values[SESSION_PREFIX + 11]?.stockReceipts?.length) g.pages.get(4).stockConfirmed = [{ id: "100", fingerprint: "stock-0" }];
+  };
+  const state = await g.run("order-all");
+  assert.equal(g.pages.get(1).stockCalls, undefined);
+  assert.equal(state.stockReceipts[0].state, "not_sent");
+  assert.match(state.stock.orders[0].message, /ordered after the scan/);
+});
+
+test("lost window stock responses retain review receipts across reopening and never resubmit", async () => {
+  const f = fixture(); f.pages.get(1).stockLostResponse = true;
+  const state = await f.run("order-all");
+  assert.equal(state.stock.orders[0].status, "review");
+  assert.equal(state.stock.orders[1].status, "confirmed");
+  const restarted = new AllOrdersController(f.api);
+  await f.run("scan", {}, restarted);
+  const before = f.events.filter(([op]) => op === "stock-order").length;
+  const next = await f.run("order-all", {}, restarted);
+  assert.match(next.stock.orders[0].message, /previous window stock request/);
+  assert.equal(f.events.filter(([op]) => op === "stock-order").length, before);
+});
+
+test("interrupted window stock preserves shared edits and never resumes requests on service-worker restart", async () => {
+  const f = fixture(); await f.run("scan"); await f.run("prepare"); await f.draft();
+  const saved = f.storage[SESSION_PREFIX + 11];
+  saved.busy = true; saved.operation = "order-all";
+  saved.stock = { id: "interrupted", phase: "ordering", orders: [{ orderId: "1000001", status: "submitting" }] };
+  saved.stockReceipts = [{ orderId: "1000001", id: "100", fingerprint: "stock-0", state: "submitted" }];
+  const before = f.events.length;
+  const restarted = new AllOrdersController(f.api);
+  const state = await f.request("get", {}, restarted);
+  assert.equal(state.busy, false); assert.equal(state.phase, "prepared");
+  assert.equal(state.stock.phase, "review"); assert.equal(state.stock.orders[0].status, "review");
+  assert.equal(state.draft.notes.sales, "Shared note");
+  assert.equal(state.stockReceipts[0].state, "submitted");
+  assert.equal(f.events.length, before);
+});
+
+test("sleeping, ambiguous, missing-adapter and moved order tabs cannot submit stock", async () => {
+  for (const flag of ["frozen", "ambiguous", "stockAdapterMissing"]) {
+    const f = fixture(); f.pages.get(1)[flag] = true;
+    const state = await f.run("order-all");
+    assert.equal(state.stock.orders[0].status, "review", flag);
+    assert.equal(f.pages.get(1).stockCalls, undefined);
+    assert.equal(f.pages.get(2).stockCalls, 1);
+  }
+  const f = fixture();
+  const save = f.api.storage.session.set;
+  f.api.storage.session.set = async values => {
+    await save(values);
+    if (values[SESSION_PREFIX + 11]?.stockReceipts?.length) f.pages.get(1).windowId = 22;
+  };
+  const state = await f.run("order-all");
+  assert.equal(state.stock.orders[0].status, "review");
+  assert.equal(state.stockReceipts[0].state, "not_sent");
+  assert.equal(f.pages.get(1).stockCalls, undefined);
+});
+
+test("a duplicate entering edit mode after the scan blocks that order before native submission", async () => {
+  const f = fixture(); const save = f.api.storage.session.set;
+  f.api.storage.session.set = async values => {
+    await save(values);
+    if (values[SESSION_PREFIX + 11]?.stockReceipts?.length) f.pages.get(4).editMode = true;
+  };
+  const state = await f.run("order-all");
+  assert.equal(state.stock.orders[0].status, "review");
+  assert.equal(state.stockReceipts[0].state, "not_sent");
+  assert.equal(f.pages.get(1).stockCalls, undefined);
+  assert.equal(f.pages.get(2).stockCalls, 1);
+});
+
+test("window stock preserves partial confirmations and refuses retries of orders needing review", async () => {
+  const f = fixture(); f.pages.get(2).stockFailure = true;
+  const state = await f.run("order-all");
+  assert.equal(state.stock.orders[1].status, "review");
+  assert.deepEqual(state.stock.orders[1].entries.map(entry => entry.state), ["review", "confirmed", "confirmed"]);
+  await f.run("order-all");
+  assert.equal(f.pages.get(1).stockCalls, 1); assert.equal(f.pages.get(2).stockCalls, 1);
+});
+
+test("window stock cannot bypass unfinished editor ownership or journal-storage failures", async () => {
+  const f = fixture(); await f.run("scan"); await f.run("prepare");
+  const other = f.pages.get(3); other.orderId = "1000001"; other.url = CRM_ORIGIN + "/order/1000001";
+  assert.match((await f.run("order-all", { windowId: 22 })).stock.orders[0].message, /unfinished All Orders editor/);
+  assert.equal(other.stockCalls, undefined);
+  f.windows.delete(11);
+  assert.equal((await f.run("order-all", { windowId: 22 })).stock.orders[0].status, "confirmed", "closed editor windows no longer reserve orders");
+  const g = fixture(); const save = g.api.storage.session.set;
+  g.api.storage.session.set = async values => {
+    if (values[SESSION_PREFIX + 11]?.stockReceipts?.length) throw Error("Storage unavailable");
+    await save(values);
+  };
+  const state = await g.run("order-all");
+  assert.equal(state.stock.phase, "review");
+  assert.equal(g.events.filter(([op]) => op === "stock-order").length, 0);
 });

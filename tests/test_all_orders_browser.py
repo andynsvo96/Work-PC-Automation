@@ -80,7 +80,7 @@ class AllOrdersBrowserTests(unittest.TestCase):
         self.driver.switch_to.default_content()
         self.driver.set_window_size(1100, 900)
         self.driver.get(self.url + "/order/1000001")
-        self.driver.execute_script("localStorage.clear();")
+        self.driver.execute_script("localStorage.clear(); sessionStorage.clear();")
         self.driver.refresh()
         self.wait = WebDriverWait(self.driver, 12)
         self.wait.until(lambda d: d.execute_script("return !!window.fixtureScope;"))
@@ -197,6 +197,40 @@ class AllOrdersBrowserTests(unittest.TestCase):
     def click_wait(self, button_id, text):
         self.driver.find_element(By.ID, button_id).click()
         self.wait.until(lambda d: text in d.find_element(By.ID, "orders-status").text)
+
+    def test_popup_orders_single_and_multi_tab_orders_in_its_window_and_keeps_results_after_reopening(self):
+        self.driver.get(self.url + "/harness")
+        self.wait.until(lambda d: d.execute_script("return !!window.fixtureApi;"))
+        self.popup()
+        self.driver.find_element(By.CSS_SELECTOR, '[aria-label="Include order 1000002"]').click()
+        self.wait.until(lambda d: d.find_element(By.ID, "orders-count").text == "1 of 2 orders included")
+        self.driver.find_element(By.ID, "orders-order-all").click()
+        self.wait.until(lambda d: "2 ordered, 0 skipped, 0 need review" in d.find_element(By.ID, "orders-stock-status").text)
+        self.assertEqual(len(self.driver.find_elements(By.CSS_SELECTOR, ".stock-row.confirmed")), 2)
+        self.driver.save_screenshot(str(self.artifacts / "popup-window-stock.png"))
+        self.driver.switch_to.default_content()
+        for tab, expected in ((1, ['100']), (2, ['100', '101']), (3, [])):
+            self.assertEqual(self.driver.execute_script("return document.getElementById('tab-'+arguments[0]).contentWindow.fixtureStockCalls;", tab), expected)
+        self.driver.execute_script("reopenPopup();")
+        self.popup()
+        self.assertIn("2 ordered", self.driver.find_element(By.ID, "orders-stock-status").text)
+        self.driver.find_element(By.ID, "orders-order-all").click()
+        self.wait.until(lambda d: "0 ordered, 2 skipped" in d.find_element(By.ID, "orders-stock-status").text)
+        self.assertEqual(self.driver.find_element(By.ID, "orders-count").text, "1 of 2 orders included")
+
+    def test_popup_window_stock_preserves_native_edits_and_shared_note_drafts(self):
+        self.driver.get(self.url + "/harness")
+        self.wait.until(lambda d: d.execute_script("return !!window.fixtureApi;"))
+        self.popup()
+        self.click_wait("orders-edit", "Choose your shared edits")
+        self.driver.find_element(By.ID, "orders-note-sales").send_keys("Keep this draft while ordering")
+        self.driver.find_element(By.ID, "orders-order-all").click()
+        self.wait.until(lambda d: "0 ordered, 2 skipped" in d.find_element(By.ID, "orders-stock-status").text)
+        self.assertEqual(self.driver.find_element(By.ID, "orders-note-sales").get_attribute("value"), "Keep this draft while ordering")
+        self.assertTrue(self.driver.find_element(By.ID, "orders-note-sales").is_enabled())
+        self.driver.switch_to.default_content()
+        for tab in (1, 2):
+            self.assertEqual(self.driver.execute_script("const win=document.getElementById('tab-'+arguments[0]).contentWindow;return [win.fixtureScope.editMode,win.fixtureStockCalls,win.fixtureSaveCount];", tab), [True, [], 0])
 
     def test_popup_complete_workflow_and_reopening_preserve_drafts_and_window_scope(self):
         self.driver.get(self.url + "/harness")

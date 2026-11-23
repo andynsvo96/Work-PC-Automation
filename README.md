@@ -36,6 +36,18 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 
 ## CRM Order Assistant and Newer Workflows
 
+- **Order All in Window:** CRM Order Assistant **1.8.8** adds a toolbar-popup button
+  that orders eligible stock for all unique CRM orders open in the current Chrome
+  window, including single-product orders and unchecked editing-list entries.
+  Orders in Edit Order, including editing duplicate tabs, are skipped. The action
+  reuses native Order Goods, preserves editing drafts, skips locked/manual/already
+  ordered stock, and lists per-order and product-tab results. Confirmed unchanged
+  stock is protected across duplicate tabs and window batches; uncertain requests
+  require CRM review. Each fully confirmed order schedules one guarded refresh of
+  its chosen tab. Reload the extension at `chrome://extensions` and refresh open
+  CRM pages; no app restart or new permission is needed. See the
+  [window ordering guide](crm-order-dark-mode-extension/README.md#order-all-in-window---188).
+
 - **Parallel single-order Queue:** compatible live orders submitted one at a time can
   start immediately in free worker slots, up to the existing **1–8 worker**
   setting in **Settings > System & workers**. The pool supports Copyright,

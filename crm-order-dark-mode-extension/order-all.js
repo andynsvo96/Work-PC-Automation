@@ -11,6 +11,7 @@
   let inFlight = false;
   let queued = false;
   let message = "";
+  let receiptReadError = false;
   const receiptKey = id => `crm-order-all-native:${id}`;
 
   function orderId() {
@@ -38,8 +39,8 @@
       design && String(design.crudAction || "").trim().toLowerCase() !== "d").length > 1;
   }
 
-  function targets(ctx) {
-    if (!ctx?.details || !hasMultipleDesigns(ctx) || ctx.scope.editMode || ctx.scope.transfersOnly || ctx.scope.savingOrder) return [];
+  function targets(ctx, allowSingle = false) {
+    if (!ctx?.details || (!allowSingle && !hasMultipleDesigns(ctx)) || ctx.scope.editMode || ctx.scope.transfersOnly || ctx.scope.savingOrder) return [];
     const found = new Map();
     for (const button of ctx.details.querySelectorAll('.order-inventory button[ng-click="orderGoods(provider);"]')) {
       if (button.disabled || button.getAttribute("aria-disabled") === "true") continue;
@@ -81,6 +82,60 @@
 
   function save(record) { sessionStorage.setItem(receiptKey(record.orderId), JSON.stringify(record)); }
 
+  function loadReceipt(ctx) {
+    if (currentId === ctx.id) return;
+    if (inFlight) throw Error("Stock requests for the previous order are still pending.");
+    currentId = ctx.id;
+    receipt = null;
+    message = "";
+    receiptReadError = false;
+    try {
+      const stored = sessionStorage.getItem(receiptKey(ctx.id));
+      if (stored) {
+        const record = JSON.parse(stored);
+        if (!batch.valid(record, ctx.id)) throw new Error();
+        receipt = batch.resume(record);
+        save(receipt);
+      }
+    } catch (_) {
+      receiptReadError = true;
+      message = "Could not read the previous stock request. Check CRM stock before ordering again.";
+    }
+  }
+
+  function pendingDraftOrDialog(ctx) {
+    return ["addSalesNotes", "addProductionNotes", "addArtNotes"].some(name => String(ctx.resource[name] || "").trim()) ||
+      Boolean(window.__crmAllTabsHasPendingChanges?.()) ||
+      [...document.querySelectorAll('.modal, [role="dialog"], .ngdialog-content')].some(node =>
+        node.getClientRects().length && getComputedStyle(node).visibility !== "hidden");
+  }
+
+  function stockSkipReason(ctx) {
+    if (ctx.scope.editMode) return "In Edit Order; stock was skipped.";
+    if (ctx.scope.transfersOnly) return "Transfers-only order; stock was skipped.";
+    if (ctx.scope.saving || ctx.scope.savingOrder || ctx.scope.fileUploading || pendingDraftOrDialog(ctx)) {
+      return "This order has pending edits, a dialog, or a native action in progress. Resolve it in CRM first.";
+    }
+    if (inFlight || inventoryBusy(ctx) || priorAutomationPending(ctx.id)) return "Another stock request may still be active. Review it in CRM first.";
+    if (receiptReadError) return message || "Could not read the previous stock request. Check CRM stock before ordering again.";
+    if (receipt?.entries.some(entry => ["submitted", "review"].includes(entry.state))) return "A previous stock request needs review. Check this order's stock in CRM before retrying from its order page.";
+    return "";
+  }
+
+  function inspectStock(id) {
+    const ctx = context();
+    if (!ctx || ctx.id !== id) return null;
+    loadReceipt(ctx);
+    const skipReason = stockSkipReason(ctx);
+    return { success: true, adapterVersion: 1, orderId: ctx.id, skipReason,
+      reviewRequired: receiptReadError || Boolean(receipt?.entries.some(entry => ["submitted", "review"].includes(entry.state))),
+      confirmed: [...(receipt?.history || []), ...(receipt?.entries || []).filter(entry => entry.state === "confirmed")]
+        .map(({ id, fingerprint }) => ({ id, fingerprint })),
+      designs: (ctx.resource.designs || []).filter(design => design && String(design.crudAction || "").trim().toLowerCase() !== "d")
+        .map(design => ({ id: String(design.id), fingerprint: batch.fingerprint(design) })),
+      targets: skipReason ? [] : batch.retryable(receipt, targets(ctx, true)).map(({ id, tab, fingerprint }) => ({ id, tab, fingerprint })) };
+  }
+
   function priorAutomationPending(id) {
     // Honor a request already submitted by older extension versions. Reading
     // its receipt does not contact or start the local Automation app.
@@ -114,24 +169,47 @@
     return result;
   }
 
-  async function start() {
+  async function start(command, attempt = null) {
+    const fromWindow = command?.op === "order";
     const ctx = context();
+    if (fromWindow) {
+      if (!ctx || ctx.id !== command.orderId) throw Error("This page no longer contains the expected CRM order.");
+      loadReceipt(ctx);
+      const reason = stockSkipReason(ctx);
+      if (reason) throw Error(reason);
+    }
     if (!ctx || inFlight || inventoryBusy(ctx) || priorAutomationPending(ctx.id)) return;
-    const selected = batch.retryable(receipt, targets(ctx));
+    let selected = batch.retryable(receipt, targets(ctx, fromWindow));
+    if (fromWindow) {
+      if (!Array.isArray(command.targets) || !command.targets.length || new Set(command.targets.map(target => target.id)).size !== command.targets.length) {
+        throw Error("The stock tabs could not be identified uniquely. Scan this window again.");
+      }
+      selected = command.targets.map(expected => {
+        const target = selected.find(target => target.id === expected.id && target.fingerprint === expected.fingerprint);
+        if (!target) throw Error("Stock changed after this window was read. Review this order before ordering again.");
+        return target;
+      });
+    }
     if (!selected.length || batch.blocked(receipt, selected)) return;
     let service;
     try {
       const injector = angular.element(ctx.root).injector?.() || angular.element(document.body).injector?.();
       service = injector?.get("orders/inventory/InventorySrv");
       if (typeof service?.orderGoodsSupplynet !== "function") throw new Error();
-    } catch (_) { message = "CRM's Order Goods action is not ready. Refresh the order and try again."; sync(); return; }
-    receipt = batch.create(ctx.id, selected, receipt);
+    } catch (_) {
+      message = "CRM's Order Goods action is not ready. Refresh the order and try again.";
+      sync();
+      if (fromWindow) throw Error(message);
+      return;
+    }
+    const record = receipt = batch.create(ctx.id, selected, receipt);
     inFlight = true;
     message = "";
     try {
-      await batch.run(receipt, selected, {
+      await batch.run(record, selected, {
         save,
         submit(target) {
+          if (attempt) attempt.submitted = true;
           return inAngular(target.owner, () => {
             target.owner.placingOrder = true;
             return service.orderGoodsSupplynet(target.design.id);
@@ -142,15 +220,19 @@
         },
         changed() { sync(); }
       });
-      if (receipt.phase === "confirmed" && orderId() === ctx.id && !ctx.scope.editMode) {
+      if (record.phase === "confirmed" && orderId() === ctx.id && !ctx.scope.editMode) {
         // Use one refresh after all native requests finish, rather than the
         // separate five-second reload scheduled by each individual button.
-        setTimeout(() => { if (orderId() === ctx.id && !ctx.scope.editMode) window.location.reload(); }, 1500);
+        setTimeout(() => { if (orderId() === ctx.id && !ctx.scope.editMode && !pendingDraftOrDialog(ctx)) window.location.reload(); }, 1500);
       }
     } catch (_) {
-      if (receipt.entries.every(entry => entry.state === "prepared")) receipt = null;
+      const notSubmitted = record.entries.every(entry => entry.state === "prepared");
+      if (notSubmitted) receipt = null;
       message = "Could not record the stock requests. Check CRM stock before trying again.";
+      if (fromWindow) return { success: false, orderId: ctx.id, notSubmitted, message };
     } finally { inFlight = false; sync(); }
+    if (fromWindow) return { success: true, adapterVersion: 1, orderId: ctx.id, phase: record.phase,
+      entries: record.entries.map(({ id, tab, fingerprint, state, message }) => ({ id, tab, fingerprint, state, message })) };
   }
 
   function control(id, tag) {
@@ -213,21 +295,7 @@
   function sync() {
     const ctx = context();
     if (!ctx?.details) { clear(); return; }
-    if (currentId !== ctx.id) {
-      if (inFlight) { clear(); return; }
-      currentId = ctx.id;
-      receipt = null;
-      message = "";
-      try {
-        const stored = sessionStorage.getItem(receiptKey(ctx.id));
-        if (stored) {
-          const record = JSON.parse(stored);
-          if (!batch.valid(record, ctx.id)) throw new Error();
-          receipt = batch.resume(record);
-          save(receipt);
-        }
-      } catch (_) { message = "Could not read the previous stock request. Check CRM stock before ordering again."; }
-    }
+    try { loadReceipt(ctx); } catch (_) { clear(); return; }
     if (ctx.scope.editMode) { clear(); return; }
     const available = batch.retryable(receipt, targets(ctx));
     if (hasMultipleDesigns(ctx) && (available.length || inFlight)) {
@@ -253,6 +321,17 @@
     queued = true;
     setTimeout(() => { queued = false; sync(); }, 60);
   }
+  // Only the extension's scripting coordinator calls this adapter. No page-event
+  // or local-app write channel is added. The normal per-order button stays scoped
+  // to multi-product orders; the window action also supports single-product orders.
+  window.CRMOrderAllPage = { async execute(command) {
+    const attempt = { submitted: false };
+    try {
+      if (command.op === "inspect") return inspectStock(command.orderId);
+      if (command.op === "order") return await start(command, attempt);
+      throw Error("Unknown stock action.");
+    } catch (error) { return { success: false, orderId: command.orderId, notSubmitted: !attempt.submitted, message: error.message }; }
+  } };
   new MutationObserver(schedule).observe(document, { subtree: true, childList: true,
     attributes: true, attributeFilter: ["class", "disabled", "hidden", "style"] });
   window.addEventListener("hashchange", schedule);

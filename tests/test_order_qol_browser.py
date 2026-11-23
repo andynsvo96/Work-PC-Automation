@@ -73,6 +73,50 @@ class OrderQolBrowserTests(unittest.TestCase):
         WebDriverWait(self.driver, 5).until(lambda d: d.find_elements(By.CSS_SELECTOR, "#crm-order-all-header button"))
         return self.driver.find_element(By.CSS_SELECTOR, "#crm-order-all-header button")
 
+    def stock_action(self, op, **extra):
+        return self.driver.execute_async_script("const done=arguments[arguments.length-1]; CRMOrderAllPage.execute(arguments[0]).then(done);",
+            {"op": op, "orderId": "1234567", **extra})
+
+    def test_window_adapter_orders_single_product_stock_without_adding_a_per_order_button(self):
+        self.show()
+        self.driver.execute_script("resource.designs=resource.designs.slice(0,1); fixtureStock.ordered[0]=false; orderScope.activeDesignIndex=0; nativeMode='success'; renderFixture();")
+        WebDriverWait(self.driver, 5).until(lambda d: not d.find_elements(By.ID, "crm-order-all-header"))
+        self.assertEqual(self.driver.find_elements(By.ID, "crm-order-all-header"), [])
+        read = self.stock_action("inspect")
+        self.assertEqual([target['id'] for target in read['targets']], ['100'])
+        result = self.stock_action("order", targets=read['targets'])
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['phase'], 'confirmed')
+        self.assertEqual(self.driver.execute_script("return [nativeCalls,nativeReloads,queueCalls];"), [['100'], 1, []])
+        inspected = self.stock_action("inspect")
+        self.assertEqual(inspected['targets'], [])
+        self.assertEqual([entry['id'] for entry in inspected['confirmed']], ['100'])
+
+    def test_window_adapter_rechecks_edit_mode_and_stock_fingerprints_before_any_submission(self):
+        for change in ("orderScope.editMode=true", "resource.designs[2].designItems[0].quantity=2",
+                       "resource.addSalesNotes='Keep this pending note'", "inventoryScopes[0].placingOrder=true",
+                       "document.body.insertAdjacentHTML('beforeend','<div role=dialog>Keep this dialog</div>')"):
+            with self.subTest(change=change):
+                self.show()
+                targets = self.stock_action("inspect")['targets']
+                self.driver.execute_script(change + "; renderFixture();")
+                result = self.stock_action("order", targets=targets)
+                self.assertFalse(result['success'], result)
+                self.assertTrue(result['notSubmitted'])
+                self.assertEqual(self.driver.execute_script("return nativeCalls;"), [])
+
+    def test_window_adapter_skips_locked_and_manual_stock_and_does_not_retry_uncertain_receipts(self):
+        self.show()
+        self.driver.execute_script("resource.featureFlags.stockOrderingLocked=true; renderFixture();")
+        self.assertEqual(self.stock_action("inspect")['targets'], [])
+        self.driver.execute_script("resource.featureFlags.stockOrderingLocked=false; inventoryScopes[1].providers[0].id=210; renderFixture();")
+        read = self.stock_action("inspect")
+        self.assertEqual([target['id'] for target in read['targets']], ['102'])
+        self.driver.execute_script("inventoryService.orderGoodsSupplynet=()=>Promise.reject(Error('Lost response'));")
+        result = self.stock_action("order", targets=read['targets'])
+        self.assertEqual(result['phase'], 'review')
+        self.assertIn("previous stock request needs review", self.stock_action("inspect")['skipReason'])
+
     def edit(self):
         self.driver.find_element(By.CSS_SELECTOR, ".edit-btn").click()
         WebDriverWait(self.driver, 5).until(lambda d: d.find_elements(By.ID, "crm-edit-design-previews"))

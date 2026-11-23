@@ -28,6 +28,8 @@ button { border: 1px solid #555f69; background: #30363c; color: #eef3f8; border-
 button:hover:enabled { background: #404c58; }
 button.primary { background: #0e639c; border-color: #2388cb; font-weight: 600; }
 button.primary:hover:enabled { background: #117bbd; }
+button.stock-action { background: #267c4a; border-color: #39965f; font-weight: 600; }
+button.stock-action:hover:enabled { background: #328c56; }
 button:disabled { opacity: .45; cursor: default; }
 button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid #75beff; outline-offset: 2px; }
 .orders-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 4px 12px 0; }
@@ -37,6 +39,13 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-
 .order-row input { margin: 2px 0 0; }
 .order-row.review, .order-row.error { color: #ffb6ae; }
 .order-row.saved, .order-row.verified { color: #96d5af; }
+.stock-row { display: grid; grid-template-columns: 84px 1fr; gap: 6px; padding: 7px 5px; border-bottom: 1px solid #303940; font-size: 12px; line-height: 1.4; }
+.stock-row a { color: #8fcbff; text-decoration: none; font-weight: 600; }
+.stock-row a:hover { text-decoration: underline; }
+.stock-row.confirmed { color: #96d5af; }
+.stock-row.review, #orders-stock .error { color: #ffb6ae; }
+#orders-stock-status { font-size: 12px; line-height: 1.4; }
+#orders-stock h2 { margin-top: 0; }
 .duplicate-label { display: block; font-size: 10px; font-weight: normal; color: #9dabb8; }
 h2 { font-size: 14px; margin: 17px 0 7px; color: #eff5fa; }
 #orders-areas { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }

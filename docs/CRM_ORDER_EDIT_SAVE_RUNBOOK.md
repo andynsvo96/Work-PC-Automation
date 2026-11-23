@@ -46,6 +46,19 @@ Do not build a new automation as a single giant script if it needs to run from t
 
 ## Order Goods native batch
 
+CRM Order Assistant 1.8.8 also exposes **Order All in Window** in its popup.
+`window-order-all.mjs` selects unique order tabs only in the originating window,
+and `order-all.js` exposes a scripting-only adapter over the existing native
+batch. Single-product orders are included. Native editors, pending drafts,
+dialogs, and editing duplicate tabs are excluded without changing the All Orders
+editor's selection or shared draft. Extension-session submission receipts protect
+confirmed stock across stale duplicate tabs and later window batches; interrupted
+or uncertain window requests stop for CRM review without automatic retry. Each
+fully confirmed order schedules the existing single guarded page refresh. This
+does not start a worker, use the queue, or save an order editor. Reload the
+extension and refresh CRM pages to load it; no app restart is needed. See the
+[window ordering guide](../crm-order-dark-mode-extension/README.md#order-all-in-window---188).
+
 Normal Order Goods runs on orders with multiple product tabs use
 `workers/crm_order_goods_native.py` and its Selenium JavaScript adapter. The
 adapter loads the extension's `order-all-batch.js`, sharing stock fingerprints,

@@ -1,6 +1,6 @@
 # CRM Order Assistant
 
-Private Manifest V3 extension for the Automation project's CRM pages. It provides local order-page dark mode, native editing across orders in one Chrome window, bulk stock and print-area editing within an order, queued single-order tools, list selection and rush highlighting, reliable Salesforce tab reuse, and an automatic Orders email sender default. List controls select orders and open tabs; queued tools remain scoped to individual order pages.
+Private Manifest V3 extension for the Automation project's CRM pages. It provides local order-page dark mode, native editing and stock ordering across orders in one Chrome window, bulk stock and print-area editing within an order, queued single-order tools, list selection and rush highlighting, reliable Salesforce tab reuse, and an automatic Orders email sender default. List controls select orders and open tabs; queued tools remain scoped to individual order pages.
 
 ## Install locally
 
@@ -14,6 +14,57 @@ The preference is stored locally in that Chrome profile. Removing or reloading t
 After extension updates, reload the extension at `chrome://extensions` and refresh open CRM order/list and Salesforce pages. Updates that also change the local Automation app require an app restart as noted below.
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
+
+## Order All in Window - 1.8.8
+
+Open the toolbar popup and click **Order All in Window** to order eligible stock
+for every unique CRM order open in that Chrome window. This includes single- and
+multi-product orders and orders unchecked in the editing list. The editing
+checkboxes apply only to the editor. The expanded editor uses its original
+order window. Other windows, reports, and websites are excluded.
+
+An order in **Edit Order** is skipped, including when any duplicate tab for that
+order is editing. Pending notes, All Tabs drafts, dialogs, busy inventory, and
+transfers-only orders are also left for manual resolution. Sleeping, loading,
+unreadable, or ambiguous order tabs need review. Duplicate order tabs count once;
+only the chosen order tab submits stock. The shared editing draft and existing
+native editors are preserved.
+
+Duplicate tabs with different stock contents stop that order for review. Existing
+per-order purchase confirmations on duplicate tabs are honored by the window
+action, including a purchase that finishes while the window is being read.
+
+The action uses the same native **Order Goods** requests and stock fingerprints
+as the order page's **Order All**. All eligible requests start without waiting
+for another order to finish. Locked, disabled, removed, manual-order, Add Box,
+and already ordered stock are excluded. Results list each order and product tab.
+An order with all requests confirmed schedules one refresh of its chosen tab;
+that refresh is skipped if editing, draft notes, or a dialog appears. Duplicate
+tabs are not refreshed. Failed or uncertain requests are never retried
+automatically. Review the affected stock in CRM before any manual retry.
+
+Submission intents and confirmations are retained in extension session storage,
+as well as the existing order-page receipts. Confirmed, unchanged stock is
+excluded even if a later click chooses a stale duplicate tab or another window.
+Newly added sizes or quantities can be ordered when CRM exposes an eligible
+control. Interrupted or uncertain window requests remain blocked from subsequent
+window batches for the Chrome extension session; resolve any retry on the order
+page after checking CRM. Closing/reopening the popup preserves results and does
+not cancel an initiated operation. An interrupted service worker never resumes
+stock requests. The action requires no local Automation app or queue.
+
+Reload **CRM Order Assistant 1.8.8** at `chrome://extensions` and refresh open CRM
+order pages. No app restart or new permission is needed. Offline checks:
+
+```powershell
+node --test tests/test_all_orders.mjs tests/test_order_all_batch.mjs
+python -m unittest discover -s tests -p test_all_orders_browser.py
+python -m unittest discover -s tests -p test_order_qol_browser.py
+```
+
+These checks use local fixtures, including the actual popup and native Angular
+inventory adapter. Live stock purchases, installed-extension behavior, and macOS
+remain unverified.
 
 ## Exclude orders during batch editing - 1.8.6
 
@@ -215,8 +266,9 @@ This feature uses the logged-in Chrome session and CRM's native Angular controls
 and helpers. It requires no Selenium/Python worker, automation queue, or running
 local Automation app. Version **1.8.0** adds Chrome's **scripting** permission to
 invoke the adapter in the selected CRM document; it adds no host access and no
-page-event or local-server write channel. It does not order stock, send messages,
-or alter the existing single-order queued workflows.
+page-event or local-server write channel. The editing actions do not order stock
+or send messages, and do not alter the existing single-order queued workflows.
+Version 1.8.8 adds the separate **Order All in Window** stock action described above.
 
 Reload **CRM Order Assistant 1.8.0** at `chrome://extensions`, accept Chrome's
 permission prompt if shown, and refresh open CRM order pages before using it.

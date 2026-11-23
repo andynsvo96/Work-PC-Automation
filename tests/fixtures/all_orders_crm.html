@@ -20,6 +20,7 @@ body{font:14px Arial;margin:20px}button{padding:8px}textarea{display:block;width
   </ul><div class="tab-content">
     <div class="tab-pane" ng-repeat="design in order.getResource().designs">
       <p ng-repeat="area in design.printAreas" ng-show="area.crudAction != 'd'">{{area.description}} / {{area.printMethodDescription}}</p>
+      <div class="order-inventory" order-inventory="design" order="order"></div>
     </div>
   </div></div>
   <section id="order-notes-sales-notes"><h2>Sales Notes</h2><pre>{{order.getResource().salesNotes}}</pre>
@@ -48,7 +49,34 @@ window.fixtureSaveCount = 0;
 window.fixtureChangeCount = 0;
 window.fixtureDiscardNoCount = 0;
 window.fixtureDiscardYesCount = 0;
-angular.module('allOrdersFixture', []).controller('OrderFixture', function($scope, $timeout) {
+window.fixtureStockCalls = [];
+window.fixtureStockRefreshes = 0;
+window.fixtureStock = JSON.parse(sessionStorage.getItem(storageKey + ':stock') || '{}');
+const nativeTimeout = window.setTimeout.bind(window);
+window.setTimeout = (fn, delay, ...args) => {
+  if (delay === 1500 && String(fn).includes('window.location.reload')) { fixtureStockRefreshes++; return -1; }
+  return nativeTimeout(fn, delay, ...args);
+};
+angular.module('allOrdersFixture', []).factory('orders/inventory/InventorySrv', function($timeout) {
+  return { orderGoodsSupplynet(id) {
+    fixtureStockCalls.push(String(id));
+    return $timeout(() => {
+      fixtureStock[String(id)] = true;
+      sessionStorage.setItem(storageKey + ':stock', JSON.stringify(fixtureStock));
+      return { succeeded: true, supplier: 'Sanmar' };
+    }, 30);
+  }};
+}).directive('orderInventory', function() {
+  return { scope: { design: '&orderInventory', order: '&' },
+    template: '<table><tr ng-repeat="provider in providers"><th>Sanmar / S&amp;S Activewear</th><td><button ng-click="orderGoods(provider);" ng-disabled="placingOrder" ng-hide="ordered()">Order Goods</button></td></tr></table>',
+    link(scope) {
+      scope.providers = [{ id: null }]; scope.itemCount = 1; scope.placingOrder = false;
+      scope.ordered = () => fixtureStock[String(scope.design().id)];
+      scope.orderGoods = () => {};
+      scope.isOrderingLocked = () => false;
+    }
+  };
+}).controller('OrderFixture', function($scope, $timeout) {
   window.fixtureScope = $scope;
   $scope.STATICS = {
     printAreaTemplates: ['Front','Front-Left Chest','Front-Right Chest','Back','Side Left'].map((description,i) => ({id:i+1,description,active:'1'})),
@@ -110,4 +138,6 @@ angular.module('allOrdersFixture', []).controller('OrderFixture', function($scop
 </script>
 <script src="/extension/all-tabs-model.js"></script>
 <script src="/extension/all-orders-page.js"></script>
+<script src="/extension/order-all-batch.js"></script>
+<script src="/extension/order-all.js"></script>
 </html>
