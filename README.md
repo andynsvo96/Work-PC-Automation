@@ -1,8 +1,10 @@
 # Work PC Automation
 
-Cross-platform Windows/macOS automation dashboard for CRM and Salesforce workflows, Paycom time tracking, Slack updates, and private remote controls. Includes the CRM Order Assistant Chrome extension for working directly from an order page. Desktop power and hardware metrics remain Windows-only.
+Windows/macOS Flask and Selenium dashboard for CRM and Salesforce workflows, SanMar stock purchasing, Paycom time tracking, Slack messages, Google Sheets scanning, and private remote controls. Includes the Manifest V3 **CRM Order Assistant** Chrome extension for native order editing and stock ordering, queued order-page tools, list helpers, dark mode, and Salesforce tab reuse. Desktop power and hardware metrics remain Windows-only.
 
-The app runs as a local Flask server with a browser control panel and a tray icon. Worker scripts handle the browser automation through Selenium, while the server coordinates scheduling, locks, retries, runtime state, result history, stage timing, and audit logging.
+The app runs locally with a browser control panel and a tray icon. Its persistent queue coordinates scheduling, repeat runs, locks, guarded retries, per-order reports, stage timing, and audit logging. Supported single-order workflows share a bounded worker pool; the same order and incompatible workflows retain their queue boundaries. Native extension editors and Order All actions also work with the app closed.
+
+Each computer owns its queue, browser sessions, credentials, and recovery receipts. Remote controls run work on the computer serving that dashboard; queue work from only one computer at a time. Private Tailscale access and authenticated Windows/macOS clipboard transfer are supported. See [local setup](#local-setup), the [extension guide](crm-order-dark-mode-extension/README.md), and [Mac/tablet setup](docs/MAC_AND_TABLET_SETUP.md).
 
 ## What It Does
 
@@ -113,7 +115,7 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 - **Copyright cancellation by design:** Cancel > Copyright - Cancel scans every tab's Design Name. Tabs that share the same artwork Design ID remain individually selectable using their saved order-tab IDs. Selecting all tabs retains whole-order cancellation and **[AUTO] Copyright Cancel**. Selecting some removes only those designs, accepts purchased-stock tabs retained at QTY 0/$0.00, verifies the recalculated credit, and uses **[AUTO] Copyright Cancel - Partial** while the remaining order stays active. Partial work and financial submissions have recovery receipts; retry the original queued task. Restart the local app, reload CRM Order Assistant 1.6.1, and refresh CRM order pages after updating. See the extension guide for refund checks and recovery details.
 - **Partial copyright cancellation recovery:** if a refund is completed while a task is stopped after removing designs, Retry verifies the exact credit amount, reduced Paid, zero Balance Due, unchanged total/fees, and retained transaction history before resuming the Sales Note and email. It does not issue the refund again. A missing Sales Note is saved again once after reload and must persist before the workflow continues. Note entry waits for Edit Order to initialize, and an unsaved draft is saved rather than treated as a completed note. Unrelated payment changes still stop for review; existing Salesforce email confirmation receipts still apply. The next worker loads this change; no app restart, extension reload, or page refresh is needed. Keep the original queue entry and recovery receipt.
 - **Manual single-order processing:** choose address validation, mixed-product separation, auto-splitting, stock unlocking and goods ordering, shipping bypass, push back, or Extra Print Areas from the extension's Manual Process menu.
-- **Order Goods across product tabs:** multi-tab orders now use the same native CRM stock service as the extension's **Order All**. All eligible tabs start together, with per-tab results and one final refresh to verify saved stock. The worker keeps its existing stock-unlock flow; disabled/locked controls, Manual Order, Add Box, and removed tabs are excluded from the batch. A saved vendor/PO row without an available button skips only that tab; a PO with an eligible button can still order remaining stock, including newly added sizes. An order-wide Ordered status or stock ordered during unlocking does not skip other tabs. Every run rechecks eligible orders regardless of Stock Tools history, and visits each order once. Durable receipts under `runtime/state/order_goods_native/` prevent repeated confirmed purchases across worker profiles and restarts. A confirmed failure may be retried by a later run; lost responses or unverified saved stock stop for review before another unlock or purchase. Keep the receipts. Dry runs and Push Back retain their existing inspection/feedback flows. The next queued worker loads this update; no app restart, extension reload, page refresh, or history clearing is needed. See the [native stock workflow](docs/CRM_ORDER_EDIT_SAVE_RUNBOOK.md#order-goods-native-batch).
+- **Order Goods across product tabs:** single- and multi-product orders use the native stock submission engine shared with the extension's **Order All**. Normal Order Goods submits enabled automatic stock requests in one browser, with up to 25 background order tabs; it skips editing, locked, disabled, manual, and already ordered stock. Results say **Submitted**, without unlocking, supplier-error investigation, automatic purchase retries, or a verification refresh. Durable receipts under `runtime/state/order_goods_native/` protect unchanged submissions across worker profiles and restarts; uncertain or interrupted submissions stop for review. Keep the receipts. Dry runs submit nothing, and Push Back retains its separate feedback and recovery flow. See the [native stock workflow](docs/CRM_ORDER_EDIT_SAVE_RUNBOOK.md#order-goods-native-batch).
 - **Auto Splitter stock changes during a split:** the worker rechecks the original's stock before trimming, after saving, and after retained-order payment allocation. If CRM orders stock during a split that began with unordered stock, the worker switches to the stock-ordered cancellation method: reuse the existing split orders, create a replacement for split 1, verify all split contents, follow the existing vendor/PO routing rules, allocate the original payment, then cancel the original through the existing verified cleanup. Saved design contents, shipping shares, and promo allocation stay consistent with the already-created orders. A trimmed original uses its current subtotal for the Refund fee and only its remaining payment for the manual transfer transaction. The switch and new order IDs are saved for targeted retries. An uncertain replacement conversion or ambiguous stock state stops for review before creating another replacement. If stock remains unordered, planned moved tabs retained by CRM are accepted only with verified zero quantity and $0.00 totals. Restart the local app and refresh the dashboard to load recovery changes; no extension reload is needed.
 - **Separator screenprinting review:** the Auto Separator warning checks only the source design tabs actually being separated. Screenprinting on an untouched tab or a tab excluded because of custom names and numbers does not trigger the warning. Print methods are checked before separation changes the designs. The next separator worker uses this change automatically; no app restart or extension reload is needed.
 - **Batch address validation:** an order that still times out after the bounded recovery attempts is recorded for manual review. The validator continues to the remaining eligible orders and excludes attempted orders from later list scans in that run. A completed batch shows its success/review counts; the order's timeout remains available in **View Report**. Restart the local app and refresh the dashboard to load the summary update.
@@ -163,21 +165,28 @@ See the [CRM Order Assistant guide](crm-order-dark-mode-extension/README.md) for
 
 ## Project Layout
 
-- `server.py` - main Flask server, scheduler, tray app, and orchestration layer.
-- `ui_panel.html` - local browser control panel.
-- `workers/` - Selenium worker scripts for Paycom, Slack, and CRM workflows.
+- `server.py` - main Flask server, persistent queue, scheduler, worker pool, tray app, and orchestration layer.
+- `queue_order_work.py` / `workers/crm_queue_order.py` - explicit single-order pool eligibility and isolated worker dispatch.
+- `process_locks.py` - cross-platform process locks for shared vendor-cart access.
+- `ui_panel.html` / `static/` - local browser control panel, Salesforce template editor, and dashboard assets.
+- `workers/` - Selenium workflows for CRM, SanMar, Salesforce email/texts, Paycom, Slack, and Google Sheets scanning.
 - `routes/` - grouped Flask route modules.
 - `automation_runtime.py` - shared Selenium/runtime helpers.
 - `runtime_paths.py` - centralized paths for ignored local runtime artifacts.
 - `runtime_maintenance.py` - bounded retention for disposable runtime evidence.
 - `config_defaults.py` - tracked non-secret setting contract inherited by each machine's `config.py`.
+- `platform_runtime.py` / `node_preferences.py` - platform capabilities, worker capacity, and machine-local preferences.
 - `automation_audit.py` - audit log helpers.
 - `credential_store.py` / `manage_credentials.py` - Windows Credential Manager and macOS Keychain integration.
 - `service_health.py` - read-only live authentication checks that never print secret values.
-- `safe_sync.py` - non-destructive Git fetch/fast-forward startup.
+- `app_security.py` / `setup_app_security.py` - PIN/session, CSRF, and private-access security setup.
+- `clipboard_runtime.py` / `configure_clipboard.py` - authenticated text/PNG clipboard transfer between computers.
+- `safe_sync.py` / `version_state.py` - safe Git startup, version locks, updates, and publish/restart handling.
 - `slack_message_rotation.py` - alternating Slack message state logic.
+- `slack_delivery_receipts.py` / `slack_post_history.py` / `m6_posting.py` - order-notification receipts, confirmed post history, and the local Post to M6 switch.
+- `salesforce_templates.py` / `salesforce_email_html.py` - local email-template library, backups, and HTML cleanup.
 - `config.example.py` - safe template for local runtime settings.
-- `shipping_bypasser_product_color_mappings.json` - editable CRM-to-SanMar product and color mappings used by Shipping Bypasser.
+- `shipping_bypasser_mappings.py` / `shipping_bypasser_product_color_mappings.json` - editable CRM-to-SanMar product/color rules shared by Shipping Bypasser and Reorder Stock.
 - `docs/` - fuller system guide and CRM automation notes.
 - `crm-order-dark-mode-extension/` - CRM Order Assistant extension and local app bridge.
 - `tests/` - regression coverage for CRM workflows, queues, security, credentials, cross-platform runtime, sync, and extension behavior.
@@ -202,15 +211,17 @@ This repo intentionally does not commit real credentials, browser sessions, logs
 
 3. Fill in `config.py` with non-secret local values such as Slack channel URLs and CRM report URLs.
 
-4. Store login secrets in Windows Credential Manager (the prompts do not echo passwords). Paycom setup prompts for its username, password, and four-digit PIN:
+4. Store login secrets with the cross-platform credential tool: Windows Credential Manager on Windows or Keychain on macOS. Secret prompts do not echo their values. Paycom setup prompts for its username, password, and four-digit PIN:
 
    ```powershell
-   python manage_windows_credentials.py set paycom
-   python manage_windows_credentials.py set crm
-   python manage_windows_credentials.py set sanmar
-   python manage_windows_credentials.py set salesforce
-   python manage_windows_credentials.py set google_sheets
+   python manage_credentials.py set paycom
+   python manage_credentials.py set crm
+   python manage_credentials.py set sanmar
+   python manage_credentials.py set salesforce
+   python manage_credentials.py set slack
    ```
+
+   For Google Sheets, import your local service-account JSON with `python manage_credentials.py set google_sheets --json-file PATH_TO_SERVICE_ACCOUNT.json`. Keep the source JSON private and outside tracked files. The older `manage_windows_credentials.py` remains available for Windows-specific setup and migration.
 
 5. Start the server:
 
@@ -296,6 +307,7 @@ The following are created or maintained locally and are ignored by Git:
 - `runtime/screenshots/` for browser screenshots
 - `runtime/logs/` for `server.log` and `automation_record_log.txt`
 - `runtime/generated_profiles/` for temporary cloned browser profiles
+- `runtime/browser_profiles/` for platform-specific browser sessions
 - `runtime/debug/` for old backups, exports, temp files, and test artifacts
 - browser profile folders such as `chrome_profile_crm/`
 - driver downloads and cache folders
@@ -303,6 +315,8 @@ The following are created or maintained locally and are ignored by Git:
 Keeping these files local prevents credentials, login sessions, audit history, and generated artifacts from being published.
 
 ## Testing
+
+Use the existing virtual environment (`.venv\Scripts\python.exe` on Windows or `.venv/bin/python` on macOS), or activate it before running these commands.
 
 Run the regression suite with:
 
@@ -316,6 +330,20 @@ Run the extension's Node tests with:
 node --test tests/test_extension_bridge.mjs tests/test_salesforce_tabs.mjs
 ```
 
+The extension and dashboard also have Node coverage for native editing/ordering,
+completion refreshes, tab scans, queue reports/sorting, scheduling, stock history,
+and work plans. Run every Node regression in PowerShell with:
+
+```powershell
+node --test (Get-ChildItem tests/test_*.mjs).FullName
+```
+
+On macOS, use `node --test tests/test_*.mjs`. For focused native-editor and stock
+checks, see the [extension guide](crm-order-dark-mode-extension/README.md).
+Queue persistence, pool isolation, scheduling, and recovery are covered by
+`tests/test_queue_persistence.py`, `tests/test_queue_parallel.py`,
+`tests/test_scheduled_repeat.py`, and `tests/test_queue_retry.py`.
+
 Check CRM list selection, rush highlighting, tab opening, and the offline Chrome fixtures with:
 
 ```powershell
@@ -326,6 +354,11 @@ python -m unittest discover -s tests -p test_rush_list_browser.py
 The browser check uses a local ChromeDriver (set `CHROMEDRIVER` if needed), an
 isolated profile under `runtime/debug/`, and a loopback fixture server. It never
 opens live CRM orders.
+
+Some browser suites also require ignored local fixture assets, such as the
+Angular fixture used by the native editors, or suite-specific driver variables.
+Missing prerequisites cause skips; report them separately from passing tests.
+Browser verification must use local fixtures and isolated profiles.
 
 Verify Queue reports, sorting, task controls, and execution order with:
 
@@ -378,6 +411,6 @@ python -m compileall automation_audit.py automation_runtime.py server.py slack_m
 
 ## Notes
 
-Login secrets are stored as Generic Credentials for the current Windows user under the `WorkAutomation/*` targets. `config.py` and browser profile directories can still contain private operational URLs and active sessions, so they remain ignored and should not be force-added to Git.
+Login secrets are stored in Windows Credential Manager or macOS Keychain under the `WorkAutomation/*` targets. `config.py`, local template libraries, recovery receipts, and browser profiles can contain private operational data and active sessions; they remain ignored and should not be force-added to Git. Preserve recovery receipts when cleaning runtime data so confirmed purchases, refunds, emails, and messages cannot be repeated accidentally.
 
 For contributor guidance, see [AGENTS.md](AGENTS.md). For deeper implementation details, see [the system guide](docs/AUTOMATION_SYSTEM_GUIDE.md) and [CRM edit/save runbook](docs/CRM_ORDER_EDIT_SAVE_RUNBOOK.md). Older planning documents may describe earlier versions; check current code and tests when implementing changes.
