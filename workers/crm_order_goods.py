@@ -1,5 +1,6 @@
 """
-CRM Rush order-goods automation worker.
+CRM Order Goods worker: submit enabled stock requests in one browser window.
+Legacy unlock/feedback helpers remain available to the separate Push Back worker.
 
 Usage:
     python crm_order_goods.py --action order_goods_batch --visible --dry-run
@@ -9,9 +10,7 @@ Usage:
 import argparse
 import os
 import re
-import shutil
 import sys
-import threading
 import time
 
 from _bootstrap import ensure_project_root_on_path
@@ -45,8 +44,6 @@ from crm_validate_address import (
     _batch_limit_reached,
     _build_crm_session_driver,
     _click_with_fallback,
-    _clone_profile_for_worker,
-    _collect_batch_order_ids,
     _collect_batch_order_ids_with_driver,
     _crm_attempt_modes,
     _is_retryable_exception,
@@ -54,13 +51,13 @@ from crm_validate_address import (
     _normalize_target_order_id,
     _open_target_order,
     _record_stage_timing,
-    _worker_profile_lock,
 )
 from crm_unlock_orders import (
     unlock_single_order_with_driver as _unlock_single_order_through_locked_report,
     wait_for_order_preview_panel as _wait_for_stock_unlock_preview_panel,
 )
 import crm_order_goods_native as native_stock
+import crm_order_goods_only as order_only
 
 configure_console_utf8()
 
@@ -2377,13 +2374,30 @@ def _order_goods_for_all_stock_tabs(
     return results
 
 
-def _run_order_with_driver(
+def _run_order_with_driver(driver, order_id, dry_run=False, wait_for_auto_order_result=False, ignore_already_ordered=False):
+    if wait_for_auto_order_result:
+        return _run_order_with_feedback(driver, order_id, dry_run=dry_run,
+            wait_for_auto_order_result=True, ignore_already_ordered=ignore_already_ordered)
+    normalized = _normalize_target_order_id(order_id)
+    if not normalized:
+        raise ValueError("Order ID must be a seven-digit value or CRM order URL.")
+    blocked = native_stock.recovery_block(normalized, submission_only=True)
+    if blocked:
+        return [{"order_id": normalized, "success": False, "outcome": "native_stock_uncertain",
+                 "message": blocked, "manual_review_required": True}]
+    _open_target_order(driver, normalized, shipping_filter=RUSH_FILTER)
+    return order_only.order_window(sys.modules[__name__], driver, [normalized], dry_run=dry_run,
+        existing_handle=driver.current_window_handle)
+
+
+def _run_order_with_feedback(
     driver,
     order_id,
     dry_run=False,
     wait_for_auto_order_result=False,
     ignore_already_ordered=False,
 ):
+    """Push Back's existing feedback workflow, separate from stock-only dispatch."""
     normalized_order_id = _normalize_target_order_id(order_id)
     if not normalized_order_id:
         raise RuntimeError("Order ID must be a 7-digit value or CRM order URL.")
@@ -2474,499 +2488,14 @@ def _summary_message(report_items, refresh_passes=1, order_count=0, row_descript
     return " ".join(parts)
 
 
-def _order_goods_worker_payload(order_id, headless_mode, dry_run=False, profile_path=None, skip_stale_chrome_check=False):
-    started_at = time.monotonic()
-    driver = None
-    report_items = []
-    try:
-        _publish_status(f"Loading CRM session for Rush Order Goods order {order_id}.", stage="loading_crm", order_id=order_id)
-        driver = _build_crm_session_driver(
-            profile_path,
-            headless_mode=headless_mode,
-            profile_label=f"CRM order goods worker {order_id}",
-            skip_stale_chrome_check=skip_stale_chrome_check,
-        )
-        # Multi-tab Order Goods confirms the native batch directly. Push Back
-        # separately owns dialogs and automated-note classifications.
-        report_items = _run_order_with_driver(
-            driver,
-            order_id,
-            dry_run=dry_run,
-            wait_for_auto_order_result=False,
-        )
-        duration = _elapsed_seconds(started_at)
-        for item in report_items:
-            if isinstance(item, dict):
-                item["duration_seconds"] = duration
-                item["session_duration_seconds"] = duration
-        success = all(bool(item.get("success")) for item in report_items) if report_items else True
-        message = _summary_message(report_items, refresh_passes=1, order_count=1)
-        return {
-            "action": "order_goods_batch",
-            "success": success,
-            "message": message,
-            "order_count": 1,
-            "order_ids": [order_id],
-            "report": report_items,
-            "dry_run": bool(dry_run),
-            "headless": bool(headless_mode),
-            "shipping_filter": RUSH_FILTER,
-            "refresh_passes": 1,
-            "duration_seconds": duration,
-            "session_duration_seconds": duration,
-            "manual_review_required": any(bool(item.get("manual_review_required")) for item in report_items),
-            "resolution": "batch",
-        }
-    except Exception as exc:
-        if driver is not None:
-            safe_take_screenshot(driver, "crm_order_goods_error")
-        duration = _elapsed_seconds(started_at)
-        return {
-            "action": "order_goods_batch",
-            "success": False,
-            "message": str(exc),
-            "order_count": 1,
-            "order_ids": [order_id],
-            "report": [
-                {
-                    "order_id": order_id,
-                    "success": False,
-                    "outcome": "worker_exception",
-                    "message": str(exc),
-                    "manual_review_required": True,
-                    "retryable": _is_retryable_exception(exc),
-                    "error_type": type(exc).__name__,
-                    "duration_seconds": duration,
-                    "session_duration_seconds": duration,
-                }
-            ],
-            "dry_run": bool(dry_run),
-            "headless": bool(headless_mode),
-            "shipping_filter": RUSH_FILTER,
-            "duration_seconds": duration,
-            "session_duration_seconds": duration,
-            "manual_review_required": True,
-            "resolution": "batch",
-        }
-    finally:
-        safe_driver_quit(driver, profile_path=profile_path)
-
-
-def _payload_has_retryable_order_goods_exception(payload):
-    if not isinstance(payload, dict) or payload.get("success"):
-        return False
-    if payload.get("retryable"):
-        return True
-    report = payload.get("report")
-    if not isinstance(report, list):
-        return False
-    for item in report:
-        if not isinstance(item, dict) or item.get("success"):
-            continue
-        if item.get("outcome") != "worker_exception":
-            continue
-        if item.get("retryable"):
-            return True
-        message = item.get("message") or payload.get("message") or ""
-        error = RuntimeError(str(message))
-        if _is_retryable_exception(error):
-            return True
-    return False
-
-
-def _mark_order_goods_retry_attempted(payload):
-    if not isinstance(payload, dict):
-        return payload
-    payload["transient_retry_attempted"] = True
-    report = payload.get("report")
-    if isinstance(report, list):
-        for item in report:
-            if isinstance(item, dict):
-                item["retry_attempted"] = True
-                item["transient_retry_attempted"] = True
-    return payload
-
-
 def _run_parallel_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_path=None, list_url=None, parallel_workers=1):
-    batch_started_at = time.monotonic()
-    target_url = _validate_runtime_config(list_url)
-    row_options = _order_goods_allowed_row_options(target_url)
-    requested_batch_size = _normalize_requested_batch_size(batch_size)
-    resolved_profile_path = os.path.abspath(profile_path or PROFILE_PATH)
-    worker_limit = max(1, int(parallel_workers or 1))
-    if requested_batch_size is not None:
-        worker_limit = min(worker_limit, requested_batch_size)
-
-    report_items = []
-    attempted_order_ids = []
-    # Deduplicate within this run only; history must not hide changed orders.
-    attempted_order_id_set = set()
-    refresh_passes = 0
-    completed_order_count = 0
-    total_scanned_count = 0
-    stage_timings = []
-    while not _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
-        refresh_passes += 1
-        remaining = _batch_collection_limit(
-            requested_batch_size,
-            len(attempted_order_ids),
-            worker_limit=worker_limit,
-        )
-        _publish_status(
-            f"Loading CRM order-goods list pass {refresh_passes} to scan for eligible orders.",
-            stage="loading_crm_list",
-            current=completed_order_count if total_scanned_count else None,
-            total=total_scanned_count or None,
-        )
-        list_scan_started_at = time.monotonic()
-        order_ids = _collect_batch_order_ids(
-            RUSH_FILTER,
-            remaining,
-            resolved_profile_path,
-            list_url_override=target_url,
-            exclude_order_ids=attempted_order_id_set,
-            visible=not bool(headless_mode),
-            **row_options,
-        )
-        _record_stage_timing(
-            stage_timings,
-            "list_scan",
-            list_scan_started_at,
-            refresh_pass=refresh_passes,
-            order_count=len(order_ids),
-        )
-        if not order_ids:
-            _publish_status(
-                "No more eligible Rush Order Goods orders were found in the CRM list.",
-                stage="scan_complete",
-                current=completed_order_count if total_scanned_count else None,
-                total=total_scanned_count or None,
-            )
-            break
-        order_ids = order_ids[:remaining]
-        total_scanned_count += len(order_ids)
-        _publish_status(
-            f"Scanned {len(order_ids)} eligible Rush Order Goods order(s) on pass {refresh_passes}; processing with {worker_limit} worker(s).",
-            stage="processing_orders",
-            current=completed_order_count,
-            total=total_scanned_count,
-        )
-
-        finished_lock = threading.Lock()
-        worker_gate = threading.BoundedSemaphore(worker_limit)
-        threads = []
-        chunk_payloads = []
-        chunk_started_at = time.monotonic()
-
-        def _worker(order_index, order_id):
-            nonlocal completed_order_count
-            with worker_gate:
-                session_started_at = time.monotonic()
-                print(f"Launching Rush Order Goods worker {order_index + 1}/{len(order_ids)} for order {order_id}...")
-                with finished_lock:
-                    current_done = completed_order_count
-                _publish_status(
-                    f"Processing Rush Order Goods order {order_id} ({current_done}/{total_scanned_count} done).",
-                    stage="processing_order",
-                    current=current_done,
-                    total=total_scanned_count,
-                    order_id=order_id,
-                )
-                payload = None
-                attempt_count = 0
-                retry_allowed = not bool(dry_run)
-                total_attempts = 2 if retry_allowed else 1
-                worker_slot = (order_index % worker_limit) + 1
-                for attempt in range(1, total_attempts + 1):
-                    attempt_count = attempt
-                    try:
-                        temp_root, cloned_profile_path = _clone_profile_for_worker(
-                            resolved_profile_path,
-                            f"order_goods_{order_index + 1}_{order_id}_attempt_{attempt}",
-                            worker_slot=worker_slot,
-                            pool_name="order_goods",
-                            rebuild=attempt > 1,
-                        )
-                    except Exception as exc:
-                        payload = {
-                            "success": False,
-                            "order_ids": [order_id],
-                            "report": [
-                                {
-                                    "order_id": order_id,
-                                    "success": False,
-                                    "outcome": "worker_exception",
-                                    "message": str(exc),
-                                    "manual_review_required": True,
-                                    "retryable": _is_retryable_exception(exc),
-                                    "error_type": type(exc).__name__,
-                                    "duration_seconds": _elapsed_seconds(session_started_at),
-                                    "session_duration_seconds": _elapsed_seconds(session_started_at),
-                                }
-                            ],
-                        }
-                        break
-                    try:
-                        if attempt > 1:
-                            print(f"Retrying Rush Order Goods order {order_id} once with a fresh CRM worker profile...")
-                            time.sleep(1)
-                        with _worker_profile_lock(cloned_profile_path):
-                            payload = _order_goods_worker_payload(
-                                order_id,
-                                headless_mode=headless_mode,
-                                dry_run=dry_run,
-                                profile_path=cloned_profile_path,
-                                skip_stale_chrome_check=True,
-                            )
-                    finally:
-                        if temp_root:
-                            shutil.rmtree(temp_root, ignore_errors=True)
-                    if not _payload_has_retryable_order_goods_exception(payload):
-                        break
-                    if attempt < total_attempts:
-                        payload = _mark_order_goods_retry_attempted(payload)
-                        continue
-                    payload = _mark_order_goods_retry_attempted(payload)
-                _attach_duration(payload, _elapsed_seconds(session_started_at))
-                if isinstance(payload, dict):
-                    payload["attempt_count"] = attempt_count
-                with finished_lock:
-                    chunk_payloads.append(payload)
-                    completed_order_count += 1
-                    current_done = completed_order_count
-                _publish_status(
-                    f"Finished Rush Order Goods order {order_id} ({current_done}/{total_scanned_count} done).",
-                    stage="finished_order",
-                    current=current_done,
-                    total=total_scanned_count,
-                    order_id=order_id,
-                )
-
-        for order_index, order_id in enumerate(order_ids):
-            attempted_order_id_set.add(order_id)
-            attempted_order_ids.append(order_id)
-            thread = threading.Thread(target=_worker, args=(order_index, order_id), daemon=True)
-            threads.append(thread)
-            thread.start()
-
-        for thread in threads:
-            thread.join()
-        _record_stage_timing(
-            stage_timings,
-            "parallel_order_processing",
-            chunk_started_at,
-            refresh_pass=refresh_passes,
-            order_count=len(order_ids),
-            worker_count=worker_limit,
-        )
-
-        chunk_order_position = {order_id: index for index, order_id in enumerate(order_ids)}
-        chunk_payloads.sort(key=lambda payload: chunk_order_position.get(str((payload.get("order_ids") or [""])[0] or ""), 999999))
-        for payload in chunk_payloads:
-            payload_report = payload.get("report") if isinstance(payload, dict) else []
-            if isinstance(payload_report, list):
-                report_items.extend(payload_report)
-
-        if _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
-            break
-        print("Finished Rush Order Goods list pass; reopening the list to look for more eligible orders...")
-
-    success = all(bool(item.get("success")) for item in report_items) if report_items else True
-    message = _summary_message(
-        report_items,
-        refresh_passes=refresh_passes,
-        order_count=len(attempted_order_ids),
-        row_description=row_options.get("allowed_row_description"),
-    )
-    return {
-        "action": "order_goods_batch",
-        "success": success,
-        "message": message,
-        "order_count": len(attempted_order_ids),
-        "order_ids": attempted_order_ids,
-        "report": report_items,
-        "dry_run": bool(dry_run),
-        "headless": bool(headless_mode),
-        "shipping_filter": RUSH_FILTER,
-        "list_url": target_url,
-        "batch_size": requested_batch_size,
-        "parallel_workers": worker_limit,
-        "refresh_passes": refresh_passes,
-        "duration_seconds": _elapsed_seconds(batch_started_at),
-        "stage_timings": stage_timings,
-        "manual_review_required": any(bool(item.get("manual_review_required")) for item in report_items),
-        "resolution": "batch" if attempted_order_ids else "no_orders",
-        "skipped_historical_order_count": 0,
-    }
+    return order_only.run_with_mode(sys.modules[__name__], headless_mode, dry_run=dry_run, batch_size=batch_size,
+        profile_path=profile_path, list_url=list_url, parallel_workers=parallel_workers)
 
 
 def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_path=None, list_url=None, parallel_workers=1):
-    batch_started_at = time.monotonic()
-    target_url = _validate_runtime_config(list_url)
-    row_options = _order_goods_allowed_row_options(target_url)
-    requested_batch_size = _normalize_requested_batch_size(batch_size)
-    worker_limit = max(1, int(parallel_workers or 1))
-    if requested_batch_size is not None:
-        worker_limit = min(worker_limit, requested_batch_size)
-    if worker_limit > 1:
-        return _run_parallel_batch_with_mode(
-            headless_mode,
-            dry_run=dry_run,
-            batch_size=requested_batch_size,
-            profile_path=profile_path,
-            list_url=target_url,
-            parallel_workers=worker_limit,
-        )
-
-    resolved_profile_path = os.path.abspath(profile_path or PROFILE_PATH)
-    _publish_status("Loading CRM session for Rush Order Goods batch.", stage="loading_crm")
-    driver = _build_crm_session_driver(
-        resolved_profile_path,
-        headless_mode=headless_mode,
-        profile_label="CRM order goods",
-    )
-    report_items = []
-    attempted_order_ids = []
-    attempted_order_id_set = set()
-    refresh_passes = 0
-    completed_order_count = 0
-    total_scanned_count = 0
-    stage_timings = []
-    try:
-        while not _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
-            refresh_passes += 1
-            remaining = _batch_collection_limit(
-                requested_batch_size,
-                len(attempted_order_ids),
-                worker_limit=CONTINUOUS_ORDER_FETCH_LIMIT,
-            )
-            _publish_status(
-                f"Loading CRM order-goods list pass {refresh_passes} to scan for eligible orders.",
-                stage="loading_crm_list",
-                current=completed_order_count if total_scanned_count else None,
-                total=total_scanned_count or None,
-            )
-            list_scan_started_at = time.monotonic()
-            order_ids = _collect_batch_order_ids_with_driver(
-                driver,
-                RUSH_FILTER,
-                remaining,
-                list_url_override=target_url,
-                exclude_order_ids=attempted_order_id_set,
-                **row_options,
-            )
-            _record_stage_timing(
-                stage_timings,
-                "list_scan",
-                list_scan_started_at,
-                refresh_pass=refresh_passes,
-                order_count=len(order_ids),
-            )
-            if not order_ids:
-                _publish_status(
-                    "No more eligible Rush Order Goods orders were found in the CRM list.",
-                    stage="scan_complete",
-                    current=completed_order_count if total_scanned_count else None,
-                    total=total_scanned_count or None,
-                )
-                break
-            total_scanned_count += len(order_ids)
-            _publish_status(
-                f"Scanned {len(order_ids)} eligible Rush Order Goods order(s) on pass {refresh_passes}; processing orders.",
-                stage="processing_orders",
-                current=completed_order_count,
-                total=total_scanned_count,
-            )
-            chunk_started_at = time.monotonic()
-            for order_id in order_ids:
-                if _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
-                    break
-                attempted_order_id_set.add(order_id)
-                attempted_order_ids.append(order_id)
-                print(f"Processing Rush Order Goods order {len(attempted_order_ids)}: {order_id}...")
-                _publish_status(
-                    f"Processing Rush Order Goods order {order_id} ({completed_order_count}/{total_scanned_count} done).",
-                    stage="processing_order",
-                    current=completed_order_count,
-                    total=total_scanned_count,
-                    order_id=order_id,
-                )
-                order_started_at = time.monotonic()
-                try:
-                    order_report = _run_order_with_driver(driver, order_id, dry_run=dry_run)
-                    order_duration = _elapsed_seconds(order_started_at)
-                    for item in order_report:
-                        if isinstance(item, dict):
-                            item["duration_seconds"] = order_duration
-                            item["session_duration_seconds"] = order_duration
-                    report_items.extend(order_report)
-                except Exception as exc:
-                    safe_take_screenshot(driver, "crm_order_goods_error")
-                    order_duration = _elapsed_seconds(order_started_at)
-                    report_items.append(
-                        {
-                            "order_id": order_id,
-                            "success": False,
-                            "outcome": "worker_exception",
-                            "message": str(exc),
-                            "manual_review_required": True,
-                            "retryable": _is_retryable_exception(exc),
-                            "error_type": type(exc).__name__,
-                            "duration_seconds": order_duration,
-                            "session_duration_seconds": order_duration,
-                        }
-                    )
-                completed_order_count += 1
-                _publish_status(
-                    f"Finished Rush Order Goods order {order_id} ({completed_order_count}/{total_scanned_count} done).",
-                    stage="finished_order",
-                    current=completed_order_count,
-                    total=total_scanned_count,
-                    order_id=order_id,
-                )
-                if _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
-                    break
-            _record_stage_timing(
-                stage_timings,
-                "shared_session_order_processing",
-                chunk_started_at,
-                refresh_pass=refresh_passes,
-                order_count=len(order_ids),
-                worker_count=worker_limit,
-            )
-            if _batch_limit_reached(len(attempted_order_ids), requested_batch_size):
-                break
-            print("Finished Rush Order Goods list pass; reopening the list to look for more eligible orders...")
-    finally:
-        safe_driver_quit(driver, profile_path=resolved_profile_path)
-
-    success = all(bool(item.get("success")) for item in report_items) if report_items else True
-    message = _summary_message(
-        report_items,
-        refresh_passes=refresh_passes,
-        order_count=len(attempted_order_ids),
-        row_description=row_options.get("allowed_row_description"),
-    )
-    return {
-        "action": "order_goods_batch",
-        "success": success,
-        "message": message,
-        "order_count": len(attempted_order_ids),
-        "order_ids": attempted_order_ids,
-        "report": report_items,
-        "dry_run": bool(dry_run),
-        "headless": bool(headless_mode),
-        "shipping_filter": RUSH_FILTER,
-        "list_url": target_url,
-        "batch_size": requested_batch_size,
-        "parallel_workers": worker_limit,
-        "refresh_passes": refresh_passes,
-        "duration_seconds": _elapsed_seconds(batch_started_at),
-        "stage_timings": stage_timings,
-        "manual_review_required": any(bool(item.get("manual_review_required")) for item in report_items),
-        "resolution": "batch" if attempted_order_ids else "no_orders",
-        "skipped_historical_order_count": 0,
-    }
+    return order_only.run_with_mode(sys.modules[__name__], headless_mode, dry_run=dry_run, batch_size=batch_size,
+        profile_path=profile_path, list_url=list_url, parallel_workers=parallel_workers)
 
 
 def _run_batch(dry_run=False, batch_size=None, parallel_workers=1, profile_path=None, list_url=None, visible=False):
@@ -3020,61 +2549,8 @@ def _run_batch(dry_run=False, batch_size=None, parallel_workers=1, profile_path=
 
 
 def _run_single_with_mode(headless_mode, order_id, dry_run=False, profile_path=None):
-    started_at = time.monotonic()
-    normalized_order_id = _normalize_target_order_id(order_id)
-    if not normalized_order_id:
-        raise RuntimeError("Order ID must be a 7-digit value or CRM order URL.")
-    resolved_profile_path = os.path.abspath(profile_path or PROFILE_PATH)
-    _publish_status(
-        f"Loading CRM session for Rush Order Goods order {normalized_order_id}.",
-        stage="loading_crm",
-        current=0,
-        total=1,
-        order_id=normalized_order_id,
-    )
-    driver = _build_crm_session_driver(
-        resolved_profile_path,
-        headless_mode=headless_mode,
-        profile_label=f"CRM order goods single {normalized_order_id}",
-    )
-    report_items = []
-    try:
-        # Use the same stock-tab ordering path as list-driven Order Goods.
-        report_items = _run_order_with_driver(
-            driver,
-            normalized_order_id,
-            dry_run=dry_run,
-            wait_for_auto_order_result=False,
-        )
-        _publish_status(
-            f"Finished Rush Order Goods order {normalized_order_id} (1/1 done).",
-            stage="finished_order",
-            current=1,
-            total=1,
-            order_id=normalized_order_id,
-        )
-    finally:
-        safe_driver_quit(driver, profile_path=resolved_profile_path)
-
-    success = all(bool(item.get("success")) for item in report_items) if report_items else True
-    return {
-        "action": "order_goods_single",
-        "success": success,
-        "message": _summary_message(report_items, refresh_passes=1, order_count=1),
-        "target_order_id": normalized_order_id,
-        "order_count": 1,
-        "order_ids": [normalized_order_id],
-        "report": report_items,
-        "dry_run": bool(dry_run),
-        "headless": bool(headless_mode),
-        "shipping_filter": RUSH_FILTER,
-        "batch_size": 1,
-        "parallel_workers": 1,
-        "refresh_passes": 1,
-        "duration_seconds": _elapsed_seconds(started_at),
-        "manual_review_required": any(bool(item.get("manual_review_required")) for item in report_items),
-        "resolution": "single",
-    }
+    return order_only.run_with_mode(sys.modules[__name__], headless_mode, order_id=order_id,
+        dry_run=dry_run, profile_path=profile_path)
 
 
 def _run_single(order_id, dry_run=False, profile_path=None, visible=False):
@@ -3202,7 +2678,7 @@ def parse_args(argv=None):
         "--parallel-workers",
         type=int,
         default=1,
-        help="Run up to this many isolated Rush Order Goods workers at the same time.",
+        help="Retained for saved-setting compatibility; Order Goods uses one browser with background order tabs.",
     )
     parser.add_argument("--visible", action="store_true", help="Run Chrome visibly instead of headless for testing.")
     parser.add_argument("--dry-run", action="store_true", help="Find the Sanmar / S&S button without clicking it.")

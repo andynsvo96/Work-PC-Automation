@@ -79,14 +79,15 @@ def _save(record):
             temporary.unlink()
 
 
-def recovery_block(order_id, *, check_lock=True):
+def recovery_block(order_id, *, check_lock=True, submission_only=False):
     """Check before unlocking, since CRM can itself buy stock during an unlock."""
     try:
         if check_lock and _path(order_id).with_suffix(".lock").exists():
             return "Another native stock run is active or was interrupted. Check the worker and CRM stock before retrying."
         record = _load(order_id)
         if record and any(entry["state"] in {"prepared", "submitted"} or
-                          (entry["state"] == "confirmed" and entry.get("verified") is not True) or
+                          (entry["state"] == "confirmed" and entry.get("verified") is not True and
+                           not (submission_only and record.get("submissionOnly") is True)) or
                           (entry["state"] == "review" and entry.get("failureConfirmed") is not True)
                           for entry in record["entries"]):
             return f"An earlier native stock request is uncertain. Review CRM stock and {_path(order_id)} before retrying; no stock was resubmitted."

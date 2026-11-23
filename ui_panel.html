@@ -6931,7 +6931,7 @@ function renderCrmProcessingSelectionButtons(state = {}) {
     orderGoodsBtn.classList.toggle('processing-disabled', !canRunOrderGoods);
     orderGoodsBtn.disabled = !canRunOrderGoods;
     orderGoodsBtn.textContent = 'Order Goods';
-    orderGoodsBtn.title = 'Toggle Order Goods in Automate Processing.';
+    orderGoodsBtn.title = 'Submit available stock requests only. Locked stock is skipped; purchase outcomes are not checked.';
   }
   if (shippingBypasserBtn) {
     const enabled = selectedSteps.includes('shipping_bypasser');
@@ -8602,13 +8602,13 @@ function renderCrmOrderGoodsStatus(payload) {
   } else if (processingRunning) {
     headline = 'Rush Order Goods is waiting for Automate Processing to finish.';
   } else if (runtime.lastSuccess === true) {
-    headline = 'Last Rush Order Goods run completed successfully.';
+    headline = resultPayload.submission_only ? 'Last Order Goods submission run completed.' : 'Last Rush Order Goods run completed successfully.';
   } else if (runtime.lastSuccess === false) {
     headline = 'Last Rush Order Goods run needs attention.';
   }
 
   const runtimeText = running
-    ? (isSingle ? `Order ${targetOrderId || '-'} | ${runtime.lastMessage || headline}` : `Workers ${parallelWorkers} | ${runtime.lastMessage || headline}`)
+    ? (isSingle ? `Order ${targetOrderId || '-'} | ${runtime.lastMessage || headline}` : `One browser | ${runtime.lastMessage || headline}`)
     : (runtime.lastMessage || resultPayload.message || 'No Order Goods runs yet.');
 
   setCrmOrderGoodsStatusText(headline);

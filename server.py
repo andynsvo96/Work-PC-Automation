@@ -5697,6 +5697,10 @@ def _normalize_crm_stock_order_results(items, fallback_order_ids=None, fallback_
 
 def _crm_order_goods_outcome_label(outcome, success):
     key = str(outcome or "").strip().lower()
+    if key == "order_goods_submitted":
+        return "Submitted"
+    if key == "order_goods_skipped":
+        return "Skipped"
     if key == "partial_success":
         return "Partially successful"
     if key == "already_stock_ordered":
@@ -9304,8 +9308,8 @@ def start_crm_order_goods_run(dry_run=False, batch_size=None, parallel_workers=N
         return True, f"Single Stock run started for order {normalized_order_id}."
     scope = _crm_batch_scope_phrase(normalized_batch_size)
     if dry_run:
-        return True, f"Rush Order Goods dry run started {scope} with {normalized_parallel_workers} worker(s)."
-    return True, f"Rush Order Goods started {scope} with {normalized_parallel_workers} worker(s)."
+        return True, f"Order Goods dry run started {scope} in one browser."
+    return True, f"Order Goods stock submissions started {scope} in one browser."
 
 
 def get_crm_order_goods_status_payload():
@@ -12779,7 +12783,7 @@ def _crm_extension_order_thread(order_id, shipping_too_expensive=False):
                 )
                 return
 
-        _set_crm_extension_order_progress("order_goods", "Unlocking stock if needed and ordering goods for every stock tab.")
+        _set_crm_extension_order_progress("order_goods", "Submitting available stock requests for this order.")
         order_goods_results = []
         for target_order_id in target_order_ids:
             ok, message, payload = _execute_crm_order_goods_worker(

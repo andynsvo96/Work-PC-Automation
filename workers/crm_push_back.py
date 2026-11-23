@@ -41,7 +41,7 @@ from config import (
 import crm_order_goods as crm_order_goods_worker
 import crm_shipping_bypasser as crm_shipping_bypasser_worker
 from crm_order_goods import (
-    _run_order_with_driver as _order_goods_for_order_with_driver,
+    _run_order_with_feedback as _order_goods_for_order_with_driver,
     _wait_for_order_goods_page_ready,
 )
 from crm_shipping_bypasser import (

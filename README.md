@@ -36,6 +36,21 @@ The app runs as a local Flask server with a browser control panel and a tray ico
 
 ## CRM Order Assistant and Newer Workflows
 
+- **Order Goods now only submits stock:** the existing automation opens applicable
+  orders in one browser, up to 25 background tabs at a time, and runs the native
+  Order All requests for every enabled automatic stock control. Single-product
+  orders use the same procedure. Orders in edit mode and locked, disabled,
+  manual, or already ordered stock are skipped. Order Goods no longer unlocks
+  stock, investigates
+  error messages, retries orders, or refreshes to verify purchases. Reports say
+  **Submitted**; a completed submission run does not establish that every purchase
+  succeeded. Existing list filters, batch limits, queue locks, dry runs, and
+  durable duplicate-submission receipts remain. The saved worker-count parameter
+  remains compatible; Order Goods uses one browser regardless of that value.
+  Separate Stock Unlocker and Push Back workflows retain their own behavior.
+  Restart the app and refresh the dashboard for the updated report labels; the
+  next queued worker uses the replacement. No extension reload is needed.
+
 - **Order All in Window:** CRM Order Assistant **1.8.8** adds a toolbar-popup button
   that orders eligible stock for all unique CRM orders open in the current Chrome
   window, including single-product orders and unchecked editing-list entries.
@@ -336,16 +351,14 @@ The Stock Issue offline browser checks also verify Sales Note persistence,
 note-only save recovery, and preservation of Production Notes. They open local
 fixtures only (`python -m unittest discover -s tests -p test_stock_issue_browser.py`).
 
-Verify Order Goods tab handling, repeat runs, and dry runs with
-`python -m unittest discover -s tests -p 'test_crm_order_goods*.py'`.
+Verify Order Goods ordering-only dispatch, background tabs, repeat runs, and dry
+runs with `python -m unittest discover -s tests -p 'test_crm_order_goods*.py'`.
 The browser checks use a local ChromeDriver (`CHROMEDRIVER` can override it), an
 isolated profile under `runtime/debug/`, and local fixtures only. They cover
-yellow PO records with and without buttons, mixed ordered/unordered tabs,
-duplicate tab labels, View Proofs, concurrent native requests, one final refresh,
-partial failures, durable interrupted-run protection, saved-stock verification,
-and sizes added before a later run. The native batch shares the extension's
-receipt/fingerprint implementation, also checked with
-`node --test tests/test_order_all_batch.mjs`.
+concurrent order tabs, native submissions, locked-stock skips, ignored supplier
+error messages, durable receipts, and dry runs. Legacy feedback/save-verification
+checks cover the helpers retained for Push Back. The shared submission engine is
+also checked with `node --test tests/test_order_all_batch.mjs`.
 
 Verify the NJ/ADD history display with:
 

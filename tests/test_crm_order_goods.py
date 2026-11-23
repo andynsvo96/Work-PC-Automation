@@ -144,31 +144,15 @@ class StockTabRecoveryTests(unittest.TestCase):
 
 
 class RepeatStockBatchTests(unittest.TestCase):
-    def test_parallel_batches_revisit_history_but_deduplicate_current_run(self):
-        exclusions = []
+    def test_both_batch_entrypoints_use_the_ordering_only_shared_browser(self):
+        with mock.patch.object(worker.order_only, "run_with_mode", return_value={"success": True}) as dispatch:
+            for entrypoint in (worker._run_batch_with_mode, worker._run_parallel_batch_with_mode):
+                self.assertTrue(entrypoint(True, parallel_workers=8, list_url="https://crm.example/report")["success"])
+        self.assertEqual(dispatch.call_count, 2)
+        for call in dispatch.call_args_list:
+            self.assertIs(call.args[0], worker)
+            self.assertEqual(call.kwargs["parallel_workers"], 8)
 
-        def collect(*_args, exclude_order_ids, **_kwargs):
-            exclusions.append(set(exclude_order_ids))
-            return [] if "5000001" in exclude_order_ids else ["5000001"]
-
-        history = {"run_history": [{"automation_key": "order_goods", "order_ids": ["5000001"]}]}
-        with mock.patch("builtins.open", mock.mock_open(read_data=json.dumps(history))), \
-             mock.patch.object(worker, "_publish_status"), \
-             mock.patch.object(worker, "_collect_batch_order_ids", side_effect=collect), \
-             mock.patch.object(worker, "_clone_profile_for_worker", return_value=(None, str(ROOT))), \
-             mock.patch.object(worker, "_order_goods_worker_payload", side_effect=lambda *_a, **_k: {
-                 "success": True, "order_ids": ["5000001"],
-                 "report": [{"order_id": "5000001", "success": True, "outcome": "order_goods_clicked"}],
-             }) as run_order:
-            for _ in range(2):
-                result = worker._run_parallel_batch_with_mode(
-                    True, profile_path=str(ROOT), list_url="https://crm.example/report", parallel_workers=2,
-                )
-                self.assertTrue(result["success"])
-                self.assertEqual(result["order_ids"], ["5000001"])
-                self.assertEqual(result["skipped_historical_order_count"], 0)
-        self.assertEqual(run_order.call_count, 2)
-        self.assertEqual(exclusions, [set(), {"5000001"}, set(), {"5000001"}])
 
 
 if __name__ == "__main__":

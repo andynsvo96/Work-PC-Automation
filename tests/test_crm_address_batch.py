@@ -11063,77 +11063,18 @@ class CrmAddressServerTests(unittest.TestCase):
             )
         )
 
-    @mock.patch.object(crm_order_goods, "_publish_status")
-    @mock.patch.object(crm_order_goods, "safe_driver_quit")
-    @mock.patch.object(crm_order_goods, "_run_order_with_driver")
-    @mock.patch.object(crm_order_goods, "_build_crm_session_driver")
-    def test_order_goods_batch_worker_clicks_without_waiting_for_auto_order_feedback(
-        self,
-        mock_build_driver,
-        mock_run_order,
-        _mock_quit,
-        _mock_publish_status,
-    ):
-        mock_build_driver.return_value = mock.Mock()
-        mock_run_order.return_value = [
-            {
-                "order_id": "4418860",
-                "success": True,
-                "outcome": "auto_order_succeeded",
-                "message": "Goods have been ordered successfully.",
-                "manual_review_required": False,
-            }
-        ]
-
-        payload = crm_order_goods._order_goods_worker_payload(
-            "4418860",
-            headless_mode=True,
-            dry_run=False,
-            profile_path=str(ROOT),
-        )
-
+    def test_order_goods_batch_uses_ordering_only_instead_of_isolated_workers(self):
+        with mock.patch.object(crm_order_goods.order_only, "run_with_mode", return_value={"success": True}) as dispatch:
+            payload = crm_order_goods._run_parallel_batch_with_mode(True, parallel_workers=4, profile_path=str(ROOT))
         self.assertTrue(payload["success"])
-        mock_run_order.assert_called_once_with(
-            mock.ANY,
-            "4418860",
-            dry_run=False,
-            wait_for_auto_order_result=False,
-        )
+        dispatch.assert_called_once_with(crm_order_goods, True, dry_run=False, batch_size=None,
+            profile_path=str(ROOT), list_url=None, parallel_workers=4)
 
-    @mock.patch.object(crm_order_goods, "_publish_status")
-    @mock.patch.object(crm_order_goods, "safe_driver_quit")
-    @mock.patch.object(crm_order_goods, "_run_order_with_driver")
-    @mock.patch.object(crm_order_goods, "_build_crm_session_driver")
-    def test_order_goods_single_clicks_without_waiting_for_auto_order_feedback(
-        self,
-        mock_build_driver,
-        mock_run_order,
-        _mock_quit,
-        _mock_publish_status,
-    ):
-        mock_build_driver.return_value = mock.Mock()
-        mock_run_order.return_value = [{
-            "order_id": "4418860",
-            "success": True,
-            "outcome": "order_goods_clicked",
-            "message": "Clicked Sanmar / S&S Activewear order goods.",
-            "manual_review_required": False,
-        }]
-
-        payload = crm_order_goods._run_single_with_mode(
-            True,
-            "4418860",
-            dry_run=False,
-            profile_path=str(ROOT),
-        )
-
+    def test_order_goods_single_uses_ordering_only(self):
+        with mock.patch.object(crm_order_goods.order_only, "run_with_mode", return_value={"success": True}) as dispatch:
+            payload = crm_order_goods._run_single_with_mode(True, "4418860", profile_path=str(ROOT))
         self.assertTrue(payload["success"])
-        mock_run_order.assert_called_once_with(
-            mock.ANY,
-            "4418860",
-            dry_run=False,
-            wait_for_auto_order_result=False,
-        )
+        dispatch.assert_called_once_with(crm_order_goods, True, order_id="4418860", dry_run=False, profile_path=str(ROOT))
 
     def test_sanmar_quantity_fill_uses_native_input_setter(self):
         self.assertIn(
@@ -11362,7 +11303,7 @@ class CrmAddressServerTests(unittest.TestCase):
     @mock.patch.object(crm_order_goods, "_unlock_current_order_for_auto_ordering")
     @mock.patch.object(crm_order_goods, "_wait_for_order_goods_page_ready", return_value=False)
     @mock.patch.object(crm_order_goods, "_open_target_order")
-    def test_order_goods_stops_when_order_page_never_renders_expected_order(
+    def test_push_back_stock_feedback_stops_when_order_page_never_renders_expected_order(
         self,
         mock_open,
         mock_ready,
@@ -11372,7 +11313,7 @@ class CrmAddressServerTests(unittest.TestCase):
         driver = mock.Mock()
 
         with self.assertRaises(crm_order_goods.TimeoutException):
-            crm_order_goods._run_order_with_driver(driver, "4418860", dry_run=False)
+            crm_order_goods._run_order_with_feedback(driver, "4418860", dry_run=False)
 
         self.assertEqual(mock_open.call_count, 2)
         self.assertEqual(mock_ready.call_count, 2)
@@ -11384,7 +11325,7 @@ class CrmAddressServerTests(unittest.TestCase):
     @mock.patch.object(crm_order_goods, "_unlock_current_order_for_auto_ordering")
     @mock.patch.object(crm_order_goods, "_wait_for_order_goods_page_ready", return_value=True)
     @mock.patch.object(crm_order_goods, "_open_target_order")
-    def test_order_goods_unlocks_locked_order_then_refreshes_before_ordering(self, mock_open, _mock_ready, mock_unlock, _mock_wait_after_unlock, mock_order_tabs):
+    def test_push_back_stock_feedback_unlocks_locked_order_then_refreshes_before_ordering(self, mock_open, _mock_ready, mock_unlock, _mock_wait_after_unlock, mock_order_tabs):
         driver = mock.Mock()
         mock_unlock.return_value = {
             "order_id": "4418860",
@@ -11397,7 +11338,7 @@ class CrmAddressServerTests(unittest.TestCase):
             {"order_id": "4418860", "success": True, "outcome": "order_goods_clicked", "message": "clicked", "manual_review_required": False}
         ]
 
-        results = crm_order_goods._run_order_with_driver(driver, "4418860", dry_run=False)
+        results = crm_order_goods._run_order_with_feedback(driver, "4418860", dry_run=False)
 
         self.assertEqual(mock_open.call_count, 2)
         driver.refresh.assert_called_once()
@@ -11410,7 +11351,7 @@ class CrmAddressServerTests(unittest.TestCase):
     @mock.patch.object(crm_order_goods, "_unlock_current_order_for_auto_ordering")
     @mock.patch.object(crm_order_goods, "_wait_for_order_goods_page_ready", return_value=True)
     @mock.patch.object(crm_order_goods, "_open_target_order")
-    def test_order_goods_checks_remaining_tabs_after_post_unlock_auto_order(self, _mock_open, _mock_ready, mock_unlock, _mock_wait_after_unlock, mock_order_tabs):
+    def test_push_back_stock_feedback_checks_remaining_tabs_after_post_unlock_auto_order(self, _mock_open, _mock_ready, mock_unlock, _mock_wait_after_unlock, mock_order_tabs):
         driver = mock.Mock()
         mock_unlock.return_value = {
             "order_id": "4418860",
@@ -11424,7 +11365,7 @@ class CrmAddressServerTests(unittest.TestCase):
             {"order_id": "4418860", "success": True, "outcome": "order_goods_clicked"},
         ]
 
-        results = crm_order_goods._run_order_with_driver(driver, "4418860", dry_run=False)
+        results = crm_order_goods._run_order_with_feedback(driver, "4418860", dry_run=False)
 
         self.assertEqual(len(results), 2)
         self.assertTrue(all(item["success"] and item["stock_unlocked_before_order_goods"] for item in results))
@@ -11438,7 +11379,7 @@ class CrmAddressServerTests(unittest.TestCase):
     @mock.patch.object(crm_order_goods, "_unlock_current_order_for_auto_ordering")
     @mock.patch.object(crm_order_goods, "_wait_for_order_goods_page_ready", return_value=True)
     @mock.patch.object(crm_order_goods, "_open_target_order")
-    def test_order_goods_retries_locked_status_through_order_preview(self, mock_open, _mock_ready, mock_unlock, mock_report_unlock, _mock_wait_after_unlock, mock_order_tabs):
+    def test_push_back_stock_feedback_retries_locked_status_through_order_preview(self, mock_open, _mock_ready, mock_unlock, mock_report_unlock, _mock_wait_after_unlock, mock_order_tabs):
         driver = mock.Mock()
         mock_unlock.return_value = {
             "order_id": "4418860", "success": True, "outcome": "stock_unlocked", "message": "First unlock attempt."
@@ -11450,7 +11391,7 @@ class CrmAddressServerTests(unittest.TestCase):
             {"order_id": "4418860", "success": True, "outcome": "order_goods_clicked", "message": "clicked"}
         ]
 
-        results = crm_order_goods._run_order_with_driver(driver, "4418860", dry_run=False)
+        results = crm_order_goods._run_order_with_feedback(driver, "4418860", dry_run=False)
 
         mock_unlock.assert_called_once_with(mock.ANY, "4418860", dry_run=False)
         mock_report_unlock.assert_called_once_with(mock.ANY, "4418860")
@@ -11464,7 +11405,7 @@ class CrmAddressServerTests(unittest.TestCase):
     @mock.patch.object(crm_order_goods, "_unlock_current_order_for_auto_ordering")
     @mock.patch.object(crm_order_goods, "_wait_for_order_goods_page_ready", return_value=True)
     @mock.patch.object(crm_order_goods, "_open_target_order")
-    def test_order_goods_refuses_to_claim_unlock_without_confirmation(self, _mock_open, _mock_ready, mock_unlock, _mock_wait_after_unlock, mock_order_tabs):
+    def test_push_back_stock_feedback_refuses_to_claim_unlock_without_confirmation(self, _mock_open, _mock_ready, mock_unlock, _mock_wait_after_unlock, mock_order_tabs):
         mock_unlock.return_value = {
             "order_id": "4418860",
             "success": True,
@@ -11473,7 +11414,7 @@ class CrmAddressServerTests(unittest.TestCase):
             "manual_review_required": False,
         }
 
-        results = crm_order_goods._run_order_with_driver(mock.Mock(), "4418860", dry_run=False)
+        results = crm_order_goods._run_order_with_feedback(mock.Mock(), "4418860", dry_run=False)
 
         self.assertFalse(results[0]["success"])
         self.assertEqual(results[0]["outcome"], "stock_unlock_not_confirmed")
@@ -11484,7 +11425,7 @@ class CrmAddressServerTests(unittest.TestCase):
     @mock.patch.object(crm_order_goods, "_unlock_current_order_for_auto_ordering")
     @mock.patch.object(crm_order_goods, "_wait_for_order_goods_page_ready", return_value=True)
     @mock.patch.object(crm_order_goods, "_open_target_order")
-    def test_order_goods_single_dry_run_reports_locked_unlock_without_ordering(self, _mock_open, _mock_ready, mock_unlock, mock_order_tabs):
+    def test_push_back_stock_feedback_single_dry_run_reports_locked_unlock_without_ordering(self, _mock_open, _mock_ready, mock_unlock, mock_order_tabs):
         driver = mock.Mock()
         mock_unlock.return_value = {
             "order_id": "4418860",
@@ -11494,7 +11435,7 @@ class CrmAddressServerTests(unittest.TestCase):
             "manual_review_required": False,
         }
 
-        results = crm_order_goods._run_order_with_driver(driver, "4418860", dry_run=True)
+        results = crm_order_goods._run_order_with_feedback(driver, "4418860", dry_run=True)
 
         self.assertEqual(results[0]["outcome"], "stock_unlock_ready")
         driver.refresh.assert_not_called()
@@ -11570,89 +11511,21 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertEqual(results[0]["outcome"], "stock_tab_not_vendor_orderable")
         self.assertEqual(results[1]["outcome"], "order_goods_clicked")
 
-    @mock.patch.object(crm_order_goods, "safe_driver_quit")
-    @mock.patch.object(crm_order_goods, "_publish_status")
-    @mock.patch.object(crm_order_goods, "_run_order_with_driver")
-    @mock.patch.object(crm_order_goods, "_build_crm_session_driver")
-    @mock.patch.object(crm_order_goods, "_collect_batch_order_ids_with_driver")
-    def test_order_goods_batch_reprocesses_orders_on_next_run(self, mock_collect, _mock_build_driver, mock_run_order, _mock_status, _mock_quit):
-        exclusions = []
+    def test_order_goods_submission_report_does_not_claim_purchases_were_verified(self):
+        payload = {"submission_only": True, "success": True, "order_ids": ["4418860"], "report": [
+            {"order_id": "4418860", "success": True, "outcome": "order_goods_submitted",
+             "message": "Stock request submitted; purchase outcome was not checked."}]}
+        row = server._build_crm_order_goods_order_results(payload)[0]
+        self.assertEqual(row["status"], "Submitted")
+        self.assertIn("not checked", row["message"])
+        self.assertEqual(server._crm_order_goods_outcome_label("order_goods_skipped", True), "Skipped")
 
-        def collect(*_args, exclude_order_ids, **_kwargs):
-            exclusions.append(set(exclude_order_ids))
-            return [] if "4418860" in exclude_order_ids else ["4418860"]
-
-        mock_collect.side_effect = collect
-        mock_run_order.side_effect = lambda *_args, **_kwargs: [
-            {"order_id": "4418860", "success": True, "outcome": "order_goods_clicked"}
-        ]
-        history = {"run_history": [{"automation_key": "order_goods", "order_ids": ["4418860"]}]}
-        with mock.patch("builtins.open", mock.mock_open(read_data=json.dumps(history))):
-            for _ in range(2):
-                payload = crm_order_goods._run_batch_with_mode(False, dry_run=False, batch_size=None, profile_path=str(ROOT))
-                self.assertTrue(payload["success"])
-                self.assertEqual(payload["order_ids"], ["4418860"])
-                self.assertEqual(payload["skipped_historical_order_count"], 0)
-
-        self.assertEqual(mock_run_order.call_count, 2)
-        self.assertEqual(exclusions, [set(), {"4418860"}, set(), {"4418860"}])
-
-    @mock.patch.object(crm_order_goods.shutil, "rmtree")
-    @mock.patch.object(crm_order_goods, "_clone_profile_for_worker")
-    @mock.patch.object(crm_order_goods, "_order_goods_worker_payload")
-    @mock.patch.object(crm_order_goods, "_collect_batch_order_ids")
-    def test_parallel_order_goods_retries_retryable_worker_once(
-        self,
-        mock_collect,
-        mock_worker_payload,
-        mock_clone_profile,
-        _mock_rmtree,
-    ):
-        mock_collect.side_effect = [["4418860"], []]
-        mock_clone_profile.side_effect = [
-            ("temp-a", "profile-a"),
-            ("temp-b", "profile-b"),
-        ]
-        mock_worker_payload.side_effect = [
-            {
-                "success": False,
-                "order_ids": ["4418860"],
-                "report": [
-                    {
-                        "order_id": "4418860",
-                        "success": False,
-                        "outcome": "worker_exception",
-                        "message": "Message: button was not found",
-                        "retryable": True,
-                    }
-                ],
-            },
-            {
-                "success": True,
-                "order_ids": ["4418860"],
-                "report": [
-                    {
-                        "order_id": "4418860",
-                        "success": True,
-                        "outcome": "order_goods_clicked",
-                        "message": "Clicked.",
-                    }
-                ],
-            },
-        ]
-
-        payload = crm_order_goods._run_parallel_batch_with_mode(
-            False,
-            dry_run=False,
-            batch_size=1,
-            profile_path=str(ROOT),
-            list_url="https://crm.example/report?shippingCharges%5Blow%5D=1",
-            parallel_workers=4,
-        )
-
-        self.assertTrue(payload["success"])
-        self.assertEqual(mock_worker_payload.call_count, 2)
-        self.assertEqual(payload["report"][0]["outcome"], "order_goods_clicked")
+    def test_order_goods_never_retries_a_failed_submission_run_automatically(self):
+        failed = {"success": False, "message": "Submission unknown", "submission_only": True}
+        with mock.patch.object(crm_order_goods.order_only, "run_with_mode", return_value=failed) as dispatch:
+            payload = crm_order_goods._run_batch(parallel_workers=4, profile_path=str(ROOT), visible=True)
+        self.assertFalse(payload["success"])
+        dispatch.assert_called_once()
 
     @mock.patch.object(server, "save_crm_state")
     @mock.patch.object(server, "load_crm_state")

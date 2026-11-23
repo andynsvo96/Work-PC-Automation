@@ -24,7 +24,7 @@ These are the main CRM automation files in this repo:
 | `workers/crm_product_separator.py` | Opens a CRM order, enters `Edit Order`, modifies order/product data through Angular scope and DOM inputs, clicks `Save Order`, and waits until CRM exits edit mode. |
 | `workers/crm_auto_splitter.py` | Uses the same order edit/save contract as product separator, plus quote copy/save flows. |
 | `workers/crm_shipping_bypasser.py` | Changes CRM due date, production date, and production notes through visible `Edit Order` and `Save Order` controls, then refreshes and verifies persisted field values. |
-| `workers/crm_order_goods.py` | Opens orders from rush/813 lists, reads stock tabs, handles stock unlock state, and launches SanMar order goods flow. |
+| `workers/crm_order_goods.py` | Collects applicable orders and delegates stock-only submissions to `crm_order_goods_only.py`; feedback helpers are retained for Push Back. |
 | `workers/crm_unlock_orders.py` | Demonstrates report-list bulk actions through the Order Preview panel rather than direct order edit mode. |
 | `server.py` and `routes/work_routes.py` | Orchestrate workers, locks, queues, state, status polling, and `last_result.json` result handoff. |
 | `automation_runtime.py` | Shared Selenium helpers: Chrome driver setup, safe navigation, screenshots, status/result payloads, and safe shutdown. |
@@ -59,59 +59,57 @@ does not start a worker, use the queue, or save an order editor. Reload the
 extension and refresh CRM pages to load it; no app restart is needed. See the
 [window ordering guide](../crm-order-dark-mode-extension/README.md#order-all-in-window---188).
 
-Normal Order Goods runs on orders with multiple product tabs use
-`workers/crm_order_goods_native.py` and its Selenium JavaScript adapter. The
-adapter loads the extension's `order-all-batch.js`, sharing stock fingerprints,
-concurrent submission, response timeouts, and browser-session receipts. The
-extension does not have to be installed or enabled in the worker profile.
+Normal Order Goods, including single-order runs, now uses
+`workers/crm_order_goods_only.py`. The worker collects IDs using the configured
+report's existing eligibility rules, opens up to 25 background tabs in one
+browser, and starts every ready order's native stock requests before waiting for
+another order's response. Each order is attempted once per run. The saved
+`parallel_workers` parameter remains accepted for compatibility; the replacement
+uses one browser. Tasks still run locally under the existing queue and profile
+ownership, subprocess, and result-file contracts.
 
-After the existing targeted stock-unlock checks, the worker identifies each
-active design by its saved ID and reads its native inventory scope. It starts
-the same `orders/inventory/InventorySrv.orderGoodsSupplynet(design.id)` action
-used by Order All for every eligible SanMar / S&S Activewear control before
-waiting for any response. Inactive product panes are included without switching
-tabs. Removed designs, hidden/disabled/locked controls, Manual Order, and Add Box
-are excluded. A stock-order request already in progress stops another batch.
-The order-wide Ordered banner does not exclude remaining stock on other tabs.
+`crm_order_goods_native.js` reads native inventory scopes and uses the shared
+`order-all-batch.js` submission engine. Single-product orders follow the same
+path. Disabled/locked controls, removed designs, Manual Order, Add Box, transfers,
+and native editors are skipped. This path does not unlock stock, scan supplier
+or CRM error messages, classify automated notes, recover pages, or refresh to
+verify purchases. The standalone Stock Unlocker and Push Back workflows retain
+their own actions; Push Back explicitly uses `_run_order_with_feedback`.
 
-Before the first request, the worker atomically saves all submission intents
-under `runtime/state/order_goods_native/<order-id>.json`. A per-order `.lock`
-prevents overlapping native batches. Browser-session receipts also retain
-individual confirmations while requests finish. After the batch settles, one
-refresh verifies the same design IDs and stock quantities, saved stock records
-or native ordered flags, and the absence of another eligible control. Both a
-successful native response with a supplier and this persistence check are
-required for success. Results retain each tab's number, label, and saved design
-ID. Successful tabs stay successful if another tab fails.
+All intended requests are saved under
+`runtime/state/order_goods_native/<order-id>.json` before submission, with the
+existing per-order `.lock`. Browser receipts are retained while requests settle,
+so owned tabs are not closed during pending requests. Response success/failure
+flags are used only for duplicate protection; supplier error text is not read.
+An ordering-only receipt has `submissionOnly: true`. Confirmed fingerprints skip
+unchanged requests on later runs without claiming saved-value verification.
+New quantities may be submitted when the native control is enabled. Lost or
+interrupted submissions, unreadable receipts, and earlier unverified receipts
+remain blocked for manual review. Never clear these receipts to force a retry.
+The worker never automatically retries a submission or starts a fresh browser
+following an uncertain run.
 
-A later run skips confirmed stock with unchanged contents. Newly added sizes
-or quantities can be ordered when CRM exposes an eligible control. Explicit
-unsuccessful responses without a supplier can be attempted again by a later
-run; the batch never automatically retries a request. A lost response,
-interrupted submission, unreadable receipt, or confirmed request without saved
-stock verification stops for review before another stock unlock, because CRM
-can order stock during unlocking. Confirmed purchases remain protected even
-after temporary worker profiles are removed or an order is reduced to one tab.
-Keep these receipts and resolve ambiguous entries only after reviewing CRM's
-actual stock records. An interrupted worker can leave a `.lock`; verify that
-the worker has stopped and inspect its receipt and CRM stock before resolving
-that lock. Clearing Stock Tools history does not clear purchase receipts.
+Reports use `order_goods_submitted` (**Submitted**) for dispatched requests,
+`order_goods_skipped` (**Skipped**) for excluded controls, and retain `success`
+and `message`. `submission_only: true` and `submitted_request_count` distinguish
+submission completion from purchase confirmation. Even a supplier rejection is
+reported as an attempted submission; it does not trigger error investigation.
+Transport/storage failures still appear in the report. Dry runs inspect controls
+without submitting or writing purchase receipts. Existing order editors are not
+saved or canceled by this path.
 
-Dry runs continue inspecting without submitting stock or reserving purchases.
-Single-tab orders without native batch history retain their existing button
-flow. Push Back retains its sequential native-button feedback and automated-note
-classification, which it uses to decide whether to change dates or bypass
-shipping. Existing queue serialization, order targeting, worker subprocesses,
-and result handoff remain in use.
-
-The next queued worker loads this change. No app restart, extension reload, or
-page refresh is required. Offline checks use isolated profiles and local
-fixtures only:
+Restart the app and refresh the dashboard for updated report labels; newly
+queued workers load the replacement automatically. No extension reload is
+needed. Offline checks use isolated profiles and local fixtures only:
 
 ```powershell
 python -m unittest discover -s tests -p 'test_crm_order_goods*.py'
 node --test tests/test_order_all_batch.mjs
 ```
+
+The browser tests include two concurrently loaded order tabs, requests started
+before result polling, locked-stock skips, ignored supplier error text, dry runs,
+and duplicate-submission receipts. Live purchases and macOS remain unverified.
 
 ## Required Local Setup On A New Computer
 

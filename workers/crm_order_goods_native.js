@@ -14,7 +14,8 @@ return (() => {
     if (String(scope.order?.getResource?.()?.id) === String(expectedOrderId) && typeof scope.saveOrder === 'function') break;
   }
   if (!scope || String(scope.order?.getResource?.()?.id) !== String(expectedOrderId) || typeof scope.saveOrder !== 'function') return fail('The expected CRM order is not loaded.');
-  if (scope.editMode || scope.transfersOnly || scope.savingOrder) return fail('CRM must finish editing or saving before ordering stock.');
+  if (scope.editMode || scope.transfersOnly || scope.savingOrder) return options.submissionOnly && action === 'inspect'
+    ? { ready: true, designs: [], skipped: true } : fail('CRM must finish editing or saving before ordering stock.');
   const resource = scope.order.getResource();
   const details = document.getElementById('order-design-details');
   if (!details || !Array.isArray(resource.designs)) return fail('CRM design inventory is not ready.');
@@ -80,7 +81,8 @@ return (() => {
       state.kind = 'initializing'; return state;
     }
     const automatic = owner.providers.filter(provider => provider.id === null);
-    state.stockRecorded = automatic.some(provider => provider.goodsPreviouslyOrdered || provider.stockOrdered || provider.allStockOrdered) || savedStock(node);
+    state.stockRecorded = automatic.some(provider => provider.goodsPreviouslyOrdered || provider.stockOrdered || provider.allStockOrdered) ||
+      (!options.submissionOnly && savedStock(node));
     state.kind = state.stockRecorded ? 'ordered' : automatic.length ? 'unavailable' : 'manual';
     if (owner.placingOrder) { state.kind = 'busy'; return state; }
     for (const button of node.querySelectorAll('button[ng-click="orderGoods(provider);"]')) {
@@ -119,6 +121,7 @@ return (() => {
   } catch (_) { return { ...fail('CRM native Order Goods service is not ready.'), notSubmitted: true }; }
   const record = batch.create(String(expectedOrderId), selected, options.previous);
   record.automationId = options.automationId;
+  if (options.submissionOnly) record.submissionOnly = true;
   function inAngular(owner, fn) {
     let result;
     const run = () => { result = fn(); };
@@ -138,7 +141,9 @@ return (() => {
       return Promise.resolve(request).then(response => {
         const entry = record.entries.find(entry => entry.id === target.id);
         entry.failureConfirmed = response?.succeeded === false && !response.supplier;
-        return response;
+        // Ordering-only runs retain submission receipts without reading supplier
+        // error messages, CRM dialogs, notes, or post-purchase stock records.
+        return options.submissionOnly ? { succeeded: response?.succeeded, supplier: response?.supplier } : response;
       });
     },
     finished(target, entry) {

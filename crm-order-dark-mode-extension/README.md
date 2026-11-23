@@ -66,6 +66,27 @@ These checks use local fixtures, including the actual popup and native Angular
 inventory adapter. Live stock purchases, installed-extension behavior, and macOS
 remain unverified.
 
+## Order Goods automation submits stock only
+
+**Manual Process > Order Goods** and the dashboard's existing Order Goods action
+now use one automation browser with background order tabs, applying the same
+native automatic stock requests as Order All. They submit enabled controls only,
+including single-product orders, and skip locked, disabled, manual, and editing
+stock. List runs retain their configured eligibility filters and open up to 25
+orders at a time. The existing action is replaced; there is no additional mode.
+
+The worker does not unlock stock, inspect CRM or supplier error messages, recover
+orders, or refresh to verify purchases. It keeps submitted pages alive until
+their requests settle and retains receipts to prevent duplicate submissions.
+Reports show **Submitted**, with purchase outcomes left for manual CRM review.
+Interrupted or uncertain submissions keep their review protection. Dry runs make
+no stock requests. The separate Stock Unlocker and Push Back actions keep their
+own workflows; the extension's Order All buttons keep their existing behavior.
+
+Restart the local app and refresh the dashboard for updated report labels. New
+worker runs load the replacement automatically. No extension reload or new
+permission is required.
+
 ## Exclude orders during batch editing - 1.8.6
 
 Uncheck an included order while editing to continue with the other orders. This

@@ -30,10 +30,12 @@
 </body>
 <script>
 const grid = new URLSearchParams(location.search).get('layout') === 'grid';
-let saved = JSON.parse(sessionStorage.getItem('stockFixture') || 'null');
+const fixtureOrderId = new URLSearchParams(location.search).get('order') || '5000001';
+const fixtureStorageKey = fixtureOrderId === '5000001' ? 'stockFixture' : 'stockFixture:' + fixtureOrderId;
+let saved = JSON.parse(sessionStorage.getItem(fixtureStorageKey) || 'null');
 if (!saved) saved = { pending: [false, true, true, true], purchases: [1, 1, 0, 0], quantities: [2,2,2,2], clicks: [], events: [], legacyClicks: 0 };
-const persist = () => sessionStorage.setItem('stockFixture', JSON.stringify(saved));
-window.resource = {id:'5000001', designs: saved.quantities.map((quantity, index) => ({
+const persist = () => sessionStorage.setItem(fixtureStorageKey, JSON.stringify(saved));
+window.resource = {id:fixtureOrderId, designs: saved.quantities.map((quantity, index) => ({
   id:String(101+index), designItems:[{id:501+index, productId:10, colorId:20, quantity, sizes:[{id:1,sizeId:1,quantity}]}]
 }))};
 window.nativeModes = {};

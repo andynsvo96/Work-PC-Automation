@@ -19,6 +19,7 @@ for path in (ROOT, ROOT / "workers"):
 
 import crm_order_goods as worker  # noqa: E402
 import crm_order_goods_native as native  # noqa: E402
+import crm_order_goods_only as only  # noqa: E402
 
 
 class StockOrderingBrowserTests(unittest.TestCase):
@@ -63,6 +64,74 @@ class StockOrderingBrowserTests(unittest.TestCase):
         self.assertEqual(len(tabs), 4)
         self.assertIn("View Proofs", tabs[1]["label"])
         self.assertEqual(tabs[2]["label"], tabs[3]["label"])
+
+    def test_ordering_only_submits_without_refreshing_or_reading_error_messages(self):
+        self.driver.execute_script("""
+          nativeModes[3]='fail';
+          const submit=inventoryService.orderGoodsSupplynet;
+          inventoryService.orderGoodsSupplynet=id=>submit(id).then(response=>{
+            Object.defineProperty(response,'errors',{get(){throw Error('Supplier errors must not be read');}});
+            return response;
+          });
+        """)
+        with mock.patch.object(self.driver, "refresh", wraps=self.driver.refresh) as refresh, \
+             mock.patch.object(worker, "_unlock_current_order_for_auto_ordering") as unlock, \
+             mock.patch.object(worker, "_wait_for_auto_order_feedback") as feedback:
+            results = only.order_window(worker, self.driver, ["5000001"], existing_handle=self.driver.current_window_handle)
+        self.assertEqual([row["outcome"] for row in results], ["order_goods_skipped"] + ["order_goods_submitted"] * 3)
+        self.assertTrue(all(row["success"] for row in results))
+        self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [2, 3, 4])
+        self.assertFalse(any("Not enough stock" in row["message"] for row in results))
+        refresh.assert_not_called(); unlock.assert_not_called(); feedback.assert_not_called()
+        self.assertTrue(native._load("5000001")["submissionOnly"])
+        self.assertIsNone(native.recovery_block("5000001", submission_only=True))
+
+    def test_ordering_only_skips_locked_stock_and_dry_run_never_submits(self):
+        self.driver.execute_script("fixtureLocked=true;")
+        results = only.order_window(worker, self.driver, ["5000001"], existing_handle=self.driver.current_window_handle)
+        self.assertTrue(all(row["success"] and row["outcome"] == "order_goods_skipped" for row in results))
+        self.driver.execute_script("fixtureLocked=false;")
+        results = only.order_window(worker, self.driver, ["5000001"], dry_run=True, existing_handle=self.driver.current_window_handle)
+        self.assertEqual(sum(row["outcome"] == "order_goods_ready" for row in results), 3)
+        self.assertEqual(self.driver.execute_script("return stockFixtureState().clicks"), [])
+        self.assertEqual(list(native.RECEIPT_DIR.iterdir()), [])
+
+    def test_ordering_only_supports_one_product_without_legacy_button_clicks(self):
+        self.driver.execute_script("""
+          resource.designs=[resource.designs[3]];
+          window.submittedDesigns=[];
+          inventoryService.orderGoodsSupplynet=id=>{
+            submittedDesigns.push(String(id));
+            return Promise.resolve({succeeded:true,supplier:'Sanmar'});
+          };
+        """)
+        results = only.order_window(worker, self.driver, ["5000001"], existing_handle=self.driver.current_window_handle)
+        self.assertEqual([row["outcome"] for row in results], ["order_goods_submitted"])
+        self.assertEqual(self.driver.execute_script("return submittedDesigns"), ["104"])
+        self.assertEqual(self.driver.execute_script("return stockFixtureState().legacyClicks"), 0)
+        repeated = only.order_window(worker, self.driver, ["5000001"], existing_handle=self.driver.current_window_handle)
+        self.assertEqual(repeated[0]["outcome"], "order_goods_skipped")
+        self.assertEqual(self.driver.execute_script("return submittedDesigns"), ["104"])
+
+    def test_ordering_only_loads_two_background_orders_in_one_browser_before_submission(self):
+        url = self.fixture_url
+        events = []
+        original = self.driver.execute_cdp_cmd
+        def create(command, options):
+            if command == "Target.createTarget":
+                events.append("open")
+            return original(command, options)
+        read = only._read
+        def observe(*args, **kwargs):
+            events.append(args[2] if len(args) > 2 else "inspect")
+            return read(*args, **kwargs)
+        source = self.driver.current_window_handle
+        with mock.patch.object(self.driver, "execute_cdp_cmd", side_effect=create), mock.patch.object(only, "_read", side_effect=observe):
+            results = only.order_window(worker, self.driver, ["5000001", "5000002"], order_url=lambda value: url + "?order=" + value)
+        self.assertEqual(events[:2], ["open", "open"])
+        self.assertLess(max(i for i, event in enumerate(events) if event == "start"), min(i for i, event in enumerate(events) if event == "status"))
+        self.assertEqual(sum(row["outcome"] == "order_goods_submitted" for row in results), 6)
+        self.assertEqual(self.driver.window_handles, [source])
 
     def test_po_detection_uses_visible_records_and_ignores_notes_and_drafts(self):
         for layout in ("table", "grid"):
