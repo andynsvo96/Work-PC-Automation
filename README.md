@@ -38,22 +38,18 @@ Each computer owns its queue, browser sessions, credentials, and recovery receip
 
 ## CRM Order Assistant and Newer Workflows
 
-- **Full-width design workspace:** CRM Order Assistant **1.8.10** lets the Edit
-  Order design workspace span the page instead of splitting CRM's middle column.
-  Design Studio Previews have their own left column, and print areas use the
-  remaining width on the right, including in All Tabs. Other CRM panels appear
-  below the workspace during editing. Narrow layouts stack the previews above
-  the fields, and leaving editing restores the normal CRM columns. Reload the
-  extension at `chrome://extensions` and refresh open CRM pages after saving
-  existing edits. No app restart or new permission is needed. See the
-  [design workspace guide](crm-order-dark-mode-extension/README.md#full-width-design-workspace---1810).
+- **Original edit-mode previews restored:** CRM Order Assistant **1.8.11**
+  restores Design Studio Previews to their regular position at the bottom of
+  the order during Edit Order, including All Tabs. CRM columns and print areas
+  retain their original layout. Automation queue buttons and hidden-section
+  preferences remain available. Reload the extension at `chrome://extensions`
+  and refresh CRM pages after saving open edits. No app restart is needed. See
+  the [preview restoration guide](crm-order-dark-mode-extension/README.md#original-edit-mode-previews-restored---1811).
 
 - **Extension quality-of-life controls:** CRM Order Assistant **1.8.9** keeps
   Manual Process, Cancel, Reachout, and Stock Issue available while automations
   wait or run. Queue multiple actions for an order; the queue retains its
-  same-order execution safeguards. Edit Order places Design Studio Previews to
-  the left of print areas, including All Tabs, and stacks them on narrow screens.
-  Red **×** buttons on titled order panels hide those sections across all orders
+  same-order execution safeguards. Red **×** buttons on titled order panels hide those sections across all orders
   in the Chrome profile. The **eye-slash button to the left of Dark mode** lists
   hidden sections with **Unhide** controls; open orders update immediately.
   Reload the extension at `chrome://extensions` and refresh open CRM order pages.

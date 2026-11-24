@@ -6,9 +6,6 @@
   window.__crmEditPreviewsInstalled = true;
   let queued = false;
   let signature = "";
-  let layoutParent = null;
-  let layoutTarget = null;
-  let pageLayout = null;
   const previewId = "crm-edit-design-previews";
   const images = [["f", "Front Preview"], ["b", "Back Preview"],
     ["sl", "Sleeve Left Preview"], ["sr", "Sleeve Right Preview"], ["t", "Inside Tag Line"]];
@@ -38,73 +35,8 @@
     return undefined;
   }
 
-  function clearLayout() {
-    layoutParent?.classList.remove("crm-edit-preview-layout");
-    layoutTarget?.classList.remove("crm-edit-preview-target");
-    layoutParent = null;
-    layoutTarget = null;
-  }
-
-  function clearPageLayout() {
-    if (!pageLayout) return;
-    pageLayout.root.classList.remove("crm-edit-previews-active", "crm-edit-wide-order");
-    for (const property of ["--crm-edit-summary-rows", "--crm-edit-left-track", "--crm-edit-right-track"]) {
-      pageLayout.content?.style.removeProperty(property);
-    }
-    pageLayout = null;
-  }
-
-  function syncPageLayout(root) {
-    const details = root.querySelector("#order-design-details");
-    const main = details?.parentElement;
-    const content = main?.parentElement;
-    const nativeColumns = main?.id === "main-content" && content?.id === "content";
-    const nextContent = nativeColumns ? content : null;
-    if (pageLayout && (pageLayout.root !== root || pageLayout.content !== nextContent)) clearPageLayout();
-    pageLayout = { root, content: nextContent };
-    if (!root.classList.contains("crm-edit-previews-active")) root.classList.add("crm-edit-previews-active");
-    root.classList.toggle("crm-edit-wide-order", nativeColumns);
-    if (!nativeColumns) return;
-    // Promote the design workspace into the page's grid through display:
-    // contents. Native DOM parents, Angular scopes, forms, and repeat anchors
-    // stay in place; the CRM side panels occupy the rows below the workspace.
-    const rows = Math.max(1, [...main.children].filter(node => node !== details).length);
-    const tracks = {
-      "--crm-edit-summary-rows": String(rows),
-      "--crm-edit-left-track": content.querySelector(":scope > #left-column") ? "1fr" : "0fr",
-      "--crm-edit-right-track": content.querySelector(":scope > #right-column") ? "1fr" : "0fr"
-    };
-    for (const [property, value] of Object.entries(tracks)) {
-      if (content.style.getPropertyValue(property) !== value) content.style.setProperty(property, value);
-    }
-  }
-
-  function place(panel, root) {
-    syncPageLayout(root);
-    const allTabs = root.querySelector("#crm-all-tabs-panel:not([hidden])");
-    const areaColumn = root.querySelector('#order-design-details > .tab-content > .tab-pane.active [ng-repeat*="in design.printAreas"]');
-    const target = allTabs?.querySelector(".crm-all-tabs-cards:not(.crm-all-tabs-stock-cards)")
-      || areaColumn?.parentElement
-      || root.querySelector("#order-design-details > .tab-content");
-    if (!target) {
-      clearLayout();
-      if (panel.parentElement !== root) root.append(panel);
-      return;
-    }
-    if (layoutTarget !== target || layoutParent !== target.parentElement) clearLayout();
-    layoutTarget = target;
-    layoutParent = target.parentElement;
-    if (!layoutParent.classList.contains("crm-edit-preview-layout")) layoutParent.classList.add("crm-edit-preview-layout");
-    if (!layoutTarget.classList.contains("crm-edit-preview-target")) layoutTarget.classList.add("crm-edit-preview-target");
-    // Add a sibling to the native row. Its forms, repeat anchors, scope, and
-    // inputs keep their original parents and identities.
-    if (panel.parentElement !== layoutParent || panel.nextElementSibling !== target) layoutParent.insertBefore(panel, target);
-  }
-
   function clear() {
     document.getElementById(previewId)?.remove();
-    clearLayout();
-    clearPageLayout();
     signature = "";
   }
 
@@ -129,12 +61,11 @@
       if (base.protocol !== "https:" || base.username || base.password) { clear(); return; }
     } catch (_) { clear(); return; }
     const nextSignature = JSON.stringify([id, index, String(design.designId), base.href]);
-    const existing = document.getElementById(previewId);
-    if (signature === nextSignature && existing) { place(existing, root); return; }
+    if (signature === nextSignature && document.getElementById(previewId)) return;
     clear();
     const panel = document.createElement("section");
     panel.id = previewId;
-    panel.className = "crm-edit-previews";
+    panel.className = "col-xs-12 crm-edit-previews";
     const heading = document.createElement("h4");
     heading.textContent = "Design Studio Previews";
     const caption = document.createElement("p");
@@ -163,7 +94,7 @@
       grid.append(link);
     }
     panel.append(heading, caption, grid);
-    place(panel, root);
+    root.append(panel);
     signature = nextSignature;
   }
 
@@ -172,13 +103,7 @@
     queued = true;
     setTimeout(() => { queued = false; sync(); }, 60);
   }
-  new MutationObserver(records => {
-    // All Tabs hides the native pane as soon as its root class changes. Move
-    // the preview in the same update instead of leaving it in that hidden pane
-    // until the normal debounced scan.
-    if (records.some(record => record.target === document.documentElement && record.attributeName === "class")) sync();
-    else schedule();
-  }).observe(document, { subtree: true, childList: true,
+  new MutationObserver(schedule).observe(document, { subtree: true, childList: true,
     attributes: true, attributeFilter: ["class"] });
   window.addEventListener("hashchange", schedule);
   window.addEventListener("popstate", schedule);

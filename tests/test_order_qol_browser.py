@@ -150,20 +150,14 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.driver.execute_script("document.getElementById('refresh-dialog').remove();")
         self.assertTrue(safe())
 
-    def test_previews_sit_left_of_print_areas_and_follow_highlighted_design_without_model_edits(self):
+    def test_previews_remain_at_bottom_and_follow_highlighted_design_without_model_edits(self):
         self.show()
         original = self.driver.execute_script("return structuredClone(resource);")
         self.assertEqual(self.driver.find_elements(By.ID, "crm-edit-design-previews"), [])
         self.edit()
         panel = self.driver.find_element(By.ID, "crm-edit-design-previews")
         self.assertTrue(panel.is_displayed())
-        self.assertTrue(self.driver.execute_script("""
-          const preview = document.getElementById('crm-edit-design-previews');
-          const areas = preview.nextElementSibling;
-          return areas.classList.contains('crm-edit-preview-target')
-            && preview.getBoundingClientRect().right < areas.getBoundingClientRect().left
-            && Math.abs(preview.getBoundingClientRect().top - areas.getBoundingClientRect().top) < 15;
-        """))
+        self.assertEqual(self.driver.execute_script("return document.querySelector('#view-orders-index').lastElementChild.id;"), panel.get_attribute("id"))
         self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, ".crm-edit-previews-caption").text, "Highlighted tab 2")
         images = self.driver.find_elements(By.CSS_SELECTOR, ".crm-edit-previews-grid img")
         self.assertEqual(len(images), 5)
@@ -176,113 +170,39 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.assertIn("src=20002_f", self.driver.find_element(By.CSS_SELECTOR, ".crm-edit-previews-grid img").get_attribute("src"))
         self.assertEqual(self.driver.execute_script("return resource;"), original)
         self.driver.find_element(By.CSS_SELECTOR, ".save-btn").click()
-        WebDriverWait(self.driver, 5).until(lambda d: not d.find_elements(By.CSS_SELECTOR, "#crm-edit-design-previews, .crm-edit-wide-order"))
+        WebDriverWait(self.driver, 5).until(lambda d: not d.find_elements(By.ID, "crm-edit-design-previews"))
         self.assertTrue(self.driver.find_element(By.ID, "native-preview").is_displayed())
-        self.assertEqual(self.driver.find_elements(By.CSS_SELECTOR, ".crm-edit-preview-layout, .crm-edit-preview-target"), [])
-        self.assertFalse(self.driver.execute_script("return document.getElementById('view-orders-index').classList.contains('crm-edit-wide-order');"))
 
-    def test_edit_workspace_spans_page_outside_crm_columns_and_restores_original_layout(self):
+
+    def test_bottom_previews_preserve_native_columns_and_drafts_at_different_widths(self):
         self.show()
         original = self.driver.execute_script("""
-          window.layoutNodes = {
-            details: document.getElementById('order-design-details'),
-            main: document.getElementById('main-content'),
-            notes: document.querySelector('#order-notes input'),
-            area: document.querySelector('.tab-pane.active .printarea input'),
-            form: document.querySelector('.tab-pane.active [ng-form="designForm"]')
-          };
-          return {resource: structuredClone(resource),
-            pageWidth: document.getElementById('content').getBoundingClientRect().width,
-            mainWidth: layoutNodes.main.getBoundingClientRect().width};
+          window.originalPrintArea = document.querySelector('.tab-pane.active .printarea input');
+          window.originalForm = originalPrintArea.closest('[ng-form="designForm"]');
+          originalPrintArea.value = 'Keep this draft';
+          orderScope.editMode = true; document.body.classList.toggle('changed');
+          return structuredClone(resource);
         """)
-        self.assertAlmostEqual(original['mainWidth'], original['pageWidth'] / 2, delta=2)
-        self.driver.execute_script("layoutNodes.area.value = 'Unchanged native draft'; orderScope.editMode = true; document.body.classList.toggle('changed');")
-        wait = WebDriverWait(self.driver, 5)
-        wait.until(lambda d: d.find_elements(By.ID, "crm-edit-design-previews"))
-        for width in (1200, 1600, 1920):
-            with self.subTest(width=width):
-                self.driver.set_window_size(width, 1200)
-                dimensions = self.driver.execute_script("""
-                  const page = document.getElementById('content').getBoundingClientRect();
-                  const details = layoutNodes.details.getBoundingClientRect();
-                  const preview = document.getElementById('crm-edit-design-previews').getBoundingClientRect();
-                  const areas = document.querySelector('.crm-edit-preview-target').getBoundingClientRect();
-                  return {page: page.width, details: details.width, preview: preview.width, areas: areas.width,
-                    left: preview.left, right: areas.right, pageLeft: page.left, pageRight: page.right,
-                    separate: preview.right < areas.left,
-                    panelsBelow: ['left-column','right-column','order-notes'].every(id =>
-                      document.getElementById(id).getBoundingClientRect().top >= details.bottom - 1),
-                    overflow: document.documentElement.scrollWidth > innerWidth};
-                """)
-                self.assertAlmostEqual(dimensions['details'], dimensions['page'], delta=2)
-                self.assertGreaterEqual(dimensions['preview'], 390)
-                self.assertGreaterEqual(dimensions['areas'], 600)
-                self.assertGreaterEqual(dimensions['left'], dimensions['pageLeft'])
-                self.assertLessEqual(dimensions['right'], dimensions['pageRight'] + 1)
-                self.assertTrue(dimensions['separate'])
-                self.assertTrue(dimensions['panelsBelow'])
-                self.assertFalse(dimensions['overflow'])
-        self.driver.execute_script("document.getElementById('main-header').style.cssText='position:fixed;top:0;left:0;z-index:9999'; scrollTo(0, 400);")
-        self.assertAlmostEqual(self.driver.execute_script("return document.getElementById('main-header').getBoundingClientRect().top;"), 0, delta=1)
-        self.driver.execute_script("scrollTo(0, 0); document.getElementById('main-header').removeAttribute('style');")
-        self.assertEqual(self.driver.execute_script("return resource;"), original['resource'])
-        self.assertTrue(self.driver.execute_script("""
-          return layoutNodes.details.parentElement === layoutNodes.main
-            && layoutNodes.area === document.querySelector('.tab-pane.active .printarea input')
-            && layoutNodes.area.closest('[ng-form="designForm"]') === layoutNodes.form
-            && layoutNodes.area.value === 'Unchanged native draft'
-            && layoutNodes.notes === document.querySelector('#order-notes input')
-            && layoutNodes.notes.value === 'Keep this order note';
-        """))
-        self.driver.execute_script("orderScope.editMode = false; document.body.classList.toggle('changed');")
-        wait.until(lambda d: not d.find_elements(By.ID, "crm-edit-design-previews"))
-        self.assertTrue(self.driver.execute_script("""
-          return getComputedStyle(layoutNodes.main).display !== 'contents'
-            && Math.abs(layoutNodes.main.getBoundingClientRect().width - document.getElementById('content').getBoundingClientRect().width / 2) < 2
-            && !document.querySelector('.crm-edit-wide-order, .crm-edit-previews-active')
-            && !document.getElementById('content').style.getPropertyValue('--crm-edit-summary-rows');
-        """))
-
-    def test_previews_stack_on_narrow_screens_and_keep_native_print_area_inputs(self):
-        self.show()
-        self.driver.execute_script("window.originalPrintArea = document.querySelector('.tab-pane.active .printarea input'); originalPrintArea.value = 'Keep this draft';")
-        # Entering edit mode here does not redraw the fixture's native inputs.
-        self.driver.execute_script("orderScope.editMode = true; document.body.classList.toggle('changed');")
         WebDriverWait(self.driver, 5).until(lambda d: d.find_elements(By.ID, "crm-edit-design-previews"))
-        self.driver.execute_script("document.querySelector('#view-orders-index').style.maxWidth='520px';")
-        self.assertTrue(self.driver.execute_script("return document.documentElement.scrollWidth <= innerWidth;"))
-        self.assertEqual(self.driver.execute_async_script("""
-          const done = arguments[arguments.length - 1], changes = [];
-          const observer = new MutationObserver(records => changes.push(...records));
-          observer.observe(document.querySelector('.crm-edit-preview-layout'), {attributes:true, attributeFilter:['class']});
-          setTimeout(() => {observer.disconnect(); done(changes.length);}, 950);
-        """), 0)
-        self.driver.set_window_size(700, 1100)
-        self.assertTrue(self.driver.execute_script("""
-          const preview = document.getElementById('crm-edit-design-previews');
-          return preview.getBoundingClientRect().bottom <= preview.nextElementSibling.getBoundingClientRect().top + 1
-            && document.documentElement.scrollWidth <= innerWidth
-            && originalPrintArea === document.querySelector('.tab-pane.active .printarea input')
-            && originalPrintArea.value === 'Keep this draft';
-        """))
-        self.driver.save_screenshot(str(self.artifacts / "preview-narrow.png"))
-
-    def test_wide_workspace_handles_missing_side_columns_and_restores_on_route_exit(self):
-        self.show()
-        self.edit()
-        wait = WebDriverWait(self.driver, 5)
-        self.driver.execute_script("document.getElementById('left-column').remove(); document.getElementById('right-column').remove();")
-        wait.until(lambda d: d.execute_script("return document.getElementById('content').style.getPropertyValue('--crm-edit-left-track') === '0fr';"))
-        self.assertTrue(self.driver.execute_script("""
-          const page = document.getElementById('content').getBoundingClientRect();
-          const workspace = document.getElementById('order-design-details').getBoundingClientRect();
-          const notes = document.getElementById('order-notes').getBoundingClientRect();
-          return Math.abs(page.width - workspace.width) < 2 && Math.abs(page.width - notes.width) < 2
-            && document.documentElement.scrollWidth <= innerWidth;
-        """))
-        self.driver.execute_script("history.pushState({}, '', '/reports/1234567'); dispatchEvent(new PopStateEvent('popstate'));")
-        wait.until(lambda d: not d.find_elements(By.CSS_SELECTOR, ".crm-edit-wide-order, .crm-edit-previews-active"))
-        self.assertFalse(self.driver.execute_script("return !!document.getElementById('content').style.getPropertyValue('--crm-edit-summary-rows');"))
+        for width in (1200, 1600, 700):
+            with self.subTest(width=width):
+                self.driver.set_window_size(width, 1100)
+                self.assertTrue(self.driver.execute_script("""
+                  const root = document.getElementById('view-orders-index');
+                  const main = document.getElementById('main-content');
+                  const page = document.getElementById('content');
+                  const preview = document.getElementById('crm-edit-design-previews');
+                  return root.lastElementChild === preview
+                    && preview.getBoundingClientRect().top >= page.getBoundingClientRect().bottom
+                    && getComputedStyle(main).display === 'block'
+                    && Math.abs(main.getBoundingClientRect().width - page.getBoundingClientRect().width * (innerWidth > 991 ? .5 : 1)) < 2
+                    && originalPrintArea === document.querySelector('.tab-pane.active .printarea input')
+                    && originalPrintArea.closest('[ng-form="designForm"]') === originalForm
+                    && originalPrintArea.value === 'Keep this draft'
+                    && !root.querySelector('.crm-edit-preview-layout, .crm-edit-preview-target')
+                    && document.documentElement.scrollWidth <= innerWidth;
+                """))
+        self.assertEqual(self.driver.execute_script("return resource;"), original)
 
     def test_automation_menus_queue_separator_then_copyright_reachout_while_working(self):
         self.show()
@@ -412,17 +332,8 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.driver.find_element(By.ID, "crm-all-tabs-header").click()
         self.assertTrue(self.driver.find_element(By.ID, "crm-edit-design-previews").is_displayed())
         self.assertTrue(self.driver.find_element(By.ID, "crm-all-tabs-panel").is_displayed())
-        self.assertTrue(self.driver.execute_script("""
-          const preview = document.getElementById('crm-edit-design-previews');
-          return preview.parentElement.id === 'crm-all-tabs-panel'
-            && preview.getBoundingClientRect().right < preview.nextElementSibling.getBoundingClientRect().left;
-        """))
         self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, ".crm-edit-previews-caption").text, "Highlighted tab 2")
         self.assertEqual(self.driver.execute_script("return [orderScope.activeDesignIndex, resource.designs.length];"), [1, 3])
-        self.driver.find_elements(By.CSS_SELECTOR, "#main-header-design-tabs button[ng-repeat]")[0].click()
-        WebDriverWait(self.driver, 5).until(lambda d: d.find_element(By.CSS_SELECTOR, ".crm-edit-previews-caption").text.endswith("1"))
-        self.assertTrue(self.driver.find_element(By.ID, "crm-edit-design-previews").is_displayed())
-        self.assertNotEqual(self.driver.execute_script("return document.querySelector('#crm-edit-design-previews').parentElement.id;"), "crm-all-tabs-panel")
 
     def test_order_all_submits_all_native_requests_in_one_click_without_automation(self):
         self.show()
