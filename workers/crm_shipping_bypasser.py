@@ -5388,7 +5388,7 @@ function visible(node) {
 const nodes = Array.from(document.querySelectorAll('body *')).filter(visible);
 const headings = nodes.filter(node => {
   const own = normalize(Array.from(node.childNodes).filter(child => child.nodeType === Node.TEXT_NODE).map(child => child.textContent).join(' '));
-  return /^(ship\s*to|shipping\s*address|ship\s*to\s*address|delivery\s*address)\s*:?$/i.test(own);
+  return /^(ship\s*to|shipping\s*address|shipping\s*information|ship\s*to\s*address|delivery\s*address)\s*:?$/i.test(own);
 });
 for (const heading of headings) {
   for (let node = heading, depth = 0; node && node !== document.body && depth < 5; node = node.parentElement, depth++) {

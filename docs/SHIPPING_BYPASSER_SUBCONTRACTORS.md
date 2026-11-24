@@ -64,6 +64,13 @@ address's name, street, suite, city, state, and ZIP must match the reviewed entr
 and the shipping address must be confirmed again on the review page. A billing
 address cannot establish the shipping destination.
 
+Review verification recognizes SanMar's **Shipping Information** section on
+`/checkout/reviewandsubmit`, as well as Ship To / Shipping Address headings.
+The full reviewed destination must still match within that shipping section;
+correct billing details cannot compensate for a different shipping address.
+This review-layout correction loads with the next worker run and needs no app
+restart, extension reload, or CRM page refresh.
+
 Tabs run independently, as they do for Mach6. A stock or timing issue skips that
 tab and permits other eligible tabs to continue after the usual cart cleanup.
 Confirmed purchases are preserved and are not repeated on Retry. Shared-cart

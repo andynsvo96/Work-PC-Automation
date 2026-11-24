@@ -234,6 +234,40 @@ class NjLocalBrowserTests(unittest.TestCase):
                 worker._fill_review_and_submit(self.driver, "5681151-1", shipping_requirements={"order_type": order_type, "shipping": shipping})
             self.assertNotIn("Thank You", self.driver.execute_script("return document.body.innerText;"))
 
+    def test_sanmar_shipping_information_review_layout_confirms_the_wsa_destination(self):
+        order_type = subcontractor_order_type("WSA PROMOTIONS LLC")
+        with mock.patch.object(worker.time, "sleep"):
+            self.driver.get(self.fixture + "?page=checkout")
+            self.driver.execute_script("window.fixtureSetSavedAddresses(arguments[0]);", [SUBCONTRACTOR_DESTINATIONS[order_type]])
+            shipping = worker._select_shipping_destination(self.driver, order_type, worker.NJ_WAREHOUSE)
+            worker._select_ups_eta_for_shipping_plan(self.driver, order_type, warehouse=worker.NJ_WAREHOUSE, selected_warehouses=[worker.NJ_WAREHOUSE])
+            worker._click_sanmar_button(self.driver, r"Proceed\s+To\s+Payment")
+            # Sanitized structure observed on SanMar /checkout/reviewandsubmit.
+            self.driver.execute_script("""
+document.querySelector('#ship-to').outerHTML = `<div class="order-info row px-0 flex-fill flex-lg-grow-0" id="ship-to">
+  <div class="col-12 header-row"><h1 class="d-none d-lg-block">Shipping Information</h1></div>
+  <div class="col-12 col-lg-4"><strong>WSA Promotions, LLC</strong><div>520 Franklin St</div><div>Center Point, IA 52213-9388</div></div>
+  <div class="col-12 col-lg-8 warehouses row mx-0"><div>Warehouse: Robbinsville, NJ</div><div>Method: UPS</div></div>
+</div>`;
+""")
+            self.assertEqual(worker._fill_review_and_submit(self.driver, "5677729-2", dry_run=True, shipping_requirements={"order_type": order_type, "shipping": shipping}), "dry_run_review_ready")
+            self.assertNotIn("Thank You", self.driver.execute_script("return document.body.innerText;"))
+
+    def test_shipping_information_still_rejects_wrong_address_even_with_correct_billing(self):
+        destination = SUBCONTRACTOR_DESTINATIONS[subcontractor_order_type("WSA PROMOTIONS LLC")]
+        self.driver.execute_script("""
+document.body.innerHTML = `<div class="order-info row"><div class="header-row"><h1>Shipping Information</h1></div>
+  <div><strong>WSA Promotions, LLC</strong><div id="street">520 Franklin St</div><div id="city-state-zip">Center Point, IA 52213-9388</div></div>
+  <div>Warehouse: Dallas, TX Method: UPS</div></div>
+  <section><h2>Billing Address</h2><p>WSA Promotions, LLC, 520 Franklin St, Center Point, IA 52213-9388</p></section>`;
+""")
+        for element, wrong_value in (("street", "521 Franklin St"), ("city-state-zip", "Wrong City, IA 52213-9388"), ("city-state-zip", "Center Point, IL 52213-9388"), ("city-state-zip", "Center Point, IA 52214-9388")):
+            with self.subTest(element=element, value=wrong_value):
+                original = self.driver.execute_script("const el = document.getElementById(arguments[0]); const original = el.textContent; el.textContent = arguments[1]; return original;", element, wrong_value)
+                with self.assertRaisesRegex(RuntimeError, "review did not confirm.*shipping address"):
+                    worker._verify_sanmar_subcontractor_review_address(self.driver, destination)
+                self.driver.execute_script("document.getElementById(arguments[0]).textContent = arguments[1];", element, original)
+
     def test_saved_production_notes_reader_ignores_other_notes_and_unsaved_drafts(self):
         self.driver.execute_script("document.body.insertAdjacentHTML('afterbegin', `<div class='panel-heading'><span class='vendor'>Subcontractor: DESIGNER T'S (NJ)</span></div><section>Sales Notes LATEST SHIP DATE 12/9</section><textarea>LATEST SHIP DATE 12/8</textarea>`); window.fixtureSetProductionNotes(arguments[0]);", [
             {"timestamp": "Nov 24th, 2026 @ 09:18 AM", "text": "LATEST SHIP DATE - 12/3***"},
