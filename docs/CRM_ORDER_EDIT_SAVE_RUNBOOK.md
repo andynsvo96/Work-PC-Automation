@@ -498,6 +498,24 @@ retained in the report. Restart the app and refresh the dashboard to load these
 changes, then use the original queue entry's Retry to preserve its receipts and
 request. No extension reload or CRM page refresh is required.
 
+The HTML template loader also avoids passing Lightning subject or iframe
+elements through WebDriver. It fills and verifies the subject in one page
+command and returns only owned frame indexes or scoped shadow paths. Editor
+commands run in that same CKEditor frame through Chrome DevTools, preserving
+the existing source-mode paste and text/link/image/bold/list checks. This also
+avoids a stale-element failure inside WebDriver's numeric frame switch. Send
+returns only button coordinates and dispatches one native press/release; a
+failure after either event cannot trigger a fallback click.
+
+Extra Print Areas and Comp Sleeves permit one email send attempt. They retain
+the Activity wait and refresh checks, but missing Activity stops for review
+without rebuilding or resending the draft. The attempt is receipted before the
+click; an uncertain receipt blocks later sends, and a confirmed receipt skips
+the email on Retry. Never delete or advance an uncertain receipt to bypass
+review. These shared worker changes require an app restart; no extension reload
+or CRM page refresh is needed. Windows live verification confirmed one new
+matching email that survived refresh; live macOS remains unverified.
+
 ### Extra Print Areas payment texts
 
 Paid Extra Print Areas requests now send the payment request and the captured

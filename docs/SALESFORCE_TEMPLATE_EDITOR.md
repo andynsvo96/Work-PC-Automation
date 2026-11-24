@@ -166,6 +166,15 @@ It does not open or search the Salesforce template picker. The send composer
 does not show the template editor's Source toolbar button; its CKEditor source
 command provides the same HTML mode. No operating-system clipboard is needed.
 
+Template loading keeps Lightning DOM elements inside the page. The subject is
+filled and checked in one command; the owned editor frame is addressed by its
+native index or a scoped shadow path. Chrome DevTools executes the HTML source
+commands in that frame, so neither element serialization nor WebDriver frame
+switching is needed. All existing HTML verification still runs before Send.
+Send uses verified button coordinates for one native mouse press/release, with
+no fallback click after an uncertain event. Restart the app to load these shared
+worker changes; no extension reload or CRM page refresh is needed.
+
 Placeholder replacements retain their surrounding bold, font, and size markup.
 The Additional Requests invoice placeholder becomes a clickable link when it is
 body text, and can also be used in an anchor's `href` with a label such as
@@ -183,6 +192,9 @@ before it enters the browser.
 
 Existing CRM save verification, recipient/From checks, Activity confirmation,
 bounded resend checks, workflow receipts, and queue locks remain in effect.
+Extra Print Areas/Comp Sleeves allow one send attempt, with Activity and refresh
+checks but no automatic resend. An unconfirmed attempt stops for review and
+keeps its receipt; a confirmed receipt suppresses later sends on Retry.
 An edited template does not reset a send receipt or automatically resend an
 already-confirmed email. A retry whose rebuilt subject/body differs from the
 first draft stops before another send. Review an uncertain send in Salesforce
