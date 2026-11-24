@@ -38,6 +38,14 @@ Each computer owns its queue, browser sessions, credentials, and recovery receip
 
 ## CRM Order Assistant and Newer Workflows
 
+- **Lock section hide buttons:** CRM Order Assistant **1.8.12** adds a lock icon
+  at the top right of **Hidden order sections**. Lock it to hide the red **×**
+  buttons across CRM orders; unlock it to show them again. The setting stays
+  saved in the Chrome profile, and **Unhide** remains available while locked.
+  Reload the extension at `chrome://extensions` and refresh open CRM pages after
+  saving edits. No app restart or new permission is needed. See the
+  [section lock guide](crm-order-dark-mode-extension/README.md#lock-section-hide-buttons---1812).
+
 - **Original edit-mode previews restored:** CRM Order Assistant **1.8.11**
   restores Design Studio Previews to their regular position at the bottom of
   the order during Edit Order, including All Tabs. CRM columns and print areas

@@ -15,6 +15,30 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
+## Lock section hide buttons - 1.8.12
+
+Open **Hidden order sections** using the eye-slash button beside Dark mode.
+The **lock icon at the top right** controls the red **×** buttons on CRM section
+titles. A closed lock hides those buttons; an open lock shows them again.
+It starts unlocked so existing section controls remain available after updating.
+
+The setting stays saved in the Chrome profile and updates open and newly opened
+orders. Existing hidden sections stay hidden, and **Unhide** remains available
+while locked. The lock changes the section controls without editing order data.
+
+Reload **CRM Order Assistant 1.8.12** at `chrome://extensions` and refresh open
+CRM order pages after saving existing edits. **No app restart or new permission
+is needed.** Offline checks use the actual popup and local order fixtures:
+
+```powershell
+python -m unittest discover -s tests -p test_order_qol_browser.py
+python -m unittest discover -s tests -p test_all_orders_browser.py
+```
+
+These cover locking, unlocking, popup reopening, multiple order tabs, persistence,
+Unhide while locked, and failed preference saves. Live CRM and macOS remain
+unverified.
+
 ## Original edit-mode previews restored - 1.8.11
 
 **Design Studio Previews** again appear in their regular position at the bottom

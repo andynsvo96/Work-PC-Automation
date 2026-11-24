@@ -87,6 +87,21 @@ class OrderQolBrowserTests(unittest.TestCase):
         WebDriverWait(self.driver, 5).until(lambda d: d.find_elements(By.CSS_SELECTOR, "#crm-order-all-header button"))
         return self.driver.find_element(By.CSS_SELECTOR, "#crm-order-all-header button")
 
+    def open_hidden_sections_popup(self):
+        self.driver.switch_to.default_content()
+        self.driver.execute_script("""
+          document.getElementById('popup')?.remove();
+          const popup = document.createElement('iframe'); popup.id='popup';
+          popup.style='position:fixed;top:0;left:0;width:800px;height:600px;z-index:2147483647;border:0';
+          popup.src='/extension/popup.html'; document.body.append(popup);
+        """)
+        wait = WebDriverWait(self.driver, 5)
+        self.driver.switch_to.frame(wait.until(lambda d: d.find_element(By.ID, "popup")))
+        wait.until(lambda d: d.find_element(By.ID, "hidden-sections-toggle").is_displayed())
+        self.driver.find_element(By.ID, "hidden-sections-toggle").click()
+        return wait.until(lambda d: d.find_element(By.ID, "hidden-sections-lock").is_enabled()
+                          and d.find_element(By.ID, "hidden-sections-lock"))
+
     def stock_action(self, op, **extra):
         return self.driver.execute_async_script("const done=arguments[arguments.length-1]; CRMOrderAllPage.execute(arguments[0]).then(done);",
             {"op": op, "orderId": "1234567", **extra})
@@ -313,6 +328,93 @@ class OrderQolBrowserTests(unittest.TestCase):
         """)
         wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#order-promos .crm-order-section-hide")) == 1)
         self.assertFalse(self.driver.find_element(By.ID, "order-promos").is_displayed())
+
+    def test_section_hide_lock_persists_across_orders_and_keeps_unhide_available(self):
+        self.show()
+        wait = WebDriverWait(self.driver, 5)
+        original = self.driver.execute_script("return structuredClone(resource);")
+        wait.until(lambda d: d.find_element(By.CSS_SELECTOR, '#order-purchase-orders .crm-order-section-hide')).click()
+        wait.until(lambda d: not d.find_element(By.ID, "order-purchase-orders").is_displayed())
+        lock = self.open_hidden_sections_popup()
+        self.assertEqual(lock.get_attribute("aria-pressed"), "false")
+        self.assertTrue(self.driver.execute_script("""
+          const lock = document.getElementById('hidden-sections-lock').getBoundingClientRect();
+          const title = document.querySelector('.hidden-sections-heading h2').getBoundingClientRect();
+          const panel = document.getElementById('hidden-sections-panel').getBoundingClientRect();
+          return lock.left > title.right && lock.right < panel.right && lock.top < title.bottom;
+        """))
+        lock.click()
+        wait.until(lambda d: lock.get_attribute("aria-pressed") == "true" and lock.is_enabled())
+        self.driver.save_screenshot(str(self.artifacts / "hidden-sections-locked.png"))
+        self.driver.switch_to.default_content()
+        wait.until(lambda d: not d.find_elements(By.CSS_SELECTOR, ".crm-order-section-hide, .crm-order-hideable-heading"))
+        self.assertFalse(self.driver.find_element(By.ID, "order-purchase-orders").is_displayed())
+        self.assertEqual(self.driver.execute_script("return resource;"), original)
+        self.driver.refresh()
+        self.inject()
+        self.assertEqual(self.driver.find_elements(By.CSS_SELECTOR, ".crm-order-section-hide"), [])
+        first = self.driver.current_window_handle
+        self.driver.switch_to.new_window("tab")
+        try:
+            self.driver.get(self.url + "/app#/order/7654321")
+            self.inject()
+            self.assertEqual(self.driver.find_elements(By.CSS_SELECTOR, ".crm-order-section-hide"), [])
+            self.assertFalse(self.driver.find_element(By.ID, "order-purchase-orders").is_displayed())
+            lock = self.open_hidden_sections_popup()
+            self.assertEqual(lock.get_attribute("aria-pressed"), "true")
+            self.driver.find_element(By.CSS_SELECTOR, '[aria-label="Unhide Purchase Orders"]').click()
+            wait.until(lambda d: not d.find_elements(By.CSS_SELECTOR, "#hidden-sections-list li"))
+            self.assertEqual(lock.get_attribute("aria-pressed"), "true")
+            self.driver.switch_to.default_content()
+            wait.until(lambda d: d.find_element(By.ID, "order-purchase-orders").is_displayed())
+            self.assertEqual(self.driver.find_elements(By.CSS_SELECTOR, ".crm-order-section-hide"), [])
+            self.driver.execute_script("document.getElementById('order-promos').outerHTML='<section id=order-promos class=panel><div class=panel-heading>Promos</div></section>';")
+            self.assertEqual(self.driver.find_elements(By.CSS_SELECTOR, "#order-promos .crm-order-section-hide"), [])
+            second = self.driver.current_window_handle
+            self.driver.switch_to.window(first)
+            wait.until(lambda d: d.find_element(By.ID, "order-purchase-orders").is_displayed())
+            self.assertEqual(self.driver.find_elements(By.CSS_SELECTOR, ".crm-order-section-hide"), [])
+            lock = self.open_hidden_sections_popup()
+            self.assertEqual(lock.get_attribute("aria-pressed"), "true")
+            lock.click()
+            wait.until(lambda d: lock.get_attribute("aria-pressed") == "false" and lock.is_enabled())
+            self.driver.switch_to.default_content()
+            wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".crm-order-section-hide")) == 5)
+            self.driver.switch_to.window(second)
+            wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".crm-order-section-hide")) == 5)
+            self.driver.refresh()
+            self.inject()
+            wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".crm-order-section-hide")) == 5)
+        finally:
+            for handle in self.driver.window_handles:
+                if handle != first:
+                    self.driver.switch_to.window(handle)
+                    self.driver.close()
+            self.driver.switch_to.window(first)
+
+    def test_section_hide_lock_save_failures_keep_previous_lock_state_and_buttons(self):
+        self.show()
+        wait = WebDriverWait(self.driver, 5)
+        wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".crm-order-section-hide")) == 5)
+        lock = self.open_hidden_sections_popup()
+        for initially_locked in (False, True):
+            with self.subTest(locked=initially_locked):
+                self.driver.switch_to.default_content()
+                self.driver.execute_script("fixtureStorageFail = true;")
+                self.driver.switch_to.frame(self.driver.find_element(By.ID, "popup"))
+                lock.click()
+                wait.until(lambda d: "Could not save the section lock" in d.find_element(By.ID, "hidden-sections-status").text)
+                self.assertEqual(lock.get_attribute("aria-pressed"), str(initially_locked).lower())
+                self.assertTrue(lock.is_enabled())
+                self.driver.switch_to.default_content()
+                self.assertEqual(len(self.driver.find_elements(By.CSS_SELECTOR, ".crm-order-section-hide")), 0 if initially_locked else 5)
+                self.assertEqual(self.driver.execute_script("return [queueCalls,nativeCalls];"), [[], []])
+                self.driver.execute_script("fixtureStorageFail = false;")
+                self.driver.switch_to.frame(self.driver.find_element(By.ID, "popup"))
+                if not initially_locked:
+                    lock.click()
+                    wait.until(lambda d: lock.get_attribute("aria-pressed") == "true" and lock.is_enabled())
+        self.driver.switch_to.default_content()
 
     def test_preview_preserves_approval_vendor_transfer_and_deleted_design_restrictions(self):
         self.show()
