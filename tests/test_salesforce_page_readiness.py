@@ -102,3 +102,14 @@ class SalesforcePageReadinessTests(TestCase):
                     with self.assertRaises(WebDriverException):
                         action(driver)
                 self.assertEqual(driver.find_elements.call_count + driver.execute_script.call_count, 1)
+
+    def test_send_release_failure_never_replays_an_uncertain_click(self):
+        driver = mock.Mock()
+        driver.execute_script.return_value = {'x': 100, 'y': 200}
+        driver.execute_cdp_cmd.side_effect = [None, WebDriverException('Release outcome uncertain')]
+        with mock.patch.object(shared, '_restore_salesforce_email_composer'), \
+                mock.patch.object(shared, '_wait_for_email_composer'), mock.patch.object(shared.time, 'sleep'):
+            with self.assertRaises(WebDriverException):
+                shared._click_salesforce_send_button(driver)
+        self.assertEqual([call.args[1]['type'] for call in driver.execute_cdp_cmd.call_args_list],
+                         ['mousePressed', 'mouseReleased'])

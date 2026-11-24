@@ -197,6 +197,16 @@ class LocalTemplateBrowserTests(unittest.TestCase):
                 """), '')
                 self.assertEqual(self.driver.find_element('id', 'sentHtml').text, '')
 
+    def test_shared_send_uses_one_native_click_without_a_web_element(self):
+        self.open_fixture()
+        self.driver.execute_script("""
+          document.querySelector('[role=dialog]').insertAdjacentHTML('afterbegin', '<h2>Email</h2>');
+          window.fixtureSendClicks = 0;
+          document.getElementById('send').addEventListener('click', () => window.fixtureSendClicks++);
+        """)
+        self.assertTrue(shared._click_salesforce_send_button(self.driver))
+        self.assertEqual(self.driver.execute_script('return window.fixtureSendClicks'), 1)
+
     def test_customer_email_link_opens_once_without_returning_stale_elements(self):
         for shadow, href in (
             (False, 'javascript:void(0)'), (True, 'javascript:void(0)'),

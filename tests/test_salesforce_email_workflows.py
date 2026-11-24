@@ -106,28 +106,39 @@ class SalesforceEmailWorkflowTests(unittest.TestCase):
                     contact={'salesforce_label': 'Salesforce Contact'})
             self.assertEqual(click.call_count, 1)
 
-    def test_extra_print_and_comp_sleeves_rebuild_same_draft_and_confirm_activity(self):
+    def test_extra_print_and_comp_sleeves_send_once_and_require_activity(self):
         for process in (sleeves.SLEEVE_PRINTS_PROCESS, sleeves.COMP_SLEEVES_PROCESS):
-            with self.subTest(process=process.key), ExitStack() as stack:
-                subject = f'Order #1234567 - {process.salesforce_template}'
-                driver = self.confirmation_driver(subject)
-                click = self.setup_confirmation(stack, sleeves.shared)
-                template = {'subject': subject, 'body': '[REQUEST] [REQUEST] [COST] [INVOICE_LINK]'}
-                body = 'sleeve prints sleeve prints $0.00 https://example.test/invoice'
-                final = {'subject': subject, 'body': body}
-                stack.enter_context(patch.object(sleeves.shared, '_insert_cancel_template'))
-                stack.enter_context(patch.object(
-                    sleeves.shared, '_read_salesforce_email_state', side_effect=[template, final, template, final]))
-                stack.enter_context(patch.object(sleeves, '_replace_additional_request_placeholders',
-                                                 return_value={'[REQUEST]': 2, '[COST]': 1, '[INVOICE_LINK]': 1}))
-                recipients = stack.enter_context(patch.object(sleeves, '_verify_final_recipients'))
-                result = sleeves._prepare_and_send_salesforce_email(
-                    driver, 'crm', '1234567', 'customer@example.test', 'sleeve prints',
-                    '$0.00', 'https://example.test/invoice', process=process)
-                self.assertTrue(result['activity_verified'])
-                self.assertEqual(result['send_attempts'], 2)
-                self.assertEqual(click.call_count, 2)
-                self.assertEqual(recipients.call_count, 2)
+            for confirmed in (False, True):
+                with self.subTest(process=process.key, confirmed=confirmed), ExitStack() as stack:
+                    subject = f'Order #1234567 - {process.salesforce_template} - {confirmed}'
+                    driver = self.confirmation_driver(subject, confirmed=False)
+                    if confirmed:
+                        snapshots = iter([[], [{'subject': subject, 'sender': 'Orders', 'recipient': 'Customer'}]])
+                        driver.execute_script.side_effect = lambda script, *args: next(snapshots) if script == confirmation.ACTIVITY_SCRIPT else False
+                    click = self.setup_confirmation(stack, sleeves.shared)
+                    template = {'subject': subject, 'body': '[REQUEST] [REQUEST] [COST] [INVOICE_LINK]'}
+                    body = 'sleeve prints sleeve prints $0.00 https://example.test/invoice'
+                    final = {'subject': subject, 'body': body}
+                    stack.enter_context(patch.object(sleeves.shared, '_insert_cancel_template'))
+                    stack.enter_context(patch.object(
+                        sleeves.shared, '_read_salesforce_email_state', side_effect=[template, final]))
+                    stack.enter_context(patch.object(sleeves, '_replace_additional_request_placeholders',
+                                                     return_value={'[REQUEST]': 2, '[COST]': 1, '[INVOICE_LINK]': 1}))
+                    recipients = stack.enter_context(patch.object(sleeves, '_verify_final_recipients'))
+                    def send():
+                        return sleeves._prepare_and_send_salesforce_email(
+                            driver, 'crm', '1234567', 'customer@example.test', 'sleeve prints',
+                            '$0.00', 'https://example.test/invoice', process=process)
+                    if confirmed:
+                        result = send()
+                        self.assertTrue(result['activity_verified'])
+                        self.assertEqual(result['send_attempts'], 1)
+                    else:
+                        with self.assertRaises(confirmation.UnconfirmedEmailError):
+                            send()
+                        driver.refresh.assert_called_once()
+                    self.assertEqual(click.call_count, 1)
+                    self.assertEqual(recipients.call_count, 1)
 
     def test_all_stock_issue_senders_revalidate_and_require_activity(self):
         for workflow in ('extension', 'color', 'size'):
