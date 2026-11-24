@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass
 from decimal import Decimal
 
+from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -1848,36 +1849,53 @@ def _visible_salesforce_login_inputs(driver):
                 continue
             if element.is_displayed() and element.size.get("width", 0) > 30 and element.size.get("height", 0) > 10:
                 inputs.append(element)
+        except StaleElementReferenceException:
+            # A partial input list cannot establish whether login is required.
+            raise
         except Exception:
             pass
     return inputs
 
 
 def _salesforce_login_fields(driver):
-    inputs = _visible_salesforce_login_inputs(driver)
-    username_input = None
-    password_input = None
-    for element in inputs:
+    # Lightning can replace its inputs while ChromeDriver serializes the list
+    # or while we inspect it. Reacquire the complete snapshot before deciding
+    # whether this is a login form; never treat an unreadable page as signed in.
+    for attempt in range(3):
         try:
-            hint = " ".join(
-                [
-                    element.get_attribute("type") or "",
-                    element.get_attribute("name") or "",
-                    element.get_attribute("id") or "",
-                    element.get_attribute("placeholder") or "",
-                    element.get_attribute("autocomplete") or "",
-                    element.get_attribute("aria-label") or "",
-                ]
-            ).lower()
-            if (element.get_attribute("type") or "").lower() == "password" or "password" in hint:
-                password_input = element
-            elif any(token in hint for token in ("username", "email", "user")):
-                username_input = element
-        except Exception:
-            pass
-    if username_input is None:
-        username_input = next((element for element in inputs if element != password_input), None)
-    return username_input, password_input
+            inputs = _visible_salesforce_login_inputs(driver)
+            username_input = None
+            password_input = None
+            for element in inputs:
+                try:
+                    hint = " ".join(
+                        [
+                            element.get_attribute("type") or "",
+                            element.get_attribute("name") or "",
+                            element.get_attribute("id") or "",
+                            element.get_attribute("placeholder") or "",
+                            element.get_attribute("autocomplete") or "",
+                            element.get_attribute("aria-label") or "",
+                        ]
+                    ).lower()
+                    if (element.get_attribute("type") or "").lower() == "password" or "password" in hint:
+                        password_input = element
+                    elif any(token in hint for token in ("username", "email", "user")):
+                        username_input = element
+                except StaleElementReferenceException:
+                    raise
+                except Exception:
+                    pass
+            if username_input is None:
+                username_input = next((element for element in inputs if element != password_input), None)
+            return username_input, password_input
+        except StaleElementReferenceException as exc:
+            if attempt == 2:
+                raise CopyrightCancelError(
+                    "Salesforce page inputs kept changing during the login check. "
+                    "Could not determine whether login is required."
+                ) from exc
+            time.sleep(0.25)
 
 
 def _salesforce_login_stage(driver):
@@ -2235,7 +2253,19 @@ def _verify_salesforce_email(driver, expected_email):
 def _click_salesforce_email(driver, email):
     target = str(email or "").strip().lower()
     _wait_for_salesforce_account_page(driver, target, timeout=45)
-    for element in driver.find_elements("xpath", f"//a[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{target}')]"):
+    # Retry only the read. Once a click starts, retain the existing composer and
+    # send guards instead of replaying the email workflow.
+    for attempt in range(3):
+        try:
+            elements = driver.find_elements("xpath", f"//a[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{target}')]")
+            break
+        except StaleElementReferenceException as exc:
+            if attempt == 2:
+                raise CopyrightCancelError(
+                    "Salesforce email links kept changing before opening the composer."
+                ) from exc
+            time.sleep(0.25)
+    for element in elements:
         try:
             if not element.is_displayed():
                 continue

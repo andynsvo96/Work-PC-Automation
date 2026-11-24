@@ -14,6 +14,7 @@ const names = [
   'crmProcessingRunForReport', 'crmProcessingRunTotals', 'crmProcessingRunId',
   'openCrmProcessingRunReport', 'openQueueTaskReport', 'queueProcessingFilterFromTask',
   'sortedQueueTasks', 'queueStatusLabel', 'queueTaskProgressLabel', 'renderQueue',
+  'conciseAutomationFailureMessage',
 ];
 const functions = names.map((name) => {
   const start = source.indexOf(`function ${name}(`);
@@ -42,7 +43,6 @@ function dashboard(tasks, state = {}) {
     applyPlatformCapabilities() {}, queueTimeText: () => '',
     queueRunHistoryHtml: () => '', currentCrmProcessingOrderProgressLabel: () => '',
     stripDuplicateCrmProcessingProgress: (message) => message,
-    conciseAutomationFailureMessage: (message) => message,
   });
   vm.runInContext(`${constants}\n${functions}`, context);
   return { context, elements };
@@ -80,6 +80,20 @@ function mainTask(overrides = {}) {
     ...overrides,
   };
 }
+
+test('stale Salesforce pages retain their cause instead of claiming a browser-session failure', () => {
+  const { context } = dashboard([]);
+  for (const cause of [
+    'Message: stale element reference: stale element not found in the current frame\n'
+      + 'For documentation: https://www.selenium.dev/documentation/webdriver/troubleshooting/errors',
+    'Salesforce page inputs kept changing during the login check.',
+    'Salesforce email links kept changing before opening the composer.',
+  ]) {
+    assert.equal(context.conciseAutomationFailureMessage(
+      'Extra Print Areas stopped at salesforce_email: ' + cause), 'Page changed during automation.');
+  }
+  assert.equal(context.conciseAutomationFailureMessage('WebDriver disconnected.'), 'Browser session failed.');
+});
 
 test('finished main runs offer View Report, including successes and idle repeats', () => {
   for (const status of ['completed', 'failed', 'canceled', 'idle']) {

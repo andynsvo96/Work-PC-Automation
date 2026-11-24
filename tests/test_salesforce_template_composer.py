@@ -139,6 +139,31 @@ class LocalTemplateBrowserTests(unittest.TestCase):
     def write_library(self, records):
         self.store.path.write_text(json.dumps({'schema_version':1,'templates':records}),encoding='utf-8')
 
+    def test_login_check_reacquires_replaced_inputs_without_filling_or_sending(self):
+        for login_required in (False, True):
+            with self.subTest(login_required=login_required):
+                self.open_fixture()
+                stale_inputs = self.driver.execute_script("""
+                  const form = document.createElement('form');
+                  form.id = 'login-fixture';
+                  form.innerHTML = '<input name="username"><input type="password" name="password">';
+                  document.body.appendChild(form);
+                  return Array.from(form.querySelectorAll('input'));
+                """)
+                self.driver.execute_script("""
+                  const form = document.getElementById('login-fixture');
+                  if (arguments[0]) form.replaceWith(form.cloneNode(true));
+                  else form.remove();
+                """, login_required)
+                fresh_inputs = self.driver.find_elements('css selector', 'input')
+                with mock.patch.object(self.driver, 'find_elements', side_effect=[stale_inputs, fresh_inputs]) as find:
+                    self.assertEqual(shared._is_salesforce_login_page(self.driver), login_required)
+                self.assertEqual(find.call_count, 2)
+                self.assertEqual(self.driver.execute_script("""
+                  return Array.from(document.querySelectorAll('#login-fixture input')).map(input => input.value).join('');
+                """), '')
+                self.assertEqual(self.driver.find_element('id', 'sentHtml').text, '')
+
     def test_item_sales_note_preserves_production_notes_and_persists_three_lines_once(self):
         self.driver.get(self.url + '/stock-sales-notes?case=composer')
         self.driver.execute_script("sessionStorage.removeItem('stock-issue-notes:composer');")

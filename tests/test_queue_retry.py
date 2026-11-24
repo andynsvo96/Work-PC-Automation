@@ -306,6 +306,23 @@ class LocalQueueRetryTests(unittest.TestCase):
         )
         self.assertNotIn("needs attention", payload["message"].lower())
 
+    def test_stale_page_error_is_not_reported_as_a_browser_session_failure(self):
+        for cause in (
+            "Message: stale element reference: stale element not found in the current frame\n"
+            "For documentation: https://www.selenium.dev/documentation/webdriver/troubleshooting/errors",
+            "Salesforce page inputs kept changing during the login check.",
+            "Salesforce email links kept changing before opening the composer.",
+        ):
+            with self.subTest(cause=cause):
+                message = "Extra Print Areas stopped at salesforce_email: " + cause
+                task = {
+                    "task_type": "crm.sleeve_prints", "status": "failed", "message": message,
+                    "result_context": {"report": {"message": message, "order_details": []}},
+                }
+                payload = server._automation_queue_task_payload(task)
+                self.assertEqual(payload["message"], "Page changed during automation.")
+                self.assertEqual(payload["result_context"]["report"]["message"], message)
+
     def test_unknown_specific_failure_is_preserved_instead_of_generic_task_label(self):
         task = {
             "task_type": "crm.mass_emailer",

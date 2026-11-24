@@ -481,6 +481,18 @@ another surcharge. A CRM save timeout does not prove that any changes persisted.
 Restart the local app to load this fix: the queued Extra Print Areas runner uses
 the worker module in the server process. No extension reload is needed.
 
+Salesforce login detection and the customer email-link lookup can race with a
+Lightning page redraw. The shared login helper reacquires the entire input
+snapshot up to three times on a stale element error, including errors during
+collection, visibility checks, or field inspection. Persistent staleness stops
+the login check; an unreadable page cannot establish an authenticated session.
+The email-link helper retries only collection, before any click. Neither
+read retry replays credentials, CRM edits, or Send. Queue summaries identify
+stale elements as **Page changed during automation**, with the detailed cause
+retained in the report. Restart the app and refresh the dashboard to load these
+changes, then use the original queue entry's Retry to preserve its receipts and
+request. No extension reload or CRM page refresh is required.
+
 ### Extra Print Areas payment texts
 
 Paid Extra Print Areas requests now send the payment request and the captured
