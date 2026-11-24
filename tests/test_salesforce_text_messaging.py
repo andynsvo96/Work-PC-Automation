@@ -77,6 +77,30 @@ class TextReceiptTests(unittest.TestCase):
             self.send()
         self.assertEqual(self.driver.actions, [])
 
+    def test_competing_retry_cannot_enter_a_reserved_text_receipt(self):
+        self.confirmed_email()
+        other = TwilioDriver()
+        def competing_retry():
+            with self.assertRaisesRegex(texts.TextMessageError, 'Another worker'):
+                texts.send_text_messages(other, self.path, ORDER, EMAIL, timeout=0)
+            self.assertEqual(other.actions, [])
+        self.driver.before_click = competing_retry
+        self.assertTrue(self.send()['sent'])
+        self.assertEqual(self.driver.sends, MESSAGES)
+        self.assertEqual(other.sends, [])
+
+    def test_send_timeout_is_uncertain_and_cannot_be_mistaken_for_lock_contention(self):
+        self.confirmed_email()
+        def uncertain_send():
+            raise TimeoutError('Native send outcome uncertain')
+        self.driver.before_click = uncertain_send
+        with self.assertRaisesRegex(TimeoutError, 'Native send outcome uncertain'):
+            self.send()
+        saved = texts.load_receipt(self.path, ORDER, EMAIL)
+        self.assertEqual(saved['messages'][0]['state'], 'attempted')
+        with self.assertRaisesRegex(texts.TextMessageError, 'previous.*unconfirmed'):
+            self.send()
+
     def test_sends_in_order_and_persists_attempt_before_each_click_then_skips_completed_pair(self):
         self.confirmed_email()
 

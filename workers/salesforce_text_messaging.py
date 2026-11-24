@@ -4,11 +4,14 @@ A pending click is deliberately never repeated. A matching new outgoing Twilio
 row confirms submission even when delivery fails, and can reconcile a receipt.
 """
 
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
 import tempfile
 import time
+
+from process_locks import exclusive_process_lock
 
 
 class TextMessageError(RuntimeError):
@@ -212,6 +215,17 @@ def _wait_for_recorded_text(driver, recipient, record, entry, timeout):
 
 
 def send_text_messages(driver, path, order_id, recipient, *, timeout=30):
+    # Re-read receipt states only after taking ownership, so a recovery process
+    # and a queued retry cannot both act on an earlier "ready" snapshot.
+    with ExitStack() as locks:
+        try:
+            locks.enter_context(exclusive_process_lock(str(path) + '.lock', timeout=0))
+        except TimeoutError as exc:
+            raise TextMessageError('Another worker is handling these Salesforce texts; no text was sent.') from exc
+        return _send_text_messages_locked(driver, path, order_id, recipient, timeout=timeout)
+
+
+def _send_text_messages_locked(driver, path, order_id, recipient, *, timeout=30):
     path = Path(path)
     receipt = load_receipt(path, order_id, recipient)
     if receipt is None or receipt["email_confirmed"] is not True:

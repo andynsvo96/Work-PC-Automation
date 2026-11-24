@@ -3024,6 +3024,8 @@ def _queue_order_profiles(request_data, slot):
     scanner = request_data["automation_key"] in SCANNER_WORKFLOWS
     base = getattr(config_module, "PROCESSOR_PROFILE_DIR" if scanner else "CRM_PROFILE_DIR")
     base = resolve_existing_automation_profile_path(os.path.join(SCRIPT_DIR, base))
+    # CRM-only slots start with the current connection login. Scanner slots
+    # retain their own authenticated Salesforce session and setup ownership.
     _root, crm_profile = _clone_profile_for_worker(base, f"queue_{slot}", worker_slot=slot,
                                                   pool_name="sheet_scanner_crm" if scanner else "queue_crm",
                                                   rebuild=not scanner)

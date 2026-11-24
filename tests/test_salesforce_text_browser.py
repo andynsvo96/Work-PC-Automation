@@ -87,6 +87,10 @@ class SalesforceTextBrowserTests(unittest.TestCase):
         result = self.send()
         self.assertEqual(result["confirmed_count"], 2)
         self.assertEqual(self.script("return fixture.sends"), MESSAGES)
+        self.assertEqual(self.script("return fixture.textClicks"), 0)
+        self.assertEqual(self.script("return fixture.unrelatedClicks"), 0)
+        self.assertTrue(self.send()["skipped"])
+        self.assertEqual(self.script("return fixture.sends"), MESSAGES)
 
     def test_text_entry_does_not_return_lightning_elements_to_webdriver(self):
         self.navigate()
@@ -106,10 +110,6 @@ class SalesforceTextBrowserTests(unittest.TestCase):
         self.assertEqual(self.script('return fixture.sends'), MESSAGES)
         self.assertTrue(self.send()['skipped'])
         self.assertEqual(self.script('return fixture.sends'), MESSAGES)
-        self.assertEqual(self.script("return fixture.textClicks"), 0)
-        self.assertEqual(self.script("return fixture.unrelatedClicks"), 0)
-        self.assertTrue(self.send()["skipped"])
-        self.assertEqual(self.script("return fixture.sends"), MESSAGES)
 
     def test_contact_opens_text_tab_and_waits_for_lazy_shadow_dom_composer(self):
         self.navigate("Contact")

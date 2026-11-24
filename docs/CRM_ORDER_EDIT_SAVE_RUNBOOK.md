@@ -219,6 +219,15 @@ The product separator worker demonstrates the pattern with:
 
 The important concept is that every edit/save action must happen after the driver is focused on the actual CRM Angular app document.
 
+CRM-only queue workers (Address Validator, Product Separator, Order Goods, and
+Push Back) refresh their owned slot from the current connection profile before
+opening the browser. This replaces an expired worker copy with the login that
+was just verified in the connection browser. A running slot is never rebuilt.
+Scanner/reachout workers keep their independently authenticated Salesforce
+profiles and setup. Queue ownership, same-order exclusions, barriers, and
+purchasing/recovery receipts are unchanged. Restart the app and refresh the
+dashboard to load this dispatch change; no extension reload is needed.
+
 ## Finding The Order Angular Scope
 
 The most reliable order edit/save path uses Angular scope, not only visible selectors.
@@ -538,8 +547,10 @@ submission for the customer's record, not delivery to their phone.
 Live Lightning/Aura requires native keyboard events to bind the text to Twilio's
 message model; setting the textarea value and dispatching synthetic events can
 leave **Send Message** disabled. The helper centers and focuses the scoped input,
-then types with Selenium without a pointer click that the fixed utility bar can
-intercept. An exact existing draft can be rebound without duplicating its text.
+then returns only scalar readiness data. Chrome DevTools native insertion and
+Tab bind the selected message without returning a Lightning textarea through
+WebDriver or clicking through the fixed utility bar. An exact existing draft
+is selected and replaced, so rebinding cannot append it a second time.
 Confirmation includes both `.outgoing` and `.outgoing-error` rows; both prove the
 text is recorded and allow the invoice message to continue.
 
@@ -547,7 +558,10 @@ Receipts in `runtime/state/extra_print_text_receipts/` freeze both texts and the
 invoice URL before email. Confirmed email and text states survive retries and
 server restarts. A confirmed legacy reverse-print/additional-embroidery email
 also continues to the text stage without resending the email. Text submission
-is checkpointed before each click. Retry checks an attempted text's exact outgoing
+is checkpointed before each click. A process lock beside each receipt serializes
+its entire send/recovery operation, including across a queued retry and a
+separate recovery process. Receipt states are re-read after taking ownership.
+Retry checks an attempted text's exact outgoing
 history on the original customer record against its saved pre-send count. An
 increased count confirms the recorded submission without another click, including
 older receipts stopped by a carrier failure. Retry then sends an unattempted
