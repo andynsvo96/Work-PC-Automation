@@ -85,6 +85,9 @@ window.fixtureVendorCellTag = 'th';
 window.fixtureVendor = false;
 window.fixtureSubcontractor = new URLSearchParams(location.search).has('subcontractor');
 window.fixtureVendorPOCalls = 0;
+window.fixtureAssociations = new URLSearchParams(location.search).has('associations');
+window.fixtureAssociationCount = 2;
+window.fixtureAssociationLinkClicks = 0;
 window.queueCalls = [];
 window.queueMode = 'success';
 window.fixtureQueueResolvers = [];
@@ -191,6 +194,25 @@ function renderFixture() {
   document.querySelector('.edit-btn').classList.toggle('ng-hide', orderScope.editMode);
   document.querySelector('.save-btn').classList.toggle('ng-hide', !orderScope.editMode);
   document.querySelector('#native-preview').classList.toggle('ng-hide', orderScope.editMode);
+  let associations = document.querySelector('[data-fixture-associations]');
+  if (!fixtureAssociations) associations?.remove();
+  else {
+    if (!associations) {
+      // Exercise title matching without relying on a particular native ID.
+      associations = document.createElement('section');
+      associations.className = 'panel panel-default';
+      associations.setAttribute('data-fixture-associations', '');
+      associations.innerHTML = '<div class="panel-heading"><!-- native heading --><i class="glyphicon glyphicon-collapse-down"></i><strong></strong></div><div class="panel-body"><a href="/order/7654321">Example linked order</a></div>';
+      associations.querySelector('.panel-heading').onclick = () => {
+        fixtureHeaderClicks++;
+        const body = associations.querySelector('.panel-body'); body.hidden = !body.hidden;
+      };
+      associations.querySelector('a').onclick = event => { event.preventDefault(); fixtureAssociationLinkClicks++; };
+      document.getElementById('left-column').append(associations);
+    }
+    const title = `Associations (${fixtureAssociationCount})`;
+    if (associations.querySelector('strong').textContent !== title) associations.querySelector('strong').textContent = title;
+  }
   const vendorPO = document.getElementById('order-vendor-po-panel');
   if (!fixtureSubcontractor || orderScope.editMode) vendorPO?.parentElement.remove();
   else if (!vendorPO) {

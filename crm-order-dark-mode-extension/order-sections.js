@@ -4,6 +4,8 @@
   "use strict";
   const sections = [
     ["contact-panel", "Contact Info and Send Options"],
+    // Match the native title when a stable panel ID is unavailable; ignore its count.
+    ["order-associations", "Associations", /^Associations(?:\s*\(\s*\d+\s*\))?$/i],
     ["design-assignments-panel", "Design Assignments"],
     ["status-history", "Status History and Art Changes"],
     ["access-history", "Access Log"],
@@ -17,7 +19,7 @@
     ["order-promos", "Promos"],
     ["order-cartons", "Carton Tracking"],
     ["sales-tax-transactions", "Sales Tax Transactions"]
-  ].map(([id, label]) => Object.freeze({ id, label, key: `crmOrderHiddenSection:${id}` }));
+  ].map(([id, label, headingPattern]) => Object.freeze({ id, label, key: `crmOrderHiddenSection:${id}`, headingPattern }));
   globalThis.CRMOrderSections = Object.freeze({
     sections: Object.freeze(sections),
     lockKey: "crmOrderSectionControlsLocked"

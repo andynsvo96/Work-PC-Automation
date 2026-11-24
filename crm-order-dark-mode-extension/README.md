@@ -15,6 +15,19 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
+## Hide Associations - 1.8.14
+
+**Associations** now has a red **×** when section controls are unlocked. Hiding
+it stays saved across orders, including orders with different association counts.
+Restore it using **Hidden order sections > Associations > Unhide**. The existing
+lock applies to its **×**, and order associations and their links are preserved.
+
+Reload **CRM Order Assistant 1.8.14** at `chrome://extensions` and refresh open
+CRM pages after saving existing edits. **No app restart or new permission is
+needed.** The local QOL browser fixture checks count changes, persistence across
+orders, lock/Unhide behavior, and preservation of native actions. Live CRM and
+macOS remain unverified.
+
 ## Hide Vendor Purchase Order - 1.8.13
 
 The **Vendor Purchase Order** panel on subcontractor orders now has the same
@@ -96,7 +109,7 @@ preview layout is restored in **1.8.11**.
 
 Use the red **×** at the right of a supported panel's title to hide that section
 on **all CRM orders in the same Chrome profile**. Supported panels include
-Contact Info and Send Options, Design Assignments, Status History and Art Changes,
+Contact Info and Send Options, Associations, Design Assignments, Status History and Art Changes,
 Access Log, Station Assignments, Subcontractor Assignments, Order Totals,
 Payments and Credits, Shipping Info, **Vendor Purchase Order**, **Purchase Orders**, **Promos**,
 **Carton Tracking**, and **Sales Tax Transactions**. Hiding only changes the

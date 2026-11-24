@@ -1940,13 +1940,27 @@ function applyThemeState() {
   syncOrderSectionVisibility();
 }
 
+function orderSectionPanels(section) {
+  const panels = new Set(document.querySelectorAll(`#view-orders-index [id="${section.id}"]`));
+  if (section.headingPattern) {
+    for (const heading of document.querySelectorAll("#view-orders-index .panel > .panel-heading")) {
+      const title = [...heading.childNodes]
+        .filter(node => node.nodeType === Node.TEXT_NODE
+          || (node.nodeType === Node.ELEMENT_NODE && !node.classList.contains("crm-order-section-hide")))
+        .map(node => node.textContent || "").join("").replace(/\s+/g, " ").trim();
+      if (section.headingPattern.test(title)) panels.add(heading.parentElement);
+    }
+  }
+  return panels;
+}
+
 function syncOrderSectionVisibility() {
   const active = Boolean(currentOrderId()) && isOrderDocument();
   const showHideButtons = active && orderSectionPreferencesLoaded && !orderSectionControlsLocked;
   for (const section of orderSections) {
     // Order Totals has two native variants with the same ID. Style both and
     // leave CRM's own ng-show/ng-hide conditions in control of their visibility.
-    for (const panel of document.querySelectorAll(`#view-orders-index [id="${section.id}"]`)) {
+    for (const panel of orderSectionPanels(section)) {
       panel.toggleAttribute("data-crm-order-section-hidden", active && hiddenOrderSections.has(section.id));
       const heading = [...panel.children].find(node => node.classList.contains("panel-heading"));
       if (!heading) continue;

@@ -38,6 +38,13 @@ Each computer owns its queue, browser sessions, credentials, and recovery receip
 
 ## CRM Order Assistant and Newer Workflows
 
+- **Hide Associations:** CRM Order Assistant **1.8.14** adds the red **×** to
+  **Associations**, with the existing lock and **Unhide** controls. The saved
+  preference applies across orders regardless of the association count. Reload
+  the extension at `chrome://extensions` and refresh CRM pages after saving
+  edits. No app restart is needed. See the
+  [Associations guide](crm-order-dark-mode-extension/README.md#hide-associations---1814).
+
 - **Hide Vendor Purchase Order:** CRM Order Assistant **1.8.13** adds the red
   **×** to the subcontractor order's Vendor Purchase Order panel. It uses the
   existing lock, saved section preferences, and **Unhide** list. Reload the
