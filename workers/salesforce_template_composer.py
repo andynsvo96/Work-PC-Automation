@@ -3,6 +3,7 @@
 from html import escape
 from html.parser import HTMLParser
 import ipaddress
+import json
 import re
 from urllib.parse import urlsplit
 
@@ -106,7 +107,41 @@ if (fields.length !== 1) return {error: 'Expected exactly one visible email subj
 const subject = fields[0];
 const composer = subject.closest('[role="dialog"],.slds-docked-composer,.modal-container');
 if (!composer) return {error: 'The email subject is outside a Salesforce composer.'};
-return {subject, frames: walk(composer).filter(node => node.tagName === 'IFRAME' && visible(node))};
+if (arguments.length) {
+  const value = arguments[0], view = subject.ownerDocument.defaultView;
+  const proto = subject.tagName === 'TEXTAREA' ? view.HTMLTextAreaElement.prototype : view.HTMLInputElement.prototype;
+  subject.focus();
+  Object.getOwnPropertyDescriptor(proto, 'value').set.call(subject, value);
+  subject.dispatchEvent(new view.InputEvent('input', {bubbles:true, inputType:'insertFromPaste', data:value}));
+  subject.dispatchEvent(new view.Event('change', {bubbles:true}));
+  subject.blur();
+  if (subject.value !== value) return {error: 'The local template title did not remain in the email subject.'};
+}
+// Lightning can expose DOM wrappers that ChromeDriver cannot serialize as
+// WebElements. Keep ownership in this page and return only native frame indexes.
+function selectorPath(node) {
+  const path = [];
+  for (let target = node; target; target = target.getRootNode().host) {
+    const pieces = [];
+    for (let element = target; element; element = element.parentElement) {
+      const siblings = element.parentNode.children;
+      const index = Array.prototype.indexOf.call(siblings, element) + 1;
+      pieces.unshift(`${element.localName}:nth-child(${index})`);
+    }
+    path.unshift(pieces.join(' > '));
+  }
+  return path;
+}
+const frames = [], indexes = new Set();
+for (const frame of walk(composer).filter(node => node.tagName === 'IFRAME' && visible(node))) {
+  const index = Array.from({length: window.length}, (_, index) => index)
+    .find(index => window[index] === frame.contentWindow);
+  const selectors = index === undefined ? selectorPath(frame) : [];
+  const key = index === undefined ? JSON.stringify(selectors) : `index:${index}`;
+  if (!indexes.has(key)) frames.push({index: index ?? null, selectors, title: frame.title || ''});
+  indexes.add(key);
+}
+return {subject_value: subject.value, frames};
 """
 
 
@@ -147,21 +182,63 @@ return {
 """
 
 
+class _EditorContext:
+    """Run scalar editor commands in its owned frame without WebDriver elements."""
+
+    def __init__(self, driver, frame):
+        self.driver = driver
+        self.frame = frame
+        self.window = driver.current_window_handle
+
+    def execute_script(self, script, *args):
+        if self.driver.current_window_handle != self.window:
+            raise TemplateComposerError('The Salesforce email tab changed during template loading.')
+        invocation = '(function(){\n' + script + '\n}).apply(null,' + json.dumps(args) + ')'
+        expression = r'''(() => {
+          const frame = FRAME;
+          let target;
+          if (frame.index !== null) target = window[frame.index];
+          else {
+            let root = document;
+            for (const [index, selector] of frame.selectors.entries()) {
+              const element = root.querySelector(selector);
+              if (!element) throw new Error('The owned email editor frame is no longer present.');
+              if (index === frame.selectors.length - 1) target = element.contentWindow;
+              else root = element.shadowRoot;
+            }
+          }
+          if (!target) throw new Error('The owned email editor frame is no longer present.');
+          return target.eval(INVOCATION);
+        })()'''.replace('FRAME', json.dumps(self.frame)).replace('INVOCATION', json.dumps(invocation))
+        response = self.driver.execute_cdp_cmd('Runtime.evaluate', {
+            'expression': expression, 'returnByValue': True,
+        })
+        if response.get('exceptionDetails'):
+            details = response['exceptionDetails']
+            reason = (details.get('exception') or {}).get('description') or details.get('text')
+            raise TemplateComposerError(f'The Salesforce HTML editor command failed: {reason}')
+        result = response.get('result') or {}
+        if 'value' in result:
+            return result['value']
+        if result.get('type') == 'undefined':
+            return None
+        raise TemplateComposerError('The Salesforce HTML editor returned an unreadable result.')
+
+
 def _enter_editor(driver, frames, timeout):
     """Inspect only frames owned by the one visible composer, including shadow DOM."""
     for frame in frames:
-        title = frame.get_attribute("title")
-        driver.switch_to.frame(frame)
+        title = frame['title']
+        context = _EditorContext(driver, frame)
         if title == "CK Editor Container":
-            editors = WebDriverWait(driver, timeout).until(lambda browser: browser.execute_script(EDITOR_SCRIPT))
+            editors = WebDriverWait(context, timeout).until(lambda browser: browser.execute_script(EDITOR_SCRIPT))
         else:
-            WebDriverWait(driver, timeout).until(lambda browser: browser.execute_script("return document.readyState === 'complete';"))
-            editors = driver.execute_script(EDITOR_SCRIPT)
+            WebDriverWait(context, timeout).until(lambda browser: browser.execute_script("return document.readyState === 'complete';"))
+            editors = context.execute_script(EDITOR_SCRIPT)
         if len(editors) == 1:
-            return editors[0]
+            return context, editors[0]
         if len(editors) > 1:
             raise TemplateComposerError("The email composer contains multiple editable HTML editors.")
-        driver.switch_to.parent_frame()
     raise TemplateComposerError("The Salesforce email HTML editor was not found in the active composer.")
 
 
@@ -187,28 +264,20 @@ def fill_template(driver, reference, *, store=None, timeout=15, replacements=Non
     _EmailHtml().feed(template["body_html"])
     try:
         driver.switch_to.default_content()
-        composer = driver.execute_script(COMPOSER_SCRIPT) or {}
-        if composer.get("error") or not composer.get("subject"):
+        composer = driver.execute_script(COMPOSER_SCRIPT, template["subject"]) or {}
+        if composer.get("error") or "subject_value" not in composer:
             raise TemplateComposerError(composer.get("error") or "The email composer was not found.")
-        subject = composer["subject"]
-        driver.execute_script(r"""
-          const field=arguments[0],value=arguments[1],view=field.ownerDocument.defaultView;
-          const proto=field.tagName==='TEXTAREA'?view.HTMLTextAreaElement.prototype:view.HTMLInputElement.prototype;
-          field.focus();Object.getOwnPropertyDescriptor(proto,'value').set.call(field,value);
-          field.dispatchEvent(new view.InputEvent('input',{bubbles:true,inputType:'insertFromPaste',data:value}));
-          field.dispatchEvent(new view.Event('change',{bubbles:true}));field.blur();
-        """, subject, template["subject"])
-        if subject.get_attribute("value") != template["subject"]:
+        if composer["subject_value"] != template["subject"]:
             raise TemplateComposerError("The local template title did not remain in the email subject.")
-        editor = _enter_editor(driver, composer.get("frames", []), timeout)
+        context, editor = _enter_editor(driver, composer.get("frames", []), timeout)
         name = editor["name"]
         if not editor["source"]:
             raise TemplateComposerError("The Salesforce email editor does not support HTML source mode.")
-        driver.execute_script("const e=window.CKEDITOR.instances[arguments[0]];if(e.mode!=='source')e.execCommand('source');", name)
-        wait = WebDriverWait(driver, timeout)
+        context.execute_script("const e=window.CKEDITOR.instances[arguments[0]];if(e.mode!=='source')e.execCommand('source');", name)
+        wait = WebDriverWait(context, timeout)
         wait.until(lambda browser: browser.execute_script(
             "const e=window.CKEDITOR.instances[arguments[0]];return e.mode==='source' && !!e.container.$.querySelector('textarea.cke_source');", name))
-        exact = driver.execute_script(r"""
+        exact = context.execute_script(r"""
           const e=window.CKEDITOR.instances[arguments[0]],source=e.container.$.querySelector('textarea.cke_source');
           const value=arguments[1];
           Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(source,value);
@@ -217,11 +286,11 @@ def fill_template(driver, reference, *, store=None, timeout=15, replacements=Non
         """, name, template["body_html"])
         if not exact:
             raise TemplateComposerError("The email HTML source paste did not match the local JSON.")
-        driver.execute_script("window.CKEDITOR.instances[arguments[0]].execCommand('source');", name)
+        context.execute_script("window.CKEDITOR.instances[arguments[0]].execCommand('source');", name)
         wait.until(lambda browser: browser.execute_script(
             "const e=window.CKEDITOR.instances[arguments[0]];return e.mode==='wysiwyg' && !!e.document;", name))
-        driver.execute_script("const e=window.CKEDITOR.instances[arguments[0]];e.updateElement();e.fire('change');e.fire('blur');", name)
-        verified = driver.execute_script(VERIFY_SCRIPT, name, template["body_html"]) or {}
+        context.execute_script("const e=window.CKEDITOR.instances[arguments[0]];e.updateElement();e.fire('change');e.fire('blur');", name)
+        verified = context.execute_script(VERIFY_SCRIPT, name, template["body_html"]) or {}
         checks = ("text_matches", "links_match", "images_match", "bold_match", "lists_match")
         if not all(verified.get(key) for key in checks) or not verified.get("body"):
             failed = ", ".join(key for key in checks if not verified.get(key))

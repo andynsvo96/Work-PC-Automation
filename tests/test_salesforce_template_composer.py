@@ -16,6 +16,7 @@ from selenium import webdriver
 from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.remote.webelement import WebElement
 from werkzeug.serving import make_server
 
 from salesforce_templates import SalesforceTemplateStore
@@ -139,6 +140,37 @@ class LocalTemplateBrowserTests(unittest.TestCase):
 
     def write_library(self, records):
         self.store.path.write_text(json.dumps({'schema_version':1,'templates':records}),encoding='utf-8')
+
+    def test_template_fill_does_not_return_composer_elements_through_webdriver(self):
+        self.write_library([{'id':'scalar','name':'Scalar template','subject':'Order #[ORDER_NUMBER]',
+            'body_html':'<p>Keep <strong>formatted text</strong> and <a href="https://example.test/invoice">invoice</a>.</p>'}])
+        self.open_fixture()
+        execute = self.driver.execute_script
+
+        def contains_element(value):
+            if isinstance(value, WebElement):
+                return True
+            if isinstance(value, dict):
+                return any(contains_element(item) for item in value.values())
+            if isinstance(value, (list, tuple)):
+                return any(contains_element(item) for item in value)
+            return False
+
+        def execute_without_elements(script, *args):
+            value = execute(script, *args)
+            if contains_element(value):
+                raise StaleElementReferenceException('Lightning element serialization failed.')
+            return value
+
+        with mock.patch.object(self.driver, 'execute_script', side_effect=execute_without_elements), \
+                mock.patch.object(self.driver.switch_to, 'frame', side_effect=StaleElementReferenceException()) as switch_frame:
+            result = composer.fill_template(self.driver, 'Scalar template', store=self.store)
+        switch_frame.assert_not_called()
+        self.assertEqual(result['state']['subject'], 'Order #[ORDER_NUMBER]')
+        self.assertIn('formatted text', result['state']['body'])
+        self.assertIn('<strong>formatted text</strong>', result['state']['body_html'])
+        self.assertTrue(self.driver.execute_script('return window === window.top;'))
+        self.assertEqual(self.driver.find_element('id', 'sentHtml').text, '')
 
     def test_login_check_reacquires_replaced_inputs_without_filling_or_sending(self):
         for login_required in (False, True):

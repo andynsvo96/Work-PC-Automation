@@ -6216,20 +6216,20 @@ def _click_salesforce_send_button(driver):
             const send = candidates[0];
             if (!send) return null;
             const clickable = send.closest('button,a,input,[role=button]') || send;
+            if (clickable.disabled || clickable.getAttribute('aria-disabled') === 'true') return null;
             clickable.scrollIntoView({block: 'center', inline: 'center'});
-            return clickable;
+            const rect = clickable.getBoundingClientRect();
+            return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2};
             """
         )
         if send is not None:
-            try:
-                ActionChains(driver).move_to_element(send).pause(0.1).click(send).perform()
-                return True
-            except Exception:
-                try:
-                    send.click()
-                    return True
-                except Exception:
-                    pass
+            # The receipt is already reserved by send_and_confirm. Dispatch one
+            # native click without returning a Lightning WebElement or replaying
+            # an uncertain press/release through another click mechanism.
+            point = {'x': send['x'], 'y': send['y'], 'button': 'left', 'clickCount': 1}
+            driver.execute_cdp_cmd('Input.dispatchMouseEvent', {**point, 'type': 'mousePressed'})
+            driver.execute_cdp_cmd('Input.dispatchMouseEvent', {**point, 'type': 'mouseReleased'})
+            return True
         time.sleep(0.5)
     return False
 
