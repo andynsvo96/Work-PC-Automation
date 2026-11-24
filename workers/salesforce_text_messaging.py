@@ -10,8 +10,6 @@ from pathlib import Path
 import tempfile
 import time
 
-from selenium.webdriver.common.keys import Keys
-
 
 class TextMessageError(RuntimeError):
     pass
@@ -80,7 +78,10 @@ if (action === 'fill') {
   // Keep the input above Salesforce's fixed utility bar before native entry.
   input.scrollIntoView({block: 'center', inline: 'nearest'});
   input.focus({preventScroll: true});
-  return {input, record, value: input.value, enabled: !disabled(input) && !disabled(button)};
+  if (input.getRootNode().activeElement !== input && input.ownerDocument.activeElement !== input)
+    return {error: 'The customer Twilio input could not be focused.'};
+  input.setSelectionRange(0, input.value.length);
+  return {input_ready: true, record, value: input.value, enabled: !disabled(input) && !disabled(button)};
 }
 if (action === 'send') {
   if (input.value !== message || disabled(input) || disabled(button)) return {error: 'The exact text and enabled Send Message button were not retained.'};
@@ -183,17 +184,18 @@ def _wait_for_panel(driver, recipient, *, record=None, message=None, timeout=30)
 
 def _fill_text(driver, recipient, message, record):
     state = _snapshot(driver, recipient, "fill", message, record)
-    if state.get("input") is None:
+    if state.get("input_ready") is not True:
         raise TextMessageError("The customer Twilio message input did not become ready for entry.")
     if state.get("value") == message and state.get("enabled"):
         return
-    control = state["input"]
     # Lightning does not always bind synthetic input/change events to the Aura
-    # message model. Native keys update that model and enable Send Message.
-    if state.get("value") == message:
-        control.send_keys(Keys.END, " ", Keys.BACKSPACE, Keys.TAB)
-    else:
-        control.send_keys(message, Keys.TAB)
+    # message model. Native insertion and Tab bind the focused, scoped textarea
+    # without passing a Lightning WebElement through ChromeDriver. An exact
+    # existing draft is selected and replaced, so rebinding cannot append it.
+    driver.execute_cdp_cmd('Input.insertText', {'text': message})
+    key = {'key': 'Tab', 'code': 'Tab', 'windowsVirtualKeyCode': 9, 'nativeVirtualKeyCode': 9}
+    driver.execute_cdp_cmd('Input.dispatchKeyEvent', {**key, 'type': 'keyDown'})
+    driver.execute_cdp_cmd('Input.dispatchKeyEvent', {**key, 'type': 'keyUp'})
 
 
 def _wait_for_recorded_text(driver, recipient, record, entry, timeout):

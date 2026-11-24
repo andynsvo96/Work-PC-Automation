@@ -3025,7 +3025,8 @@ def _queue_order_profiles(request_data, slot):
     base = getattr(config_module, "PROCESSOR_PROFILE_DIR" if scanner else "CRM_PROFILE_DIR")
     base = resolve_existing_automation_profile_path(os.path.join(SCRIPT_DIR, base))
     _root, crm_profile = _clone_profile_for_worker(base, f"queue_{slot}", worker_slot=slot,
-                                                  pool_name="sheet_scanner_crm" if scanner else "queue_crm")
+                                                  pool_name="sheet_scanner_crm" if scanner else "queue_crm",
+                                                  rebuild=not scanner)
     slack_base = resolve_existing_automation_profile_path(os.path.join(SCRIPT_DIR, "slack_chrome_profile"))
     slack_pool = "sheet_scanner_slack" if scanner else "queue_slack"
     slack_profile = _worker_profile_path(slack_pool, slot)

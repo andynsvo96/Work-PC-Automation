@@ -4,6 +4,7 @@ import json
 import tempfile
 import threading
 import time
+import sys
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
@@ -15,6 +16,30 @@ from runtime_paths import DEBUG_DIR
 
 
 class ParallelOrderRequestTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if server.WORKERS_DIR not in sys.path:
+            sys.path.insert(0, server.WORKERS_DIR)
+
+    def test_crm_only_dispatch_refreshes_its_free_slot_from_the_current_base_profile(self):
+        with mock.patch.object(server, 'resolve_existing_automation_profile_path', side_effect=lambda path:path), \
+                mock.patch('crm_validate_address._clone_profile_for_worker', return_value=(None,'isolated-profile')) as clone, \
+                mock.patch('crm_validate_address._worker_profile_path', return_value='slack-profile'), \
+                mock.patch.object(server.os.path, 'isdir', return_value=False):
+            for automation in ('product_separator','address_validator','order_goods','push_back'):
+                server._queue_order_profiles({'automation_key':automation},1)
+                self.assertTrue(clone.call_args.kwargs.get('rebuild'))
+                self.assertEqual(clone.call_args.kwargs['pool_name'],'queue_crm')
+
+    def test_scanner_dispatch_preserves_its_authenticated_salesforce_worker_profile(self):
+        with mock.patch.object(server, 'resolve_existing_automation_profile_path', side_effect=lambda path:path), \
+                mock.patch('crm_validate_address._clone_profile_for_worker', return_value=(None,'isolated-profile')) as clone, \
+                mock.patch('crm_validate_address._worker_profile_path', return_value='slack-profile'), \
+                mock.patch.object(server.os.path, 'isdir', return_value=False):
+            server._queue_order_profiles({'automation_key':'copyright_cancel'},1)
+            self.assertFalse(clone.call_args.kwargs.get('rebuild',False))
+            self.assertEqual(clone.call_args.kwargs['pool_name'],'sheet_scanner_crm')
+
     def task(self, automation="copyright_cancel", order_id="1000001", **updates):
         task = {"queue_mode": "normal", "execution_descriptor": {"kind": "crm.extension_manual", "arguments": {
             "automation_key": automation, "order_id": order_id, "reason": "Original reason",

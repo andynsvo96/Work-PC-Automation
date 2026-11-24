@@ -7,8 +7,11 @@ import re
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 from selenium import webdriver
+from selenium.common.exceptions import StaleElementReferenceException
+from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.chrome.service import Service
 
 from workers import salesforce_text_messaging as texts
@@ -84,6 +87,25 @@ class SalesforceTextBrowserTests(unittest.TestCase):
         result = self.send()
         self.assertEqual(result["confirmed_count"], 2)
         self.assertEqual(self.script("return fixture.sends"), MESSAGES)
+
+    def test_text_entry_does_not_return_lightning_elements_to_webdriver(self):
+        self.navigate()
+        execute = self.driver.execute_script
+        def reject_elements(script, *args):
+            result = execute(script, *args)
+            def contains_element(value):
+                if isinstance(value, WebElement): return True
+                if isinstance(value, dict): return any(contains_element(item) for item in value.values())
+                if isinstance(value, list): return any(contains_element(item) for item in value)
+                return False
+            if contains_element(result):
+                raise StaleElementReferenceException('Lightning textarea serialization failed.')
+            return result
+        with mock.patch.object(self.driver, 'execute_script', side_effect=reject_elements):
+            self.assertTrue(self.send()['sent'])
+        self.assertEqual(self.script('return fixture.sends'), MESSAGES)
+        self.assertTrue(self.send()['skipped'])
+        self.assertEqual(self.script('return fixture.sends'), MESSAGES)
         self.assertEqual(self.script("return fixture.textClicks"), 0)
         self.assertEqual(self.script("return fixture.unrelatedClicks"), 0)
         self.assertTrue(self.send()["skipped"])

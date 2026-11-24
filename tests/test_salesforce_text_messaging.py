@@ -7,8 +7,6 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from selenium.webdriver.common.keys import Keys
-
 from workers import crm_reverse_prints as reverse
 from workers import crm_sleeve_prints as extra
 from workers import salesforce_text_messaging as texts
@@ -40,17 +38,7 @@ class TwilioDriver:
         if action == "fill":
             if self.fail_second_fill and len(self.sends) == 1:
                 raise RuntimeError("Second input unavailable")
-            driver = self
-
-            class Input:
-                def send_keys(self, *values):
-                    for value in values:
-                        if value == Keys.BACKSPACE:
-                            driver.value = driver.value[:-1]
-                        elif value not in {Keys.TAB, Keys.END}:
-                            driver.value += value
-
-            return {"input": Input(), "record": self.record, "value": self.value, "enabled": bool(self.value)}
+            return {"input_ready": True, "record": self.record, "value": self.value, "enabled": bool(self.value)}
         if action == "send":
             if self.before_click:
                 self.before_click()
@@ -60,6 +48,12 @@ class TwilioDriver:
             self.value = ""
             return {"clicked": True, "record": self.record}
         return {"record": self.record, "rows": self.rows[:], "value": self.value, "enabled": bool(self.value)}
+
+    def execute_cdp_cmd(self, command, parameters):
+        if command == 'Input.insertText':
+            self.value = parameters['text']
+        elif command != 'Input.dispatchKeyEvent':
+            raise AssertionError('Unexpected native input command')
 
 
 class TextReceiptTests(unittest.TestCase):
