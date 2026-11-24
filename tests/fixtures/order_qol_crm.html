@@ -83,6 +83,8 @@ window.fixtureStock = JSON.parse(sessionStorage.getItem('fixture-native-stock') 
   { ordered: [true, false, false], disabled: [false, false, false], hidden: [false, false, false] };
 window.fixtureVendorCellTag = 'th';
 window.fixtureVendor = false;
+window.fixtureSubcontractor = new URLSearchParams(location.search).has('subcontractor');
+window.fixtureVendorPOCalls = 0;
 window.queueCalls = [];
 window.queueMode = 'success';
 window.fixtureQueueResolvers = [];
@@ -189,6 +191,25 @@ function renderFixture() {
   document.querySelector('.edit-btn').classList.toggle('ng-hide', orderScope.editMode);
   document.querySelector('.save-btn').classList.toggle('ng-hide', !orderScope.editMode);
   document.querySelector('#native-preview').classList.toggle('ng-hide', orderScope.editMode);
+  const vendorPO = document.getElementById('order-vendor-po-panel');
+  if (!fixtureSubcontractor || orderScope.editMode) vendorPO?.parentElement.remove();
+  else if (!vendorPO) {
+    // Sanitized structure from the subcontractor order snapshot. Keep the
+    // native role/edit visibility gate outside the extension's preferences.
+    const wrapper = document.createElement('div');
+    wrapper.className = 'row';
+    wrapper.setAttribute('ng-if', "!editMode && showVendorPO && user.isAny('admin', 'owner', 'productionmanager', 'vendor')");
+    wrapper.innerHTML = `<div id="order-vendor-po-panel" class="panel panel-default">
+      <div class="panel-heading"><a class="clickable" ng-click="collapse('order-vendor-po-panel');"><strong>Vendor Purchase Order</strong></a></div>
+      <div class="panel-body collapse in"><div id="order-vendor-po"><button type="button">create purchase order</button><p>Notes</p></div></div>
+    </div>`;
+    wrapper.querySelector('.panel-heading').onclick = () => {
+      fixtureHeaderClicks++;
+      const body = wrapper.querySelector('.panel-body'); body.hidden = !body.hidden;
+    };
+    wrapper.querySelector('button').onclick = () => fixtureVendorPOCalls++;
+    document.getElementById('main-content').append(wrapper);
+  }
   const header = document.querySelector('#main-header-design-tabs .btn-group');
   const nav = document.querySelector('#order-design-details .nav-tabs');
   const content = document.querySelector('#order-design-details .tab-content');

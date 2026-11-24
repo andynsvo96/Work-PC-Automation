@@ -15,6 +15,21 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
+## Hide Vendor Purchase Order - 1.8.13
+
+The **Vendor Purchase Order** panel on subcontractor orders now has the same
+red **×** as other hideable sections when section controls are unlocked. Its
+preference is saved across orders in the Chrome profile, and it appears as
+**Vendor Purchase Order** in the popup's **Hidden order sections / Unhide** list.
+The existing lock applies to its **×** too. Purchase-order data and CRM's native
+role/edit visibility rules are preserved.
+
+Reload **CRM Order Assistant 1.8.13** at `chrome://extensions` and refresh open
+CRM order pages after saving existing edits. **No app restart or new permission
+is needed.** The local QOL browser fixture checks the subcontractor-only panel,
+hide/Unhide, lock behavior, and preserved native actions and visibility. Live CRM
+and macOS remain unverified.
+
 ## Lock section hide buttons - 1.8.12
 
 Open **Hidden order sections** using the eye-slash button beside Dark mode.
@@ -83,7 +98,7 @@ Use the red **×** at the right of a supported panel's title to hide that sectio
 on **all CRM orders in the same Chrome profile**. Supported panels include
 Contact Info and Send Options, Design Assignments, Status History and Art Changes,
 Access Log, Station Assignments, Subcontractor Assignments, Order Totals,
-Payments and Credits, Shipping Info, **Purchase Orders**, **Promos**,
+Payments and Credits, Shipping Info, **Vendor Purchase Order**, **Purchase Orders**, **Promos**,
 **Carton Tracking**, and **Sales Tax Transactions**. Hiding only changes the
 screen display; the native contents and light print output remain intact.
 

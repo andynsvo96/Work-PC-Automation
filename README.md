@@ -38,6 +38,13 @@ Each computer owns its queue, browser sessions, credentials, and recovery receip
 
 ## CRM Order Assistant and Newer Workflows
 
+- **Hide Vendor Purchase Order:** CRM Order Assistant **1.8.13** adds the red
+  **×** to the subcontractor order's Vendor Purchase Order panel. It uses the
+  existing lock, saved section preferences, and **Unhide** list. Reload the
+  extension at `chrome://extensions` and refresh CRM pages after saving edits.
+  No app restart or new permission is needed. See the
+  [Vendor Purchase Order guide](crm-order-dark-mode-extension/README.md#hide-vendor-purchase-order---1813).
+
 - **Lock section hide buttons:** CRM Order Assistant **1.8.12** adds a lock icon
   at the top right of **Hidden order sections**. Lock it to hide the red **×**
   buttons across CRM orders; unlock it to show them again. The setting stays

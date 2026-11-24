@@ -12,6 +12,7 @@
     ["order-totals", "Order Totals"],
     ["order-payments-credits", "Payments and Credits"],
     ["order-shipping", "Shipping Info"],
+    ["order-vendor-po-panel", "Vendor Purchase Order"],
     ["order-purchase-orders", "Purchase Orders"],
     ["order-promos", "Promos"],
     ["order-cartons", "Carton Tracking"],
