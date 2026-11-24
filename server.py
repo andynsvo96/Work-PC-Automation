@@ -9465,14 +9465,21 @@ def _shipping_bypasser_problem_details(payload):
             continue
         seen.add(key)
         if descriptor and descriptor != "tab":
-            details.append(f"{order_id} {descriptor}")
+            detail = f"{order_id} {descriptor}"
         else:
-            details.append(order_id)
+            detail = order_id
+        reason = " ".join(str(item.get("message") or item.get("outcome") or "").split())
+        details.append(f"{detail}: {reason[:300]}" if reason else detail)
     return details
 
 
 def _notify_shipping_bypasser_problem_orders(payload, message=None):
-    if not isinstance(payload, dict) or bool(payload.get("success")):
+    if not isinstance(payload, dict):
+        return
+    affected = _shipping_bypasser_problem_details(payload)
+    # Confirmed purchases may make the overall run a partial success. Its failed
+    # tabs still need an alert, including for Mach6 and manually queued orders.
+    if bool(payload.get("success")) and not affected:
         return
     text = _concise_automation_failure_message(
         {
@@ -9485,10 +9492,11 @@ def _notify_shipping_bypasser_problem_orders(payload, message=None):
         },
         message or payload.get("message"),
     )
-    affected = _shipping_bypasser_problem_details(payload)
     if affected:
-        text = f"{text.rstrip()} Affected: {', '.join(affected)}."
-    notify_user("Shipping Bypasser Failed", text)
+        suffix = f"; and {len(affected) - 10} more in the report" if len(affected) > 10 else ""
+        text = f"{text.rstrip()} Affected: {'; '.join(affected[:10])}{suffix}."
+    title = "Shipping Bypasser Needs Attention" if payload.get("success") else "Shipping Bypasser Failed"
+    notify_user(title, text)
 
 
 def _start_crm_shipping_bypasser_runtime(dry_run=False, batch_size=None, list_url=None, order_id=None):

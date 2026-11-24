@@ -767,6 +767,7 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
         shipping_class="rush",
         dry_run=False,
         order_type="inhouse",
+        order_overrides=None,
     ):
         day = lambda value: crm_shipping_bypasser.datetime(2026, 10, value).date()
         product = {"index": 1, "product_id": "LST350", "color": "Lime Shock", "quantities": {"3XL": 1, "4XL": 1}}
@@ -784,6 +785,7 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
             "shipping_class": shipping_class,
             "stock_tab_index": 1,
         }
+        order.update(order_overrides or {})
         if inventory is None:
             inventory = [
                 {"warehouse": "Robbinsville, NJ", "stock": {"3XL": 0, "4XL": 0}},
@@ -838,6 +840,9 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
             "_require_crm_order_ready_once_with_refresh": {},
             "_publish_status": {},
             "_extract_order_data": {"return_value": order},
+            "_load_nj_stock_order": {"return_value": None},
+            "_saved_shipping_bypass_submission": {"return_value": None},
+            "_reload_crm_order_for_production_verify": {"return_value": True},
             "_pending_shipping_bypass_submission": {"return_value": None},
             "_saved_shipping_bypass_confirmation": {"return_value": None},
             "_crm_stock_order_yellow_visual_exists": {"return_value": False},
@@ -859,7 +864,7 @@ class ShippingBypassDeliveryFallbackTests(unittest.TestCase):
             "_select_shipping_destination": {"side_effect": lambda _driver, _order_type, warehouse, **kwargs: {"ship_mode": "pickup" if _order_type == "inhouse" and warehouse == "Robbinsville, NJ" else "ship", "address": "Mach 6 Manufacturing" if _order_type == "mach6" else warehouse or "123 EZ TEES INC"}},
             "_select_ups_eta_for_shipping_plan": {"side_effect": read_eta},
             "_clear_sanmar_cart": {"side_effect": clear_cart},
-            "_change_crm_production_date": {"side_effect": lambda _driver, _order_id, target: target},
+            "_change_crm_production_date": {"side_effect": lambda _driver, _order_id, target, **_kwargs: target},
             "_change_crm_due_date": {"side_effect": lambda _driver, _order_id, target: target},
             "_fill_review_and_submit": {"return_value": "dry_run_ready" if dry_run else "submitted"},
             "_capture_sanmar_confirmation": {"return_value": {"po_confirmed": True, "po": order["po"]}},

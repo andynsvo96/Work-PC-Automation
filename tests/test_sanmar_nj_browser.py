@@ -15,6 +15,7 @@ for path in (ROOT, ROOT / "workers"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 import crm_shipping_bypasser as worker
+from shipping_bypasser_subcontractors import SUBCONTRACTOR_DESTINATIONS, subcontractor_order_type
 
 
 @unittest.skipUnless(os.environ.get("SANMAR_FIXTURE_CHROMEDRIVER"), "Set SANMAR_FIXTURE_CHROMEDRIVER to run local browser fixtures")
@@ -176,6 +177,80 @@ class NjLocalBrowserTests(unittest.TestCase):
                 order = worker._extract_order_data(self.driver, "5000001")
                 self.assertEqual(order["order_type"], expected)
                 self.assertTrue(order["subcontractor_banner_present"])
+
+    def test_all_reviewed_subcontractors_select_the_exact_saved_address_without_pickup(self):
+        entries = list(SUBCONTRACTOR_DESTINATIONS.values())
+        for index, (order_type, destination) in enumerate(SUBCONTRACTOR_DESTINATIONS.items()):
+            with self.subTest(subcontractor=destination["crm_name"]), mock.patch.object(worker.time, "sleep"):
+                self.driver.get(self.fixture + "?page=checkout")
+                self.driver.execute_script("window.fixtureSetSavedAddresses(arguments[0]);", entries)
+                shipping = worker._select_shipping_destination(self.driver, order_type, worker.NJ_WAREHOUSE)
+                self.assertEqual(shipping, {"ship_mode": "ship", "address": destination["name"]})
+                self.assertFalse(self.driver.execute_script("return document.querySelector('#pickup').checked;"))
+                self.assertEqual(self.driver.execute_script("return document.querySelector('input[name=shippingAddress]:checked').value;"), str(index))
+
+    def test_changed_or_duplicate_saved_addresses_stop_before_confirming_address(self):
+        order_type = subcontractor_order_type("COSMIC PRINTING")
+        expected = SUBCONTRACTOR_DESTINATIONS[order_type]
+        variants = [{**expected, field: "Wrong value"} for field in ("name", "line1", "line2", "city", "state", "zip")]
+        for entries in [[entry] for entry in variants] + [[expected, expected]]:
+            with self.subTest(entries=entries), mock.patch.object(worker.time, "sleep"):
+                self.driver.get(self.fixture + "?page=checkout")
+                self.driver.execute_script("window.fixtureSetSavedAddresses(arguments[0]);", entries)
+                with self.assertRaisesRegex(RuntimeError, "saved address.*missing, changed, or ambiguous"):
+                    worker._select_shipping_destination(self.driver, order_type, worker.NJ_WAREHOUSE)
+                self.assertEqual(self.driver.execute_script("return document.querySelector('#shipping-methods').textContent;"), "")
+
+    def test_subcontractor_nj_and_split_shipping_verify_full_review_address_and_original_po(self):
+        for crm_name in ("DESIGNER T'S", "SEW NICE EMBROIDERY & GIFTS", "PRINT WORKS"):
+            order_type = subcontractor_order_type(crm_name)
+            destination = SUBCONTRACTOR_DESTINATIONS[order_type]
+            for keys, names in (("nj", [worker.NJ_WAREHOUSE]), ("va,nj", ["Richmond, VA", worker.NJ_WAREHOUSE])):
+                with self.subTest(subcontractor=crm_name, warehouses=names), mock.patch.object(worker.time, "sleep"):
+                    self.driver.get(self.fixture + "?page=checkout&warehouses=" + keys)
+                    self.driver.execute_script("window.fixtureSetSavedAddresses(arguments[0]);", [destination])
+                    multi = len(names) > 1
+                    shipping = worker._select_shipping_destination(self.driver, order_type, None if multi else names[0], multi_warehouse=multi)
+                    eta = worker._select_ups_eta_for_shipping_plan(self.driver, order_type, warehouse=None if multi else names[0], selected_warehouses=names, multi_warehouse=multi)
+                    self.assertEqual(eta["eta"], worker.datetime(2026, 10, 6).date())
+                    worker._click_sanmar_button(self.driver, r"Proceed\s+To\s+Payment")
+                    state = self.driver.execute_script("return window.fixtureFulfillment;")
+                    self.assertFalse(state["pickup"])
+                    self.assertEqual(state["address"], destination["name"])
+                    self.assertEqual(state["methods"], [{"warehouse": name, "method": "ups"} for name in names])
+                    self.assertEqual(worker._fill_review_and_submit(self.driver, "5681151-1", dry_run=True, shipping_requirements={"order_type": order_type, "shipping": shipping}), "dry_run_review_ready")
+                    self.assertEqual(self.driver.execute_script("return document.getElementById('po').value;"), "5681151-1")
+
+    def test_billing_address_cannot_confirm_a_changed_shipping_destination(self):
+        order_type = subcontractor_order_type("DESIGNER T'S")
+        with mock.patch.object(worker.time, "sleep"):
+            self.driver.get(self.fixture + "?page=checkout")
+            self.driver.execute_script("window.fixtureSetSavedAddresses(arguments[0]);", [SUBCONTRACTOR_DESTINATIONS[order_type]])
+            shipping = worker._select_shipping_destination(self.driver, order_type, worker.NJ_WAREHOUSE)
+            worker._select_ups_eta_for_shipping_plan(self.driver, order_type, warehouse=worker.NJ_WAREHOUSE, selected_warehouses=[worker.NJ_WAREHOUSE])
+            worker._click_sanmar_button(self.driver, r"Proceed\s+To\s+Payment")
+            self.driver.execute_script("document.querySelector('#ship-to').innerHTML = '<h2>Ship To</h2><p>Wrong vendor, 99 Wrong Rd, Wrong City, NJ 08030</p>'; document.body.insertAdjacentHTML('beforeend', '<section><h2>Billing Address</h2><p>Designer Ts Inc, 20 Creek Rd, Brooklawn, NJ 08030-2748</p></section>');")
+            with self.assertRaisesRegex(RuntimeError, "review did not confirm.*shipping address"):
+                worker._fill_review_and_submit(self.driver, "5681151-1", shipping_requirements={"order_type": order_type, "shipping": shipping})
+            self.assertNotIn("Thank You", self.driver.execute_script("return document.body.innerText;"))
+
+    def test_saved_production_notes_reader_ignores_other_notes_and_unsaved_drafts(self):
+        self.driver.execute_script("document.body.insertAdjacentHTML('afterbegin', `<div class='panel-heading'><span class='vendor'>Subcontractor: DESIGNER T'S (NJ)</span></div><section>Sales Notes LATEST SHIP DATE 12/9</section><textarea>LATEST SHIP DATE 12/8</textarea>`); window.fixtureSetProductionNotes(arguments[0]);", [
+            {"timestamp": "Nov 24th, 2026 @ 09:18 AM", "text": "LATEST SHIP DATE - 12/3***"},
+            {"timestamp": "Nov 23rd, 2026 @ 04:50 PM", "text": "LATEST SHIP DATE 12/2"},
+            {"timestamp": "Nov 25, 2026 @ 09:00 AM", "text": "Approved"},
+        ])
+        order = worker._extract_order_data(self.driver, "5000001")
+        self.assertEqual(order["order_type"], subcontractor_order_type("DESIGNER T'S"))
+        self.assertEqual(order["latest_ship_date"], worker.datetime(2026, 12, 3).date())
+        self.assertEqual(order["due_date"], worker.datetime(2026, 12, 7).date())
+
+    def test_production_date_save_preserves_the_due_date_in_real_dom(self):
+        with mock.patch.object(worker, "_wait_for_order_goods_page_ready", return_value=True), mock.patch.object(worker, "_wait_for_crm_shipping_method_selection"), mock.patch.object(worker, "_acknowledge_crm_production_date_warning", return_value=False), mock.patch.object(worker.time, "sleep"):
+            saved = worker._change_crm_production_date(self.driver, "5000001", worker.datetime(2026, 12, 1).date(), expected_due_date=worker.datetime(2026, 12, 7).date())
+        self.assertEqual(saved, worker.datetime(2026, 12, 1).date())
+        self.assertEqual(self.driver.execute_script("return localStorage.getItem('fixture_due');"), "2026-12-07")
+        self.assertEqual(self.driver.execute_script("return localStorage.getItem('fixture_production');"), "2026-12-01")
 
     def test_add_only_rows_do_not_match_original_po_guards(self):
         self.driver.execute_script("localStorage.setItem('fixture_rows', JSON.stringify(['ADD-H-CJVillafra302']));")

@@ -12806,6 +12806,28 @@ class CrmAddressServerTests(unittest.TestCase):
         self.assertIn("4636204 tab 2 of 2", mock_notify.call_args.args[1])
         self.assertIn("H-TabTwo", mock_notify.call_args.args[1])
 
+    def test_shipping_bypasser_successful_partial_run_still_notifies_failed_tab_and_reason(self):
+        payload = {
+            "success": True,
+            "message": "One order partially succeeded.",
+            "report": [
+                {"order_id": "5000001", "success": True, "outcome": "shipping_bypass_ordered", "stock_tab_index": 1, "stock_tab_count": 2},
+                {"order_id": "5000001", "success": False, "outcome": "eta_after_latest_ship_date", "message": "UPS ETA is on LATEST SHIP DATE 2026-12-02.", "stock_tab_index": 2, "stock_tab_count": 2, "stock_tab_label": "H-LateTab"},
+            ],
+        }
+        with mock.patch.object(server, "notify_user") as notify:
+            server._notify_shipping_bypasser_problem_orders(payload)
+        notify.assert_called_once()
+        self.assertEqual(notify.call_args.args[0], "Shipping Bypasser Needs Attention")
+        self.assertIn("5000001 tab 2 of 2", notify.call_args.args[1])
+        self.assertIn("H-LateTab", notify.call_args.args[1])
+        self.assertIn("LATEST SHIP DATE 2026-12-02", notify.call_args.args[1])
+
+    def test_shipping_bypasser_fully_successful_run_has_no_problem_notification(self):
+        with mock.patch.object(server, "notify_user") as notify:
+            server._notify_shipping_bypasser_problem_orders({"success": True, "report": [{"order_id": "5000001", "success": True}]})
+        notify.assert_not_called()
+
     def test_processing_all_mode_can_disable_validator_and_run_other_steps(self):
         with tempfile.TemporaryDirectory() as tmp:
             state_path = Path(tmp) / "crm_processing_state.json"

@@ -65,6 +65,12 @@ from crm_validate_address import (
 from crm_order_goods import _wait_for_order_goods_page_ready
 from runtime_paths import SCREENSHOTS_DIR, state_file
 from shipping_bypasser_mappings import build_runtime_indexes
+from shipping_bypasser_subcontractors import (
+    latest_ship_deadline,
+    subcontractor_destination,
+    subcontractor_order_type,
+    subcontractor_warehouse_priorities,
+)
 
 configure_console_utf8()
 
@@ -103,6 +109,7 @@ WAREHOUSE_DISTANCE = {
         "Robbinsville, NJ",
     ],
 }
+WAREHOUSE_DISTANCE.update(subcontractor_warehouse_priorities(WAREHOUSE_DISTANCE["inhouse"]))
 WAREHOUSE_ALIASES = {
     "robbinsville": "Robbinsville, NJ",
     "richmond": "Richmond, VA",
@@ -1185,6 +1192,12 @@ return {
   activeTabText: activeTab ? activeTab.text : '',
   activePanelText: activePanelTextFor(heading),
   activePanelStockOrders: activePanelStockOrders(),
+  productionNotes: Array.from(document.querySelectorAll('#order-notes-production-notes .notes-envelope'))
+    .filter(isVisible)
+    .map((note) => ({
+      timestamp: normalize(note.querySelector('.notes-date')?.textContent),
+      text: normalize(note.querySelector('.notes-body')?.textContent),
+    })),
   subcontractorBannerText: (() => {
     const banners = Array.from(document.querySelectorAll('.panel-heading .vendor')).filter((node) => {
       const rect = node.getBoundingClientRect();
@@ -1276,9 +1289,16 @@ def _extract_order_data(driver, order_id, tab_context=None):
     subcontractor_banner_present = bool(re.search(r"\bSubcontractor\s*:", body_text, flags=re.I))
     order_type = (
         "mach6" if MACH6_SUBCONTRACTOR_PATTERN.match(subcontractor)
-        else "unsupported_subcontractor" if subcontractor_banner_present and not INHOUSE_SUBCONTRACTOR_PATTERN.fullmatch(subcontractor)
+        else (subcontractor_order_type(subcontractor) or "unsupported_subcontractor") if subcontractor_banner_present and not INHOUSE_SUBCONTRACTOR_PATTERN.fullmatch(subcontractor)
         else "inhouse"
     )
+    latest_ship_date = None
+    latest_ship_date_error = ""
+    if subcontractor_destination(order_type):
+        try:
+            latest_ship_date = latest_ship_deadline(data.get("productionNotes"))
+        except ValueError as exc:
+            latest_ship_date_error = str(exc)
     shipping_class = _order_shipping_class_from_text(body_text) or "rush"
     first_product = products[0] if products else {}
     return {
@@ -1296,6 +1316,8 @@ def _extract_order_data(driver, order_id, tab_context=None):
         "subcontractor": subcontractor,
         "subcontractor_banner_present": subcontractor_banner_present,
         "order_type": order_type,
+        "latest_ship_date": latest_ship_date,
+        "latest_ship_date_error": latest_ship_date_error,
         "shipping_class": shipping_class,
         "stock_tab_index": tab_context.get("stock_tab_index"),
         "stock_tab_count": tab_context.get("stock_tab_count"),
@@ -2967,9 +2989,9 @@ def _choose_multi_warehouse_plan(product_lines, order_type, stock_buffer=SANMAR_
     lines = product_lines if isinstance(product_lines, list) else []
     if order_type not in WAREHOUSE_DISTANCE:
         return None
-    # Mach6 ships every box, including NJ. In-house shipped ADD carts exclude NJ.
+    # Subcontractors ship every box, including NJ. In-house ADD carts exclude NJ.
     if include_nj is None:
-        include_nj = order_type == "mach6"
+        include_nj = order_type == "mach6" or bool(subcontractor_destination(order_type))
     priority = [warehouse for warehouse in _warehouse_priority(order_type) if include_nj or warehouse != NJ_WAREHOUSE]
     expanded_lines = []
     pieces_by_warehouse = {}
@@ -3092,6 +3114,8 @@ def _production_destination_error(order):
         return None
     if order_type == "mach6" and is_mach6:
         return None
+    if subcontractor_destination(order_type) and subcontractor_order_type(subcontractor) == order_type:
+        return None
     return f"Unsupported or unclear production destination: {subcontractor or order_type or 'unknown'}. Review the subcontractor banner before ordering stock."
 
 
@@ -3145,9 +3169,11 @@ def _late_eta_stock_context(product_lines, order_type, selected_warehouses, stoc
 
 def _late_eta_failure_message(order, product_lines, selected_warehouses, eta, production_target, stock_buffer=SANMAR_WAREHOUSE_STOCK_BUFFER):
     context = _late_eta_stock_context(product_lines, order.get("order_type"), selected_warehouses, stock_buffer=stock_buffer)
+    deadline = order["latest_ship_date"] if subcontractor_destination(order.get("order_type")) else order["due_date"]
+    deadline_label = "LATEST SHIP DATE" if subcontractor_destination(order.get("order_type")) else "CRM due date"
     timing = (
-        f"Its UPS ETA is {eta.isoformat()}, which would move production to {production_target.isoformat()}; "
-        f"that is not before the CRM due date {order['due_date'].isoformat()}."
+        f"Its UPS ETA is {eta.isoformat()}, with production required on {production_target.isoformat()}; "
+        f"that is not before the {deadline_label} {deadline.isoformat()}."
     )
     return " ".join(part for part in (context, timing, "No SanMar stock was ordered.") if part)
 
@@ -4305,6 +4331,46 @@ def _validate_sanmar_cart_contents(driver, product_lines, warehouse=None, cart_l
     }
 
 
+def _select_sanmar_subcontractor_address(driver, destination):
+    result = driver.execute_script(r"""
+const expected = arguments[0];
+const key = value => String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+function visible(node) {
+  if (!node || !node.getBoundingClientRect().width || !node.getBoundingClientRect().height) return false;
+  for (let el = node; el; el = el.parentElement) {
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+  }
+  return true;
+}
+const matches = [];
+for (const name of document.querySelectorAll('.savedName,.saved-name')) {
+  const row = name.closest('tr');
+  if (!visible(row) || key(name.textContent) !== key(expected.name)) continue;
+  const read = selector => row.querySelector(selector)?.textContent || '';
+  if (key(read('.saved-add-1')) !== key(expected.line1)
+      || key(read('.saved-add-2')) !== key(expected.line2)
+      || key(read('.saved-city')) !== key(expected.city)
+      || key(read('.saved-state')) !== key(expected.state)
+      || key(read('.saved-zip')) !== key(expected.zip)) continue;
+  const radio = row.querySelector('input[type="radio"][name="shippingAddress"]');
+  if (radio && !radio.disabled) matches.push(radio);
+}
+if (matches.length !== 1) return {success: false, count: matches.length};
+const radio = matches[0];
+radio.scrollIntoView({block: 'center'});
+radio.click();
+radio.dispatchEvent(new Event('change', {bubbles: true}));
+return {success: Boolean(radio.isConnected && radio.checked), addressId: radio.value};
+""", destination)
+    if not isinstance(result, dict) or not result.get("success"):
+        raise RuntimeError(
+            f"SanMar saved address for {destination['name']} is missing, changed, or ambiguous. "
+            "The reviewed street, suite, city, state, and ZIP must match before ordering."
+        )
+    return result
+
+
 def _select_shipping_destination(driver, order_type, warehouse=None, multi_warehouse=False):
     if order_type not in WAREHOUSE_DISTANCE:
         raise RuntimeError("Unsupported production destination; no SanMar shipping was selected.")
@@ -4318,8 +4384,12 @@ def _select_shipping_destination(driver, order_type, warehouse=None, multi_wareh
         _click_sanmar_button(driver, r"Proceed\s+To\s+Payment")
         return {"ship_mode": "pickup", "address": "Robbinsville, NJ"}
     _click_radio_near_text(driver, "Ship to an address")
-    target = "Mach 6 Manufacturing" if order_type == "mach6" else "123 EZ TEES INC"
-    _click_radio_near_text(driver, target)
+    destination = subcontractor_destination(order_type)
+    target = destination["name"] if destination else "Mach 6 Manufacturing" if order_type == "mach6" else "123 EZ TEES INC"
+    if destination:
+        _select_sanmar_subcontractor_address(driver, destination)
+    else:
+        _click_radio_near_text(driver, target)
     _wait_for_text(driver, re.escape(target), timeout=5)
     _click_sanmar_button(driver, r"Confirm\s+Address")
     time.sleep(2.0)
@@ -4803,6 +4873,14 @@ def _select_ups_eta_for_shipping_plan(driver, order_type, warehouse=None, select
             }
         except RuntimeError as exc:
             scoped_error = exc
+            if subcontractor_destination(order_type):
+                # A date from another checkout section cannot establish that
+                # this selected warehouse meets a subcontractor's deadline.
+                if order_id:
+                    setattr(exc, "sanmar_checkout_diagnostic", _capture_sanmar_checkout_diagnostic(
+                        driver, order_id=order_id, reason="ups_warehouse_eta_unavailable",
+                    ))
+                raise
     try:
         eta = _select_ups_and_eta(driver, order_type)
         return {
@@ -4843,7 +4921,8 @@ def _parse_sanmar_eta(value):
     month = months.get(match.group(1).lower())
     if not month:
         return None
-    year = int(match.group(3) or datetime.now().year)
+    now = datetime.now()
+    year = int(match.group(3)) if match.group(3) else now.year + int(now.month == 12 and month == 1)
     try:
         return datetime(year, month, int(match.group(2))).date()
     except ValueError:
@@ -5098,7 +5177,7 @@ def _reload_crm_order_for_production_verify(driver, order_id):
     return bool(_wait_for_order_goods_page_ready(driver, order_id, timeout=max(8, CRM_ACTION_TIMEOUT)))
 
 
-def _change_crm_production_date(driver, order_id, target_date):
+def _change_crm_production_date(driver, order_id, target_date, expected_due_date=None):
     edit = _find_clickable_by_text(driver, r"edit\s+order")
     if edit is None:
         raise RuntimeError("CRM edit order button was not found for production date update.")
@@ -5108,6 +5187,14 @@ def _change_crm_production_date(driver, order_id, target_date):
     _wait_for_crm_shipping_method_selection(driver, timeout=25)
     _acknowledge_crm_production_date_warning(driver, timeout=12)
     _wait_for_crm_shipping_method_selection(driver, timeout=6, initial_grace=1)
+    if expected_due_date is not None:
+        due_value = driver.execute_script(r"""
+const fields = Array.from(document.querySelectorAll('input[name="Fulfillment Date"],input[ng-model="order.getResource().fulfillmentDate"]'))
+  .filter(input => input.getBoundingClientRect().width && input.getBoundingClientRect().height);
+return fields.length === 1 ? fields[0].value : '';
+""")
+        if _parse_crm_date(due_value) != expected_due_date:
+            raise RuntimeError("CRM Due Date changed or could not be verified in the editor. The order was not saved; review before purchasing.")
     save = _find_clickable_by_text(driver, r"save\s+order")
     if save is None:
         raise RuntimeError("CRM save order button was not found after production date update.")
@@ -5122,6 +5209,8 @@ def _change_crm_production_date(driver, order_id, target_date):
         _reload_crm_order_for_production_verify(driver, order_id)
         refreshed = _extract_order_data(driver, order_id)
         actual_date = refreshed.get("production_date")
+        if expected_due_date is not None and refreshed.get("due_date") != expected_due_date:
+            raise RuntimeError("CRM Due Date changed after the production-date save. Review the saved order before purchasing.")
         if actual_date == saved_target_date:
             return saved_target_date
         seen_values.append(actual_date.isoformat() if hasattr(actual_date, "isoformat") else str(actual_date or "blank"))
@@ -5129,6 +5218,28 @@ def _change_crm_production_date(driver, order_id, target_date):
     expected = saved_target_date.isoformat() if hasattr(saved_target_date, "isoformat") else str(saved_target_date)
     detail = ", ".join(seen_values) if seen_values else "blank"
     raise RuntimeError(f"CRM production date did not persist after save and refresh. Expected {expected}; saw {detail}.")
+
+
+def _verify_subcontractor_deadline_before_submit(driver, order, eta, dry_run=False):
+    """Re-read saved common order fields before a new subcontractor purchase."""
+    if not _reload_crm_order_for_production_verify(driver, order["order_id"]):
+        raise RuntimeError("CRM could not be reloaded to verify the subcontractor deadline before purchasing.")
+    current = _extract_order_data(driver, order["order_id"])
+    if _production_destination_error(current) or current.get("order_type") != order["order_type"]:
+        raise RuntimeError("CRM subcontractor changed before purchasing. Review the destination.")
+    if current.get("due_date") != order["due_date"]:
+        raise RuntimeError("CRM Due Date changed during this run. Review the saved order before purchasing.")
+    deadline = current.get("latest_ship_date")
+    if not deadline or current.get("latest_ship_date_error") or deadline != order["latest_ship_date"]:
+        raise RuntimeError("The newest saved LATEST SHIP DATE changed or could not be verified before purchasing.")
+    production = current.get("production_date")
+    if eta is None or production is None:
+        raise RuntimeError("Stock ETA and saved production date must be confirmed before purchasing.")
+    arrival_production = _shipping_bypasser_production_target_for_eta(eta)
+    if eta >= deadline or max(production, arrival_production) >= deadline:
+        raise RuntimeError(f"Stock ETA and production must be before LATEST SHIP DATE {deadline.isoformat()}.")
+    if production < arrival_production and not dry_run:
+        raise RuntimeError("The saved production date is earlier than stock arrival. Review the production-date save before purchasing.")
 
 
 def _change_crm_due_date(driver, order_id, target_date):
@@ -5256,6 +5367,44 @@ return { success: true, alreadyPresent: false };
     return "already_present" if result.get("alreadyPresent") else "recorded"
 
 
+def _verify_sanmar_subcontractor_review_address(driver, destination):
+    confirmed = driver.execute_script(r"""
+const expected = arguments[0];
+const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+const key = value => normalize(value).toUpperCase()
+  .replace(/\bSUITE\b/g, 'STE').replace(/\bROAD\b/g, 'RD')
+  .replace(/\bSTREET\b/g, 'ST').replace(/\bDRIVE\b/g, 'DR')
+  .replace(/\bAVENUE\b/g, 'AVE').replace(/\bBOULEVARD\b/g, 'BLVD')
+  .replace(/\bHIGHWAY\b/g, 'HWY').replace(/\bLANE\b/g, 'LN')
+  .replace(/\bPARKWAY\b/g, 'PKWY').replace(/[^A-Z0-9]/g, '');
+function visible(node) {
+  if (!node.getBoundingClientRect().width || !node.getBoundingClientRect().height) return false;
+  for (let el = node; el; el = el.parentElement) {
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+  }
+  return true;
+}
+const nodes = Array.from(document.querySelectorAll('body *')).filter(visible);
+const headings = nodes.filter(node => {
+  const own = normalize(Array.from(node.childNodes).filter(child => child.nodeType === Node.TEXT_NODE).map(child => child.textContent).join(' '));
+  return /^(ship\s*to|shipping\s*address|ship\s*to\s*address|delivery\s*address)\s*:?$/i.test(own);
+});
+for (const heading of headings) {
+  for (let node = heading, depth = 0; node && node !== document.body && depth < 5; node = node.parentElement, depth++) {
+    const text = normalize(node.innerText);
+    if (text.length > 1500 || /billing\s*address|saved\s*addresses/i.test(text)) break;
+    const textKey = key(text);
+    if ([expected.name, expected.line1, expected.line2, expected.city].filter(Boolean).every(value => textKey.includes(key(value)))
+        && new RegExp('\\b' + expected.state + '\\s+' + expected.zip.slice(0, 5) + '(?:-\\d{4})?\\b', 'i').test(text)) return true;
+  }
+}
+return false;
+""", destination)
+    if confirmed is not True:
+        raise RuntimeError(f"SanMar review did not confirm the reviewed shipping address for {destination['name']}; refusing to submit.")
+
+
 def _verify_sanmar_review_fulfillment(driver, requirements):
     order_type = requirements.get("order_type")
     shipping = requirements.get("shipping") or {}
@@ -5272,6 +5421,9 @@ def _verify_sanmar_review_fulfillment(driver, requirements):
         raise RuntimeError("UPS shipping was not confirmed on SanMar review; refusing to submit. Subcontractors cannot use pickup.")
     if order_type == "mach6" and not re.search(r"\bmach\s*6\s+manufacturing\b", text, flags=re.I):
         raise RuntimeError("Mach6 shipping destination was not confirmed on SanMar review; refusing to submit.")
+    destination = subcontractor_destination(order_type)
+    if destination:
+        _verify_sanmar_subcontractor_review_address(driver, destination)
 
 
 def _fill_review_and_submit(driver, po, dry_run=False, shipping_requirements=None):
@@ -5938,8 +6090,8 @@ def _prepare_sanmar_shipping_plan(sanmar_driver, order_id, order, product_lines,
     _wait_for_text(sanmar_driver, r"Shipping\s+Details|Shipping\s+Address", timeout=20)
     _publish_status(f"Selecting SanMar shipping for order {order_id}.", stage="selecting_sanmar_shipping", order_id=order_id)
     shipping = _select_shipping_destination(sanmar_driver, order["order_type"], warehouse, multi_warehouse=multi_warehouse)
-    if order["order_type"] == "mach6" and shipping.get("ship_mode") != "ship":
-        return _result(order_id, False, "subcontractor_shipping_required", "Mach6 must use UPS shipping to California. No stock was ordered.", order=order, retryable=False)
+    if (order["order_type"] == "mach6" or subcontractor_destination(order["order_type"])) and shipping.get("ship_mode") != "ship":
+        return _result(order_id, False, "subcontractor_shipping_required", "Subcontractors must use UPS shipping to their production destination. No stock was ordered.", order=order, retryable=False)
     if order["order_type"] == "inhouse" and warehouse == NJ_WAREHOUSE and shipping.get("ship_mode") != "pickup":
         return _result(order_id, False, "nj_pickup_required", "NJ pickup was not confirmed. No NJ stock was ordered.", retryable=False)
     eta_state = {}
@@ -6481,6 +6633,21 @@ def _process_open_order(
         return done(_result(order_id, False, "crm_data_missing", f"Missing CRM order data: {', '.join(missing)}.", order=order))
     if not order.get("quantities"):
         return done(_result(order_id, False, "crm_quantities_missing", "Could not map CRM size quantities from the order.", order=order))
+    new_subcontractor = bool(subcontractor_destination(order["order_type"]))
+    deadline = order.get("latest_ship_date") if new_subcontractor else order["due_date"]
+    if new_subcontractor and (not deadline or order.get("latest_ship_date_error")):
+        return done(_result(
+            order_id, False, "latest_ship_date_unavailable",
+            (order.get("latest_ship_date_error") or "The newest saved LATEST SHIP DATE could not be confirmed.")
+            + " No SanMar stock was ordered.",
+            order=order, retryable=False,
+        ))
+    if new_subcontractor and order["production_date"] >= deadline:
+        return done(_result(
+            order_id, False, "production_not_before_latest_ship_date",
+            f"Saved production date {order['production_date'].isoformat()} must be before LATEST SHIP DATE {deadline.isoformat()}. No SanMar stock was ordered.",
+            order=order, retryable=False,
+        ))
     _publish_status(f"Loading SanMar for order {order_id}.", stage="loading_sanmar", order_id=order_id)
     safe_get_with_partial_load(sanmar_driver, SANMAR_URL, label="SanMar home")
     _ensure_sanmar_logged_in(sanmar_driver)
@@ -6593,11 +6760,13 @@ def _process_open_order(
         if shipping.get("ship_mode") != "ship" or eta is None:
             break
         production_target = _shipping_bypasser_production_target_for_eta(eta)
-        free_due_extension = order.get("shipping_class") == "free" and eta > order["due_date"]
+        if new_subcontractor:
+            production_target = max(production_target, order["production_date"])
+        free_due_extension = not new_subcontractor and order.get("shipping_class") == "free" and eta > deadline
         if (
             plan_attempt
             or multi_warehouse
-            or production_target < order["due_date"]
+            or production_target < deadline
             or free_due_extension
         ):
             break
@@ -6637,6 +6806,13 @@ def _process_open_order(
 
     if shipping.get("ship_mode") == "ship":
         if eta is None:
+            if new_subcontractor:
+                return done(_result(
+                    order_id, False, "sanmar_eta_unavailable",
+                    f"UPS delivery dates could not be confirmed before LATEST SHIP DATE {deadline.isoformat()}. No SanMar stock was ordered.",
+                    order=order, warehouses=selected_warehouses, products=product_lines,
+                    warehouse_plan=warehouse_plan, shipping=shipping, retryable=False,
+                ))
             if len(shipping_plan_attempts) > 1:
                 return done(_result(
                     order_id,
@@ -6661,19 +6837,26 @@ def _process_open_order(
             )
         else:
             production_target = _shipping_bypasser_production_target_for_eta(eta)
-            if eta > order["due_date"]:
-                if order.get("shipping_class") == "free":
+            if new_subcontractor:
+                production_target = max(production_target, order["production_date"])
+            late_outcome = "eta_after_latest_ship_date" if new_subcontractor else "eta_after_due_date"
+            if eta > deadline:
+                if not new_subcontractor and order.get("shipping_class") == "free":
                     # Free-ship orders may be moved out to receive stock; paid/rush orders may not.
                     due_target = _next_business_day_on_or_after(eta)
                     if due_target <= production_target:
                         due_target = _next_business_day_after(production_target)
-                    _change_crm_due_date(crm_driver, order_id, due_target)
-                    order["due_date"] = due_target
+                    if not dry_run:
+                        _change_crm_due_date(crm_driver, order_id, due_target)
+                        order["due_date"] = due_target
+                    else:
+                        order["proposed_due_date"] = due_target
+                    deadline = due_target
                 else:
                     return done(_result(
                         order_id,
                         False,
-                        "eta_after_due_date",
+                        late_outcome,
                         _late_eta_failure_message(
                             order,
                             product_lines,
@@ -6688,11 +6871,11 @@ def _process_open_order(
                         eta=str(eta),
                         eta_by_warehouse=eta_by_warehouse,
                     ))
-            if production_target >= order["due_date"]:
+            if production_target >= deadline:
                 return done(_result(
                     order_id,
                     False,
-                    "eta_after_due_date",
+                    late_outcome,
                     _late_eta_failure_message(
                         order,
                         product_lines,
@@ -6707,11 +6890,18 @@ def _process_open_order(
                     eta=str(eta),
                     eta_by_warehouse=eta_by_warehouse,
                 ))
-            if production_target < order["due_date"] and production_target > order["production_date"]:
+            if production_target < deadline and production_target > order["production_date"]:
                 try:
-                    order["production_date"] = _change_crm_production_date(crm_driver, order_id, production_target)
+                    if dry_run:
+                        order["proposed_production_date"] = production_target
+                    elif new_subcontractor:
+                        order["production_date"] = _change_crm_production_date(
+                            crm_driver, order_id, production_target, expected_due_date=order["due_date"],
+                        )
+                    else:
+                        order["production_date"] = _change_crm_production_date(crm_driver, order_id, production_target)
                 except RuntimeError as exc:
-                    if "production date did not persist" in str(exc).lower():
+                    if new_subcontractor or "production date did not persist" in str(exc).lower():
                         return done(_result(
                             order_id,
                             False,
@@ -6731,6 +6921,15 @@ def _process_open_order(
                     raise
         _click_sanmar_button(sanmar_driver, r"Proceed\s+To\s+Payment")
     _wait_for_text(sanmar_driver, r"Review\s+&\s+Submit|Review\s+and\s+Submit|Customer\s+PO", timeout=20)
+    if new_subcontractor:
+        try:
+            _verify_subcontractor_deadline_before_submit(crm_driver, order, eta, dry_run=dry_run)
+        except RuntimeError as exc:
+            return done(_result(
+                order_id, False, "subcontractor_pre_submit_review", f"{exc} No SanMar stock was ordered.",
+                order=order, warehouse=warehouse, warehouses=selected_warehouses,
+                eta=str(eta) if eta else None, shipping=shipping, retryable=False,
+            ))
     _publish_status(f"Reviewing SanMar order {order_id} before submit.", stage="reviewing_sanmar_order", order_id=order_id)
     submit_state = _fill_review_and_submit(
         sanmar_driver, order["po"], dry_run=dry_run,

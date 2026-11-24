@@ -24,9 +24,21 @@ if (page === 'checkout') {
     </div>
     <div><label><input type="radio" name="address" value="123 EZ TEES INC" checked>123 EZ TEES INC</label>
       <label><input type="radio" name="address" value="Mach 6 Manufacturing">Mach 6 Manufacturing (CA)</label></div>
+    <section id="saved-addresses"></section>
     <button id="confirm-address">Confirm Address</button>
     <section id="shipping-methods"></section>
     <button id="payment">Proceed To Payment</button>`;
+  window.fixtureSetSavedAddresses = (entries) => {
+    window.fixtureSavedAddresses = entries;
+    document.querySelector('#saved-addresses').innerHTML = '<h2>Saved Addresses</h2><ul>' + entries.map((entry, index) => `
+      <li><table><tbody><tr>
+        <td><input type="radio" name="shippingAddress" id="saved-address-${index}" value="${index}"></td>
+        <td><label for="saved-address-${index}"><span class="savedName saved-name">${escapeText(entry.name)}</span><br>
+          <span class="saved-add-1">${escapeText(entry.line1)}</span><br><span class="saved-add-2">${escapeText(entry.line2 || '')}</span></label></td>
+        <td><span class="saved-city">${escapeText(entry.city)}</span>, <span class="saved-state">${escapeText(entry.state)}</span></td>
+        <td><span class="saved-zip">${escapeText(entry.zip)}</span></td>
+      </tr></tbody></table></li>`).join('') + '</ul>';
+  };
   document.querySelector('#confirm-address').onclick = () => {
     document.querySelector('#shipping-methods').innerHTML = '<h2>Shipping Method</h2>' + sources.map((name, index) => `
       <h3>Warehouse: ${escapeText(name)}</h3><table><tbody>
@@ -37,11 +49,13 @@ if (page === 'checkout') {
   document.querySelector('#payment').onclick = () => {
     const pickup = document.querySelector('#pickup').checked;
     const warehouse = document.querySelector('#warehouse').selectedOptions[0].textContent;
-    const address = document.querySelector('input[name="address"]:checked').value;
+    const savedAddress = document.querySelector('input[name="shippingAddress"]:checked');
+    const destination = savedAddress ? window.fixtureSavedAddresses[Number(savedAddress.value)] : null;
+    const address = destination ? destination.name : document.querySelector('input[name="address"]:checked').value;
     const methods = sources.map((name, index) => ({warehouse: name, method: document.querySelector(`input[name="method-${index}"]:checked`)?.value || ''}));
     window.fixtureFulfillment = { pickup, warehouse, address, methods };
     body.innerHTML = `<h1>Review &amp; Submit</h1><p>Payment method: Net</p>
-      ${pickup ? `<p>Pickup: ${escapeText(warehouse)}</p>` : `<p>Ship To: ${escapeText(address)}</p>` + methods.map(({warehouse, method}) => `<p>Warehouse: ${escapeText(warehouse)} Shipping Method: ${method === 'ups' ? 'UPS Ground' : 'FedEx'}</p>`).join('')}
+      ${pickup ? `<p>Pickup: ${escapeText(warehouse)}</p>` : `<section id="ship-to"><h2>Ship To</h2><p>${escapeText(address)}</p>${destination ? `<p>${escapeText(destination.line1)} ${escapeText(destination.line2 || '')}</p><p>${escapeText(destination.city)}, ${escapeText(destination.state)} ${escapeText(destination.zip)}</p>` : ''}</section>` + methods.map(({warehouse, method}) => `<p>Warehouse: ${escapeText(warehouse)} Shipping Method: ${method === 'ups' ? 'UPS Ground' : 'FedEx'}</p>`).join('')}
       <label for="po">Customer PO</label><input id="po" name="customerPo" style="width:320px">
       <button id="submit">Submit Order</button>`;
     document.querySelector('#submit').onclick = () => {
@@ -52,7 +66,12 @@ if (page === 'checkout') {
 } else {
   const rows = JSON.parse(localStorage.getItem('fixture_rows') || '[]');
   const notes = localStorage.getItem('fixture_notes') || '';
+  const due = localStorage.getItem('fixture_due') || '2026-12-07';
+  const production = localStorage.getItem('fixture_production') || '2026-11-30';
+  const dateLabel = value => value.slice(5, 7) + '/' + value.slice(8, 10) + '/' + value.slice(2, 4);
   body.innerHTML = `<h1>Order 5000001 — H-CJVillafra302</h1>
+    <div><label>Due Date:</label> <span id="due-value">${dateLabel(due)}</span><input type="date" name="Fulfillment Date" id="due-input" value="${due}" style="display:none"></div>
+    <div><label>Production Date:</label> <span id="production-value">${dateLabel(production)}</span><input type="date" name="Production Date" id="production-input" value="${production}" style="display:none"></div>
     <section><h2>Order Goods from Vendor: Manual Order</h2>
       <button id="order-goods">Order Goods</button><button id="add-box">Add box</button>
       <table id="stock-rows"></table>
@@ -66,6 +85,15 @@ if (page === 'checkout') {
       <button id="edit">Edit Order</button><textarea id="note-input" style="display:none"></textarea>
       <button id="save-order" style="display:none">Save Order</button>
     </section>`;
+  window.fixtureSetProductionNotes = entries => {
+    let root = document.querySelector('#order-notes-production-notes');
+    if (!root) {
+      root = document.createElement('section');
+      root.id = 'order-notes-production-notes';
+      body.append(root);
+    }
+    root.innerHTML = '<h2>Production Notes</h2>' + entries.map(entry => `<div class="notes-envelope"><div class="notes-user">Fixture user <span class="notes-date">${escapeText(entry.timestamp)}</span></div><div class="notes-body">${escapeText(entry.text)}</div></div>`).join('');
+  };
   const renderRows = () => {
     document.querySelector('#stock-rows').innerHTML = rows.map((po) => `<tr style="background:rgb(255,255,150)"><td>Sanmar ${escapeText(po)}-Sanmar</td></tr>`).join('');
   };
@@ -92,6 +120,8 @@ if (page === 'checkout') {
     document.querySelector('#note-input').value = localStorage.getItem('fixture_notes') || '';
     document.querySelector('#sales-note-input').style.display = 'block';
     document.querySelector('#save-order').style.display = 'inline-block';
+    document.querySelector('#due-input').style.display = 'inline-block';
+    document.querySelector('#production-input').style.display = 'inline-block';
   };
   document.querySelector('#save-order').onclick = () => {
     const note = document.querySelector('#note-input').value;
@@ -106,6 +136,12 @@ if (page === 'checkout') {
     document.querySelector('#note-input').style.display = 'none';
     document.querySelector('#sales-note-input').style.display = 'none';
     document.querySelector('#save-order').style.display = 'none';
+    localStorage.setItem('fixture_due', document.querySelector('#due-input').value);
+    localStorage.setItem('fixture_production', document.querySelector('#production-input').value);
+    document.querySelector('#due-value').textContent = dateLabel(document.querySelector('#due-input').value);
+    document.querySelector('#production-value').textContent = dateLabel(document.querySelector('#production-input').value);
+    document.querySelector('#due-input').style.display = 'none';
+    document.querySelector('#production-input').style.display = 'none';
   };
 }
 </script>
