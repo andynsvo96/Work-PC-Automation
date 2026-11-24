@@ -38,6 +38,18 @@ Each computer owns its queue, browser sessions, credentials, and recovery receip
 
 ## CRM Order Assistant and Newer Workflows
 
+- **Extension quality-of-life controls:** CRM Order Assistant **1.8.9** keeps
+  Manual Process, Cancel, Reachout, and Stock Issue available while automations
+  wait or run. Queue multiple actions for an order; the queue retains its
+  same-order execution safeguards. Edit Order places Design Studio Previews to
+  the left of print areas, including All Tabs, and stacks them on narrow screens.
+  Red **×** buttons on titled order panels hide those sections across all orders
+  in the Chrome profile. The **eye-slash button to the left of Dark mode** lists
+  hidden sections with **Unhide** controls; open orders update immediately.
+  Reload the extension at `chrome://extensions` and refresh open CRM order pages.
+  No app restart or new permission is needed. See the
+  [quality-of-life guide](crm-order-dark-mode-extension/README.md#queue-controls-previews-and-hidden-sections---189).
+
 - **Order Goods now only submits stock:** the existing automation opens applicable
   orders in one browser, up to 25 background tabs at a time, and runs the native
   Order All requests for every enabled automatic stock control. Single-product

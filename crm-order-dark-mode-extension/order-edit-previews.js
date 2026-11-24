@@ -6,6 +6,8 @@
   window.__crmEditPreviewsInstalled = true;
   let queued = false;
   let signature = "";
+  let layoutParent = null;
+  let layoutTarget = null;
   const previewId = "crm-edit-design-previews";
   const images = [["f", "Front Preview"], ["b", "Back Preview"],
     ["sl", "Sleeve Left Preview"], ["sr", "Sleeve Right Preview"], ["t", "Inside Tag Line"]];
@@ -35,8 +37,37 @@
     return undefined;
   }
 
+  function clearLayout() {
+    layoutParent?.classList.remove("crm-edit-preview-layout");
+    layoutTarget?.classList.remove("crm-edit-preview-target");
+    layoutParent = null;
+    layoutTarget = null;
+  }
+
+  function place(panel, root) {
+    const allTabs = root.querySelector("#crm-all-tabs-panel:not([hidden])");
+    const areaColumn = root.querySelector('#order-design-details > .tab-content > .tab-pane.active [ng-repeat*="in design.printAreas"]');
+    const target = allTabs?.querySelector(".crm-all-tabs-cards:not(.crm-all-tabs-stock-cards)")
+      || areaColumn?.parentElement
+      || root.querySelector("#order-design-details > .tab-content");
+    if (!target) {
+      clearLayout();
+      if (panel.parentElement !== root) root.append(panel);
+      return;
+    }
+    if (layoutTarget !== target || layoutParent !== target.parentElement) clearLayout();
+    layoutTarget = target;
+    layoutParent = target.parentElement;
+    if (!layoutParent.classList.contains("crm-edit-preview-layout")) layoutParent.classList.add("crm-edit-preview-layout");
+    if (!layoutTarget.classList.contains("crm-edit-preview-target")) layoutTarget.classList.add("crm-edit-preview-target");
+    // Add a sibling to the native row. Its forms, repeat anchors, scope, and
+    // inputs keep their original parents and identities.
+    if (panel.parentElement !== layoutParent || panel.nextElementSibling !== target) layoutParent.insertBefore(panel, target);
+  }
+
   function clear() {
     document.getElementById(previewId)?.remove();
+    clearLayout();
     signature = "";
   }
 
@@ -61,11 +92,12 @@
       if (base.protocol !== "https:" || base.username || base.password) { clear(); return; }
     } catch (_) { clear(); return; }
     const nextSignature = JSON.stringify([id, index, String(design.designId), base.href]);
-    if (signature === nextSignature && document.getElementById(previewId)) return;
+    const existing = document.getElementById(previewId);
+    if (signature === nextSignature && existing) { place(existing, root); return; }
     clear();
     const panel = document.createElement("section");
     panel.id = previewId;
-    panel.className = "col-xs-12 crm-edit-previews";
+    panel.className = "crm-edit-previews";
     const heading = document.createElement("h4");
     heading.textContent = "Design Studio Previews";
     const caption = document.createElement("p");
@@ -94,7 +126,7 @@
       grid.append(link);
     }
     panel.append(heading, caption, grid);
-    root.append(panel);
+    place(panel, root);
     signature = nextSignature;
   }
 
@@ -103,7 +135,13 @@
     queued = true;
     setTimeout(() => { queued = false; sync(); }, 60);
   }
-  new MutationObserver(schedule).observe(document, { subtree: true, childList: true,
+  new MutationObserver(records => {
+    // All Tabs hides the native pane as soon as its root class changes. Move
+    // the preview in the same update instead of leaving it in that hidden pane
+    // until the normal debounced scan.
+    if (records.some(record => record.target === document.documentElement && record.attributeName === "class")) sync();
+    else schedule();
+  }).observe(document, { subtree: true, childList: true,
     attributes: true, attributeFilter: ["class"] });
   window.addEventListener("hashchange", schedule);
   window.addEventListener("popstate", schedule);

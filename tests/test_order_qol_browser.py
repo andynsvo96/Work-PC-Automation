@@ -6,6 +6,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -32,10 +33,19 @@ class OrderQolBrowserTests(unittest.TestCase):
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                route = urlsplit(self.path).path
+                data, mime = fixture, "text/html; charset=utf-8"
+                if route.startswith("/extension/"):
+                    name = route.rsplit("/", 1)[-1]
+                    data = (EXTENSION / name).read_bytes()
+                    mime = "text/css" if name.endswith(".css") else "application/javascript" if name.endswith(".js") else mime
+                    if name == "popup.html":
+                        data = data.replace(b'<script src="order-sections.js">', b'<script>window.chrome=parent.chrome;</script><script src="order-sections.js">')
+                        data = data.replace(b'<script type="module" src="all-orders-popup.mjs"></script>', b'')
                 self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Type", mime)
                 self.end_headers()
-                self.wfile.write(fixture)
+                self.wfile.write(data)
 
             def log_message(self, *_args):
                 pass
@@ -56,17 +66,21 @@ class OrderQolBrowserTests(unittest.TestCase):
         cls.driver = webdriver.Chrome(service=Service(driver_path), options=options)
         cls.addClassCleanup(cls.driver.quit)
 
+    def setUp(self):
+        self.driver.set_window_size(1200, 1200)
+        self.driver.execute_cdp_cmd("Emulation.setEmulatedMedia", {"media": "screen"})
+
     def show(self, route="/order/1234567"):
         self.driver.get("about:blank")
         self.driver.get(self.url + route)
-        self.driver.execute_script("sessionStorage.clear(); fixtureResetStock();")
+        self.driver.execute_script("sessionStorage.clear(); localStorage.clear(); fixtureResetStock();")
         self.inject()
 
     def inject(self, automation=True):
         for name in ("all-tabs.css", "order-qol.css", "dark-mode.css"):
             self.driver.execute_script("const style = document.createElement('style'); style.textContent = arguments[0]; document.head.append(style);",
                                        (EXTENSION / name).read_text(encoding="utf-8"))
-        scripts = (["content.js"] if automation else []) + ["all-tabs-model.js", "all-tabs.js", "order-all-batch.js", "order-all.js", "order-edit-previews.js"]
+        scripts = (["order-sections.js", "content.js"] if automation else []) + ["all-tabs-model.js", "all-tabs.js", "order-all-batch.js", "order-all.js", "order-edit-previews.js"]
         self.driver.execute_script("\n".join((EXTENSION / name).read_text(encoding="utf-8") for name in scripts))
 
     def wait_for_button(self):
@@ -136,14 +150,20 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.driver.execute_script("document.getElementById('refresh-dialog').remove();")
         self.assertTrue(safe())
 
-    def test_previews_remain_at_bottom_and_follow_highlighted_design_without_model_edits(self):
+    def test_previews_sit_left_of_print_areas_and_follow_highlighted_design_without_model_edits(self):
         self.show()
         original = self.driver.execute_script("return structuredClone(resource);")
         self.assertEqual(self.driver.find_elements(By.ID, "crm-edit-design-previews"), [])
         self.edit()
         panel = self.driver.find_element(By.ID, "crm-edit-design-previews")
         self.assertTrue(panel.is_displayed())
-        self.assertEqual(self.driver.execute_script("return document.querySelector('#view-orders-index').lastElementChild.id;"), panel.get_attribute("id"))
+        self.assertTrue(self.driver.execute_script("""
+          const preview = document.getElementById('crm-edit-design-previews');
+          const areas = preview.nextElementSibling;
+          return areas.classList.contains('crm-edit-preview-target')
+            && preview.getBoundingClientRect().right < areas.getBoundingClientRect().left
+            && Math.abs(preview.getBoundingClientRect().top - areas.getBoundingClientRect().top) < 15;
+        """))
         self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, ".crm-edit-previews-caption").text, "Highlighted tab 2")
         images = self.driver.find_elements(By.CSS_SELECTOR, ".crm-edit-previews-grid img")
         self.assertEqual(len(images), 5)
@@ -158,6 +178,141 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.driver.find_element(By.CSS_SELECTOR, ".save-btn").click()
         WebDriverWait(self.driver, 5).until(lambda d: not d.find_elements(By.ID, "crm-edit-design-previews"))
         self.assertTrue(self.driver.find_element(By.ID, "native-preview").is_displayed())
+        self.assertEqual(self.driver.find_elements(By.CSS_SELECTOR, ".crm-edit-preview-layout, .crm-edit-preview-target"), [])
+
+    def test_previews_stack_on_narrow_screens_and_keep_native_print_area_inputs(self):
+        self.show()
+        self.driver.execute_script("window.originalPrintArea = document.querySelector('.tab-pane.active .printarea input'); originalPrintArea.value = 'Keep this draft';")
+        # Entering edit mode here does not redraw the fixture's native inputs.
+        self.driver.execute_script("orderScope.editMode = true; document.body.classList.toggle('changed');")
+        WebDriverWait(self.driver, 5).until(lambda d: d.find_elements(By.ID, "crm-edit-design-previews"))
+        self.driver.execute_script("document.querySelector('#view-orders-index').style.maxWidth='520px';")
+        self.assertTrue(self.driver.execute_script("return document.documentElement.scrollWidth <= innerWidth;"))
+        self.assertEqual(self.driver.execute_async_script("""
+          const done = arguments[arguments.length - 1], changes = [];
+          const observer = new MutationObserver(records => changes.push(...records));
+          observer.observe(document.querySelector('.crm-edit-preview-layout'), {attributes:true, attributeFilter:['class']});
+          setTimeout(() => {observer.disconnect(); done(changes.length);}, 950);
+        """), 0)
+        self.driver.set_window_size(700, 1100)
+        self.assertTrue(self.driver.execute_script("""
+          const preview = document.getElementById('crm-edit-design-previews');
+          return preview.getBoundingClientRect().bottom <= preview.nextElementSibling.getBoundingClientRect().top + 1
+            && document.documentElement.scrollWidth <= innerWidth
+            && originalPrintArea === document.querySelector('.tab-pane.active .printarea input')
+            && originalPrintArea.value === 'Keep this draft';
+        """))
+        self.driver.save_screenshot(str(self.artifacts / "preview-narrow.png"))
+
+    def test_automation_menus_queue_separator_then_copyright_reachout_while_working(self):
+        self.show()
+        wait = WebDriverWait(self.driver, 6)
+        wait.until(lambda d: d.find_elements(By.ID, "crm-order-manual-process-button"))
+        self.driver.find_element(By.ID, "crm-order-manual-process-button").click()
+        self.driver.find_element(By.CSS_SELECTOR, '[data-crm-order-automation="product_separator"]').click()
+        wait.until(lambda d: d.execute_script("return queueCalls.length;") == 1)
+        self.driver.execute_script("fixtureRuntime = {...fixtureRuntime, queued: false, running: true};")
+        wait.until(lambda d: "Working" in d.find_element(By.ID, "crm-order-manual-process-button").text)
+        for button in self.driver.find_elements(By.CSS_SELECTOR, '[data-crm-order-process-trigger="true"]'):
+            self.assertTrue(button.is_enabled())
+        self.driver.find_element(By.ID, "crm-order-reachout-button").click()
+        self.driver.find_element(By.CSS_SELECTOR, '[data-crm-order-automation="copyright_reachout"]').click()
+        self.driver.find_element(By.ID, "crm-order-automation-reason").send_keys("Protected artwork")
+        self.driver.find_element(By.XPATH, '//div[@role="dialog"]//button[text()="Queue task"]').click()
+        wait.until(lambda d: d.execute_script("return queueCalls.length;") == 2)
+        calls = self.driver.execute_script("return queueCalls;")
+        self.assertEqual([(call["automation"], call["orderId"], call["reason"]) for call in calls],
+                         [("product_separator", "1234567", ""), ("copyright_reachout", "1234567", "Protected artwork")])
+        self.assertTrue(all(button.is_enabled() for button in self.driver.find_elements(By.CSS_SELECTOR, '[data-crm-order-process-trigger="true"]')))
+        self.assertEqual(self.driver.execute_script("return nativeCalls;"), [])
+
+    def test_sending_one_automation_leaves_other_actions_available_and_blocks_double_clicks(self):
+        self.show()
+        self.driver.execute_script("queueMode = 'hold';")
+        WebDriverWait(self.driver, 5).until(lambda d: d.find_elements(By.ID, "crm-order-manual-process-button"))
+        self.driver.find_element(By.ID, "crm-order-manual-process-button").click()
+        self.driver.find_element(By.CSS_SELECTOR, '[data-crm-order-automation="product_separator"]').click()
+        self.driver.find_element(By.ID, "crm-order-manual-process-button").click()
+        separator = self.driver.find_element(By.CSS_SELECTOR, '[data-crm-order-automation="product_separator"]')
+        self.assertFalse(separator.is_enabled())
+        self.driver.execute_script("arguments[0].click();", separator)
+        self.driver.find_element(By.CSS_SELECTOR, '[data-crm-order-automation="address_validator"]').click()
+        self.assertEqual(self.driver.execute_script("return queueCalls.map(call => call.automation);"), ["product_separator", "address_validator"])
+        self.assertTrue(self.driver.find_element(By.ID, "crm-order-reachout-button").is_enabled())
+        self.driver.execute_script("fixtureQueueResolvers.splice(0).forEach(resolve => resolve());")
+        WebDriverWait(self.driver, 5).until(lambda d: separator.is_enabled())
+        self.assertEqual(self.driver.execute_script("return queueCalls.length;"), 2)
+
+    def test_hidden_sections_persist_across_orders_and_restore_from_actual_popup(self):
+        self.show()
+        wait = WebDriverWait(self.driver, 5)
+        ids = ["order-purchase-orders", "order-promos", "order-cartons", "sales-tax-transactions"]
+        original = self.driver.execute_script("return structuredClone(resource);")
+        for section in ids:
+            button = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, f'#{section} .crm-order-section-hide'))
+            button.click()
+            wait.until(lambda d: not d.find_element(By.ID, section).is_displayed())
+        self.assertEqual(self.driver.execute_script("return [resource,fixtureHeaderClicks];"), [original, 0])
+        self.driver.refresh()
+        self.inject()
+        wait.until(lambda d: all(not d.find_element(By.ID, section).is_displayed() for section in ids))
+        first = self.driver.current_window_handle
+        self.driver.switch_to.new_window("tab")
+        try:
+            self.driver.get(self.url + "/app#/order/7654321")
+            self.inject()
+            wait.until(lambda d: all(not d.find_element(By.ID, section).is_displayed() for section in ids))
+            self.driver.execute_script("""
+              const popup = document.createElement('iframe'); popup.id='popup';
+              popup.style='position:fixed;top:0;left:0;width:800px;height:600px;z-index:2147483647;border:0';
+              popup.src='/extension/popup.html'; document.body.append(popup);
+            """)
+            self.driver.switch_to.frame(wait.until(lambda d: d.find_element(By.ID, "popup")))
+            wait.until(lambda d: d.find_element(By.ID, "hidden-sections-toggle").is_displayed())
+            self.driver.find_element(By.ID, "hidden-sections-toggle").click()
+            wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#hidden-sections-list li")) == 4)
+            self.assertTrue(self.driver.execute_script("return document.getElementById('hidden-sections-toggle').getBoundingClientRect().right < document.querySelector('.toggle').getBoundingClientRect().left;"))
+            self.driver.save_screenshot(str(self.artifacts / "hidden-sections-popup.png"))
+            self.driver.find_element(By.CSS_SELECTOR, '[aria-label="Unhide Promos"]').click()
+            wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#hidden-sections-list li")) == 3)
+            self.driver.switch_to.default_content()
+            wait.until(lambda d: d.find_element(By.ID, "order-promos").is_displayed())
+            self.driver.switch_to.window(first)
+            wait.until(lambda d: d.find_element(By.ID, "order-promos").is_displayed())
+            self.assertFalse(self.driver.find_element(By.ID, "order-cartons").is_displayed())
+        finally:
+            for handle in self.driver.window_handles:
+                if handle != first:
+                    self.driver.switch_to.window(handle)
+                    self.driver.close()
+            self.driver.switch_to.window(first)
+
+    def test_hide_controls_preserve_native_visibility_and_print_and_follow_route_changes(self):
+        self.show()
+        wait = WebDriverWait(self.driver, 5)
+        button = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, '#order-promos .crm-order-section-hide'))
+        self.driver.execute_script("fixtureStorageFail = true;")
+        button.click()
+        self.assertTrue(self.driver.find_element(By.ID, "order-promos").is_displayed())
+        self.assertIn("Could not save", button.get_attribute("title"))
+        self.driver.execute_script("fixtureStorageFail = false;")
+        button.click()
+        wait.until(lambda d: not d.find_element(By.ID, "order-promos").is_displayed())
+        self.driver.execute_cdp_cmd("Emulation.setEmulatedMedia", {"media": "print"})
+        self.assertTrue(self.driver.find_element(By.ID, "order-promos").is_displayed())
+        self.assertFalse(button.is_displayed())
+        self.driver.execute_cdp_cmd("Emulation.setEmulatedMedia", {"media": "screen"})
+        self.driver.execute_script("history.pushState({}, '', '/reports/1234567'); dispatchEvent(new PopStateEvent('popstate'));")
+        wait.until(lambda d: not d.find_elements(By.CSS_SELECTOR, ".crm-order-section-hide"))
+        self.assertTrue(self.driver.find_element(By.ID, "order-promos").is_displayed())
+        self.driver.execute_script("history.pushState({}, '', '/app#/order/7654321'); dispatchEvent(new PopStateEvent('popstate'));")
+        wait.until(lambda d: not d.find_element(By.ID, "order-promos").is_displayed())
+        self.driver.execute_script("""
+          document.getElementById('order-promos').outerHTML = '<section id="order-promos" class="panel ng-hide"><div class="panel-heading">Promos</div></section>';
+          chrome.storage.local.set({'crmOrderHiddenSection:order-promos':false});
+        """)
+        wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#order-promos .crm-order-section-hide")) == 1)
+        self.assertFalse(self.driver.find_element(By.ID, "order-promos").is_displayed())
 
     def test_preview_preserves_approval_vendor_transfer_and_deleted_design_restrictions(self):
         self.show()
@@ -177,8 +332,17 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.driver.find_element(By.ID, "crm-all-tabs-header").click()
         self.assertTrue(self.driver.find_element(By.ID, "crm-edit-design-previews").is_displayed())
         self.assertTrue(self.driver.find_element(By.ID, "crm-all-tabs-panel").is_displayed())
+        self.assertTrue(self.driver.execute_script("""
+          const preview = document.getElementById('crm-edit-design-previews');
+          return preview.parentElement.id === 'crm-all-tabs-panel'
+            && preview.getBoundingClientRect().right < preview.nextElementSibling.getBoundingClientRect().left;
+        """))
         self.assertEqual(self.driver.find_element(By.CSS_SELECTOR, ".crm-edit-previews-caption").text, "Highlighted tab 2")
         self.assertEqual(self.driver.execute_script("return [orderScope.activeDesignIndex, resource.designs.length];"), [1, 3])
+        self.driver.find_elements(By.CSS_SELECTOR, "#main-header-design-tabs button[ng-repeat]")[0].click()
+        WebDriverWait(self.driver, 5).until(lambda d: d.find_element(By.CSS_SELECTOR, ".crm-edit-previews-caption").text.endswith("1"))
+        self.assertTrue(self.driver.find_element(By.ID, "crm-edit-design-previews").is_displayed())
+        self.assertNotEqual(self.driver.execute_script("return document.querySelector('#crm-edit-design-previews').parentElement.id;"), "crm-all-tabs-panel")
 
     def test_order_all_submits_all_native_requests_in_one_click_without_automation(self):
         self.show()

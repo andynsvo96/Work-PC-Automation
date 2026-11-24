@@ -53,6 +53,8 @@ function completionFixture({ safe = true, active = true, openedAt = 0 } = {}) {
   const reloads = [], notices = [];
   const context = vm.createContext({
     currentOrderId: () => "1000001", orderProcessorDocumentOpenedAt: openedAt, orderProcessorRefreshPending: false,
+    pendingOrderAutomationRequests: new Set(), orderAutomationRequestVersion: 0,
+    document: { querySelector: () => null },
     sessionStorage: { getItem: key => stored.get(key), setItem: (key, value) => stored.set(key, value), removeItem: key => stored.delete(key) },
     window: { location: { reload: () => reloads.push(true) } },
     chrome: { runtime: { sendMessage: async () => ({ success: true, safe }) } },
@@ -99,6 +101,41 @@ test("failed attempts refresh persisted partial changes and reconnection keeps p
   fixture.run({ ...fixture.runtime, lastSuccess: false }); await settle();
   assert.equal(fixture.reloads.length, 1);
   const polling = source.slice(source.indexOf("function beginOrderProcessorPolling("), source.indexOf("\nfunction closeOrderProcessMenu("));
-  assert.match(polling, /orderId: currentOrderId\(\)/);
+  assert.match(polling, /const orderId = currentOrderId\(\)/);
   assert.doesNotMatch(polling, /if \(!renderOrderProcessorStatus.*stopOrderProcessorPolling/);
+});
+
+test("completion waits for queue requests and ignores a refresh check overtaken by a new request", async () => {
+  const fixture = completionFixture();
+  fixture.context.pendingOrderAutomationRequests.add("1000001:product_separator");
+  fixture.run(); await settle();
+  assert.equal(fixture.reloads.length, 0);
+  fixture.context.pendingOrderAutomationRequests.clear();
+  let finish;
+  fixture.context.chrome.runtime.sendMessage = () => new Promise(resolve => { finish = resolve; });
+  fixture.run();
+  fixture.context.orderAutomationRequestVersion++;
+  finish({ safe: true }); await settle();
+  assert.equal(fixture.reloads.length, 0);
+  fixture.context.chrome.runtime.sendMessage = async () => ({ safe: true });
+  fixture.run(); await settle();
+  assert.equal(fixture.reloads.length, 1);
+});
+
+test("completion waits for an open automation menu, including one opened during the refresh check", async () => {
+  const fixture = completionFixture();
+  fixture.context.document.querySelector = () => ({});
+  fixture.run(); await settle();
+  assert.equal(fixture.reloads.length, 0);
+  fixture.context.document.querySelector = () => null;
+  let finish;
+  fixture.context.chrome.runtime.sendMessage = () => new Promise(resolve => { finish = resolve; });
+  fixture.run();
+  fixture.context.document.querySelector = () => ({});
+  finish({ safe: true }); await settle();
+  assert.equal(fixture.reloads.length, 0);
+  fixture.context.document.querySelector = () => null;
+  fixture.context.chrome.runtime.sendMessage = async () => ({ safe: true });
+  fixture.run(); await settle();
+  assert.equal(fixture.reloads.length, 1);
 });

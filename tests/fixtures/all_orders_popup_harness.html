@@ -30,7 +30,14 @@ const api = {
     update:async(id,values)=>{window.fixtureFocusedWindow=id;Object.assign(windows.get(id),values);},
     remove:async id=>{document.getElementById('editor-'+id)?.remove();windows.delete(id);}
   },
-  storage:{onChanged:{addListener:fn=>listeners.push(fn)},session:{
+  storage:{onChanged:{addListener:fn=>listeners.push(fn)},local:{
+    get:async keys=>Object.fromEntries(keys.map(key=>[key,JSON.parse(localStorage.getItem('fixture-extension:'+key)||'null')])),
+    set:async values=>{
+      for(const [key,value] of Object.entries(values))localStorage.setItem('fixture-extension:'+key,JSON.stringify(value));
+      const changes=Object.fromEntries(Object.entries(values).map(([key,newValue])=>[key,{newValue}]));
+      listeners.forEach(fn=>{try{fn(changes,'local');}catch(_){}});
+    }
+  },session:{
     get:async name=>structuredClone(name===null?storage:{[name]:storage[name]}),
     set:async values=>{
       const changes = Object.fromEntries(Object.entries(values).map(([key,value])=>[key,{newValue:structuredClone(value),oldValue:storage[key]}]));

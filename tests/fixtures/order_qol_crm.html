@@ -16,15 +16,29 @@
   .order-inventory { padding: 14px; background: white; border: 1px solid #cbd5e1; }
   th, td { padding: 7px 12px; text-align: left; }
   #native-preview { padding: 25px; text-align: center; background: #e4e8ee; margin-top: 30px; }
+  .row { margin-left: -10px; margin-right: -10px; }
+  .row::after { content: ''; display: table; clear: both; }
+  .print-area-column { float: left; width: 50%; box-sizing: border-box; padding: 10px; }
+  .printarea { padding: 14px; background: white; border: 1px solid #cbd5e1; margin-bottom: 12px; }
+  .printarea input { max-width: 100%; box-sizing: border-box; }
+  .panel { margin: 18px 0; background: white; border: 1px solid #cbd5e1; }
+  .panel-heading { padding: 12px 16px; background: #245888; color: white; cursor: pointer; }
+  .panel-title { margin: 0; font: bold 14px Arial; }
+  .panel-body { padding: 16px; }
 </style>
 <main id="view-orders-index">
   <h1>Order 1234567</h1>
   <button class="btn" id="invoice">Send Invoice</button>
   <button class="btn btn-primary edit-btn" ng-click="editModeOn();">edit order</button>
   <button class="btn save-btn" ng-click="saveOrder();">save order</button>
+  <section id="contact-panel" class="panel"><div class="panel-heading"><h3 class="panel-title">Contact Info and Send Options</h3></div><div class="panel-body"><button class="btn" ng-click="addAccount()">Add Account</button></div></section>
   <div id="main-header-design-tabs"><div class="btn-group" role="group"></div></div>
   <div id="order-design-details"><ul class="nav nav-tabs"></ul><div class="tab-content"></div></div>
   <section id="native-preview">Native Design Studio Previews</section>
+  <section id="order-purchase-orders" class="panel"><div class="panel-heading"><h3 class="panel-title">Purchase Orders</h3></div><div class="panel-body"><button>+ purchase order</button></div></section>
+  <section id="order-promos" class="panel"><div class="panel-heading"><h3 class="panel-title">Promos</h3></div><div class="panel-body"><button>add promo</button></div></section>
+  <section id="order-cartons" class="panel"><div class="panel-heading"><h3 class="panel-title">Carton Tracking</h3></div><div class="panel-body">Carton / Tracking No.</div></section>
+  <section id="sales-tax-transactions" class="panel"><div class="panel-heading"><h3 class="panel-title">Sales Tax Transactions</h3></div><div class="panel-body">Order / Shipping / Sales Tax / State / Date</div></section>
 </main>
 <script>
 // Image requests are replaced with local SVGs, so testing never contacts CRM or
@@ -42,7 +56,8 @@ Object.defineProperty(HTMLImageElement.prototype, 'src', {
   }
 });
 window.resource = { id: '1234567', features: { approved: false, releasedToVendor: 0 }, featureFlags: { stockOrderingLocked: false },
-  designs: [0,1,2].map(index => ({ id: String(100 + index), designId: String(20000 + index), printAreas: [],
+  designs: [0,1,2].map(index => ({ id: String(100 + index), designId: String(20000 + index),
+    printAreas: ['Front','Back'].map((description, area) => ({id: String(1000+index*10+area), description, printMethodDescription: 'HD Digital', width: '12'})),
     designItems: [{id: String(500 + index), productId: '10', colorId: '20', quantity: 1, sizes: []}] })) };
 window.fixtureStock = JSON.parse(sessionStorage.getItem('fixture-native-stock') || 'null') ||
   { ordered: [true, false, false], disabled: [false, false, false], hidden: [false, false, false] };
@@ -50,6 +65,7 @@ window.fixtureVendorCellTag = 'th';
 window.fixtureVendor = false;
 window.queueCalls = [];
 window.queueMode = 'success';
+window.fixtureQueueResolvers = [];
 window.nativeGoodsClicks = 0;
 window.nativeCalls = JSON.parse(sessionStorage.getItem('fixture-native-calls') || '[]');
 window.pendingNative = new Map();
@@ -109,10 +125,12 @@ window.fixtureResetStock = () => {
   renderFixture();
 };
 window.chrome = {
+  tabs: { async query() { return [{id: 1}]; }, async sendMessage() { return {isOrderDocument: true, active: false}; } },
   runtime: {
     onMessage: { addListener() {} },
     async sendMessage(message) {
       if (message.type === 'crm-dark-mode:get-theme') return { enabled: false };
+      if (message.type === 'crm-dark-mode:get-bridge-status') return { connected: false, message: 'Offline fixture' };
       if (message.type === 'crm-order-automation:status') return { success: true, runtime: fixtureRuntime };
       if (message.type === 'crm-order-automation:manual-start') {
         queueCalls.push(structuredClone(message));
@@ -120,13 +138,33 @@ window.chrome = {
         if (queueMode === 'reject') return { success: false, message: 'Local Automation app is not reachable.' };
         if (queueMode === 'throw') throw new Error('Disconnected');
         fixtureRuntime = { ...fixtureRuntime, queued: true };
+        if (queueMode === 'hold') await new Promise(resolve => fixtureQueueResolvers.push(resolve));
         return { success: true, runtime: fixtureRuntime };
       }
       return { success: true };
     }
   },
-  storage: { local: { async get() { return {}; } }, onChanged: { addListener() {} } }
+  storage: { local: {
+    async get(keys) { return Object.fromEntries(keys.map(key => [key, JSON.parse(localStorage.getItem('fixture-extension:'+key) || 'null')])); },
+    async set(values) {
+      if (window.fixtureStorageFail) throw Error('Fixture storage failure');
+      const changes = {};
+      for (const [key, value] of Object.entries(values)) {
+        changes[key] = { newValue: value };
+        localStorage.setItem('fixture-extension:'+key, JSON.stringify(value));
+      }
+      fixtureStorageListeners.forEach(fn => fn(changes, 'local'));
+    }
+  }, onChanged: { addListener(fn) { fixtureStorageListeners.push(fn); } } }
 };
+window.fixtureStorageListeners = [];
+window.addEventListener('storage', event => {
+  if (event.key?.startsWith('fixture-extension:')) fixtureStorageListeners.forEach(fn => fn({
+    [event.key.slice('fixture-extension:'.length)]: { newValue: JSON.parse(event.newValue || 'null') }
+  }, 'local'));
+});
+window.fixtureHeaderClicks = 0;
+document.querySelectorAll('.panel-heading').forEach(node => node.addEventListener('click', () => fixtureHeaderClicks++));
 function renderFixture() {
   document.querySelector('.edit-btn').classList.toggle('ng-hide', orderScope.editMode);
   document.querySelector('.save-btn').classList.toggle('ng-hide', !orderScope.editMode);
@@ -173,7 +211,21 @@ function renderFixture() {
     </tbody></table>`;
     inventory.querySelectorAll('button').forEach(button => button.onclick = () => inventoryScopes[index].orderGoods(
       inventoryScopes[index].providers[button.closest('tr') === inventory.querySelector('tr') ? 0 : 1]));
-    pane.append(inventory);
+    const form = document.createElement('div');
+    form.className = 'content';
+    form.setAttribute('ng-form', 'designForm');
+    form.append(inventory);
+    const areas = document.createElement('div');
+    areas.className = 'row';
+    for (const area of design.printAreas) {
+      const column = document.createElement('div');
+      column.className = 'col-md-6 print-area-column';
+      column.setAttribute('ng-repeat', '(areaIndex, area) in design.printAreas');
+      column.innerHTML = `<div class="panel printarea"><h3>${area.description} / ${area.printMethodDescription}</h3><label>Width <input value="${area.width}"></label><p>Keep print area notes and artwork</p></div>`;
+      areas.append(column);
+    }
+    form.append(areas);
+    pane.append(form);
     content.append(pane);
   });
 }

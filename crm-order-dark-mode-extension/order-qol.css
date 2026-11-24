@@ -1,8 +1,14 @@
 @media screen {
-  .crm-edit-previews { clear: both; margin: 22px 0; padding: 16px; box-sizing: border-box; background: #f4f5f7; color: #263244; }
-  .crm-edit-previews h4 { text-align: center; margin: 0 0 7px; font-size: 19px; }
+  .crm-edit-preview-layout { display: grid !important; grid-template-columns: minmax(180px, .8fr) minmax(0, 1.2fr); column-gap: 16px; align-items: start; }
+  .crm-edit-preview-layout::before, .crm-edit-preview-layout::after { display: none !important; }
+  .crm-edit-preview-layout > * { grid-column: 1 / -1; min-width: 0; }
+  .crm-edit-preview-layout > .crm-edit-previews { grid-column: 1; position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow-y: auto; }
+  .crm-edit-preview-layout > .crm-edit-preview-target { grid-column: 2; width: auto !important; margin-left: 0; margin-right: 0; }
+  .crm-edit-preview-target > [ng-repeat*="in design.printAreas"] { float: none; width: 100%; padding-left: 0; padding-right: 0; }
+  .crm-edit-previews { margin: 8px 0 16px; padding: 12px; box-sizing: border-box; background: #f4f5f7; color: #263244; }
+  .crm-edit-previews h4 { text-align: center; margin: 0 0 7px; font-size: 16px; }
   .crm-edit-previews-caption { text-align: center; color: #536276; }
-  .crm-edit-previews-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; max-width: 830px; margin: auto; }
+  .crm-edit-previews-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; max-width: 395px; margin: auto; }
   .crm-edit-previews-grid a[hidden] { display: none !important; }
   .crm-edit-previews-grid img { display: block; width: 100%; height: auto; }
   .crm-order-all-control { margin-left: 8px; vertical-align: middle; }
@@ -12,8 +18,21 @@
   .crm-order-all-error strong { font-weight: 700; }
   .nav-tabs > .crm-order-all-control { display: flex; align-items: center; margin: 3px 0 3px 8px; }
   html.crm-order-dark-mode .crm-edit-previews { background: #252526; color: #e2e8f0; }
+  #view-orders-index .crm-order-hideable-heading { position: relative; padding-right: 42px !important; }
+  #view-orders-index [data-crm-order-section-hidden] { display: none !important; }
+  #view-orders-index .crm-order-section-hide { position: absolute; top: 50%; right: 8px; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 1px solid #dc2626 !important; border-radius: 3px; background: #fff !important; color: #b91c1c !important; -webkit-text-fill-color: #b91c1c !important; font: 700 22px/1 system-ui, sans-serif; cursor: pointer; }
+  #view-orders-index .crm-order-section-hide:hover { background: #fee2e2 !important; }
+  #view-orders-index .crm-order-section-hide:focus-visible { outline: 2px solid #dc2626; outline-offset: 2px; }
+  html.crm-order-dark-mode #view-orders-index .crm-order-section-hide { background: #332526 !important; color: #fca5a5 !important; -webkit-text-fill-color: #fca5a5 !important; }
+  html.crm-order-dark-mode #view-orders-index .crm-order-section-hide:hover { background: #572b2e !important; }
+  @media (max-width: 760px) {
+    .crm-edit-preview-layout { grid-template-columns: minmax(0, 1fr); }
+    .crm-edit-preview-layout > .crm-edit-previews, .crm-edit-preview-layout > .crm-edit-preview-target { grid-column: 1; }
+    .crm-edit-preview-layout > .crm-edit-previews { position: static; max-height: none; overflow: visible; }
+    .crm-edit-previews-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 830px; }
+  }
   @media (max-width: 480px) { .crm-edit-previews-grid { gap: 8px; } }
 }
 @media print {
-  .crm-edit-previews, .crm-order-all-control, .crm-order-all-result { display: none !important; }
+  .crm-edit-previews, .crm-order-all-control, .crm-order-all-result, .crm-order-section-hide { display: none !important; }
 }

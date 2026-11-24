@@ -13,11 +13,25 @@
           <p id="bridge-status" class="bridge-status" role="status">Checking local app bridge...</p>
           <h1>All Orders editor</h1>
         </div>
-        <label class="toggle" for="theme-toggle" title="Only CRM order pages are styled. Print output stays light.">
-          <input id="theme-toggle" type="checkbox">
-          <span class="track" aria-hidden="true"><span class="thumb"></span></span>
-          <span>Dark mode</span>
-        </label>
+        <div class="orders-header-controls">
+          <div class="hidden-sections-control">
+            <button id="hidden-sections-toggle" class="hidden-sections-toggle" type="button" aria-label="Hidden order sections" title="Hidden order sections" aria-expanded="false" aria-controls="hidden-sections-panel">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.2A11 11 0 0 1 12 5c6 0 10 7 10 7a19 19 0 0 1-4.1 4.7M6.2 6.2A20 20 0 0 0 2 12s4 7 10 7a10 10 0 0 0 4.1-.9"/>
+              </svg>
+            </button>
+            <section id="hidden-sections-panel" class="hidden-sections-panel" aria-label="Hidden order sections" hidden>
+              <h2>Hidden order sections</h2>
+              <p id="hidden-sections-status" role="status" aria-live="polite"></p>
+              <ul id="hidden-sections-list"></ul>
+            </section>
+          </div>
+          <label class="toggle" for="theme-toggle" title="Only CRM order pages are styled. Print output stays light.">
+            <input id="theme-toggle" type="checkbox">
+            <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+            <span>Dark mode</span>
+          </label>
+        </div>
       </header>
       <p id="orders-status" role="status" aria-live="polite">Reading this window…</p>
       <div class="orders-toolbar">
@@ -60,6 +74,7 @@
         </div>
       </footer>
     </main>
+    <script src="order-sections.js"></script>
     <script src="popup.js"></script>
     <script type="module" src="all-orders-popup.mjs"></script>
   </body>

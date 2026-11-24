@@ -7,6 +7,10 @@ let refreshQueued = false;
 let orderProcessorPollTimer = null;
 let orderProcessorPollBusy = false;
 let orderProcessorRefreshPending = false;
+const pendingOrderAutomationRequests = new Set();
+let orderAutomationRequestVersion = 0;
+const orderSections = globalThis.CRMOrderSections?.sections || [];
+const hiddenOrderSections = new Set();
 const orderProcessorDocumentOpenedAt = Date.now();
 
 function isSalesforceLink(value) {
@@ -120,9 +124,18 @@ function setOrderProcessorControlsDisabled(disabled) {
   }
 }
 
+function updatePendingOrderAutomationControls() {
+  document.querySelectorAll("[data-crm-order-automation]").forEach((button) => {
+    button.disabled = pendingOrderAutomationRequests.has(`${currentOrderId()}:${button.dataset.crmOrderAutomation}`);
+  });
+}
+
 function refreshOrderAfterProcessorCompletion(runtime) {
   if (!runtime || runtime.queued || runtime.running || runtime.lastSuccess === null || runtime.lastSuccess === undefined) return;
   const orderId = currentOrderId();
+  const hasPendingInput = () => [...pendingOrderAutomationRequests].some(key => key.startsWith(`${orderId}:`))
+    || document.querySelector('[data-crm-order-process-trigger="true"][aria-expanded="true"]');
+  if (hasPendingInput()) return;
   const completedAt = String(runtime.completedAt || "");
   if (!orderId || !completedAt || String(runtime.orderId || "") !== orderId) return;
   const activeRunKey = `crm-order-process-active:${orderId}`;
@@ -132,12 +145,14 @@ function refreshOrderAfterProcessorCompletion(runtime) {
   if (sessionStorage.getItem(refreshKey)) return;
   if (orderProcessorRefreshPending) return;
   orderProcessorRefreshPending = true;
+  const requestVersion = orderAutomationRequestVersion;
   void chrome.runtime.sendMessage({ type: "crm-order-automation:can-refresh", orderId }).then(response => {
-    if (currentOrderId() !== orderId) return;
+    if (currentOrderId() !== orderId || requestVersion !== orderAutomationRequestVersion) return;
     if (!response?.safe) {
       setOrderProcessorResult(manualOrderProcessorButton(), "Automation finished. Refresh pending until current edits or dialogs are closed.", "progress");
       return;
     }
+    if (hasPendingInput()) return;
     sessionStorage.setItem(refreshKey, "1");
     sessionStorage.removeItem(activeRunKey);
     window.location.reload();
@@ -174,18 +189,15 @@ function renderOrderProcessorStatus(button, response) {
   const message = String(runtime.lastMessage || "");
   button.title = message || "Choose one automation to run for this order only.";
   if (runtime.queued) {
-    setOrderProcessorControlsDisabled(true);
     button.textContent = "Manual Process: Queued";
     setOrderProcessorResult(button, message || "Queued behind any active CRM automation.", "progress");
     return true;
   }
   if (runtime.running) {
-    setOrderProcessorControlsDisabled(true);
     button.textContent = "Manual Process: Working";
     setOrderProcessorResult(button, message || "Working…", "progress");
     return true;
   }
-  setOrderProcessorControlsDisabled(false);
   button.textContent = runtime.lastSuccess === false ? "Manual Process: Review" : "Manual Process";
   setOrderProcessorResult(button, message, runtime.lastSuccess === false ? "error" : "success");
   refreshOrderAfterProcessorCompletion(runtime);
@@ -198,10 +210,12 @@ function beginOrderProcessorPolling(button) {
     if (!currentOrderId()) { stopOrderProcessorPolling(); return; }
     if (orderProcessorPollBusy) return;
     orderProcessorPollBusy = true;
+    const requestVersion = orderAutomationRequestVersion;
+    const orderId = currentOrderId();
     try {
-      const response = await chrome.runtime.sendMessage({ type: "crm-order-automation:status", orderId: currentOrderId() });
+      const response = await chrome.runtime.sendMessage({ type: "crm-order-automation:status", orderId });
+      if (currentOrderId() !== orderId || requestVersion !== orderAutomationRequestVersion) return;
       if (!response || !response.success) {
-        setOrderProcessorControlsDisabled(false);
         if (!sessionStorage.getItem(`crm-order-process-active:${currentOrderId()}`)
             && !/Queued|Working/.test(button.textContent)) return;
         button.textContent = "Manual Process: Review";
@@ -211,7 +225,7 @@ function beginOrderProcessorPolling(button) {
       }
       renderOrderProcessorStatus(button, response);
     } catch (_error) {
-      setOrderProcessorControlsDisabled(false);
+      if (currentOrderId() !== orderId || requestVersion !== orderAutomationRequestVersion) return;
       if (!sessionStorage.getItem(`crm-order-process-active:${currentOrderId()}`)
           && !/Queued|Working/.test(button.textContent)) return;
       button.textContent = "Manual Process: Review";
@@ -259,10 +273,16 @@ function queueManualOrderAutomation(
   if (!orderId) {
     return Promise.resolve({ success: false, message: "Open a CRM order with a valid 7-digit order number first." });
   }
+  const requestKey = `${orderId}:${automation.key}`;
+  if (pendingOrderAutomationRequests.has(requestKey)) {
+    return Promise.resolve({ success: false, message: "This automation request is still being sent. Check the Automation queue before trying again." });
+  }
+  pendingOrderAutomationRequests.add(requestKey);
+  orderAutomationRequestVersion++;
+  updatePendingOrderAutomationControls();
   const surfacePageErrors = options.surfacePageErrors !== false;
   const control = triggerButton.closest("[data-crm-order-menu-control='true']");
   closeOrderProcessMenu(control);
-  setOrderProcessorControlsDisabled(true);
   const isManualButton = triggerButton.id === "crm-order-manual-process-button";
   if (surfacePageErrors) {
     if (isManualButton) triggerButton.textContent = `Queuing ${automation.label}…`;
@@ -281,7 +301,6 @@ function queueManualOrderAutomation(
       beginOrderProcessorPolling(statusButton);
       return response;
     }
-    setOrderProcessorControlsDisabled(false);
     const message = (response && response.message) || "Could not queue the selected automation.";
     if (surfacePageErrors) {
       if (isManualButton) triggerButton.textContent = "Manual Process";
@@ -290,7 +309,6 @@ function queueManualOrderAutomation(
     }
     return { ...(response || {}), success: false, message };
   }).catch(() => {
-    setOrderProcessorControlsDisabled(false);
     const message = "Could not queue the selected automation. Confirm the local Automation app is running, then try again.";
     if (surfacePageErrors) {
       if (isManualButton) triggerButton.textContent = "Manual Process";
@@ -298,6 +316,9 @@ function queueManualOrderAutomation(
       setOrderProcessorResult(triggerButton, message, "error");
     }
     return { success: false, message };
+  }).finally(() => {
+    pendingOrderAutomationRequests.delete(requestKey);
+    updatePendingOrderAutomationControls();
   });
 }
 
@@ -1784,6 +1805,8 @@ function createOrderProcessMenuControl({ controlId, buttonId, label, title, colo
     const option = document.createElement("button");
     option.type = "button";
     option.textContent = automation.label;
+    option.dataset.crmOrderAutomation = automation.key;
+    option.disabled = pendingOrderAutomationRequests.has(`${currentOrderId()}:${automation.key}`);
     option.setAttribute("role", "menuitem");
     Object.assign(option.style, {
       display: "block", width: "100%", padding: "7px 9px", border: "0", borderRadius: "3px", cursor: "pointer",
@@ -1910,6 +1933,57 @@ function applyThemeState() {
   root.classList.toggle(ROOT_CLASS, active);
   root.setAttribute(ROOT_ATTRIBUTE, active ? "enabled" : "disabled");
   ensureOrderProcessorControls();
+  syncOrderSectionVisibility();
+}
+
+function syncOrderSectionVisibility() {
+  const active = Boolean(currentOrderId()) && isOrderDocument();
+  for (const section of orderSections) {
+    // Order Totals has two native variants with the same ID. Style both and
+    // leave CRM's own ng-show/ng-hide conditions in control of their visibility.
+    for (const panel of document.querySelectorAll(`#view-orders-index [id="${section.id}"]`)) {
+      panel.toggleAttribute("data-crm-order-section-hidden", active && hiddenOrderSections.has(section.id));
+      const heading = [...panel.children].find(node => node.classList.contains("panel-heading"));
+      if (!heading) continue;
+      heading.classList.toggle("crm-order-hideable-heading", active);
+      const existing = heading.querySelector(".crm-order-section-hide");
+      if (!active) { existing?.remove(); continue; }
+      if (existing) continue;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "crm-order-section-hide";
+      button.textContent = "×";
+      button.title = `Hide ${section.label} on all orders`;
+      button.setAttribute("aria-label", button.title);
+      button.addEventListener("click", async event => {
+        event.preventDefault();
+        event.stopPropagation();
+        button.disabled = true;
+        try {
+          await chrome.storage.local.set({ [section.key]: true });
+          button.title = `Hide ${section.label} on all orders`;
+          hiddenOrderSections.add(section.id);
+          syncOrderSectionVisibility();
+        } catch (_error) {
+          button.title = "Could not save this preference. Reload the extension and refresh this page.";
+        } finally { button.disabled = false; }
+      });
+      heading.append(button);
+    }
+  }
+}
+
+async function loadOrderSectionPreferences() {
+  if (!orderSections.length) return;
+  try {
+    const values = await chrome.storage.local.get(orderSections.map(section => section.key));
+    for (const section of orderSections) {
+      if (values[section.key] === true) hiddenOrderSections.add(section.id);
+    }
+    syncOrderSectionVisibility();
+  } catch (_error) {
+    // Existing CRM sections stay visible when preferences cannot be read.
+  }
 }
 
 function queueThemeRefresh() {
@@ -1951,8 +2025,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "local" || !changes[THEME_STORAGE_KEY]) return;
-  themeEnabled = changes[THEME_STORAGE_KEY].newValue === true;
+  if (areaName !== "local") return;
+  if (changes[THEME_STORAGE_KEY]) themeEnabled = changes[THEME_STORAGE_KEY].newValue === true;
+  for (const section of orderSections) {
+    if (!changes[section.key]) continue;
+    if (changes[section.key].newValue === true) hiddenOrderSections.add(section.id);
+    else hiddenOrderSections.delete(section.id);
+  }
   applyThemeState();
 });
 
@@ -1965,3 +2044,4 @@ const observer = new MutationObserver(queueThemeRefresh);
 observer.observe(document.documentElement, { childList: true, subtree: true });
 
 void loadThemePreference();
+void loadOrderSectionPreferences();

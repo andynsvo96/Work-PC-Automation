@@ -9,11 +9,55 @@ Private Manifest V3 extension for the Automation project's CRM pages. It provide
 3. Choose **Load unpacked** and select this `crm-order-dark-mode-extension` folder.
 4. Pin **CRM Order Assistant** and open its toolbar popup. Use **Edit All Orders** for CRM orders in that window, or the **Dark mode** toggle at the top right for styling. The order page also provides single-order Manual Process, Cancel, Reachout, and Stock Issue controls.
 
-The preference is stored locally in that Chrome profile. Removing or reloading the extension keeps the preference unless Chrome extension data is cleared.
+Preferences are stored locally in that Chrome profile and survive extension reloads. Clearing Chrome extension data removes them.
 
 After extension updates, reload the extension at `chrome://extensions` and refresh open CRM order/list and Salesforce pages. Updates that also change the local Automation app require an app restart as noted below.
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
+
+## Queue controls, previews, and hidden sections - 1.8.9
+
+**Manual Process**, **Cancel**, **Reachout**, and **Stock Issue** remain usable
+while an automation is queued or running. For example, queue **Manual Process >
+Product Separator**, then **Reachout > Copyright - Reachout** with its required
+reason. Both requests go to the existing local queue, which waits for the first
+task on that order before starting the next. Different orders retain the existing
+worker-pool rules. Queue status continues updating without closing an open menu.
+Only the same action is briefly unavailable while its request is being sent;
+existing scan dialogs and confirmation requirements remain in place.
+
+During **Edit Order**, the highlighted tab's **Design Studio Previews** appear
+to the left of its print areas, including in **All Tabs**. Print-area cards use
+the right column. Previews stack above the cards on narrow screens, follow the
+highlighted design, and retain the existing approval/vendor restrictions. This
+layout does not change artwork, print-area fields, notes, or saved order data.
+
+Use the red **×** at the right of a supported panel's title to hide that section
+on **all CRM orders in the same Chrome profile**. Supported panels include
+Contact Info and Send Options, Design Assignments, Status History and Art Changes,
+Access Log, Station Assignments, Subcontractor Assignments, Order Totals,
+Payments and Credits, Shipping Info, **Purchase Orders**, **Promos**,
+**Carton Tracking**, and **Sales Tax Transactions**. Hiding only changes the
+screen display; the native contents and light print output remain intact.
+
+To restore a section, open the extension and click the **eye-slash icon to the
+left of Dark mode**, then **Unhide** beside its name. The list includes sections
+hidden on other orders, even when the active tab is not a CRM order. Changes
+update open order pages immediately and remain saved after opening another
+order or restarting Chrome. These preferences need no local Automation app.
+
+Reload **CRM Order Assistant 1.8.9** at `chrome://extensions` and refresh open
+CRM order pages. Resolve unsaved edits before refreshing. **No app restart or
+new permission is needed.** Offline checks:
+
+```powershell
+node --test tests/test_order_refresh.mjs tests/test_extension_bridge.mjs tests/test_salesforce_tabs.mjs tests/test_all_orders.mjs tests/test_all_tabs.mjs tests/test_all_tabs_stock.mjs tests/test_order_all_batch.mjs tests/test_order_scan_reader.mjs
+python -m unittest discover -s tests -p test_order_qol_browser.py
+python -m unittest discover -s tests -p test_all_orders_browser.py
+```
+
+The browser checks use local fixtures and isolated profiles. Installed-extension
+behavior, live CRM workflows, and macOS remain unverified.
 
 ## Order All in Window - 1.8.8
 
