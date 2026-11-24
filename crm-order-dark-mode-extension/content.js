@@ -10,7 +10,11 @@ let orderProcessorRefreshPending = false;
 const pendingOrderAutomationRequests = new Set();
 let orderAutomationRequestVersion = 0;
 const orderSections = globalThis.CRMOrderSections?.sections || [];
+const orderSectionLockKey = globalThis.CRMOrderSections?.lockKey;
 const hiddenOrderSections = new Set();
+let orderSectionControlsLocked = false;
+let orderSectionPreferencesLoaded = false;
+let orderSectionLockVersion = 0;
 const orderProcessorDocumentOpenedAt = Date.now();
 
 function isSalesforceLink(value) {
@@ -1938,6 +1942,7 @@ function applyThemeState() {
 
 function syncOrderSectionVisibility() {
   const active = Boolean(currentOrderId()) && isOrderDocument();
+  const showHideButtons = active && orderSectionPreferencesLoaded && !orderSectionControlsLocked;
   for (const section of orderSections) {
     // Order Totals has two native variants with the same ID. Style both and
     // leave CRM's own ng-show/ng-hide conditions in control of their visibility.
@@ -1945,9 +1950,9 @@ function syncOrderSectionVisibility() {
       panel.toggleAttribute("data-crm-order-section-hidden", active && hiddenOrderSections.has(section.id));
       const heading = [...panel.children].find(node => node.classList.contains("panel-heading"));
       if (!heading) continue;
-      heading.classList.toggle("crm-order-hideable-heading", active);
+      heading.classList.toggle("crm-order-hideable-heading", showHideButtons);
       const existing = heading.querySelector(".crm-order-section-hide");
-      if (!active) { existing?.remove(); continue; }
+      if (!showHideButtons) { existing?.remove(); continue; }
       if (existing) continue;
       const button = document.createElement("button");
       button.type = "button";
@@ -1975,14 +1980,18 @@ function syncOrderSectionVisibility() {
 
 async function loadOrderSectionPreferences() {
   if (!orderSections.length) return;
+  const lockVersion = orderSectionLockVersion;
   try {
-    const values = await chrome.storage.local.get(orderSections.map(section => section.key));
+    const values = await chrome.storage.local.get([...orderSections.map(section => section.key), orderSectionLockKey].filter(Boolean));
+    if (lockVersion === orderSectionLockVersion) orderSectionControlsLocked = values[orderSectionLockKey] === true;
     for (const section of orderSections) {
       if (values[section.key] === true) hiddenOrderSections.add(section.id);
     }
-    syncOrderSectionVisibility();
   } catch (_error) {
     // Existing CRM sections stay visible when preferences cannot be read.
+  } finally {
+    orderSectionPreferencesLoaded = true;
+    syncOrderSectionVisibility();
   }
 }
 
@@ -2027,6 +2036,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local") return;
   if (changes[THEME_STORAGE_KEY]) themeEnabled = changes[THEME_STORAGE_KEY].newValue === true;
+  if (orderSectionLockKey && changes[orderSectionLockKey]) {
+    orderSectionLockVersion++;
+    orderSectionControlsLocked = changes[orderSectionLockKey].newValue === true;
+  }
   for (const section of orderSections) {
     if (!changes[section.key]) continue;
     if (changes[section.key].newValue === true) hiddenOrderSections.add(section.id);

@@ -17,5 +17,8 @@
     ["order-cartons", "Carton Tracking"],
     ["sales-tax-transactions", "Sales Tax Transactions"]
   ].map(([id, label]) => Object.freeze({ id, label, key: `crmOrderHiddenSection:${id}` }));
-  globalThis.CRMOrderSections = Object.freeze({ sections: Object.freeze(sections) });
+  globalThis.CRMOrderSections = Object.freeze({
+    sections: Object.freeze(sections),
+    lockKey: "crmOrderSectionControlsLocked"
+  });
 })();

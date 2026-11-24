@@ -21,7 +21,16 @@
               </svg>
             </button>
             <section id="hidden-sections-panel" class="hidden-sections-panel" aria-label="Hidden order sections" hidden>
-              <h2>Hidden order sections</h2>
+              <div class="hidden-sections-heading">
+                <h2>Hidden order sections</h2>
+                <button id="hidden-sections-lock" class="hidden-sections-lock" type="button" aria-label="Lock section hide buttons" aria-pressed="false" title="Lock to hide the red × buttons on CRM orders" disabled>
+                  <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="5" y="10" width="14" height="11" rx="2"/>
+                    <path id="hidden-sections-lock-shackle" d="M8 10V6a4 4 0 0 1 8 0"/>
+                    <path d="M12 14v3"/>
+                  </svg>
+                </button>
+              </div>
               <p id="hidden-sections-status" role="status" aria-live="polite"></p>
               <ul id="hidden-sections-list"></ul>
             </section>

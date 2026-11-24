@@ -4,11 +4,31 @@ const hiddenSectionsToggle = document.getElementById("hidden-sections-toggle");
 const hiddenSectionsPanel = document.getElementById("hidden-sections-panel");
 const hiddenSectionsList = document.getElementById("hidden-sections-list");
 const hiddenSectionsStatus = document.getElementById("hidden-sections-status");
+const hiddenSectionsLock = document.getElementById("hidden-sections-lock");
+const hiddenSectionsLockShackle = document.getElementById("hidden-sections-lock-shackle");
 const sectionPreferences = globalThis.CRMOrderSections.sections;
+const sectionControlsLockKey = globalThis.CRMOrderSections.lockKey;
+let sectionControlsLocked = false;
+let savingSectionLock = false;
+let sectionPreferencesReadVersion = 0;
+
+function renderSectionControlsLock() {
+  hiddenSectionsLock.setAttribute("aria-pressed", String(sectionControlsLocked));
+  hiddenSectionsLock.setAttribute("aria-label", sectionControlsLocked ? "Unlock section hide buttons" : "Lock section hide buttons");
+  hiddenSectionsLock.title = sectionControlsLocked
+    ? "Unlock to show the red × buttons on CRM orders"
+    : "Lock to hide the red × buttons on CRM orders";
+  hiddenSectionsLockShackle.setAttribute("d", sectionControlsLocked ? "M8 10V7a4 4 0 0 1 8 0v3" : "M8 10V6a4 4 0 0 1 8 0");
+}
 
 async function refreshHiddenSections() {
+  const readVersion = ++sectionPreferencesReadVersion;
   try {
-    const values = await chrome.storage.local.get(sectionPreferences.map(section => section.key));
+    const values = await chrome.storage.local.get([...sectionPreferences.map(section => section.key), sectionControlsLockKey]);
+    if (readVersion !== sectionPreferencesReadVersion) return;
+    sectionControlsLocked = values[sectionControlsLockKey] === true;
+    renderSectionControlsLock();
+    hiddenSectionsLock.disabled = savingSectionLock;
     hiddenSectionsList.replaceChildren();
     const hidden = sectionPreferences.filter(section => values[section.key] === true);
     hiddenSectionsStatus.classList.remove("error");
@@ -39,10 +59,31 @@ async function refreshHiddenSections() {
       hiddenSectionsList.append(row);
     }
   } catch (_error) {
+    if (readVersion !== sectionPreferencesReadVersion) return;
+    hiddenSectionsLock.disabled = true;
     hiddenSectionsStatus.classList.add("error");
     hiddenSectionsStatus.textContent = "Could not read hidden sections. Reopen the extension and try again.";
   }
 }
+
+hiddenSectionsLock.addEventListener("click", async () => {
+  if (savingSectionLock || hiddenSectionsLock.disabled) return;
+  const locked = !sectionControlsLocked;
+  savingSectionLock = true;
+  hiddenSectionsLock.disabled = true;
+  try {
+    await chrome.storage.local.set({ [sectionControlsLockKey]: locked });
+    sectionControlsLocked = locked;
+    renderSectionControlsLock();
+    await refreshHiddenSections();
+  } catch (_error) {
+    hiddenSectionsStatus.classList.add("error");
+    hiddenSectionsStatus.textContent = "Could not save the section lock. Try again.";
+  } finally {
+    savingSectionLock = false;
+    hiddenSectionsLock.disabled = false;
+  }
+});
 
 function closeHiddenSections() {
   hiddenSectionsPanel.hidden = true;
@@ -65,7 +106,7 @@ document.addEventListener("keydown", event => {
   }
 });
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && sectionPreferences.some(section => changes[section.key])) void refreshHiddenSections();
+  if (area === "local" && (changes[sectionControlsLockKey] || sectionPreferences.some(section => changes[section.key]))) void refreshHiddenSections();
 });
 
 function setStatus(message) { toggle.closest(".toggle").title = `${message} Print output stays light.`; }

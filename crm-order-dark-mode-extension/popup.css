@@ -25,6 +25,10 @@ p { margin: 0; }
 .hidden-sections-toggle[aria-expanded="true"] { background: #404c58; }
 .hidden-sections-panel { position: absolute; z-index: 10; top: calc(100% + 8px); right: 0; width: 300px; max-width: calc(100vw - 32px); max-height: min(400px, calc(100vh - 85px)); overflow-y: auto; padding: 13px; border: 1px solid #667380; border-radius: 6px; color: inherit; background: #252c33; box-shadow: 0 8px 24px #0006; }
 .hidden-sections-panel h2 { margin: 0 0 8px; }
+.hidden-sections-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.hidden-sections-heading h2 { margin: 0; }
+.hidden-sections-lock { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 28px; height: 28px; padding: 3px; background: transparent; color: inherit; }
+.hidden-sections-lock[aria-pressed="true"] { color: #8fcbff; border-color: #75beff; }
 #hidden-sections-status { font-size: 12px; line-height: 1.4; }
 #hidden-sections-status.error { color: #ffaaa4; }
 #hidden-sections-list { padding: 0; margin: 8px 0 0; list-style: none; }
