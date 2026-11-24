@@ -2,7 +2,8 @@
 CRM Push Back automation worker.
 
 Push Back moves eligible CRM order production dates out by one business day,
-without changing fulfillment/due dates. It only processes Rush and 813 lists.
+without changing fulfillment/due dates. Free/ALL subcontractor reports retain
+the saved Production Notes deadline checks used by Shipping Bypasser.
 """
 
 import argparse
@@ -38,6 +39,7 @@ from config import (
     CRM_PUSH_BACK_HIGH_VALUE_URL,
     CRM_PUSH_BACK_RUSH_URL,
 )
+import config as config_module
 import crm_order_goods as crm_order_goods_worker
 import crm_shipping_bypasser as crm_shipping_bypasser_worker
 from crm_order_goods import (
@@ -73,7 +75,9 @@ AUTOMATION_NAME = "crm.push_back"
 crm_order_goods_worker.AUTOMATION_NAME = AUTOMATION_NAME
 PROFILE_PATH = os.path.join(SCRIPT_DIR, CRM_PROFILE_DIR)
 CONTINUOUS_ORDER_FETCH_LIMIT = 25
-VALID_FILTERS = {"rush", "813", "high_value"}
+VALID_FILTERS = {"rush", "813", "high_value", "free", "all"}
+CRM_PUSH_BACK_FREE_URL = str(getattr(config_module, "CRM_PUSH_BACK_FREE_URL", "") or "").strip()
+CRM_PUSH_BACK_ALL_URL = str(getattr(config_module, "CRM_PUSH_BACK_ALL_URL", "") or "").strip()
 AUTO_ORDER_CONFIRMATION_TIMEOUT_SECONDS = 30
 _shipping_bypasser_lock = threading.Lock()
 RUSH_ROW_LABELS = ("tan", "purple")
@@ -134,7 +138,19 @@ def _list_url_for_filter(processing_filter, list_url=None):
         return str(CRM_PUSH_BACK_813_URL).strip()
     if key == "high_value":
         return str(CRM_PUSH_BACK_HIGH_VALUE_URL).strip()
+    if key == "free":
+        return CRM_PUSH_BACK_FREE_URL
+    if key == "all":
+        return CRM_PUSH_BACK_ALL_URL
     return str(CRM_PUSH_BACK_RUSH_URL).strip()
+
+
+def _url_config_key_for_filter(processing_filter):
+    return {
+        "rush": "CRM_PUSH_BACK_RUSH_URL", "813": "CRM_PUSH_BACK_813_URL",
+        "high_value": "CRM_PUSH_BACK_HIGH_VALUE_URL", "free": "CRM_PUSH_BACK_FREE_URL",
+        "all": "CRM_PUSH_BACK_ALL_URL",
+    }[_normalize_processing_filter(processing_filter)]
 
 
 def _allowed_row_options(processing_filter):
@@ -366,7 +382,7 @@ def _shipping_bypass_failure_detail(shipping_bypass):
     return ""
 
 
-def _precheck_row(row):
+def _precheck_row(row, use_saved_deadline=False):
     order_id = str((row or {}).get("orderId") or "").strip()
     row_color = str((row or {}).get("colorLabel") or "").strip().lower()
     if row_color == "lime_green":
@@ -381,6 +397,10 @@ def _precheck_row(row):
             manual_review_required=False,
             row_color=row_color,
         )
+    if use_saved_deadline:
+        # FREE/ALL subcontractor reports carry customer due dates. Their saved
+        # Production Notes deadline must be checked after opening the order.
+        return None
     production_date = _production_date_from_row(row)
     due_date = _fulfillment_date_from_row(row, production_date=production_date)
     target_date = _next_business_day_after(production_date) if production_date is not None else None
@@ -709,15 +729,35 @@ def _refresh_and_read_order_for_save_retry(driver, order_id, processing_filter, 
     return _extract_order_data(driver, order_id)
 
 
-def _change_crm_production_date_with_retry(driver, order_id, target_date, processing_filter, list_url):
+def _verify_subcontractor_push_back_state(current, expected, target_date):
+    if (
+        current.get("order_type") != expected.get("order_type")
+        or crm_shipping_bypasser_worker._production_destination_error(current)
+        or current.get("due_date") != expected.get("due_date")
+    ):
+        raise RuntimeError("Push Back subcontractor or actual Due Date changed; review before saving or ordering stock.")
+    deadline = current.get("latest_ship_date")
+    if not deadline or current.get("latest_ship_date_error") or deadline != expected.get("latest_ship_date"):
+        raise RuntimeError("Push Back could not confirm the newest saved LATEST SHIP DATE; review before saving or ordering stock.")
+    if target_date >= deadline:
+        raise RuntimeError("Push Back production must be before LATEST SHIP DATE; no stock was ordered.")
+
+
+def _change_crm_production_date_with_retry(driver, order_id, target_date, processing_filter, list_url, expected_order=None):
+    save_options = {}
+    if expected_order is not None:
+        _verify_subcontractor_push_back_state(_extract_order_data(driver, order_id), expected_order, target_date)
+        save_options["expected_due_date"] = expected_order["due_date"]
     try:
-        return _change_crm_production_date(driver, order_id, target_date), 0, None
+        return _change_crm_production_date(driver, order_id, target_date, **save_options), 0, None
     except Exception as first_error:
         print(
             f"Push Back save did not complete for order {order_id}: {first_error}. "
             "Refreshing the order once and retrying."
         )
         refreshed = _refresh_and_read_order_for_save_retry(driver, order_id, processing_filter, list_url)
+        if expected_order is not None:
+            _verify_subcontractor_push_back_state(refreshed, expected_order, target_date)
         refreshed_date = refreshed.get("production_date")
         if refreshed_date == target_date:
             print(f"CRM order {order_id} already shows the target production date after refresh.")
@@ -727,7 +767,7 @@ def _change_crm_production_date_with_retry(driver, order_id, target_date, proces
             stage="saving_order_retry",
             order_id=order_id,
         )
-        return _change_crm_production_date(driver, order_id, target_date), 1, str(first_error)
+        return _change_crm_production_date(driver, order_id, target_date, **save_options), 1, str(first_error)
 
 
 def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=False):
@@ -735,17 +775,20 @@ def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=Fal
     if not order_id:
         raise RuntimeError("Push Back row did not include an order ID.")
 
-    precheck = _precheck_row(row)
+    precheck = _precheck_row(row, use_saved_deadline=True) if _normalize_processing_filter(processing_filter) in {"free", "all"} else _precheck_row(row)
     if precheck is not None:
         return precheck
 
     row_production_date = _production_date_from_row(row)
     row_due_date = _fulfillment_date_from_row(row, production_date=row_production_date)
-    row_target_date = _next_business_day_after(row_production_date)
+    row_target_date = _next_business_day_after(row_production_date) if row_production_date is not None else None
     _publish_status(f"Opening CRM order {order_id} for Push Back.", stage="opening_order", order_id=order_id)
     data = _open_and_read_order(driver, order_id, processing_filter, list_url)
     production_date = data.get("production_date") or row_production_date
     due_date = data.get("due_date") or row_due_date
+    subcontractor_deadline = bool(crm_shipping_bypasser_worker.subcontractor_destination(data.get("order_type")))
+    deadline = data.get("latest_ship_date") if subcontractor_deadline else due_date
+    deadline_label = "LATEST SHIP DATE" if subcontractor_deadline else "due date"
     target_date = _next_business_day_after(production_date) if production_date is not None else row_target_date
 
     if production_date is None:
@@ -759,7 +802,7 @@ def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=Fal
             row_due_date=row_due_date,
             row_color=(row or {}).get("colorLabel"),
         )
-    if due_date is None:
+    if due_date is None or (subcontractor_deadline and data.get("due_date") is None):
         return _result(
             order_id,
             False,
@@ -771,19 +814,26 @@ def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=Fal
             row_due_date=row_due_date,
             row_color=(row or {}).get("colorLabel"),
         )
-    if target_date >= due_date:
+    if subcontractor_deadline and (not deadline or data.get("latest_ship_date_error")):
+        return _result(
+            order_id, False, "latest_ship_date_unavailable",
+            (data.get("latest_ship_date_error") or "Push Back could not confirm the newest saved LATEST SHIP DATE.") + " No production date was changed or stock ordered.",
+            manual_review_required=True, production_date=production_date, due_date=due_date,
+        )
+    if target_date >= deadline:
         return _result(
             order_id,
-            True,
-            "due_date_guard_skipped",
+            not subcontractor_deadline,
+            "latest_ship_date_guard_skipped" if subcontractor_deadline else "due_date_guard_skipped",
             (
                 "Skipped because pushing production date from "
-                f"{_date_text(production_date)} to {_date_text(target_date)} would be on or after due date {_date_text(due_date)}."
+                f"{_date_text(production_date)} to {_date_text(target_date)} would be on or after {deadline_label} {_date_text(deadline)}."
             ),
-            manual_review_required=False,
+            manual_review_required=subcontractor_deadline,
             production_date=production_date,
             target_production_date=target_date,
             due_date=due_date,
+            latest_ship_date=deadline if subcontractor_deadline else None,
             row_color=(row or {}).get("colorLabel"),
         )
 
@@ -835,17 +885,18 @@ def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=Fal
 
     while True:
         target_date = _next_business_day_after(current_production_date)
-        if target_date >= due_date:
+        if target_date >= deadline:
             return _result(
                 order_id,
                 False,
                 "push_back_no_purchase_plan_due_date_reached",
-                "Order need extension",
+                f"Order needs extension: production must be before LATEST SHIP DATE {_date_text(deadline)}." if subcontractor_deadline else "Order need extension",
                 manual_review_required=True,
                 production_date=original_production_date,
                 saved_production_date=current_production_date,
                 saved_production_dates=saved_production_dates,
                 due_date=due_date,
+                latest_ship_date=deadline if subcontractor_deadline else None,
                 row_color=(row or {}).get("colorLabel"),
                 save_retry_count=total_save_retry_count,
                 save_retry_errors=save_retry_errors,
@@ -865,11 +916,17 @@ def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=Fal
             target_date,
             processing_filter,
             list_url,
+            **({"expected_order": data} if subcontractor_deadline else {}),
         )
         saved_production_dates.append(saved_date)
         total_save_retry_count += int(save_retry_count or 0)
         if save_retry_error:
             save_retry_errors.append(str(save_retry_error))
+        if subcontractor_deadline:
+            current = _extract_order_data(driver, order_id)
+            _verify_subcontractor_push_back_state(current, data, saved_date)
+            if current.get("production_date") != saved_date:
+                raise RuntimeError("Push Back production date did not persist; no stock was ordered.")
 
         _publish_status(
             f"Ordering stock after Push Back for CRM order {order_id}.",
@@ -916,7 +973,7 @@ def _run_order_with_driver(driver, row, processing_filter, list_url, dry_run=Fal
         if _stock_order_has_outcome(stock_results, "auto_order_no_purchase_plan"):
             current_production_date = saved_date
             next_target = _next_business_day_after(current_production_date)
-            if next_target < due_date:
+            if next_target < deadline:
                 _publish_status(
                     (
                         f"CRM found no purchase plan for order {order_id}; retrying after moving production date "
@@ -986,7 +1043,7 @@ def _summary_message(report_items, refresh_passes=1, order_count=0, dry_run=Fals
         f"Push Back checked {max(1, int(order_count or 0))} order(s) across {max(1, int(refresh_passes or 1))} CRM list refresh pass(es).",
         action_text + ".",
         (f"Stock dry run passed on {stock_success} order(s)." if dry_run else f"Stock ordering succeeded on {stock_success} order(s)."),
-        f"{skipped} order(s) skipped by due-date guard.",
+        f"{skipped} order(s) skipped by deadline or eligibility checks.",
     ]
     if failed:
         parts.append(f"{failed} order(s) need attention.")
@@ -1033,7 +1090,7 @@ def _run_parallel_batch_with_mode(headless_mode, processing_filter="rush", dry_r
     normalized_filter = _normalize_processing_filter(processing_filter)
     target_url = _list_url_for_filter(normalized_filter, list_url=list_url)
     if not target_url:
-        config_key = "CRM_PUSH_BACK_813_URL" if normalized_filter == "813" else "CRM_PUSH_BACK_RUSH_URL"
+        config_key = _url_config_key_for_filter(normalized_filter)
         raise RuntimeError(f"{config_key} is empty in config.py.")
     requested_batch_size = _normalize_requested_batch_size(batch_size)
     resolved_profile_path = os.path.abspath(profile_path or PROFILE_PATH)
@@ -1238,7 +1295,7 @@ def _run_batch_with_mode(headless_mode, processing_filter="rush", dry_run=False,
     normalized_filter = _normalize_processing_filter(processing_filter)
     target_url = _list_url_for_filter(normalized_filter, list_url=list_url)
     if not target_url:
-        config_key = "CRM_PUSH_BACK_813_URL" if normalized_filter == "813" else "CRM_PUSH_BACK_RUSH_URL"
+        config_key = _url_config_key_for_filter(normalized_filter)
         raise RuntimeError(f"{config_key} is empty in config.py.")
     requested_batch_size = _normalize_requested_batch_size(batch_size)
     worker_limit = max(1, int(parallel_workers or 1))
@@ -1579,7 +1636,7 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Push eligible CRM production dates back by one business day.")
     parser.add_argument("--action", choices=["push_back_batch", "push_back_single"], default="push_back_batch")
     parser.add_argument("--order-id", required=False, help="Optional single 7-digit CRM order ID or CRM order URL.")
-    parser.add_argument("--processing-filter", choices=["rush", "813", "high_value"], default="rush")
+    parser.add_argument("--processing-filter", choices=["rush", "813", "high_value", "free", "all"], default="rush")
     parser.add_argument("--batch-size", type=int, default=None, help="Process up to this many orders; 0/unset means run until no eligible orders remain.")
     parser.add_argument("--parallel-workers", type=int, default=1, help="Number of CRM orders to process at once in batch mode.")
     parser.add_argument("--profile-path", required=False, help="Optional CRM Chrome user-data-dir override.")

@@ -454,16 +454,10 @@ def register_work_routes(
         }
         if processing_filter == "custom":
             effective.update(normalize_custom_crm_target(options, state))
-        if processing_filter == "all":
-            effective["shipping_bypasser_enabled"] = False
-            effective["push_back_enabled"] = False
-        elif processing_filter == "813":
+        if processing_filter == "813":
             effective["stock_unlocker_enabled"] = False
             effective["product_separator_enabled"] = False
             effective["auto_splitter_enabled"] = False
-        elif processing_filter == "free":
-            effective["shipping_bypasser_enabled"] = False
-            effective["push_back_enabled"] = False
         elif not unlocker_capable:
             effective["stock_unlocker_enabled"] = False
             effective["order_goods_enabled"] = False
@@ -503,9 +497,9 @@ def register_work_routes(
             and (rush_like or processing_filter in {"free", "all", "813"})
         ):
             steps.append("order_goods")
-        if effective.get("shipping_bypasser_enabled") and (rush_like or processing_filter == "813"):
+        if effective.get("shipping_bypasser_enabled") and (rush_like or processing_filter in {"813", "free", "all"}):
             steps.append("shipping_bypasser")
-        if effective.get("push_back_enabled") and (rush_like or processing_filter == "813"):
+        if effective.get("push_back_enabled") and (rush_like or processing_filter in {"813", "free", "all"}):
             steps.append("push_back")
         return steps
 
@@ -572,9 +566,9 @@ def register_work_routes(
             and (rush_like or processing_filter in {"free", "all", "813"})
         ):
             steps.append("Order Goods")
-        if effective.get("shipping_bypasser_enabled") and (rush_like or processing_filter == "813"):
+        if effective.get("shipping_bypasser_enabled") and (rush_like or processing_filter in {"813", "free", "all"}):
             steps.append("Shipping Bypasser")
-        if effective.get("push_back_enabled") and (rush_like or processing_filter == "813"):
+        if effective.get("push_back_enabled") and (rush_like or processing_filter in {"813", "free", "all"}):
             steps.append("Push Back")
         step_text = ", ".join(steps) if steps else "none selected"
         prefix = "Processing"

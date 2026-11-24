@@ -16,6 +16,11 @@ from config_defaults import *  # noqa: F403,F401
 # AUTOMATION_AUTO_UPDATE_ENABLED = False  # opt out of safe background updates
 # SLACK_CHANNEL_URL = "https://app.slack.com/client/<workspace>/<channel>"
 # CRM_REPORT_URL = "https://crm.example/report/..."
+# CRM_SHIPPING_BYPASS_FREE_URL = "https://crm.example/report/..."
+# CRM_SHIPPING_BYPASS_ALL_URL = "https://crm.example/report/..."
+# CRM_PUSH_BACK_FREE_URL = "https://crm.example/report/..."
+# CRM_PUSH_BACK_ALL_URL = "https://crm.example/report/..."
+# Use authenticated browser sessions; omit session/CSRF tokens from report URLs.
 # CRM_PROFILE_DIR = "chrome_profile_crm"
 
 # Secrets do not belong in this file. Store them with manage_credentials.py

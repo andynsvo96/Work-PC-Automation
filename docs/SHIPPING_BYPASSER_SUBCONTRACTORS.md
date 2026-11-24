@@ -80,19 +80,51 @@ existing desktop notification even when other purchases make the overall run a
 partial success; the alert includes the order, tab/PO label, and reason. This
 notification correction also applies to Mach6.
 
-## Initial testing and loading the change
+## FREE and ALL automation reports
 
-Restart the local Automation app to load the notification correction. The next
-worker loads the new mappings and checks. No extension reload, CRM page refresh,
-new host permission, or new report/list configuration is needed for this worker
-change. Do not restart the app during active automation.
+After manual testing, **Automate Processing > FREE / ALL** also supports
+**Bypasser** and **Push Back**. Each tool uses its own configured report;
+FREE and ALL do not fall back to a Rush report when a link is missing.
+Selections remain independent for each mode and are preserved in normal,
+scheduled, and repeating queue entries. Neither tool is enabled automatically
+by this update, and installing it does not start a run or create a schedule.
 
-For initial user testing, open the intended CRM order and choose **Manual
-Process > Shipping Bypasser** in the Chrome extension. This queues only that
-order and retains the existing explicit manual stock-buffer override. No new
-automatic list or schedule is configured by this change; a dedicated list can be
-connected after manual testing. Reorder Stock retains its in-house destination
-restriction.
+The four additional machine-local settings are:
+
+| Mode | Tool | Setting | Configured report filters |
+|---|---|---|---|
+| FREE | Bypasser | `CRM_SHIPPING_BYPASS_FREE_URL` | Report 967, shipping charge at most 1, Sales Notes `too expensive` |
+| FREE | Push Back | `CRM_PUSH_BACK_FREE_URL` | Report 967, shipping charge at most 1, Sales Notes `unable to be delivered on time` |
+| ALL | Bypasser | `CRM_SHIPPING_BYPASS_ALL_URL` | Report 122, no shipping-charge limit, Sales Notes `too expensive` |
+| ALL | Push Back | `CRM_PUSH_BACK_ALL_URL` | Report 122, no shipping-charge limit, Sales Notes `unable to be delivered on time` |
+
+All four supplied reports retain their approval Production Notes filter,
+unordered stock, and quantity range 1–100. The supplied production-date lower
+bounds are November 22, 2022 for FREE and November 24, 2026 for ALL; they are
+fixed report filters, not daily rolling dates. Store these URLs in local
+`config.py`, without session/CSRF tokens. Other computers need their own local
+configuration and authenticated CRM browser session.
+
+The selected **Unlocker**, **Order Goods**, **Bypasser**, and **Push Back**
+buttons are purple in FREE and ALL, in both color themes, to identify their
+subcontractor reports. Unselected buttons retain the neutral style. The existing
+Unlocker and Order Goods report links and submission behavior are preserved.
+
+Push Back checks a reviewed subcontractor's newest saved **LATEST SHIP DATE**
+before changing production or ordering stock. It permits the business day before
+that deadline, and stops the affected order if the next production date would be
+on or after it. This also bounds retries after CRM reports no purchase plan.
+The actual Due Date is checked before and after the production save and remains
+unchanged. A changed destination, deadline, or Due Date stops for review before
+stock ordering. Its existing SanMar fallback uses the shared Shipping Bypasser
+ETA, address, UPS, cart, and purchase-receipt checks.
+
+Restart the local Automation app and refresh the dashboard to load the new
+options and colors. Do not restart during active automation. No extension reload,
+CRM page refresh, or new host permission is needed. **Manual Process > Shipping
+Bypasser** in the extension continues to queue only the selected order and keeps
+its existing explicit manual stock-buffer override. Reorder Stock retains its
+in-house destination restriction.
 
 ## Local verification
 
@@ -103,6 +135,9 @@ a regression check:
 python -m unittest discover -s tests -p test_shipping_bypasser_subcontractors.py
 python -m unittest discover -s tests -p test_crm_shipping_bypasser.py
 python -m unittest discover -s tests -p test_sanmar_nj_orders.py
+python -m unittest discover -s tests -p test_crm_processing_subcontractors.py
+python -m unittest discover -s tests -p test_push_back_subcontractors.py
+node --test tests/test_processing_subcontractor_modes.mjs
 ```
 
 The optional `test_sanmar_nj_browser.py` suite uses a local ChromeDriver selected
@@ -110,4 +145,6 @@ by `SANMAR_FIXTURE_CHROMEDRIVER`. It verifies all 45 saved-address selections,
 changed/duplicate-address rejection, UPS/NJ fulfillment, full shipping-address
 review, newest saved Production Notes, and a persisted production-date edit that
 preserves the Due Date. It uses an isolated ignored runtime profile and opens
-only local fixtures. Run the full Python suite for the server notification change.
+only local fixtures. Run the full Python suite for server/config changes and
+the Node regressions for dashboard changes. Browser verification has been run
+on Windows; macOS has not been exercised for these new report options.

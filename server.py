@@ -207,6 +207,10 @@ CRM_ORDER_GOODS_HIGH_VALUE_URL = str(getattr(config_module, "CRM_ORDER_GOODS_HIG
 CRM_ORDER_GOODS_FREE_URL = str(getattr(config_module, "CRM_ORDER_GOODS_FREE_URL", "") or "").strip()
 CRM_ORDER_GOODS_ALL_URL = str(getattr(config_module, "CRM_ORDER_GOODS_ALL_URL", "") or "").strip()
 CRM_SHIPPING_BYPASS_HIGH_VALUE_URL = str(getattr(config_module, "CRM_SHIPPING_BYPASS_HIGH_VALUE_URL", "") or "").strip()
+CRM_SHIPPING_BYPASS_FREE_URL = str(getattr(config_module, "CRM_SHIPPING_BYPASS_FREE_URL", "") or "").strip()
+CRM_SHIPPING_BYPASS_ALL_URL = str(getattr(config_module, "CRM_SHIPPING_BYPASS_ALL_URL", "") or "").strip()
+CRM_PUSH_BACK_FREE_URL = str(getattr(config_module, "CRM_PUSH_BACK_FREE_URL", "") or "").strip()
+CRM_PUSH_BACK_ALL_URL = str(getattr(config_module, "CRM_PUSH_BACK_ALL_URL", "") or "").strip()
 CRM_PUSH_BACK_HIGH_VALUE_URL = str(getattr(config_module, "CRM_PUSH_BACK_HIGH_VALUE_URL", "") or "").strip()
 PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE = str(getattr(config_module, "PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE", "") or "").strip()
 CRM_PUSH_BACK_RUSH_URL = str(getattr(config_module, "CRM_PUSH_BACK_RUSH_URL", "") or "").strip()
@@ -1824,6 +1828,8 @@ def _apply_runtime_config_from_module():
     global CRM_813_ORDER_GOODS_URL, CRM_813_BYPASS_URL, CRM_ORDER_GOODS_HIGH_VALUE_URL
     global CRM_ORDER_GOODS_FREE_URL, CRM_ORDER_GOODS_ALL_URL
     global CRM_SHIPPING_BYPASS_HIGH_VALUE_URL, CRM_PUSH_BACK_HIGH_VALUE_URL
+    global CRM_SHIPPING_BYPASS_FREE_URL, CRM_SHIPPING_BYPASS_ALL_URL
+    global CRM_PUSH_BACK_FREE_URL, CRM_PUSH_BACK_ALL_URL
     global PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE
     global CRM_PUSH_BACK_RUSH_URL, CRM_PUSH_BACK_813_URL
     global CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS
@@ -1870,6 +1876,10 @@ def _apply_runtime_config_from_module():
     CRM_ORDER_GOODS_FREE_URL = str(getattr(config_module, "CRM_ORDER_GOODS_FREE_URL", CRM_ORDER_GOODS_FREE_URL) or "").strip()
     CRM_ORDER_GOODS_ALL_URL = str(getattr(config_module, "CRM_ORDER_GOODS_ALL_URL", CRM_ORDER_GOODS_ALL_URL) or "").strip()
     CRM_SHIPPING_BYPASS_HIGH_VALUE_URL = str(getattr(config_module, "CRM_SHIPPING_BYPASS_HIGH_VALUE_URL", CRM_SHIPPING_BYPASS_HIGH_VALUE_URL) or "").strip()
+    CRM_SHIPPING_BYPASS_FREE_URL = str(getattr(config_module, "CRM_SHIPPING_BYPASS_FREE_URL", CRM_SHIPPING_BYPASS_FREE_URL) or "").strip()
+    CRM_SHIPPING_BYPASS_ALL_URL = str(getattr(config_module, "CRM_SHIPPING_BYPASS_ALL_URL", CRM_SHIPPING_BYPASS_ALL_URL) or "").strip()
+    CRM_PUSH_BACK_FREE_URL = str(getattr(config_module, "CRM_PUSH_BACK_FREE_URL", CRM_PUSH_BACK_FREE_URL) or "").strip()
+    CRM_PUSH_BACK_ALL_URL = str(getattr(config_module, "CRM_PUSH_BACK_ALL_URL", CRM_PUSH_BACK_ALL_URL) or "").strip()
     CRM_PUSH_BACK_HIGH_VALUE_URL = str(getattr(config_module, "CRM_PUSH_BACK_HIGH_VALUE_URL", CRM_PUSH_BACK_HIGH_VALUE_URL) or "").strip()
     PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE = str(getattr(config_module, "PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE", PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE) or "").strip()
     CRM_PUSH_BACK_RUSH_URL = str(getattr(config_module, "CRM_PUSH_BACK_RUSH_URL", CRM_PUSH_BACK_RUSH_URL) or "").strip()
@@ -6305,17 +6315,11 @@ def _sanitize_crm_processing_mode_preferences(processing_filter, values=None):
     for pref_key in CRM_PROCESSING_MODE_PREF_KEYS:
         if pref_key in source:
             prefs[pref_key] = _normalize_crm_processing_enabled(source.get(pref_key), default=prefs.get(pref_key))
-    if key == "all":
-        prefs["shipping_bypasser_enabled"] = False
-        prefs["push_back_enabled"] = False
-    elif key == "813":
+    if key == "813":
         prefs["stock_unlocker_enabled"] = False
         prefs["product_separator_enabled"] = False
         prefs["auto_splitter_enabled"] = False
-    elif key == "free":
-        prefs["shipping_bypasser_enabled"] = False
-        prefs["push_back_enabled"] = False
-    elif key != "custom" and not _crm_processing_filter_is_rush_like(key):
+    elif key not in {"custom", "free", "all"} and not _crm_processing_filter_is_rush_like(key):
         prefs["stock_unlocker_enabled"] = False
         prefs["order_goods_enabled"] = False
         prefs["shipping_bypasser_enabled"] = False
@@ -6386,9 +6390,9 @@ def _crm_processing_selected_steps_from_state(state):
         steps.append("stock_unlocker")
     if _crm_processing_filter_supports_order_goods(processing_filter) and _normalize_crm_processing_enabled(state.get("order_goods_enabled"), default=True):
         steps.append("order_goods")
-    if (rush_like or processing_filter in {"813", "custom"}) and _normalize_crm_processing_enabled(state.get("shipping_bypasser_enabled"), default=False):
+    if (rush_like or processing_filter in {"813", "custom", "free", "all"}) and _normalize_crm_processing_enabled(state.get("shipping_bypasser_enabled"), default=False):
         steps.append("shipping_bypasser")
-    if (rush_like or processing_filter in {"813", "custom"}) and _normalize_crm_processing_enabled(state.get("push_back_enabled"), default=False):
+    if (rush_like or processing_filter in {"813", "custom", "free", "all"}) and _normalize_crm_processing_enabled(state.get("push_back_enabled"), default=False):
         steps.append("push_back")
     return steps
 
@@ -6414,11 +6418,19 @@ def _crm_processing_mode_list_url_for_step(processing_filter, step_key):
             "high_value": CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE,
         }.get(normalized_filter, "") or None
     if normalized_filter == "free":
+        if step_key == "shipping_bypasser":
+            return str(CRM_SHIPPING_BYPASS_FREE_URL or "").strip() or None
+        if step_key == "push_back":
+            return str(CRM_PUSH_BACK_FREE_URL or "").strip() or None
         if step_key == "stock_unlocker":
             return str(CRM_UNLOCKER_FREE_URL or "").strip() or None
         if step_key == "order_goods":
             return str(CRM_ORDER_GOODS_FREE_URL or "").strip() or None
     if normalized_filter == "all":
+        if step_key == "shipping_bypasser":
+            return str(CRM_SHIPPING_BYPASS_ALL_URL or "").strip() or None
+        if step_key == "push_back":
+            return str(CRM_PUSH_BACK_ALL_URL or "").strip() or None
         if step_key == "stock_unlocker":
             return str(CRM_UNLOCKER_ALL_URL or "").strip() or None
         if step_key == "order_goods":
@@ -6450,6 +6462,8 @@ def _crm_processing_mode_list_url_for_step(processing_filter, step_key):
 
 def _crm_processing_push_back_list_url_for_filter(processing_filter):
     normalized_filter = _normalize_crm_shipping_filter(processing_filter)
+    if normalized_filter in {"free", "all"}:
+        return _crm_processing_mode_list_url_for_step(normalized_filter, "push_back")
     if normalized_filter == "813":
         return str(CRM_PUSH_BACK_813_URL or "").strip() or None
     if normalized_filter == "high_value":
@@ -6469,11 +6483,19 @@ def _crm_processing_mode_url_config_key_for_step(processing_filter, step_key):
             "high_value": "CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE",
         }.get(normalized_filter, "CRM_AUTO_SPLITTER_LIST_URL_RUSH")
     if normalized_filter == "free":
+        if step_key == "shipping_bypasser":
+            return "CRM_SHIPPING_BYPASS_FREE_URL"
+        if step_key == "push_back":
+            return "CRM_PUSH_BACK_FREE_URL"
         if step_key == "stock_unlocker":
             return "CRM_UNLOCKER_FREE_URL"
         if step_key == "order_goods":
             return "CRM_ORDER_GOODS_FREE_URL"
     if normalized_filter == "all":
+        if step_key == "shipping_bypasser":
+            return "CRM_SHIPPING_BYPASS_ALL_URL"
+        if step_key == "push_back":
+            return "CRM_PUSH_BACK_ALL_URL"
         if step_key == "stock_unlocker":
             return "CRM_UNLOCKER_ALL_URL"
         if step_key == "order_goods":
@@ -9744,8 +9766,8 @@ def _build_crm_push_back_order_results(payload):
 
 def _execute_crm_push_back_worker(dry_run=False, batch_size=None, processing_filter="rush", list_url=None, visible=None, show_terminal=None, order_id=None, parallel_workers=1):
     normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-    if not (_crm_processing_filter_is_rush_like(normalized_filter) or normalized_filter == "813"):
-        message = "Push Back is only available for Rush, High Value, and 813 modes."
+    if normalized_filter not in {"rush", "high_value", "813", "free", "all"}:
+        message = "Push Back is available for Rush, High Value, Free, ALL, and 813 modes."
         return False, message, {
             "success": False,
             "message": message,
@@ -9968,8 +9990,8 @@ def _crm_push_back_run_thread(dry_run=False, batch_size=None, processing_filter=
 
 def start_crm_push_back_run(dry_run=False, batch_size=None, processing_filter="rush", list_url=None, order_id=None, parallel_workers=None):
     normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-    if not (_crm_processing_filter_is_rush_like(normalized_filter) or normalized_filter == "813"):
-        return False, "Push Back is only available for Rush, High Value, and 813 modes."
+    if normalized_filter not in {"rush", "high_value", "813", "free", "all"}:
+        return False, "Push Back is available for Rush, High Value, Free, ALL, and 813 modes."
     normalized_order_id = _normalize_crm_single_order_id(order_id) if _crm_address_value_supplied(order_id) else None
     if _crm_address_value_supplied(order_id) and not normalized_order_id:
         return False, "Order ID must be a 7-digit value or CRM order URL."
@@ -11970,7 +11992,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
     if step_key == "shipping_bypasser":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
         list_url = custom_list_url or _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
-        if normalized_filter in {"813", "high_value"} and not list_url and not target_order_id:
+        if normalized_filter in {"813", "high_value", "free", "all"} and not list_url and not target_order_id:
             message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
             return {
                 "key": step_key,
@@ -12024,8 +12046,8 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
     if step_key == "push_back":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
         list_url = custom_list_url or _crm_processing_push_back_list_url_for_filter(normalized_filter)
-        if not (_crm_processing_filter_is_rush_like(normalized_filter) or normalized_filter == "813"):
-            message = "Push Back is only available for Rush, High Value, and 813 modes."
+        if normalized_filter not in {"rush", "high_value", "813", "free", "all"}:
+            message = "Push Back is available for Rush, High Value, Free, ALL, and 813 modes."
             return {
                 "key": step_key,
                 "label": _crm_processing_step_label(step_key),

@@ -781,6 +781,10 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
 @media (max-width:980px){.rough-two,.rough-half{grid-template-columns:1fr}.rough-system-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-week{grid-template-columns:repeat(4,minmax(0,1fr))}.rough-day:nth-child(4){border-right:0}.rough-day:nth-child(n+5){border-top:1px solid var(--rough-border)}.weekly-calculator .work-plan-days{grid-template-columns:repeat(4,minmax(0,1fr))}.rough-history-panel{width:calc(100vw - 48px)}}
 @media (max-width:700px){.wrap{padding:0 16px 28px}.app-header{height:auto;min-height:72px;margin:0 -16px;padding:12px 16px;align-items:flex-start;flex-direction:column}.app-header-actions{justify-content:flex-start;width:100%}.tab-bar{height:auto;min-height:60px;margin:0 -16px 22px;padding:10px 16px;flex-wrap:wrap;overflow:visible}.control-target{width:100%;margin-left:0}.control-target select{flex:1;min-width:0;max-width:none}.page-heading{align-items:flex-start;flex-direction:column}.page-heading-actions{justify-content:flex-start}.rough-metric-row{grid-template-columns:1fr}.rough-week{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-day:nth-child(2n){border-right:0}.rough-day:nth-child(n+3){border-top:1px solid var(--rough-border)}.weekly-calculator .work-plan-days{grid-template-columns:repeat(2,minmax(0,1fr))}.slack-history-row{grid-template-columns:1fr auto}.slack-history-message{grid-column:1/-1}.rough-latest-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-action-split{grid-template-columns:1fr}.rough-action-separator{display:none}.rough-action-row{grid-template-columns:1fr}.rough-action-row>button{width:100%}.rough-power-actions{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-schedule{grid-template-columns:1fr}.rough-sync-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-history-panel{position:fixed;inset:70px 12px auto;width:auto;max-height:75vh}.workspace-nav{width:100%}.workspace-nav-btn{flex:1}.compact-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.compact-tools button{width:100%}}
 @media (max-width:560px){.app-brand-sub{display:none}.app-header-actions{gap:6px}.app-header-actions button{padding:7px 9px}.tab-bar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:auto}.tab-btn{min-width:0;padding:8px 4px;justify-content:center;font-size:11px}.control-target{grid-column:1/-1}.workspace-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));box-sizing:border-box}.workspace-nav-btn{min-width:0;white-space:normal}.rough-system-metrics{grid-template-columns:1fr}.rough-card{padding:15px}.rough-card-head{flex-wrap:wrap}.rough-week{grid-template-columns:1fr 1fr}.rough-big-time{font-size:25px}.rough-actions>*{max-width:100%}.rough-power-actions{grid-template-columns:1fr}.rough-history-panel{inset:54px 8px auto}.processing-tool-health-card .rough-card-head button{width:100%}}
+button.toggle-btn.processing-tool-toggle.subcontractor-mode.active,
+:root[data-theme='dark'] button.toggle-btn.processing-tool-toggle.subcontractor-mode.active{background:#7c3aed;border-color:#7c3aed;color:#fff}
+button.toggle-btn.processing-tool-toggle.subcontractor-mode.active:hover,
+:root[data-theme='dark'] button.toggle-btn.processing-tool-toggle.subcontractor-mode.active:hover{background:#6d28d9;border-color:#6d28d9;color:#fff}
 </style>
 </head>
 <body>
@@ -2242,7 +2246,15 @@ function canCrmProcessingFilterRunUnlocker(value) {
 }
 
 function canCrmProcessingFilterRunOrderSupport(value) {
-  return ['rush', 'high_value', '813', 'custom'].includes(normalizeCrmProcessingFilter(value));
+  return ['rush', 'high_value', 'free', 'all', '813', 'custom'].includes(normalizeCrmProcessingFilter(value));
+}
+
+function updateCrmProcessingSubcontractorToolStyles(processingFilter) {
+  const subcontractorMode = ['free', 'all'].includes(normalizeCrmProcessingFilter(processingFilter));
+  for (const id of ['crmProcessingUnlockToggleBtn', 'crmProcessingOrderGoodsToggleBtn', 'crmProcessingShippingBypasserToggleBtn', 'crmProcessingPushBackToggleBtn']) {
+    const button = document.getElementById(id);
+    if (button) button.classList.toggle('subcontractor-mode', subcontractorMode);
+  }
 }
 
 function canCrmProcessingFilterRunOrderGoods(value) {
@@ -6865,6 +6877,7 @@ function syncCrmProcessingPolling() {
 function renderCrmProcessingSelectionButtons(state = {}) {
   const selectedSteps = normalizeCrmProcessingStepList([], state);
   const processingFilter = normalizeCrmProcessingFilter(state && state.processing_filter);
+  updateCrmProcessingSubcontractorToolStyles(processingFilter);
   const unlockBtn = document.getElementById('crmProcessingUnlockToggleBtn');
   const addressBtn = document.getElementById('crmProcessingAddressToggleBtn');
   const separatorBtn = document.getElementById('crmProcessingSeparatorToggleBtn');
@@ -6941,7 +6954,7 @@ function renderCrmProcessingSelectionButtons(state = {}) {
     shippingBypasserBtn.disabled = !canRunOrderSupport;
     shippingBypasserBtn.textContent = 'Bypasser';
     shippingBypasserBtn.title = !canRunOrderSupport
-      ? `Shipping Bypasser is available in Rush, High Value, and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
+      ? `Shipping Bypasser is available in Rush, High Value, Free, ALL, and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
       : 'Toggle Shipping Bypasser in Automate Processing.';
   }
   if (pushBackBtn) {
@@ -6951,7 +6964,7 @@ function renderCrmProcessingSelectionButtons(state = {}) {
     pushBackBtn.disabled = !canRunOrderSupport;
     pushBackBtn.textContent = 'Push Back';
     pushBackBtn.title = !canRunOrderSupport
-      ? `Push Back is available in Rush, High Value, and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
+      ? `Push Back is available in Rush, High Value, Free, ALL, and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
       : 'Toggle Push Back in Automate Processing.';
   }
   if (filterSelect) {
@@ -7382,7 +7395,7 @@ async function toggleCrmProcessingSelection(stepKey) {
   }
   if ((stepKey === 'shipping_bypasser' || stepKey === 'push_back') && !canRunOrderSupport) {
     const label = stepKey === 'shipping_bypasser' ? 'Shipping Bypasser' : 'Push Back';
-    setStatus(`${label} is available in Rush, High Value, and 813 modes.`);
+    setStatus(`${label} is available in Rush, High Value, Free, ALL, and 813 modes.`);
     return;
   }
   const nextUnlock = stepKey === 'stock_unlocker'
@@ -8874,7 +8887,7 @@ async function startCrmPushBackRun(dryRun, button = null, singleOrder = false) {
       ? crmProcessingStatusPayload.state.processing_filter
       : 'rush'
   );
-  const processingFilter = ['rush', 'high_value', '813'].includes(currentFilter) ? currentFilter : 'rush';
+  const processingFilter = ['rush', 'high_value', '813', 'free', 'all'].includes(currentFilter) ? currentFilter : 'rush';
   let resultMsg = singleOrder
     ? `Starting Push Back run for order ${rawOrderTarget}...`
     : 'Starting Push Back...';
