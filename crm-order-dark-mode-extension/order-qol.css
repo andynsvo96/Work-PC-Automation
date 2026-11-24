@@ -1,5 +1,17 @@
 @media screen {
-  .crm-edit-preview-layout { display: grid !important; grid-template-columns: minmax(180px, .8fr) minmax(0, 1.2fr); column-gap: 16px; align-items: start; }
+  #view-orders-index.crm-edit-previews-active { container: crm-edit-order / inline-size; }
+  #view-orders-index.crm-edit-wide-order { width: 100%; max-width: none; }
+  #view-orders-index.crm-edit-wide-order > #content { display: grid !important; grid-template-columns: minmax(0, var(--crm-edit-left-track)) minmax(0, 2fr) minmax(0, var(--crm-edit-right-track)); grid-template-rows: auto repeat(var(--crm-edit-summary-rows), auto); align-items: start; }
+  #view-orders-index.crm-edit-wide-order > #content::before, #view-orders-index.crm-edit-wide-order > #content::after,
+  #view-orders-index.crm-edit-wide-order #main-content::before, #view-orders-index.crm-edit-wide-order #main-content::after { display: none !important; }
+  #view-orders-index.crm-edit-wide-order > #content > #main-content { display: contents !important; }
+  #view-orders-index.crm-edit-wide-order #main-content > :not(#order-design-details) { grid-column: 2; min-width: 0; margin-left: 0; margin-right: 0; }
+  #view-orders-index.crm-edit-wide-order #order-design-details { grid-column: 1 / -1; grid-row: 1; float: none; width: auto !important; min-width: 0; max-width: none; margin: 0 0 24px; padding-left: 0; padding-right: 0; }
+  #view-orders-index.crm-edit-wide-order > #content > #left-column,
+  #view-orders-index.crm-edit-wide-order > #content > #right-column { grid-row: 2 / -1; float: none; width: auto !important; min-width: 0; }
+  #view-orders-index.crm-edit-wide-order > #content > #left-column { grid-column: 1; }
+  #view-orders-index.crm-edit-wide-order > #content > #right-column { grid-column: 3; }
+  .crm-edit-preview-layout { display: grid !important; grid-template-columns: minmax(300px, 440px) minmax(0, 1fr); column-gap: 24px; align-items: start; }
   .crm-edit-preview-layout::before, .crm-edit-preview-layout::after { display: none !important; }
   .crm-edit-preview-layout > * { grid-column: 1 / -1; min-width: 0; }
   .crm-edit-preview-layout > .crm-edit-previews { grid-column: 1; position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow-y: auto; }
@@ -25,6 +37,18 @@
   #view-orders-index .crm-order-section-hide:focus-visible { outline: 2px solid #dc2626; outline-offset: 2px; }
   html.crm-order-dark-mode #view-orders-index .crm-order-section-hide { background: #332526 !important; color: #fca5a5 !important; -webkit-text-fill-color: #fca5a5 !important; }
   html.crm-order-dark-mode #view-orders-index .crm-order-section-hide:hover { background: #572b2e !important; }
+  @media (max-width: 991px) {
+    #view-orders-index.crm-edit-wide-order > #content { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
+    #view-orders-index.crm-edit-wide-order #main-content > :not(#order-design-details),
+    #view-orders-index.crm-edit-wide-order > #content > #left-column,
+    #view-orders-index.crm-edit-wide-order > #content > #right-column { grid-column: 1; grid-row: auto; }
+  }
+  @container crm-edit-order (max-width: 980px) {
+    .crm-edit-preview-layout { grid-template-columns: minmax(0, 1fr); }
+    .crm-edit-preview-layout > .crm-edit-previews, .crm-edit-preview-layout > .crm-edit-preview-target { grid-column: 1; }
+    .crm-edit-preview-layout > .crm-edit-previews { position: static; max-height: none; overflow: visible; }
+    .crm-edit-previews-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 830px; }
+  }
   @media (max-width: 760px) {
     .crm-edit-preview-layout { grid-template-columns: minmax(0, 1fr); }
     .crm-edit-preview-layout > .crm-edit-previews, .crm-edit-preview-layout > .crm-edit-preview-target { grid-column: 1; }

@@ -38,6 +38,16 @@ Each computer owns its queue, browser sessions, credentials, and recovery receip
 
 ## CRM Order Assistant and Newer Workflows
 
+- **Full-width design workspace:** CRM Order Assistant **1.8.10** lets the Edit
+  Order design workspace span the page instead of splitting CRM's middle column.
+  Design Studio Previews have their own left column, and print areas use the
+  remaining width on the right, including in All Tabs. Other CRM panels appear
+  below the workspace during editing. Narrow layouts stack the previews above
+  the fields, and leaving editing restores the normal CRM columns. Reload the
+  extension at `chrome://extensions` and refresh open CRM pages after saving
+  existing edits. No app restart or new permission is needed. See the
+  [design workspace guide](crm-order-dark-mode-extension/README.md#full-width-design-workspace---1810).
+
 - **Extension quality-of-life controls:** CRM Order Assistant **1.8.9** keeps
   Manual Process, Cancel, Reachout, and Stock Issue available while automations
   wait or run. Queue multiple actions for an order; the queue retains its

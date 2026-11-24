@@ -3,6 +3,12 @@
 <style>
   body { font: 14px Arial, sans-serif; margin: 24px; color: #263244; background: #f5f7fa; }
   #view-orders-index { max-width: 1040px; margin: auto; }
+  #content { display: flow-root; }
+  #left-column, #right-column { box-sizing: border-box; float: left; width: 25%; padding: 10px; }
+  #main-content { box-sizing: border-box; float: left; width: 50%; padding: 10px; }
+  #order-design-details { box-sizing: border-box; width: 100%; clear: both; }
+  #order-notes { margin: 12px 0; }
+  @media (max-width: 991px) { #left-column, #right-column, #main-content { float: none; width: 100%; } }
   .btn { font: inherit; padding: 8px 12px; background: white; border: 1px solid #bcc8d6; border-radius: 4px; cursor: pointer; }
   .btn-primary { background: #245888; color: white; }
   .btn-success { background: #267c4a; color: white; }
@@ -27,18 +33,32 @@
   .panel-body { padding: 16px; }
 </style>
 <main id="view-orders-index">
+  <header id="main-header">
   <h1>Order 1234567</h1>
   <button class="btn" id="invoice">Send Invoice</button>
   <button class="btn btn-primary edit-btn" ng-click="editModeOn();">edit order</button>
   <button class="btn save-btn" ng-click="saveOrder();">save order</button>
-  <section id="contact-panel" class="panel"><div class="panel-heading"><h3 class="panel-title">Contact Info and Send Options</h3></div><div class="panel-body"><button class="btn" ng-click="addAccount()">Add Account</button></div></section>
   <div id="main-header-design-tabs"><div class="btn-group" role="group"></div></div>
-  <div id="order-design-details"><ul class="nav nav-tabs"></ul><div class="tab-content"></div></div>
-  <section id="native-preview">Native Design Studio Previews</section>
+  </header>
+  <!-- Mirror CRM's 25% / 50% / 25% columns, with native forms and print-area
+       rows inside the middle column. Layout checks must escape this limit. -->
+  <section id="content">
+  <aside id="left-column">
+    <section id="contact-panel" class="panel"><div class="panel-heading"><h3 class="panel-title">Contact Info and Send Options</h3></div><div class="panel-body"><button class="btn" ng-click="addAccount()">Add Account</button></div></section>
+  </aside>
+  <section id="main-content">
+    <div class="row"><p>Native order assignments</p></div>
+    <div id="order-notes" class="row"><label>Order notes <input value="Keep this order note"></label></div>
+    <div id="order-design-details" class="row col-md-12"><ul class="nav nav-tabs"></ul><div class="tab-content"></div></div>
+    <div class="row"><section id="native-preview">Native Design Studio Previews</section></div>
+  </section>
+  <aside id="right-column">
   <section id="order-purchase-orders" class="panel"><div class="panel-heading"><h3 class="panel-title">Purchase Orders</h3></div><div class="panel-body"><button>+ purchase order</button></div></section>
   <section id="order-promos" class="panel"><div class="panel-heading"><h3 class="panel-title">Promos</h3></div><div class="panel-body"><button>add promo</button></div></section>
   <section id="order-cartons" class="panel"><div class="panel-heading"><h3 class="panel-title">Carton Tracking</h3></div><div class="panel-body">Carton / Tracking No.</div></section>
   <section id="sales-tax-transactions" class="panel"><div class="panel-heading"><h3 class="panel-title">Sales Tax Transactions</h3></div><div class="panel-body">Order / Shipping / Sales Tax / State / Date</div></section>
+  </aside>
+  </section>
 </main>
 <script>
 // Image requests are replaced with local SVGs, so testing never contacts CRM or

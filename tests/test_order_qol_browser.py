@@ -176,9 +176,72 @@ class OrderQolBrowserTests(unittest.TestCase):
         self.assertIn("src=20002_f", self.driver.find_element(By.CSS_SELECTOR, ".crm-edit-previews-grid img").get_attribute("src"))
         self.assertEqual(self.driver.execute_script("return resource;"), original)
         self.driver.find_element(By.CSS_SELECTOR, ".save-btn").click()
-        WebDriverWait(self.driver, 5).until(lambda d: not d.find_elements(By.ID, "crm-edit-design-previews"))
+        WebDriverWait(self.driver, 5).until(lambda d: not d.find_elements(By.CSS_SELECTOR, "#crm-edit-design-previews, .crm-edit-wide-order"))
         self.assertTrue(self.driver.find_element(By.ID, "native-preview").is_displayed())
         self.assertEqual(self.driver.find_elements(By.CSS_SELECTOR, ".crm-edit-preview-layout, .crm-edit-preview-target"), [])
+        self.assertFalse(self.driver.execute_script("return document.getElementById('view-orders-index').classList.contains('crm-edit-wide-order');"))
+
+    def test_edit_workspace_spans_page_outside_crm_columns_and_restores_original_layout(self):
+        self.show()
+        original = self.driver.execute_script("""
+          window.layoutNodes = {
+            details: document.getElementById('order-design-details'),
+            main: document.getElementById('main-content'),
+            notes: document.querySelector('#order-notes input'),
+            area: document.querySelector('.tab-pane.active .printarea input'),
+            form: document.querySelector('.tab-pane.active [ng-form="designForm"]')
+          };
+          return {resource: structuredClone(resource),
+            pageWidth: document.getElementById('content').getBoundingClientRect().width,
+            mainWidth: layoutNodes.main.getBoundingClientRect().width};
+        """)
+        self.assertAlmostEqual(original['mainWidth'], original['pageWidth'] / 2, delta=2)
+        self.driver.execute_script("layoutNodes.area.value = 'Unchanged native draft'; orderScope.editMode = true; document.body.classList.toggle('changed');")
+        wait = WebDriverWait(self.driver, 5)
+        wait.until(lambda d: d.find_elements(By.ID, "crm-edit-design-previews"))
+        for width in (1200, 1600, 1920):
+            with self.subTest(width=width):
+                self.driver.set_window_size(width, 1200)
+                dimensions = self.driver.execute_script("""
+                  const page = document.getElementById('content').getBoundingClientRect();
+                  const details = layoutNodes.details.getBoundingClientRect();
+                  const preview = document.getElementById('crm-edit-design-previews').getBoundingClientRect();
+                  const areas = document.querySelector('.crm-edit-preview-target').getBoundingClientRect();
+                  return {page: page.width, details: details.width, preview: preview.width, areas: areas.width,
+                    left: preview.left, right: areas.right, pageLeft: page.left, pageRight: page.right,
+                    separate: preview.right < areas.left,
+                    panelsBelow: ['left-column','right-column','order-notes'].every(id =>
+                      document.getElementById(id).getBoundingClientRect().top >= details.bottom - 1),
+                    overflow: document.documentElement.scrollWidth > innerWidth};
+                """)
+                self.assertAlmostEqual(dimensions['details'], dimensions['page'], delta=2)
+                self.assertGreaterEqual(dimensions['preview'], 390)
+                self.assertGreaterEqual(dimensions['areas'], 600)
+                self.assertGreaterEqual(dimensions['left'], dimensions['pageLeft'])
+                self.assertLessEqual(dimensions['right'], dimensions['pageRight'] + 1)
+                self.assertTrue(dimensions['separate'])
+                self.assertTrue(dimensions['panelsBelow'])
+                self.assertFalse(dimensions['overflow'])
+        self.driver.execute_script("document.getElementById('main-header').style.cssText='position:fixed;top:0;left:0;z-index:9999'; scrollTo(0, 400);")
+        self.assertAlmostEqual(self.driver.execute_script("return document.getElementById('main-header').getBoundingClientRect().top;"), 0, delta=1)
+        self.driver.execute_script("scrollTo(0, 0); document.getElementById('main-header').removeAttribute('style');")
+        self.assertEqual(self.driver.execute_script("return resource;"), original['resource'])
+        self.assertTrue(self.driver.execute_script("""
+          return layoutNodes.details.parentElement === layoutNodes.main
+            && layoutNodes.area === document.querySelector('.tab-pane.active .printarea input')
+            && layoutNodes.area.closest('[ng-form="designForm"]') === layoutNodes.form
+            && layoutNodes.area.value === 'Unchanged native draft'
+            && layoutNodes.notes === document.querySelector('#order-notes input')
+            && layoutNodes.notes.value === 'Keep this order note';
+        """))
+        self.driver.execute_script("orderScope.editMode = false; document.body.classList.toggle('changed');")
+        wait.until(lambda d: not d.find_elements(By.ID, "crm-edit-design-previews"))
+        self.assertTrue(self.driver.execute_script("""
+          return getComputedStyle(layoutNodes.main).display !== 'contents'
+            && Math.abs(layoutNodes.main.getBoundingClientRect().width - document.getElementById('content').getBoundingClientRect().width / 2) < 2
+            && !document.querySelector('.crm-edit-wide-order, .crm-edit-previews-active')
+            && !document.getElementById('content').style.getPropertyValue('--crm-edit-summary-rows');
+        """))
 
     def test_previews_stack_on_narrow_screens_and_keep_native_print_area_inputs(self):
         self.show()
@@ -203,6 +266,23 @@ class OrderQolBrowserTests(unittest.TestCase):
             && originalPrintArea.value === 'Keep this draft';
         """))
         self.driver.save_screenshot(str(self.artifacts / "preview-narrow.png"))
+
+    def test_wide_workspace_handles_missing_side_columns_and_restores_on_route_exit(self):
+        self.show()
+        self.edit()
+        wait = WebDriverWait(self.driver, 5)
+        self.driver.execute_script("document.getElementById('left-column').remove(); document.getElementById('right-column').remove();")
+        wait.until(lambda d: d.execute_script("return document.getElementById('content').style.getPropertyValue('--crm-edit-left-track') === '0fr';"))
+        self.assertTrue(self.driver.execute_script("""
+          const page = document.getElementById('content').getBoundingClientRect();
+          const workspace = document.getElementById('order-design-details').getBoundingClientRect();
+          const notes = document.getElementById('order-notes').getBoundingClientRect();
+          return Math.abs(page.width - workspace.width) < 2 && Math.abs(page.width - notes.width) < 2
+            && document.documentElement.scrollWidth <= innerWidth;
+        """))
+        self.driver.execute_script("history.pushState({}, '', '/reports/1234567'); dispatchEvent(new PopStateEvent('popstate'));")
+        wait.until(lambda d: not d.find_elements(By.CSS_SELECTOR, ".crm-edit-wide-order, .crm-edit-previews-active"))
+        self.assertFalse(self.driver.execute_script("return !!document.getElementById('content').style.getPropertyValue('--crm-edit-summary-rows');"))
 
     def test_automation_menus_queue_separator_then_copyright_reachout_while_working(self):
         self.show()
@@ -539,6 +619,7 @@ class OrderQolBrowserTests(unittest.TestCase):
             self.assertTrue(self.driver.execute_script("return document.documentElement.scrollWidth <= innerWidth;"))
         self.driver.execute_cdp_cmd("Emulation.setEmulatedMedia", {"media": "print"})
         self.assertFalse(self.driver.find_element(By.ID, "crm-edit-design-previews").is_displayed())
+        self.assertNotEqual(self.driver.execute_script("return getComputedStyle(document.getElementById('main-content')).display;"), "contents")
         self.driver.execute_cdp_cmd("Emulation.setEmulatedMedia", {"media": "screen"})
         self.driver.find_element(By.CSS_SELECTOR, ".save-btn").click()
         self.wait_for_button()

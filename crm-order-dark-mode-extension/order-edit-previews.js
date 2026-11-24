@@ -8,6 +8,7 @@
   let signature = "";
   let layoutParent = null;
   let layoutTarget = null;
+  let pageLayout = null;
   const previewId = "crm-edit-design-previews";
   const images = [["f", "Front Preview"], ["b", "Back Preview"],
     ["sl", "Sleeve Left Preview"], ["sr", "Sleeve Right Preview"], ["t", "Inside Tag Line"]];
@@ -44,7 +45,42 @@
     layoutTarget = null;
   }
 
+  function clearPageLayout() {
+    if (!pageLayout) return;
+    pageLayout.root.classList.remove("crm-edit-previews-active", "crm-edit-wide-order");
+    for (const property of ["--crm-edit-summary-rows", "--crm-edit-left-track", "--crm-edit-right-track"]) {
+      pageLayout.content?.style.removeProperty(property);
+    }
+    pageLayout = null;
+  }
+
+  function syncPageLayout(root) {
+    const details = root.querySelector("#order-design-details");
+    const main = details?.parentElement;
+    const content = main?.parentElement;
+    const nativeColumns = main?.id === "main-content" && content?.id === "content";
+    const nextContent = nativeColumns ? content : null;
+    if (pageLayout && (pageLayout.root !== root || pageLayout.content !== nextContent)) clearPageLayout();
+    pageLayout = { root, content: nextContent };
+    if (!root.classList.contains("crm-edit-previews-active")) root.classList.add("crm-edit-previews-active");
+    root.classList.toggle("crm-edit-wide-order", nativeColumns);
+    if (!nativeColumns) return;
+    // Promote the design workspace into the page's grid through display:
+    // contents. Native DOM parents, Angular scopes, forms, and repeat anchors
+    // stay in place; the CRM side panels occupy the rows below the workspace.
+    const rows = Math.max(1, [...main.children].filter(node => node !== details).length);
+    const tracks = {
+      "--crm-edit-summary-rows": String(rows),
+      "--crm-edit-left-track": content.querySelector(":scope > #left-column") ? "1fr" : "0fr",
+      "--crm-edit-right-track": content.querySelector(":scope > #right-column") ? "1fr" : "0fr"
+    };
+    for (const [property, value] of Object.entries(tracks)) {
+      if (content.style.getPropertyValue(property) !== value) content.style.setProperty(property, value);
+    }
+  }
+
   function place(panel, root) {
+    syncPageLayout(root);
     const allTabs = root.querySelector("#crm-all-tabs-panel:not([hidden])");
     const areaColumn = root.querySelector('#order-design-details > .tab-content > .tab-pane.active [ng-repeat*="in design.printAreas"]');
     const target = allTabs?.querySelector(".crm-all-tabs-cards:not(.crm-all-tabs-stock-cards)")
@@ -68,6 +104,7 @@
   function clear() {
     document.getElementById(previewId)?.remove();
     clearLayout();
+    clearPageLayout();
     signature = "";
   }
 

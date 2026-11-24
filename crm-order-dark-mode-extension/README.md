@@ -15,6 +15,38 @@ After extension updates, reload the extension at `chrome://extensions` and refre
 
 Version **1.6.2** removes **Auto-Process** from order pages and **Process current order** from the toolbar popup. Manual Process, Cancel, Reachout, and Stock Issue remain available on order pages, with queue status and completion refreshes. Reload CRM Order Assistant at `chrome://extensions` and refresh open CRM order pages to load this removal; no local Automation app restart is needed.
 
+## Full-width design workspace - 1.8.10
+
+During **Edit Order**, the design workspace spans the available page width above
+the other CRM panels. **Design Studio Previews** have their own left column,
+up to 440 pixels wide; **print areas** use the remaining width on the right.
+The layout also applies to **All Tabs** and follows the highlighted design.
+It no longer divides CRM's original half-width middle column.
+
+Contact, order notes, totals, shipping, and other CRM panels remain accessible
+below the workspace while editing. Leaving editing restores their normal CRM
+columns. When the available order-page width is 980 pixels or less, previews
+stack above the print areas. Light and dark themes and native light printing
+retain their existing behavior.
+
+The change only affects layout. Native fields, their DOM parents, Angular forms,
+print-area data, notes, prices, selections, and Save Order behavior are preserved.
+Existing preview approval/vendor restrictions still apply.
+
+Reload **CRM Order Assistant 1.8.10** at `chrome://extensions` and refresh open
+CRM order pages after saving existing edits. **No local app restart or new
+permission is needed.** Offline checks:
+
+```powershell
+python -m unittest discover -s tests -p test_order_qol_browser.py
+python -m unittest discover -s tests -p test_all_orders_browser.py
+node --test tests/test_all_tabs.mjs tests/test_all_tabs_stock.mjs tests/test_all_orders.mjs tests/test_order_refresh.mjs tests/test_order_scan_reader.mjs
+```
+
+The local browser fixture models CRM's original three columns and checks page
+widths, panel placement, resizing, draft/input identity, All Tabs, and restoration
+after editing or route changes. Live CRM and macOS remain unverified.
+
 ## Queue controls, previews, and hidden sections - 1.8.9
 
 **Manual Process**, **Cancel**, **Reachout**, and **Stock Issue** remain usable

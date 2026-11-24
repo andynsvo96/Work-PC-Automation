@@ -93,9 +93,39 @@ class AllOrdersBrowserTests(unittest.TestCase):
         return {"changes": {"front": {"location": "Front-Left Chest"}}, "additions": [],
                 "notes": {"sales": "New shared Sales Note", "production": "New shared Production Note", "art": "New shared Art Note"}}
 
-    def test_native_single_tab_save_reload_preserves_history_artwork_sizes_and_prices(self):
+    def test_native_single_tab_save_reload_in_wide_workspace_preserves_history_artwork_sizes_and_prices(self):
+        self.driver.execute_script("""
+          const details = document.getElementById('order-design-details');
+          const content = document.createElement('section'); content.id = 'content';
+          const main = document.createElement('section'); main.id = 'main-content';
+          details.before(content); content.append(main); main.append(details);
+          for (const id of ['left-column','right-column']) {
+            const aside = document.createElement('aside'); aside.id = id; aside.textContent = 'Native order panel';
+            content.append(aside);
+          }
+          const imageSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+          Object.defineProperty(HTMLImageElement.prototype, 'src', {...imageSrc, set() {
+            imageSrc.set.call(this, 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="395" height="420"/>');
+          }});
+          fixtureScope.$apply(() => {
+            fixtureResource.features = {approved: false, releasedToVendor: 0};
+            fixtureScope.user = {isAny: () => false};
+            fixtureScope.ENV_CONFIG = {rushorderteesURL: 'https://preview.example.test/'};
+          });
+          window.originalNotesInput = document.querySelector('#order-notes-sales-notes textarea');
+          window.originalDetailsParent = details.parentElement;
+        """)
+        self.driver.execute_script("const style = document.createElement('style'); style.textContent = arguments[0]; document.head.append(style);",
+                                   (EXTENSION / "order-qol.css").read_text(encoding="utf-8"))
+        self.driver.execute_script((EXTENSION / "order-edit-previews.js").read_text(encoding="utf-8"))
         before = self.driver.execute_script("return structuredClone(fixtureResource);")
         self.assertTrue(self.execute("begin")["success"])
+        self.wait.until(lambda d: d.find_elements(By.CSS_SELECTOR, ".crm-edit-wide-order #crm-edit-design-previews"))
+        self.assertTrue(self.driver.execute_script("""
+          return document.getElementById('order-design-details').parentElement === originalDetailsParent
+            && document.querySelector('#order-notes-sales-notes textarea') === originalNotesInput
+            && getComputedStyle(originalDetailsParent).display === 'contents';
+        """))
         applied = self.execute("apply", draft=self.draft())
         self.assertTrue(applied["success"], applied)
         self.assertEqual(self.driver.execute_script("return fixtureSaveCount;"), 0)
