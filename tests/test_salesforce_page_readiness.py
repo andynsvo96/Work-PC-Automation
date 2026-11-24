@@ -62,24 +62,34 @@ class SalesforcePageReadinessTests(TestCase):
         self.assertEqual(driver.find_elements.call_count, 3)
         driver.refresh.assert_not_called()
 
-    def test_email_link_collection_can_redraw_before_a_single_composer_open(self):
+    def test_email_link_click_avoids_stale_web_element_collection(self):
         driver = mock.Mock()
-        link = mock.Mock()
-        driver.find_elements.side_effect = [StaleElementReferenceException(), [link]]
+        driver.find_elements.side_effect = StaleElementReferenceException()
+        driver.execute_script.return_value = True
         with mock.patch.object(shared, "_wait_for_salesforce_account_page") as account, mock.patch.object(shared.time, "sleep"):
             shared._click_salesforce_email(driver, "customer@example.test")
         account.assert_called_once_with(driver, "customer@example.test", timeout=45)
-        self.assertEqual(driver.find_elements.call_count, 2)
-        link.click.assert_called_once_with()
+        driver.find_elements.assert_not_called()
+        driver.execute_script.assert_called_once()
+        self.assertEqual(driver.execute_script.call_args.args[1:], ("customer@example.test",))
         driver.refresh.assert_not_called()
 
-    def test_repeated_email_link_redraw_stops_before_clicking(self):
+    def test_missing_email_link_stops_without_replaying_the_click(self):
         driver = mock.Mock()
-        driver.find_elements.side_effect = StaleElementReferenceException()
+        driver.execute_script.return_value = False
         with mock.patch.object(shared, "_wait_for_salesforce_account_page"), mock.patch.object(shared.time, "sleep"):
-            with self.assertRaisesRegex(shared.CopyrightCancelError, "email links kept changing"):
+            with self.assertRaisesRegex(shared.CopyrightCancelError, "Could not click Salesforce email"):
                 shared._click_salesforce_email(driver, "customer@example.test")
-        self.assertEqual(driver.find_elements.call_count, 3)
+        driver.find_elements.assert_not_called()
+        driver.execute_script.assert_called_once()
+
+    def test_blank_email_stops_before_inspecting_or_clicking_the_page(self):
+        driver = mock.Mock()
+        with mock.patch.object(shared, "_wait_for_salesforce_account_page") as account:
+            with self.assertRaisesRegex(shared.CopyrightCancelError, "customer email is blank"):
+                shared._click_salesforce_email(driver, "  ")
+        account.assert_not_called()
+        driver.find_elements.assert_not_called()
         driver.execute_script.assert_not_called()
 
     def test_non_stale_browser_failure_is_not_retried(self):
@@ -87,7 +97,8 @@ class SalesforcePageReadinessTests(TestCase):
             with self.subTest(action=action):
                 driver = mock.Mock()
                 driver.find_elements.side_effect = WebDriverException("disconnected")
+                driver.execute_script.side_effect = WebDriverException("disconnected")
                 with mock.patch.object(shared, "_wait_for_salesforce_account_page"):
                     with self.assertRaises(WebDriverException):
                         action(driver)
-                driver.find_elements.assert_called_once()
+                self.assertEqual(driver.find_elements.call_count + driver.execute_script.call_count, 1)

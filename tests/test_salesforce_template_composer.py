@@ -13,6 +13,7 @@ from unittest import mock
 
 from flask import Flask, Response
 from selenium import webdriver
+from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from werkzeug.serving import make_server
@@ -163,6 +164,53 @@ class LocalTemplateBrowserTests(unittest.TestCase):
                   return Array.from(document.querySelectorAll('#login-fixture input')).map(input => input.value).join('');
                 """), '')
                 self.assertEqual(self.driver.find_element('id', 'sentHtml').text, '')
+
+    def test_customer_email_link_opens_once_without_returning_stale_elements(self):
+        for shadow, href in (
+            (False, 'javascript:void(0)'), (True, 'javascript:void(0)'),
+            (False, 'mailto:CUSTOMER%40example.test?subject=Order'),
+            (True, 'mailto:CUSTOMER%40example.test?subject=Order'),
+        ):
+            with self.subTest(shadow=shadow, href=href):
+                self.open_fixture()
+                self.driver.execute_script("""
+                  window.emailOpens = 0; window.wrongEmailClicks = 0; window.emailSends = 0;
+                  document.getElementById('send').addEventListener('click', () => window.emailSends++);
+                  const recipient = document.createElement('a');
+                  recipient.href = 'mailto:customer@example.test'; recipient.textContent = 'customer@example.test';
+                  recipient.onclick = event => { event.preventDefault(); window.wrongEmailClicks++; };
+                  document.querySelector('[role=dialog]').prepend(recipient);
+                  const host = document.createElement('div'); document.body.prepend(host);
+                  const root = arguments[0] ? host.attachShadow({mode: 'open'}) : host;
+                  root.innerHTML = `
+                    <div hidden><a href="mailto:customer@example.test">customer@example.test</a></div>
+                    <a href="mailto:customer@example.test.evil">customer@example.test.evil</a>
+                    <a href="mailto:other@example.test">customer@example.test</a>
+                    <span>customer@example.test</span>
+                    <a id="customerEmail" href="javascript:void(0)"><span>Customer &lt;customer@example.test&gt;</span></a>`;
+                  for (const link of root.querySelectorAll('a')) link.onclick = event => { event.preventDefault(); window.wrongEmailClicks++; };
+                  const email = root.querySelector('#customerEmail'); email.setAttribute('href', arguments[1]);
+                  email.onclick = event => { event.preventDefault(); window.emailOpens++; };
+                """, shadow, href)
+                with mock.patch.object(self.driver, 'find_elements', side_effect=StaleElementReferenceException()) as find, \
+                        mock.patch.object(shared.time, 'sleep'):
+                    shared._click_salesforce_email(self.driver, 'customer@example.test')
+                find.assert_not_called()
+                self.assertEqual(self.driver.execute_script(
+                    'return [window.emailOpens, window.wrongEmailClicks, window.emailSends]'), [1, 0, 0])
+
+    def test_email_lookup_does_not_click_page_text_or_another_recipient(self):
+        self.open_fixture()
+        self.driver.execute_script("""
+          window.wrongEmailClicks = 0;
+          const host = document.createElement('div'); document.body.prepend(host);
+          host.innerHTML = '<span>customer@example.test</span><a href="mailto:other@example.test">Other customer</a>';
+          host.querySelector('a').onclick = () => window.wrongEmailClicks++;
+        """)
+        with mock.patch.object(shared.time, 'sleep'):
+            with self.assertRaisesRegex(shared.CopyrightCancelError, 'Could not click Salesforce email'):
+                shared._click_salesforce_email(self.driver, 'customer@example.test')
+        self.assertEqual(self.driver.execute_script('return window.wrongEmailClicks'), 0)
 
     def test_item_sales_note_preserves_production_notes_and_persists_three_lines_once(self):
         self.driver.get(self.url + '/stock-sales-notes?case=composer')

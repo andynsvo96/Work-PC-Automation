@@ -2252,50 +2252,57 @@ def _verify_salesforce_email(driver, expected_email):
 
 def _click_salesforce_email(driver, email):
     target = str(email or "").strip().lower()
+    if not target:
+        raise CopyrightCancelError("Salesforce customer email is blank; the email composer was not opened.")
     _wait_for_salesforce_account_page(driver, target, timeout=45)
-    # Retry only the read. Once a click starts, retain the existing composer and
-    # send guards instead of replaying the email workflow.
-    for attempt in range(3):
-        try:
-            elements = driver.find_elements("xpath", f"//a[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{target}')]")
-            break
-        except StaleElementReferenceException as exc:
-            if attempt == 2:
-                raise CopyrightCancelError(
-                    "Salesforce email links kept changing before opening the composer."
-                ) from exc
-            time.sleep(0.25)
-    for element in elements:
-        try:
-            if not element.is_displayed():
-                continue
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center', inline: 'center'});", element)
-            element.click()
-            return
-        except Exception:
-            pass
+    # Locate and click in one page command. Returning Lightning's anchor list as
+    # WebElements can fail during serialization even after repeated fresh reads.
+    # Only a boolean crosses WebDriver; this action never clicks Send.
     clicked = bool(
         driver.execute_script(
-            """
-            const target = arguments[0].toLowerCase();
-            const nodes = Array.from(document.querySelectorAll('a,button,span,div'));
-            const matches = nodes.filter((el) => {
-              const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+            r"""
+            const target = arguments[0];
+            function walk(root, out = []) {
+              for (const node of root.querySelectorAll('*')) {
+                out.push(node);
+                if (node.shadowRoot) walk(node.shadowRoot, out);
+              }
+              return out;
+            }
+            function inComposer(node) {
+              for (let parent = node; parent; parent = parent.parentElement || parent.getRootNode().host) {
+                if (parent.matches('[role="dialog"], .slds-docked-composer, [data-target-selection-name^="sfdc:RecordField.OutgoingEmail."]')) return true;
+              }
+              return false;
+            }
+            const matches = walk(document).filter((el) => {
+              if (!el.matches('a,button,[role="link"],[role="button"]') || inComposer(el)) return false;
               const rect = el.getBoundingClientRect();
-              const style = window.getComputedStyle(el);
-              return text.includes(target) && rect.width > 0 && rect.height > 0
-                && style.display !== 'none' && style.visibility !== 'hidden';
+              const style = el.ownerDocument.defaultView.getComputedStyle(el);
+              if (!el.isConnected || rect.width <= 0 || rect.height <= 0 || el.disabled
+                  || el.getAttribute('aria-disabled') === 'true'
+                  || style.display === 'none' || style.visibility === 'hidden') return false;
+              const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+              const emails = text.match(/[a-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) || [];
+              if (emails.some(email => email !== target)) return false;
+              const href = (el.getAttribute('href') || '').trim();
+              if (/^mailto:/i.test(href)) {
+                try { return decodeURIComponent(href.slice(7).split('?')[0]).trim().toLowerCase() === target; }
+                catch (error) { return false; }
+              }
+              return emails.length > 0;
             });
             if (!matches.length) return false;
             matches.sort((a, b) => {
+              const anchorRank = Number(b.matches('a')) - Number(a.matches('a'));
+              if (anchorRank) return anchorRank;
               const ar = a.getBoundingClientRect();
               const br = b.getBoundingClientRect();
-              const anchorRank = (a.closest('a') ? 0 : 1) - (b.closest('a') ? 0 : 1);
-              if (anchorRank) return anchorRank;
               return (ar.y - br.y) || (ar.x - br.x);
             });
-            const targetEl = matches[0].closest('a') || matches[0];
+            const targetEl = matches[0];
             targetEl.scrollIntoView({block: 'center', inline: 'center'});
+            if (!targetEl.isConnected) return false;
             targetEl.click();
             return true;
             """,

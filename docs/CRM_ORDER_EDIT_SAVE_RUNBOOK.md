@@ -486,8 +486,13 @@ Lightning page redraw. The shared login helper reacquires the entire input
 snapshot up to three times on a stale element error, including errors during
 collection, visibility checks, or field inspection. Persistent staleness stops
 the login check; an unreadable page cannot establish an authenticated session.
-The email-link helper retries only collection, before any click. Neither
-read retry replays credentials, CRM edits, or Send. Queue summaries identify
+The email-link helper finds and clicks the exact customer email within one
+page command, walking Lightning shadow roots and returning only a boolean.
+It does not return a Selenium element list: that collection itself can fail
+persistently with a stale element error even after rereads. Hidden links,
+different email addresses (including suffix lookalikes), plain page text, and
+controls in an existing composer are excluded. Neither helper replays
+credentials, CRM edits, or Send. Queue summaries identify
 stale elements as **Page changed during automation**, with the detailed cause
 retained in the report. Restart the app and refresh the dashboard to load these
 changes, then use the original queue entry's Retry to preserve its receipts and
