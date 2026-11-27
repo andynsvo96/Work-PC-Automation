@@ -6275,8 +6275,14 @@ def _prepare_and_maybe_send_salesforce_email(
                         driver, crm_handle, customer_email, login_wait_seconds=login_wait_seconds, order_id=order_id,
                     )
                     _verify_salesforce_email(driver, customer_email)
-                    return {**previous, "salesforce_handle": sf_handle, "email": customer_email,
-                            "process": process.key, "dry_run": False}
+                    return {
+                        **previous,
+                        "salesforce_handle": sf_handle,
+                        "email": customer_email,
+                        "process": process.key,
+                        "dry_run": False,
+                        "message": "Reused the confirmed Salesforce customer email.",
+                    }
 
     # The local JSON template loader uses the composer for both Accounts and
     # Contacts; neither record type needs Salesforce's template picker.
@@ -7251,22 +7257,30 @@ def _click_salesforce_case_save(driver, before_click=None):
     raise CopyrightCancelError("Salesforce Case Save button was not found.")
 
 
-def _wait_for_salesforce_refund_case_saved(driver, subject, timeout=45):
+def _wait_for_salesforce_refund_case_saved(driver, order_id, subject, timeout=45):
     deadline = time.monotonic() + timeout
+    case_number = ""
     while time.monotonic() < deadline:
         text = _visible_salesforce_text(driver)
-        lower = text.lower()
-        case_number_match = re.search(r"Case Number\s+([0-9]+)", text, re.I)
-        saved_signal = bool(case_number_match) or "case created" in lower
-        if subject.lower() in lower and SALESFORCE_CASE_STATUS_REFUND_PENDING.lower() in lower and saved_signal:
+        if not case_number:
+            toast = re.search(r'\bCase\s+"?([0-9]+)"?\s+was created\b', text, re.I)
+            if toast and re.search(rf"\bCase Number\s+{toast.group(1)}\b", text, re.I):
+                case_number = toast.group(1)
+                driver.refresh()
+        elif (
+            re.search(rf"\bCase Number\s+{case_number}\b", text, re.I)
+            and re.search(rf"\bPrintfly Order Id\s+0*{re.escape(str(order_id))}\b", text, re.I)
+            and re.search(rf"\bStatus\s+{re.escape(SALESFORCE_CASE_STATUS_REFUND_PENDING)}\s+Edit Status\b", text, re.I)
+            and re.search(rf"\bSubject\s+{re.escape(subject)}\s+Edit Subject\b", text, re.I)
+        ):
             return {
                 "saved": True,
                 "subject": subject,
                 "status": SALESFORCE_CASE_STATUS_REFUND_PENDING,
-                "case_number": case_number_match.group(1) if case_number_match else "",
+                "case_number": case_number,
             }
         time.sleep(1)
-    raise CopyrightCancelError("Salesforce refund-pending Case did not show as saved.")
+    raise CopyrightCancelError("Salesforce did not confirm the saved Case number, order, subject, and status after refresh.")
 
 
 def _create_salesforce_refund_pending_case(driver, order_id, process=COPYRIGHT_CANCEL_PROCESS, dry_run=False):
@@ -7322,7 +7336,7 @@ def _create_salesforce_refund_pending_case(driver, order_id, process=COPYRIGHT_C
         _fill_salesforce_case_subject(driver, subject)
         step = "save and confirm the Case"
         _click_salesforce_case_save(driver, before_click=mark_pending)
-        saved = _wait_for_salesforce_refund_case_saved(driver, subject)
+        saved = _wait_for_salesforce_refund_case_saved(driver, order_id, subject)
     except Exception as exc:
         detail = str(exc).partition("\nStacktrace:")[0].strip()
         raise CopyrightCancelError(f"Salesforce refund Case could not {step}: {detail}") from exc

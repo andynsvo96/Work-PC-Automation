@@ -902,6 +902,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
         class Driver:
             def __init__(self):
                 self.scripts = []
+                self.clicks = []
 
             def execute_script(self, script, *args):
                 self.scripts.append(script)
@@ -940,6 +941,7 @@ class CrmCopyrightCancelTests(unittest.TestCase):
             def execute_cdp_cmd(self, command, params):
                 outer.assertEqual(command, "Input.dispatchMouseEvent")
                 outer.assertIn(params["type"], {"mouseMoved", "mousePressed", "mouseReleased"})
+                self.clicks.append((params["type"], params["x"], params["y"]))
                 return {}
 
         driver = Driver()
@@ -955,52 +957,24 @@ class CrmCopyrightCancelTests(unittest.TestCase):
                 "match_source": "printfly-order-id-column",
             },
         )
-        self.assertEqual(len(driver.scripts), 4)
+        self.assertEqual(driver.clicks, [
+            ("mouseMoved", 111, 281), ("mousePressed", 111, 281), ("mouseReleased", 111, 281),
+        ])
 
     def test_salesforce_case_order_lookup_always_opens_advanced_search(self):
-        class Field:
-            def __init__(self):
-                self.keys = []
-
-            def click(self):
-                return None
-
-            def clear(self):
-                return None
-
-            def send_keys(self, *keys):
-                self.keys.append(keys)
-
-        class Driver:
-            def __init__(self):
-                self.scripts = []
-
-            def execute_script(self, script, *args):
-                self.scripts.append(script)
-                if "Quick lookup suggestions match Salesforce Order Number" in script:
-                    self.assert_quick_lookup_is_disabled(script)
-                    return None
-                if "text.includes('show more results')" in script:
-                    return object()
-                if "some((el) => visible(el) && /(Advanced Search|Search Orders)/i.test(textOf(el)))" in script:
-                    return True
-                raise AssertionError("Unexpected Salesforce lookup script")
-
-            @staticmethod
-            def assert_quick_lookup_is_disabled(script):
-                if "exactOptions" in script or 'return "selected"' in script:
-                    raise AssertionError("Quick Salesforce Order Number selection must remain disabled")
-
-        field = Field()
-        driver = Driver()
-        with mock.patch.object(crm_copyright_cancel, "_salesforce_field_control", return_value=field), mock.patch.object(
-            crm_copyright_cancel.time, "sleep"
-        ):
+        driver = mock.Mock()
+        with mock.patch.object(crm_copyright_cancel, "_salesforce_order_search_dialog_visible",
+                               side_effect=[False, False, True]), \
+             mock.patch.object(crm_copyright_cancel, "_run_salesforce_case_field_action",
+                               side_effect=[{"type": True}, {"more": {"x": 111, "y": 281}}]) as action, \
+             mock.patch.object(crm_copyright_cancel, "_click_viewport_point", return_value=True) as click, \
+             mock.patch.object(crm_copyright_cancel.time, "sleep"):
             mode = crm_copyright_cancel._fill_salesforce_case_order_lookup(driver, "4812079")
 
         self.assertEqual(mode, "advanced")
-        self.assertIn(("4812079",), field.keys)
-        self.assertTrue(any(crm_copyright_cancel.Keys.ENTER in keys for keys in field.keys))
+        driver.execute_cdp_cmd.assert_called_once_with("Input.insertText", {"text": "4812079"})
+        self.assertIn("show more results", action.call_args.args[3])
+        click.assert_called_once_with(driver, 111, 281)
 
     def test_hdd_emb_sales_notes_do_not_require_reason(self):
         self.assertEqual(

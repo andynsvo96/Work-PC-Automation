@@ -579,6 +579,25 @@ also verified live: the payment text and separate invoice link each persisted
 once after reopening Salesforce, with carrier errors retained as information.
 Contact tab handling is covered by the offline fixture; macOS remains unverified.
 
+## Salesforce Refund Pending Case recovery
+
+For non-Stripe payments that require a Salesforce case, the cancellation worker
+uses Advanced Search and matches the exact **Printfly Order Id**. The worker
+locates the Order Number, Status, and Subject controls in the current Lightning
+page for each action so it can handle a redraw while the form loads.
+
+For a whole-order cancellation, Retry can read the confirmed email receipt
+before opening a composer and resume on the verified Salesforce customer
+record. The worker reserves a case receipt under
+`runtime/state/salesforce_refund_cases/` immediately before Save. It records
+the case number after the case creation notice and a refresh confirm the same
+case number, Printfly order ID, subject, and Refund Pending status. A confirmed
+receipt lets later retries reuse the case. An uncertain receipt requires
+Salesforce review before another submission.
+
+The next queued worker loads these changes automatically. Use the original
+queue entry to retain its selections and receipts.
+
 ## Partial copyright cancellation
 
 The extension's Copyright - Cancel action carries a complete order design scan

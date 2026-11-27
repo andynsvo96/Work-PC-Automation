@@ -54,6 +54,38 @@ class CopyrightCancelBrowserTests(unittest.TestCase):
         self.driver.get((ROOT / "tests/fixtures/copyright_cancel_crm.html").as_uri())
         self.driver.execute_script("resetFixture(false);")
 
+    def test_salesforce_case_lookup_survives_replaced_input_and_opens_advanced_search(self):
+        self.driver.execute_script("""
+          document.body.innerHTML = '<section role="dialog"><h1>New Case</h1>'
+            + '<h2>Case Information</h2><div id="lookup-host"></div></section>';
+          const root = document.getElementById('lookup-host').attachShadow({mode: 'open'});
+          root.innerHTML = '<lightning-input-field field-label="Order Number">'
+            + '<input placeholder="Search Orders..."></lightning-input-field>';
+          const input = root.querySelector('input');
+          input.addEventListener('focus', () => input.replaceWith(input.cloneNode()), {once: true});
+          window.quickLookupClicks = 0;
+          root.addEventListener('input', event => {
+            if (event.target.value !== '1234567') return;
+            const quick = document.createElement('button');
+            quick.setAttribute('role', 'option');
+            quick.textContent = '1234567';
+            quick.addEventListener('click', () => window.quickLookupClicks++);
+            root.append(quick);
+            const option = document.createElement('button');
+            option.setAttribute('role', 'option');
+            option.textContent = 'Show more results for "1234567"';
+            root.append(option);
+            option.addEventListener('click', () => {
+              document.body.insertAdjacentHTML('beforeend', '<section role="dialog">Advanced Search</section>');
+            });
+          });
+        """)
+        self.assertEqual(shared._fill_salesforce_case_order_lookup(self.driver, "1234567"), "advanced")
+        self.assertEqual(self.driver.execute_script("""
+          return document.getElementById('lookup-host').shadowRoot.querySelector('input').value;
+        """), "1234567")
+        self.assertEqual(self.driver.execute_script("return window.quickLookupClicks;"), 0)
+
     def show_picker(self):
         self.driver.execute_script(copyright.READER + self.ui + """
           window.queued = [];
