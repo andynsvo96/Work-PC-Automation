@@ -166,6 +166,20 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .field input[type=text],.field input[type=number],.field input[type=time],.field textarea,.field select,select.select{width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;background:#fff}
 .field textarea{min-height:70px}
 .crm-link-panel{border-top:1px solid #eef2f7;padding-top:8px;margin-top:8px}
+.crm-link-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0 6px}
+.crm-link-heading .section-title{margin:0}
+.crm-link-compare-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0 10px}
+.crm-link-compare-controls select{width:auto;max-width:100%;min-width:0}
+.crm-link-compare-table{min-width:600px}
+.crm-link-compare-table td{vertical-align:top;overflow-wrap:anywhere}
+.crm-link-compare-table td:first-child{width:26%}
+.crm-link-compare-table td:nth-child(2){width:15%}
+.crm-link-compare-table ul{margin:0;padding-left:17px}
+.crm-link-compare-table li+li{margin-top:3px}
+button.crm-link-compare-edit{padding:0;background:transparent;color:inherit;border:0;border-radius:0;text-align:left;font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:2px}
+button.crm-link-compare-edit:hover:not(:disabled),:root[data-theme='dark'] button.crm-link-compare-edit:hover:not(:disabled){background:transparent;text-decoration-thickness:2px}
+.crm-link-open{display:inline-block;border:1px solid currentColor;border-radius:6px;padding:3px 8px;white-space:nowrap;text-decoration:none}
+.crm-link-open:hover{text-decoration:underline}
 .crm-link-category{margin:8px 0 10px}
 .crm-link-category-title{font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#475569;margin:0 0 6px}
 .crm-link-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
@@ -5590,6 +5604,148 @@ function createHiddenConfigInput(field) {
   return input;
 }
 
+function parseCrmComparisonLink(value) {
+  try {
+    const url = new URL(value);
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return null;
+    const fragment = url.hash.match(/^#(!?\/[^?]*)(?:\?(.*))?$/);
+    const route = fragment ? fragment[1].replace(/^!/, '') : url.pathname;
+    const report = route.match(/^\/reports?\/(\d+)\/?$/i);
+    const filters = new Map();
+    const fragmentParams = new URLSearchParams(fragment ? fragment[2] : '');
+    const sensitive = /token|session|password|credential|secret|api[_-]?key|csrf|xsrf|authorization|^auth$|jwt|signature/i;
+    for (const params of [url.searchParams, fragmentParams]) {
+      for (const [key, raw] of [...params]) {
+        if (sensitive.test(key)) {
+          params.delete(key);
+          continue;
+        }
+        if (!raw.trim()) continue;
+        if (!filters.has(key)) filters.set(key, []);
+        filters.get(key).push(raw);
+      }
+    }
+    if (fragment && fragment[2] !== undefined) {
+      const query = fragmentParams.toString();
+      url.hash = fragment[1] + (query ? `?${query}` : '');
+    }
+    for (const values of filters.values()) values.sort();
+    return { href: url.href, origin: url.origin, destination: report ? `Report ${report[1]}` : route, filters };
+  } catch {
+    return null;
+  }
+}
+
+function crmLinkFilterLabel(key) {
+  const [, name, bracket] = key.match(/^([^[]+)(?:\[([^\]]*)\])?$/) || [null, key];
+  const words = name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^_+|_+$/g, '').replaceAll('_', ' ').toLowerCase();
+  const label = words.charAt(0).toUpperCase() + words.slice(1);
+  const range = { low: 'minimum', high: 'maximum' };
+  return bracket ? `${label} (${Object.hasOwn(range, bracket) ? range[bracket] : bracket})` : label;
+}
+
+function crmLinkDifferences(reference, link) {
+  const differences = [];
+  if (reference.destination !== link.destination) differences.push(['Destination', reference.destination, link.destination]);
+  if (reference.origin !== link.origin) differences.push(['Origin', reference.origin, link.origin]);
+  const keys = [...new Set([...reference.filters.keys(), ...link.filters.keys()])].sort();
+  for (const key of keys) {
+    const before = reference.filters.get(key) || [];
+    const after = link.filters.get(key) || [];
+    if (before.length === after.length && before.every((value, index) => value === after[index])) continue;
+    differences.push([crmLinkFilterLabel(key), before.join(', ') || 'Any', after.join(', ') || 'Any']);
+  }
+  return differences;
+}
+
+function createCrmLinkComparison(groups) {
+  const view = document.createElement('div');
+  view.id = 'crmLinkComparison';
+  view.hidden = true;
+  view.innerHTML = `
+    <div class='crm-link-compare-controls'>
+      <label for='crmLinkComparisonReference'>Compare against</label>
+      <select id='crmLinkComparisonReference' class='select'></select>
+    </div>
+    <div class='tbl-wrap' tabindex='0' role='region' aria-label='CRM link comparison'>
+      <table class='tbl crm-link-compare-table'>
+        <thead><tr><th scope='col'>Link</th><th scope='col'>Report or route</th><th scope='col'>Differences</th><th scope='col'>Open</th></tr></thead>
+      </table>
+    </div>`;
+  const reference = view.querySelector('select');
+  const table = view.querySelector('table');
+
+  function refresh() {
+    if (view.hidden) return;
+    const selected = reference.value;
+    const entries = [...groups.values()].flat();
+    const links = new Map(entries.map(({ key, input }) => [key, parseCrmComparisonLink(input.value.trim())]));
+    reference.replaceChildren(new Option('Rush link for each tool', ''));
+    for (const entry of entries.filter(({ key }) => links.get(key))) {
+      reference.add(new Option(entry.label, entry.key));
+    }
+    reference.value = links.get(selected) ? selected : '';
+    for (const body of [...table.tBodies]) body.remove();
+    for (const [title, group] of groups) {
+      const body = table.createTBody();
+      const header = document.createElement('th');
+      header.colSpan = 4;
+      header.scope = 'rowgroup';
+      header.textContent = title;
+      body.insertRow().appendChild(header);
+      const referenceKey = reference.value || (group.find((entry) => entry.regularRush && links.get(entry.key))
+        || group.find((entry) => links.get(entry.key)))?.key;
+      const base = links.get(referenceKey);
+      for (const entry of group) {
+        const row = body.insertRow();
+        const edit = document.createElement('button');
+        edit.type = 'button';
+        edit.className = 'crm-link-compare-edit';
+        edit.textContent = entry.label;
+        edit.addEventListener('click', () => openCrmLinkEditor(entry.editKey, entry.key !== entry.editKey));
+        appendCell(row, '').appendChild(edit);
+        const link = links.get(entry.key);
+        appendCell(row, link?.destination || '—');
+        const changes = appendCell(row, '');
+        const action = appendCell(row, '');
+        if (!link) {
+          changes.textContent = entry.input.value.trim() ? 'Invalid link' : 'No link saved';
+          continue;
+        }
+        const open = document.createElement('a');
+        open.href = link.href;
+        open.target = '_blank';
+        open.rel = 'noopener noreferrer';
+        open.className = 'crm-link-open';
+        open.textContent = 'Open';
+        open.setAttribute('aria-label', `Open ${entry.label} in a new tab`);
+        action.appendChild(open);
+        if (entry.key === referenceKey || !base) {
+          changes.textContent = 'Reference';
+          continue;
+        }
+        const differences = crmLinkDifferences(base, link);
+        if (!differences.length) {
+          changes.textContent = 'Same filters and destination';
+          continue;
+        }
+        const list = document.createElement('ul');
+        for (const [label, before, after] of differences) {
+          const item = document.createElement('li');
+          const name = document.createElement('strong');
+          name.textContent = label;
+          item.append(name, ` ${before} → ${after}`);
+          list.appendChild(item);
+        }
+        changes.appendChild(list);
+      }
+    }
+  }
+
+  reference.addEventListener('change', refresh);
+  return { view, refresh };
+}
+
 function renderCrmLinkButtonPanel(fields) {
   const panel = document.createElement('div');
   panel.className = 'crm-link-panel';
@@ -5601,6 +5757,8 @@ function renderCrmLinkButtonPanel(fields) {
   const fieldByKey = {};
   for (const field of fields) fieldByKey[field.key] = field;
   const rendered = new Set(Object.values(CRM_RUSH_CONTRACTED_LINK_KEYS));
+  const editor = document.createElement('div');
+  const groups = new Map();
 
   function appendCategory(titleText, categoryFields) {
     if (!categoryFields.length) return;
@@ -5614,7 +5772,15 @@ function renderCrmLinkButtonPanel(fields) {
     const grid = document.createElement('div');
     grid.className = 'crm-link-grid';
     for (const field of categoryFields) {
-      const label = CRM_LINK_LABEL_OVERRIDES[field.key] || keyLabel(field.key);
+      const key = field.key;
+      const label = CRM_LINK_LABEL_OVERRIDES[key] || keyLabel(key);
+      const contracted = CRM_RUSH_CONTRACTED_LINK_KEYS[key];
+      const tool = ['Core', 'Other'].includes(titleText) ? titleText : label.replace(/^813 /, '').replace(/ (?:Free |Rush |High Value |All |813 )?List$/, '');
+      if (!groups.has(tool)) groups.set(tool, []);
+      groups.get(tool).push({ key, editKey: key, label, input: fieldMap[key], regularRush: titleText === 'Rush' });
+      if (fieldByKey[contracted]) {
+        groups.get(tool).push({ key: contracted, editKey: key, label: `${label} — Contracted Orders`, input: fieldMap[contracted] });
+      }
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'crm-link-btn';
@@ -5627,13 +5793,40 @@ function renderCrmLinkButtonPanel(fields) {
       rendered.add(field.key);
     }
     category.appendChild(grid);
-    panel.appendChild(category);
+    editor.appendChild(category);
   }
 
   for (const group of CRM_LINK_SETTING_GROUPS) {
     appendCategory(group.title, group.keys.map((key) => fieldByKey[key]).filter(Boolean));
   }
   appendCategory('Other', fields.filter((field) => !rendered.has(field.key)));
+
+  const comparison = createCrmLinkComparison(groups);
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'secondary tiny';
+  toggle.textContent = 'Compare links';
+  toggle.setAttribute('aria-controls', comparison.view.id);
+  toggle.setAttribute('aria-expanded', 'false');
+  toggle.addEventListener('click', () => {
+    const showComparison = comparison.view.hidden;
+    comparison.view.hidden = !showComparison;
+    editor.hidden = showComparison;
+    toggle.textContent = showComparison ? 'Link settings' : 'Compare links';
+    toggle.setAttribute('aria-expanded', String(showComparison));
+    comparison.refresh();
+  });
+  const heading = document.createElement('div');
+  heading.className = 'crm-link-heading';
+  const title = document.createElement('div');
+  title.className = 'section-title';
+  title.textContent = 'CRM LINKS';
+  heading.append(title, toggle);
+  panel.prepend(heading);
+  panel.append(editor, comparison.view);
+  panel.addEventListener('change', (event) => {
+    if (event.target.type === 'hidden') comparison.refresh();
+  });
 
   return panel;
 }
@@ -6469,14 +6662,14 @@ function renderCRMSettings(fields) {
   for (const group of groups) {
     const found = group.keys.filter((key) => by[key]);
     if (found.length === 0) continue;
-    const title = document.createElement('div');
-    title.className = 'section-title';
-    title.textContent = group.title;
-    root.appendChild(title);
     if (group.title === 'CRM LINKS') {
       root.appendChild(renderCrmLinkButtonPanel(found.map((key) => by[key])));
       for (const key of found) rendered.add(key);
     } else {
+      const title = document.createElement('div');
+      title.className = 'section-title';
+      title.textContent = group.title;
+      root.appendChild(title);
       const holder = document.createElement('div');
       holder.className = 'subgrid';
       for (const key of found) {
@@ -6694,7 +6887,7 @@ function ensureCrmLinkModal() {
   return backdrop;
 }
 
-function openCrmLinkEditor(key) {
+function openCrmLinkEditor(key, focusContracted = false) {
   const input = fieldMap[key];
   if (!input) return;
 
@@ -6724,8 +6917,9 @@ function openCrmLinkEditor(key) {
   document.getElementById('crmLinkModalContractedOpenBtn').disabled = !contractedTextarea.value.trim();
   document.getElementById('crmLinkModalSaveBtn').textContent = contracted ? 'Save Links' : 'Save Link';
   backdrop.classList.add('active');
-  textarea.focus();
-  textarea.select();
+  const focus = focusContracted && contracted ? contractedTextarea : textarea;
+  focus.focus();
+  focus.select();
 }
 
 function closeCrmLinkEditor() {
