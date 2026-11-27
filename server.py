@@ -7986,11 +7986,11 @@ def _sync_crm_stock_parallel_worker_preferences(parallel_workers):
     return state
 
 
-def _saved_crm_automation_parallel_workers(default=1):
+def _saved_crm_automation_parallel_workers(default=1, *, legacy_manual_workers=None):
     preferences = load_node_preferences()
     resolved = resolve_worker_count(
         preferences.get("worker_mode"),
-        preferences.get("manual_workers", default),
+        preferences.get("manual_workers", default) if legacy_manual_workers is None else legacy_manual_workers,
         snapshot=get_platform_snapshot(),
     )
     return _normalize_crm_positive_int(
@@ -8268,7 +8268,10 @@ def start_crm_address_run(order_id=None, dry_run=False, action="validate_order",
     saved_batch_size = _normalize_crm_batch_size(state.get("saved_batch_size"), default=0, minimum=1, maximum=25, allow_unlimited=True)
     saved_parallel_workers = _normalize_crm_positive_int(state.get("saved_parallel_workers"), default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
     normalized_batch_size = requested_batch_size if batch_size_supplied else saved_batch_size
-    normalized_parallel_workers = requested_parallel_workers if parallel_workers_supplied else saved_parallel_workers
+    normalized_parallel_workers = (
+        requested_parallel_workers if parallel_workers_supplied
+        else _saved_crm_automation_parallel_workers(legacy_manual_workers=saved_parallel_workers)
+    )
     if normalized_batch_size is not None:
         normalized_parallel_workers = min(normalized_parallel_workers, normalized_batch_size)
     if not crm_lock.acquire(blocking=False):
@@ -12191,7 +12194,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
     with crm_address_state_lock:
         address_state = load_crm_address_state()
     batch_size = _normalize_crm_batch_size(address_state.get("saved_batch_size"), default=0, minimum=1, maximum=25, allow_unlimited=True)
-    parallel_workers = _normalize_crm_positive_int(address_state.get("saved_parallel_workers"), default=1, minimum=1, maximum=CRM_SHARED_MAX_PARALLEL_WORKERS)
+    parallel_workers = _saved_crm_automation_parallel_workers(legacy_manual_workers=address_state.get("saved_parallel_workers", 1))
     if batch_size is not None:
         parallel_workers = min(parallel_workers, batch_size)
     list_url = custom_list_url or _crm_processing_address_list_url_for_filter(normalized_filter)

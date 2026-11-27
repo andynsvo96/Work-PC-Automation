@@ -168,16 +168,16 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .crm-link-panel{border-top:1px solid #eef2f7;padding-top:8px;margin-top:8px}
 .crm-link-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0 6px}
 .crm-link-heading .section-title{margin:0}
-.crm-link-compare-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0 10px}
-.crm-link-compare-controls select{width:auto;max-width:100%;min-width:0}
+.crm-link-columns{margin:4px 0 10px}
+.crm-link-columns summary{cursor:pointer;width:max-content}
+.crm-link-column-options{display:flex;flex-wrap:wrap;gap:7px 14px;margin-top:8px}
+.crm-link-column-options label{display:inline-flex;align-items:center;gap:4px}
 .crm-link-compare-table{min-width:600px}
-.crm-link-compare-table td{vertical-align:top;overflow-wrap:anywhere}
-.crm-link-compare-table td:first-child{width:26%}
-.crm-link-compare-table td:nth-child(2){width:15%}
-.crm-link-compare-table ul{margin:0;padding-left:17px}
-.crm-link-compare-table li+li{margin-top:3px}
-button.crm-link-compare-edit{padding:0;background:transparent;color:inherit;border:0;border-radius:0;text-align:left;font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:2px}
-button.crm-link-compare-edit:hover:not(:disabled),:root[data-theme='dark'] button.crm-link-compare-edit:hover:not(:disabled){background:transparent;text-decoration-thickness:2px}
+.crm-link-compare-table td{vertical-align:top;min-width:95px;max-width:250px;overflow-wrap:anywhere}
+.crm-link-compare-table td:first-child{min-width:165px}
+.crm-link-compare-table td:nth-child(2){min-width:70px}
+.crm-link-compare-table td:nth-child(3){white-space:nowrap}
+.crm-link-compare-table button.tiny{margin-left:6px}
 .crm-link-open{display:inline-block;border:1px solid currentColor;border-radius:6px;padding:3px 8px;white-space:nowrap;text-decoration:none}
 .crm-link-open:hover{text-decoration:underline}
 .crm-link-category{margin:8px 0 10px}
@@ -1991,7 +1991,7 @@ button.toggle-btn.processing-tool-toggle.subcontractor-mode.active:hover,
           <div id='nodeHardwareSummary' class='hardware-summary'></div>
           <div class='subgrid'>
             <div class='field'><label for='workerModeSelect'>Worker mode</label><select id='workerModeSelect' onchange='syncWorkerModeControls()'><option value='auto'>Auto-detect</option><option value='manual'>Manual override</option></select></div>
-            <div class='field'><label for='manualWorkerCountInput'>Manual workers</label><input id='manualWorkerCountInput' type='number' min='1' max='8' step='1' value='1'></div>
+            <div class='field'><label for='manualWorkerCountInput'>Manual workers (1–8)</label><input id='manualWorkerCountInput' type='number' min='1' max='8' step='1' value='1' onchange='this.value = normalizeCrmParallelWorkers(this.value)'></div>
           </div>
           <div class='notice' id='workerRecommendationText'>Detecting this computer...</div>
           <div class='hardware-requirements' id='hardwareRequirementsGuide'>
@@ -2049,6 +2049,7 @@ let actionFeedbackTimer = null;
 let dismissedActionFeedbackMessage = null;
 let queueDragTaskId = null;
 let settingsSaveTimer = null;
+let workerSettingsSavePromise = Promise.resolve();
 let settingsSavePromise = Promise.resolve();
 let shippingBypassMappings = [];
 let shippingBypassBrandRules = [];
@@ -4278,14 +4279,26 @@ function syncWorkerModeControls() {
   const manualInput = document.getElementById('manualWorkerCountInput');
   const mode = modeSelect ? String(modeSelect.value || 'auto') : 'auto';
   if (manualInput) manualInput.disabled = mode !== 'manual';
+}
+
+function syncCrmWorkerSettings() {
   const crmInput = document.getElementById('crmSettingsParallelWorkersInput');
-  if (crmInput) {
-    crmInput.disabled = mode !== 'manual';
-    crmInput.title = mode === 'manual' ? '' : 'Auto-detect controls worker count for this computer.';
-    if (mode !== 'manual' && nodeRuntimePayload && nodeRuntimePayload.worker_settings) {
-      crmInput.value = String(nodeRuntimePayload.worker_settings.effective_workers || 1);
-    }
+  if (!crmInput) return;
+  const settings = nodeRuntimePayload?.worker_settings;
+  const auto = settings?.mode === 'auto';
+  crmInput.disabled = !settings || auto;
+  if (settings && (auto || document.activeElement !== crmInput)) {
+    crmInput.value = String(normalizeCrmParallelWorkers(settings.effective_workers));
   }
+  const note = document.getElementById('crmSettingsWorkerRamText');
+  const detect = document.getElementById('crmSettingsWorkerDetectBtn');
+  if (detect && !detect.disabled) detect.textContent = auto ? 'Auto-detect again' : 'Use Auto-detect';
+  if (!note) return;
+  const recommendation = settings?.recommendation?.recommended_workers;
+  const label = auto ? 'Auto-detect' : 'Manual override';
+  note.textContent = settings
+    ? `${label} active. Hardware recommends ${normalizeCrmParallelWorkers(recommendation)} worker(s). ${formatCrmWorkerRamEstimate(crmInput.value)}`
+    : 'Detecting CPU and memory for this computer…';
 }
 
 function renderNodeRuntime(payload) {
@@ -4365,6 +4378,7 @@ function renderNodeRuntime(payload) {
   }
   applyPlatformCapabilities();
   syncWorkerModeControls();
+  syncCrmWorkerSettings();
   updateSettingsOverview();
 }
 
@@ -4478,9 +4492,10 @@ async function updateAppNow(button = null) {
 async function loadNodeRuntime(showBusy = false) {
   const note = document.getElementById('workerRecommendationText');
   if (showBusy && note) note.textContent = 'Auto-detecting this computer...';
+  const previous = nodeRuntimePayload;
   try {
     const payload = await api('/api/node-runtime');
-    renderNodeRuntime(payload);
+    if (previous === nodeRuntimePayload) renderNodeRuntime(payload);
     return payload;
   } catch (error) {
     if (note) note.textContent = 'Hardware detection failed: ' + error.message;
@@ -4488,21 +4503,41 @@ async function loadNodeRuntime(showBusy = false) {
   }
 }
 
-async function saveWorkerSettings(button = null) {
-  return withButtonBusy(button, 'Saving...', async () => {
-    const modeSelect = document.getElementById('workerModeSelect');
-    const manualInput = document.getElementById('manualWorkerCountInput');
-    const payload = await api('/api/worker-settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        worker_mode: modeSelect ? modeSelect.value : 'auto',
-        manual_workers: normalizeCrmParallelWorkers(manualInput ? manualInput.value : 1),
-      }),
+async function saveWorkerSettings(button = null, mode = null, count = null) {
+  try {
+    return await withButtonBusy(button, 'Saving...', async () => {
+      const modeSelect = document.getElementById('workerModeSelect');
+      const manualInput = document.getElementById('manualWorkerCountInput');
+      const values = {
+        worker_mode: mode ?? modeSelect?.value ?? 'auto',
+        manual_workers: normalizeCrmParallelWorkers(count ?? manualInput?.value),
+      };
+      const request = workerSettingsSavePromise.then(() => api('/api/worker-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(values),
+      }));
+      workerSettingsSavePromise = request.catch(() => null);
+      const payload = await request;
+      renderNodeRuntime(payload);
+      setStatus(payload.message || 'Worker settings saved.', 'settings');
     });
-    renderNodeRuntime(payload);
-    setStatus(payload.message || 'Worker settings saved.', 'settings');
+  } catch (error) {
+    setErrorStatus('Worker settings save failed: ' + error.message, 'settings');
+  } finally {
+    syncCrmWorkerSettings();
+  }
+}
+
+async function detectCrmWorkers(button) {
+  const settings = nodeRuntimePayload?.worker_settings;
+  if (settings?.mode !== 'auto') {
+    return saveWorkerSettings(button, 'auto', settings?.manual_workers);
+  }
+  await withButtonBusy(button, 'Detecting...', async () => {
+    if (!await loadNodeRuntime(true)) setErrorStatus('Hardware detection failed.', 'settings');
   });
+  syncCrmWorkerSettings();
 }
 
 function storageGet(key) {
@@ -5630,32 +5665,39 @@ function parseCrmComparisonLink(value) {
       url.hash = fragment[1] + (query ? `?${query}` : '');
     }
     for (const values of filters.values()) values.sort();
-    return { href: url.href, origin: url.origin, destination: report ? `Report ${report[1]}` : route, filters };
+    return { href: url.href, report: report?.[1] || '', route, filters };
   } catch {
     return null;
   }
 }
 
 function crmLinkFilterLabel(key) {
-  const [, name, bracket] = key.match(/^([^[]+)(?:\[([^\]]*)\])?$/) || [null, key];
-  const words = name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^_+|_+$/g, '').replaceAll('_', ' ').toLowerCase();
-  const label = words.charAt(0).toUpperCase() + words.slice(1);
-  const range = { low: 'minimum', high: 'maximum' };
-  return bracket ? `${label} (${Object.hasOwn(range, bracket) ? range[bracket] : bracket})` : label;
+  if (key === 'shippingCharges') return 'Shipping costs';
+  const words = key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^_+|_+$/g, '').replaceAll('_', ' ').toLowerCase();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : key;
 }
 
-function crmLinkDifferences(reference, link) {
-  const differences = [];
-  if (reference.destination !== link.destination) differences.push(['Destination', reference.destination, link.destination]);
-  if (reference.origin !== link.origin) differences.push(['Origin', reference.origin, link.origin]);
-  const keys = [...new Set([...reference.filters.keys(), ...link.filters.keys()])].sort();
-  for (const key of keys) {
-    const before = reference.filters.get(key) || [];
-    const after = link.filters.get(key) || [];
-    if (before.length === after.length && before.every((value, index) => value === after[index])) continue;
-    differences.push([crmLinkFilterLabel(key), before.join(', ') || 'Any', after.join(', ') || 'Any']);
+function crmLinkFilterColumns(links) {
+  const detected = new Set();
+  for (const link of links) {
+    if (!link) continue;
+    for (const key of link.filters.keys()) detected.add(key.replace(/\[(?:low|high)?\]$/, ''));
   }
-  return differences;
+  const priority = ['shippingCharges', 'scheduledPrintDate', 'blank', 'quantity'];
+  return [...priority.filter((key) => detected.delete(key)), ...[...detected].sort((a, b) => crmLinkFilterLabel(a).localeCompare(crmLinkFilterLabel(b)))];
+}
+
+function formatCrmLinkFilterValue(link, key) {
+  if (!link) return '—';
+  const filters = link.filters;
+  const format = (value) => value === 'true' ? 'Yes' : (value === 'false' ? 'No' : value);
+  const parts = [...(filters.get(key) || []), ...(filters.get(`${key}[]`) || [])].map(format);
+  const low = (filters.get(`${key}[low]`) || []).join(', ');
+  const high = (filters.get(`${key}[high]`) || []).join(', ');
+  if (low && high) parts.push(low === high ? low : `${low} – ${high}`);
+  else if (low) parts.push(`≥ ${low}`);
+  else if (high) parts.push(`≤ ${high}`);
+  return parts.join(', ') || '—';
 }
 
 function createCrmLinkComparison(groups) {
@@ -5663,86 +5705,86 @@ function createCrmLinkComparison(groups) {
   view.id = 'crmLinkComparison';
   view.hidden = true;
   view.innerHTML = `
-    <div class='crm-link-compare-controls'>
-      <label for='crmLinkComparisonReference'>Compare against</label>
-      <select id='crmLinkComparisonReference' class='select'></select>
-    </div>
+    <details class='crm-link-columns'>
+      <summary>Filter columns</summary>
+      <div class='crm-link-column-options'></div>
+    </details>
     <div class='tbl-wrap' tabindex='0' role='region' aria-label='CRM link comparison'>
-      <table class='tbl crm-link-compare-table'>
-        <thead><tr><th scope='col'>Link</th><th scope='col'>Report or route</th><th scope='col'>Differences</th><th scope='col'>Open</th></tr></thead>
-      </table>
+      <table class='tbl crm-link-compare-table'><thead><tr></tr></thead></table>
     </div>`;
-  const reference = view.querySelector('select');
+  const options = view.querySelector('.crm-link-column-options');
   const table = view.querySelector('table');
+  const hidden = new Set(['_filterForm', 'sortColumn', 'sortDir']);
+  let links = new Map();
+  let columns = [];
 
-  function refresh() {
-    if (view.hidden) return;
-    const selected = reference.value;
-    const entries = [...groups.values()].flat();
-    const links = new Map(entries.map(({ key, input }) => [key, parseCrmComparisonLink(input.value.trim())]));
-    reference.replaceChildren(new Option('Rush link for each tool', ''));
-    for (const entry of entries.filter(({ key }) => links.get(key))) {
-      reference.add(new Option(entry.label, entry.key));
+  function renderTable() {
+    const visible = columns.filter((key) => !hidden.has(key));
+    const headerRow = table.tHead.rows[0];
+    headerRow.replaceChildren();
+    for (const title of ['Link', 'Report #', 'Actions', ...visible.map(crmLinkFilterLabel)]) {
+      const header = document.createElement('th');
+      header.scope = 'col';
+      header.textContent = title;
+      headerRow.appendChild(header);
     }
-    reference.value = links.get(selected) ? selected : '';
     for (const body of [...table.tBodies]) body.remove();
     for (const [title, group] of groups) {
       const body = table.createTBody();
       const header = document.createElement('th');
-      header.colSpan = 4;
+      header.colSpan = visible.length + 3;
       header.scope = 'rowgroup';
       header.textContent = title;
       body.insertRow().appendChild(header);
-      const referenceKey = reference.value || (group.find((entry) => entry.regularRush && links.get(entry.key))
-        || group.find((entry) => links.get(entry.key)))?.key;
-      const base = links.get(referenceKey);
       for (const entry of group) {
         const row = body.insertRow();
+        const link = links.get(entry.key);
+        appendCell(row, entry.label);
+        appendCell(row, link ? (link.report || link.route) : '—');
+        const action = appendCell(row, '');
+        if (link) {
+          const open = document.createElement('a');
+          open.href = link.href;
+          open.target = '_blank';
+          open.rel = 'noopener noreferrer';
+          open.className = 'crm-link-open';
+          open.textContent = 'Open';
+          open.setAttribute('aria-label', `Open ${entry.label} in a new tab`);
+          action.appendChild(open);
+        }
         const edit = document.createElement('button');
         edit.type = 'button';
-        edit.className = 'crm-link-compare-edit';
-        edit.textContent = entry.label;
+        edit.className = 'secondary tiny';
+        edit.textContent = 'Edit';
+        edit.setAttribute('aria-label', `Edit ${entry.label}`);
         edit.addEventListener('click', () => openCrmLinkEditor(entry.editKey, entry.key !== entry.editKey));
-        appendCell(row, '').appendChild(edit);
-        const link = links.get(entry.key);
-        appendCell(row, link?.destination || '—');
-        const changes = appendCell(row, '');
-        const action = appendCell(row, '');
-        if (!link) {
-          changes.textContent = entry.input.value.trim() ? 'Invalid link' : 'No link saved';
-          continue;
-        }
-        const open = document.createElement('a');
-        open.href = link.href;
-        open.target = '_blank';
-        open.rel = 'noopener noreferrer';
-        open.className = 'crm-link-open';
-        open.textContent = 'Open';
-        open.setAttribute('aria-label', `Open ${entry.label} in a new tab`);
-        action.appendChild(open);
-        if (entry.key === referenceKey || !base) {
-          changes.textContent = 'Reference';
-          continue;
-        }
-        const differences = crmLinkDifferences(base, link);
-        if (!differences.length) {
-          changes.textContent = 'Same filters and destination';
-          continue;
-        }
-        const list = document.createElement('ul');
-        for (const [label, before, after] of differences) {
-          const item = document.createElement('li');
-          const name = document.createElement('strong');
-          name.textContent = label;
-          item.append(name, ` ${before} → ${after}`);
-          list.appendChild(item);
-        }
-        changes.appendChild(list);
+        action.appendChild(edit);
+        if (!link) action.title = entry.input.value.trim() ? 'Invalid link' : 'No link saved';
+        for (const key of visible) appendCell(row, formatCrmLinkFilterValue(link, key));
       }
     }
   }
 
-  reference.addEventListener('change', refresh);
+  function refresh() {
+    if (view.hidden) return;
+    links = new Map([...groups.values()].flat().map(({ key, input }) => [key, parseCrmComparisonLink(input.value.trim())]));
+    columns = crmLinkFilterColumns(links.values());
+    const choices = columns.map((key) => {
+      const label = document.createElement('label');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = !hidden.has(key);
+      box.addEventListener('change', () => {
+        if (box.checked) hidden.delete(key);
+        else hidden.add(key);
+        renderTable();
+      });
+      label.append(box, crmLinkFilterLabel(key));
+      return label;
+    });
+    options.replaceChildren(...(choices.length ? choices : ['No filters detected']));
+    renderTable();
+  }
   return { view, refresh };
 }
 
@@ -5777,7 +5819,7 @@ function renderCrmLinkButtonPanel(fields) {
       const contracted = CRM_RUSH_CONTRACTED_LINK_KEYS[key];
       const tool = ['Core', 'Other'].includes(titleText) ? titleText : label.replace(/^813 /, '').replace(/ (?:Free |Rush |High Value |All |813 )?List$/, '');
       if (!groups.has(tool)) groups.set(tool, []);
-      groups.get(tool).push({ key, editKey: key, label, input: fieldMap[key], regularRush: titleText === 'Rush' });
+      groups.get(tool).push({ key, editKey: key, label, input: fieldMap[key] });
       if (fieldByKey[contracted]) {
         groups.get(tool).push({ key: contracted, editKey: key, label: `${label} — Contracted Orders`, input: fieldMap[contracted] });
       }
@@ -6693,9 +6735,10 @@ function renderCRMSettings(fields) {
 function getSavedCrmBatchPreferences(state) {
   const source = state || {};
   const hasSavedBatchSize = Object.prototype.hasOwnProperty.call(source, 'saved_batch_size');
+  const settings = nodeRuntimePayload?.worker_settings;
   return {
     batchSize: normalizeCrmBatchSize(hasSavedBatchSize ? source.saved_batch_size : 0),
-    parallelWorkers: normalizeCrmParallelWorkers(source.saved_parallel_workers),
+    parallelWorkers: normalizeCrmParallelWorkers(settings?.mode === 'auto' ? settings.effective_workers : source.saved_parallel_workers),
   };
 }
 
@@ -6714,16 +6757,10 @@ function formatCrmWorkerRamEstimate(parallelWorkers) {
   return `RAM estimate: ${workers} worker${workers === 1 ? '' : 's'} x ~${CRM_WORKER_RAM_GB.toFixed(2)} GB = ~${ram} GB for worker browser sessions.`;
 }
 
-function renderCrmPreferenceSettings(addressState = {}, stockState = {}) {
+function renderCrmPreferenceSettings(addressState = {}) {
   const root = document.getElementById('crmPreferenceFields');
   if (!root) return;
   const prefs = getSavedCrmBatchPreferences(addressState);
-  const stock = stockState || {};
-  const fallbackWorkers = stock.saved_order_goods_parallel_workers
-    || stock.saved_product_separator_parallel_workers
-    || stock.saved_auto_splitter_parallel_workers
-    || 1;
-  const savedWorkers = normalizeCrmParallelWorkers(prefs.parallelWorkers || fallbackWorkers);
   root.innerHTML = '';
 
   const title = document.createElement('div');
@@ -6738,7 +6775,7 @@ function renderCrmPreferenceSettings(addressState = {}, stockState = {}) {
   batchField.className = 'field';
   const batchLabel = document.createElement('label');
   batchLabel.setAttribute('for', 'crmSettingsBatchSizeInput');
-  batchLabel.textContent = 'Batch Size';
+  batchLabel.textContent = 'Batch size (1–25 orders)';
   const batchInput = document.createElement('input');
   batchInput.id = 'crmSettingsBatchSizeInput';
   batchInput.type = 'number';
@@ -6746,24 +6783,32 @@ function renderCrmPreferenceSettings(addressState = {}, stockState = {}) {
   batchInput.max = '25';
   batchInput.step = '1';
   batchInput.value = crmBatchPreferenceInputValue(prefs.batchSize);
-  batchInput.placeholder = '0 = continuous';
+  batchInput.setAttribute('aria-describedby', 'crmSettingsBatchSizeHint');
+  batchInput.addEventListener('change', () => {
+    batchInput.value = String(normalizeCrmBatchPreferenceInput(batchInput.value));
+  });
+  const batchHint = document.createElement('div');
+  batchHint.id = 'crmSettingsBatchSizeHint';
+  batchHint.className = 'muted';
+  batchHint.textContent = 'Address Validator runs continuously with 0.';
   batchField.appendChild(batchLabel);
   batchField.appendChild(batchInput);
+  batchField.appendChild(batchHint);
   holder.appendChild(batchField);
 
   const parallelField = document.createElement('div');
   parallelField.className = 'field';
   const parallelLabel = document.createElement('label');
   parallelLabel.setAttribute('for', 'crmSettingsParallelWorkersInput');
-  parallelLabel.textContent = 'Parallel Workers';
+  parallelLabel.textContent = 'Parallel workers (1–8)';
   const parallelInput = document.createElement('input');
   parallelInput.id = 'crmSettingsParallelWorkersInput';
   parallelInput.type = 'number';
   parallelInput.min = '1';
   parallelInput.max = '8';
   parallelInput.step = '1';
-  parallelInput.value = String(savedWorkers);
-  parallelInput.placeholder = '1-8';
+  parallelInput.value = String(prefs.parallelWorkers);
+  parallelInput.setAttribute('aria-describedby', 'crmSettingsWorkerRamText');
   parallelField.appendChild(parallelLabel);
   parallelField.appendChild(parallelInput);
   holder.appendChild(parallelField);
@@ -6771,14 +6816,25 @@ function renderCrmPreferenceSettings(addressState = {}, stockState = {}) {
   const note = document.createElement('div');
   note.className = 'worker-ram-note';
   note.id = 'crmSettingsWorkerRamText';
-  note.textContent = formatCrmWorkerRamEstimate(savedWorkers);
   holder.appendChild(note);
 
-  parallelInput.addEventListener('input', () => {
-    note.textContent = formatCrmWorkerRamEstimate(parallelInput.value);
+  const actions = document.createElement('div');
+  actions.className = 'row';
+  actions.innerHTML = `
+    <button class='secondary tiny' id='crmSettingsWorkerDetectBtn' type='button'>Use Auto-detect</button>
+    <button class='secondary tiny' type='button'>System &amp; workers</button>`;
+  actions.firstElementChild.addEventListener('click', (event) => detectCrmWorkers(event.currentTarget));
+  actions.lastElementChild.addEventListener('click', () => showSettingsSection('system', {focusHeading: true}));
+
+  parallelInput.addEventListener('input', syncCrmWorkerSettings);
+  parallelInput.addEventListener('change', () => {
+    const workers = normalizeCrmParallelWorkers(parallelInput.value);
+    parallelInput.value = String(workers);
+    if (nodeRuntimePayload?.worker_settings?.mode === 'manual') saveWorkerSettings(null, 'manual', workers);
   });
 
-  root.appendChild(holder);
+  root.append(holder, actions);
+  syncCrmWorkerSettings();
 }
 
 function bindSettingsAutoSaveInput(input) {
@@ -6790,7 +6846,6 @@ function bindSettingsAutoSaveInput(input) {
 function bindSettingsAutoSaveHandlers() {
   for (const input of Object.values(fieldMap)) bindSettingsAutoSaveInput(input);
   bindSettingsAutoSaveInput(document.getElementById('crmSettingsBatchSizeInput'));
-  bindSettingsAutoSaveInput(document.getElementById('crmSettingsParallelWorkersInput'));
 }
 
 function collectConfigValues() {
@@ -6807,15 +6862,7 @@ function collectConfigValues() {
 
 function collectCrmPreferenceValues() {
   const batchInput = document.getElementById('crmSettingsBatchSizeInput');
-  const parallelInput = document.getElementById('crmSettingsParallelWorkersInput');
-  const address = {
-    batch_size: normalizeCrmBatchPreferenceInput(batchInput ? batchInput.value : 0),
-  };
-  const modeSelect = document.getElementById('workerModeSelect');
-  if (!modeSelect || modeSelect.value === 'manual') {
-    address.parallel_workers = normalizeCrmParallelWorkers(parallelInput ? parallelInput.value : 1);
-  }
-  return { address };
+  return { address: { batch_size: normalizeCrmBatchPreferenceInput(batchInput?.value) } };
 }
 
 function syncLastConfigGroupsFromValues(values) {
@@ -6977,7 +7024,7 @@ async function saveSettings(options = {}) {
   const crmPreferences = collectCrmPreferenceValues();
   const requests = [];
   const hasConfigValues = Object.keys(configValues).length > 0;
-  const hasCrmPreferenceInputs = Boolean(document.getElementById('crmSettingsBatchSizeInput') && document.getElementById('crmSettingsParallelWorkersInput'));
+  const hasCrmPreferenceInputs = Boolean(document.getElementById('crmSettingsBatchSizeInput'));
 
   settingsSavePromise = settingsSavePromise
     .catch(() => null)
@@ -7017,9 +7064,6 @@ async function saveSettings(options = {}) {
         if (crmResult.status === 'fulfilled') {
           if (crmResult.value) {
             renderCrmAddressStatus(crmResult.value);
-            const stockState = crmOrderGoodsStatusPayload && crmOrderGoodsStatusPayload.state ? crmOrderGoodsStatusPayload.state : {};
-            renderCrmPreferenceSettings(crmResult.value.state || {}, stockState);
-            bindSettingsAutoSaveHandlers();
             if (crmResult.value.message) messages.push(crmResult.value.message);
           }
         } else {
@@ -9926,16 +9970,8 @@ function renderCrmAddressStatus(payload) {
   const batchSettingsText = document.getElementById('crmAddressBatchSettingsText');
   if (batchSettingsText) batchSettingsText.textContent = formatCrmBatchPreferenceSummary(savedBatchPrefs.batchSize, savedBatchPrefs.parallelWorkers);
   const batchPrefInput = document.getElementById('crmSettingsBatchSizeInput');
-  const parallelPrefInput = document.getElementById('crmSettingsParallelWorkersInput');
   if (batchPrefInput && document.activeElement !== batchPrefInput) {
     batchPrefInput.value = crmBatchPreferenceInputValue(savedBatchPrefs.batchSize);
-  }
-  if (parallelPrefInput && document.activeElement !== parallelPrefInput) {
-    parallelPrefInput.value = String(savedBatchPrefs.parallelWorkers);
-  }
-  const workerRamText = document.getElementById('crmSettingsWorkerRamText');
-  if (workerRamText && parallelPrefInput) {
-    workerRamText.textContent = formatCrmWorkerRamEstimate(parallelPrefInput.value);
   }
   renderCrmAddressModeControls();
   const filterToggleBtn = document.getElementById('crmAddressFilterToggleBtn');
@@ -10367,10 +10403,7 @@ async function loadConfig() {
     renderWorkSettings(groups.work || []);
     renderCRMSettings(allConfigFields);
     renderOtherSettings(groups.other || []);
-    renderCrmPreferenceSettings(
-      crmAddressStatusPayload && crmAddressStatusPayload.state ? crmAddressStatusPayload.state : {},
-      crmOrderGoodsStatusPayload && crmOrderGoodsStatusPayload.state ? crmOrderGoodsStatusPayload.state : {},
-    );
+    renderCrmPreferenceSettings(crmAddressStatusPayload?.state);
     bindSettingsAutoSaveHandlers();
     updateSettingsOverview();
     filterSettingsNavigation(document.getElementById('settingsSearchInput') ? document.getElementById('settingsSearchInput').value : '');

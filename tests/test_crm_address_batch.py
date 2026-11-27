@@ -13095,10 +13095,8 @@ class CrmAddressServerTests(unittest.TestCase):
         thread_instance = mock.Mock()
         mock_thread.return_value = thread_instance
 
-        ok, message = server.start_crm_address_run(
-            dry_run=True,
-            action="validate_batch",
-        )
+        with mock.patch.object(server, "load_node_preferences", return_value={"worker_mode": "manual", "manual_workers": 1}):
+            ok, message = server.start_crm_address_run(dry_run=True, action="validate_batch")
 
         self.assertTrue(ok)
         self.assertIn("continuously until no orders remain", message)
@@ -13108,6 +13106,24 @@ class CrmAddressServerTests(unittest.TestCase):
             daemon=True,
         )
         thread_instance.start.assert_called_once()
+
+    @mock.patch.object(server.threading, "Thread")
+    @mock.patch.object(server, "load_crm_address_state")
+    @mock.patch.object(server, "ensure_crm_address_state_file")
+    @mock.patch.object(server, "crm_lock")
+    def test_address_batch_uses_detected_capacity_up_to_its_batch_limit(
+        self, mock_crm_lock, _ensure, mock_load_state, mock_thread,
+    ):
+        mock_crm_lock.acquire.return_value = True
+        mock_load_state.return_value = {"active_filter": "rush", "saved_batch_size": 3, "saved_parallel_workers": 1}
+        snapshot = mock.Mock(worker_recommendation={"recommended_workers": 6})
+        with mock.patch.object(server, "load_node_preferences", return_value={"worker_mode": "auto"}), mock.patch.object(
+            server, "get_platform_snapshot", return_value=snapshot
+        ):
+            self.assertTrue(server.start_crm_address_run(dry_run=True, action="validate_batch")[0])
+            self.assertEqual(mock_thread.call_args.kwargs["args"], (None, "rush", True, "validate_batch", 3, 3, None))
+            self.assertTrue(server.start_crm_address_run(dry_run=True, action="validate_batch", parallel_workers=2)[0])
+            self.assertEqual(mock_thread.call_args.kwargs["args"], (None, "rush", True, "validate_batch", 3, 2, None))
 
 
 class AutomationRuntimeTests(unittest.TestCase):
