@@ -55,7 +55,13 @@ from clipboard_runtime import (
     create_platform_clipboard_adapter,
 )
 from credential_store import CREDENTIAL_TARGETS
-from crm_list_url import normalize_custom_crm_order_ids, normalize_custom_crm_target
+from crm_list_url import (
+    CRM_RUSH_REPORT_KEYS,
+    normalize_custom_crm_list_url,
+    normalize_custom_crm_order_ids,
+    normalize_custom_crm_target,
+    normalize_rush_contracted_steps,
+)
 import config as config_module
 from m6_posting import M6PostingError, get_m6_posting_enabled, set_m6_posting_enabled
 from node_preferences import load_node_preferences, update_node_preferences
@@ -6184,6 +6190,7 @@ CRM_PROCESSING_MODE_PREF_KEYS = (
     "push_back_enabled",
 )
 CRM_PROCESSING_PREF_KEYS = CRM_PROCESSING_GLOBAL_PREF_KEYS + CRM_PROCESSING_MODE_PREF_KEYS
+CRM_RUSH_REPORT_SETTING_KEYS = tuple(key for pair in CRM_RUSH_REPORT_KEYS.values() for key in pair)
 
 
 def _normalize_crm_shipping_filter(value):
@@ -6315,6 +6322,8 @@ def _sanitize_crm_processing_mode_preferences(processing_filter, values=None):
     for pref_key in CRM_PROCESSING_MODE_PREF_KEYS:
         if pref_key in source:
             prefs[pref_key] = _normalize_crm_processing_enabled(source.get(pref_key), default=prefs.get(pref_key))
+    if key == "rush":
+        prefs["rush_contracted_steps"] = normalize_rush_contracted_steps(source.get("rush_contracted_steps"), prefs)
     if key == "813":
         prefs["stock_unlocker_enabled"] = False
         prefs["product_separator_enabled"] = False
@@ -6353,6 +6362,7 @@ def _apply_crm_processing_mode_preferences_to_state(state, processing_filter=Non
     active_preferences = mode_preferences.get(normalized_filter) or _default_crm_processing_mode_preferences(normalized_filter)
     for pref_key in CRM_PROCESSING_MODE_PREF_KEYS:
         state[pref_key] = bool(active_preferences.get(pref_key))
+    state["rush_contracted_steps"] = list(active_preferences.get("rush_contracted_steps", []))
     return state
 
 
@@ -11525,7 +11535,7 @@ def clear_crm_mass_emailer_history():
     return True, "Sheets Scanner history cleared."
 
 
-def update_crm_processing_preferences(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None, custom_list_url=None, custom_input_type=None, custom_order_ids=None):
+def update_crm_processing_preferences(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None, custom_list_url=None, custom_input_type=None, custom_order_ids=None, rush_contracted_steps=None):
     ensure_crm_processing_state_file()
     unlock_supplied = _crm_processing_value_supplied(stock_unlocker_enabled)
     address_supplied = _crm_processing_value_supplied(address_validator_enabled)
@@ -11586,6 +11596,8 @@ def update_crm_processing_preferences(stock_unlocker_enabled=None, mass_emailer_
                 push_back_enabled,
                 default=target_preferences.get("push_back_enabled"),
             )
+        if rush_contracted_steps is not None:
+            target_preferences["rush_contracted_steps"] = rush_contracted_steps
         mode_preferences[target_filter] = _sanitize_crm_processing_mode_preferences(target_filter, target_preferences)
         state["mode_preferences"] = _normalize_crm_processing_mode_preferences(mode_preferences)
         _apply_crm_processing_mode_preferences_to_state(state, target_filter)
@@ -11803,6 +11815,24 @@ def _run_crm_processing_auto_splitter_order(order_id):
 
 def _run_crm_processing_step(step_key, processing_filter, processing_state=None, target_order_id=None):
     target_order_id = _normalize_crm_single_order_id(target_order_id)
+    contracted_list_url = None
+    if (
+        _normalize_crm_shipping_filter(processing_filter) == "rush"
+        and step_key in (processing_state or {}).get("rush_contracted_steps", [])
+        and step_key in CRM_RUSH_REPORT_KEYS
+        and (not target_order_id or step_key == "stock_unlocker")
+    ):
+        _, config_key = CRM_RUSH_REPORT_KEYS[step_key]
+        try:
+            contracted_list_url = normalize_custom_crm_list_url(getattr(config_module, config_key, ""))
+        except ValueError:
+            label = _crm_processing_step_label(step_key)
+            return {
+                "key": step_key,
+                "label": label,
+                "success": False,
+                "message": f"Set a valid Contracted Orders link for {label} in Settings > CRM links & defaults.",
+            }
     custom_list_url = None
     if _normalize_crm_shipping_filter(processing_filter) == "custom":
         try:
@@ -11939,7 +11969,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
 
     if step_key == "order_goods":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-        list_url = custom_list_url or _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
+        list_url = contracted_list_url or custom_list_url or _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
         if normalized_filter in {"813", "high_value", "free", "all"} and not list_url and not target_order_id:
             message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
             return {
@@ -11990,7 +12020,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
 
     if step_key == "shipping_bypasser":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-        list_url = custom_list_url or _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
+        list_url = contracted_list_url or custom_list_url or _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
         if normalized_filter in {"813", "high_value", "free", "all"} and not list_url and not target_order_id:
             message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
             return {
@@ -12044,7 +12074,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
 
     if step_key == "push_back":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-        list_url = custom_list_url or _crm_processing_push_back_list_url_for_filter(normalized_filter)
+        list_url = contracted_list_url or custom_list_url or _crm_processing_push_back_list_url_for_filter(normalized_filter)
         if normalized_filter not in {"rush", "high_value", "813", "free", "all"}:
             message = "Push Back is available for Rush, High Value, Free, ALL, and 813 modes."
             return {
@@ -12113,7 +12143,7 @@ def _run_crm_processing_step(step_key, processing_filter, processing_state=None,
 
     if step_key == "stock_unlocker":
         normalized_filter = _normalize_crm_shipping_filter(processing_filter)
-        list_url = custom_list_url or _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
+        list_url = contracted_list_url or custom_list_url or _crm_processing_mode_list_url_for_step(normalized_filter, step_key)
         if normalized_filter in {"free", "all"} and not list_url and not target_order_id:
             message = f"{_crm_processing_mode_url_config_key_for_step(normalized_filter, step_key)} is empty in config.py."
             return {
@@ -12333,6 +12363,7 @@ def start_crm_processing_run(
     custom_list_url=None,
     custom_input_type=None,
     custom_order_ids=None,
+    rush_contracted_steps=None,
 ):
     ensure_crm_processing_state_file()
     unlock_supplied = _crm_processing_value_supplied(stock_unlocker_enabled)
@@ -12394,6 +12425,9 @@ def start_crm_processing_run(
                 push_back_enabled,
                 default=target_preferences.get("push_back_enabled"),
             )
+        if rush_contracted_steps is not None or not persist_preferences:
+            # Queued runs created before this option used the regular Rush reports.
+            target_preferences["rush_contracted_steps"] = rush_contracted_steps
         mode_preferences[target_filter] = _sanitize_crm_processing_mode_preferences(target_filter, target_preferences)
         state["mode_preferences"] = _normalize_crm_processing_mode_preferences(mode_preferences)
         _apply_crm_processing_mode_preferences_to_state(state, target_filter)
@@ -14521,7 +14555,7 @@ def run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, limit=
     return _wait_for_status_completion(get_crm_mass_emailer_status_payload, msg)
 
 
-def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None, retry_plan=None, custom_list_url=None, custom_input_type=None, custom_order_ids=None):
+def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enabled=None, address_validator_enabled=None, product_separator_enabled=None, auto_splitter_enabled=None, order_goods_enabled=None, shipping_bypasser_enabled=None, push_back_enabled=None, processing_filter=None, retry_plan=None, custom_list_url=None, custom_input_type=None, custom_order_ids=None, rush_contracted_steps=None):
     ok, msg = start_crm_processing_run(
         stock_unlocker_enabled=stock_unlocker_enabled,
         mass_emailer_enabled=mass_emailer_enabled,
@@ -14537,6 +14571,7 @@ def run_crm_processing_run_queued(stock_unlocker_enabled=None, mass_emailer_enab
         custom_list_url=custom_list_url,
         custom_input_type=custom_input_type,
         custom_order_ids=custom_order_ids,
+        rush_contracted_steps=rush_contracted_steps,
     )
     if not ok:
         return ok, msg
@@ -14563,7 +14598,8 @@ def _run_system_power_task(action):
 
 def _load_config_assignment_keys():
     try:
-        src = open(CONFIG_FILE, "r", encoding="utf-8-sig").read()
+        with open(CONFIG_FILE, "r", encoding="utf-8-sig") as config_file:
+            src = config_file.read()
         tree = ast.parse(src)
     except Exception:
         return []
@@ -14654,15 +14690,14 @@ def _format_python_literal(v):
 
 
 def get_config_ui_payload():
+    groups = {"paycom": [], "slack": [], "work": [], "crm": [], "other": []}
     with config_lock:
         importlib.reload(config_module)
         _apply_runtime_config_from_module()
-
-    groups = {"paycom": [], "slack": [], "work": [], "crm": [], "other": []}
-    for key in _load_config_assignment_keys():
-        if hasattr(config_module, key):
-            val = getattr(config_module, key)
-            groups[_cfg_group(key)].append({"key": key, "type": _field_kind(val), "value": val})
+        for key in dict.fromkeys([*_load_config_assignment_keys(), *CRM_RUSH_REPORT_SETTING_KEYS]):
+            if hasattr(config_module, key) or key in CRM_RUSH_REPORT_SETTING_KEYS:
+                val = getattr(config_module, key, "")
+                groups[_cfg_group(key)].append({"key": key, "type": _field_kind(val), "value": val})
     return {"success": True, "groups": groups}
 
 
@@ -14671,15 +14706,17 @@ def update_config_values(updates):
         return False, "No config values provided."
 
     with config_lock:
-        src = open(CONFIG_FILE, "r", encoding="utf-8-sig").read()
+        with open(CONFIG_FILE, "r", encoding="utf-8-sig") as config_file:
+            src = config_file.read()
         keys = _load_config_assignment_keys()
-        allowed = set(keys)
+        allowed = set(keys).union(CRM_RUSH_REPORT_SETTING_KEYS)
         bad = [k for k in updates if k not in allowed]
         if bad:
             return False, f"Invalid config keys: {', '.join(sorted(bad))}"
 
         importlib.reload(config_module)
         current = {k: getattr(config_module, k) for k in keys if hasattr(config_module, k)}
+        current.update({k: getattr(config_module, k, "") for k in CRM_RUSH_REPORT_SETTING_KEYS})
         parsed = {}
         for k, raw in updates.items():
             if k in current:
@@ -14696,7 +14733,7 @@ def update_config_values(updates):
             if k in ranges:
                 s, e = ranges[k]
                 repl.append((s, e, line))
-            else:
+            elif v != current[k]:
                 repl.append((len(lines) + 1, len(lines), line))
         repl.sort(key=lambda x: x[0], reverse=True)
         for s, e, line in repl:

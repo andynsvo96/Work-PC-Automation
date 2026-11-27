@@ -184,6 +184,11 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .modal textarea{width:100%;min-height:150px;resize:vertical;padding:9px;border:1px solid #cbd5e1;border-radius:6px;font:13px/1.4 Consolas,'Courier New',monospace}
 .modal-actions{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px}
 .modal-actions .row{margin-bottom:0}
+#crmLinkModalBackdrop.paired textarea{min-height:64px}
+#crmLinkModalBackdrop .modal-actions{justify-content:flex-end}
+.crm-link-modal-field{margin-top:12px}
+.crm-link-modal-field label:not(.sr-only){display:block;margin-bottom:4px;font-weight:700}
+.crm-link-modal-field button{margin-top:4px}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 button{border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:6px;padding:7px 10px;cursor:pointer}
 button.secondary{background:#fff;color:#2563eb}
@@ -781,8 +786,12 @@ button.toggle-btn.processing-tool-toggle{display:inline-flex;align-items:center;
 @media (max-width:980px){.rough-two,.rough-half{grid-template-columns:1fr}.rough-system-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-week{grid-template-columns:repeat(4,minmax(0,1fr))}.rough-day:nth-child(4){border-right:0}.rough-day:nth-child(n+5){border-top:1px solid var(--rough-border)}.weekly-calculator .work-plan-days{grid-template-columns:repeat(4,minmax(0,1fr))}.rough-history-panel{width:calc(100vw - 48px)}}
 @media (max-width:700px){.wrap{padding:0 16px 28px}.app-header{height:auto;min-height:72px;margin:0 -16px;padding:12px 16px;align-items:flex-start;flex-direction:column}.app-header-actions{justify-content:flex-start;width:100%}.tab-bar{height:auto;min-height:60px;margin:0 -16px 22px;padding:10px 16px;flex-wrap:wrap;overflow:visible}.control-target{width:100%;margin-left:0}.control-target select{flex:1;min-width:0;max-width:none}.page-heading{align-items:flex-start;flex-direction:column}.page-heading-actions{justify-content:flex-start}.rough-metric-row{grid-template-columns:1fr}.rough-week{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-day:nth-child(2n){border-right:0}.rough-day:nth-child(n+3){border-top:1px solid var(--rough-border)}.weekly-calculator .work-plan-days{grid-template-columns:repeat(2,minmax(0,1fr))}.slack-history-row{grid-template-columns:1fr auto}.slack-history-message{grid-column:1/-1}.rough-latest-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-action-split{grid-template-columns:1fr}.rough-action-separator{display:none}.rough-action-row{grid-template-columns:1fr}.rough-action-row>button{width:100%}.rough-power-actions{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-schedule{grid-template-columns:1fr}.rough-sync-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.rough-history-panel{position:fixed;inset:70px 12px auto;width:auto;max-height:75vh}.workspace-nav{width:100%}.workspace-nav-btn{flex:1}.compact-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.compact-tools button{width:100%}}
 @media (max-width:560px){.app-brand-sub{display:none}.app-header-actions{gap:6px}.app-header-actions button{padding:7px 9px}.tab-bar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:auto}.tab-btn{min-width:0;padding:8px 4px;justify-content:center;font-size:11px}.control-target{grid-column:1/-1}.workspace-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));box-sizing:border-box}.workspace-nav-btn{min-width:0;white-space:normal}.rough-system-metrics{grid-template-columns:1fr}.rough-card{padding:15px}.rough-card-head{flex-wrap:wrap}.rough-week{grid-template-columns:1fr 1fr}.rough-big-time{font-size:25px}.rough-actions>*{max-width:100%}.rough-power-actions{grid-template-columns:1fr}.rough-history-panel{inset:54px 8px auto}.processing-tool-health-card .rough-card-head button{width:100%}}
+button.toggle-btn.processing-tool-toggle.rush-contracted-mode.active,
+:root[data-theme='dark'] button.toggle-btn.processing-tool-toggle.rush-contracted-mode.active,
 button.toggle-btn.processing-tool-toggle.subcontractor-mode.active,
 :root[data-theme='dark'] button.toggle-btn.processing-tool-toggle.subcontractor-mode.active{background:#7c3aed;border-color:#7c3aed;color:#fff}
+button.toggle-btn.processing-tool-toggle.rush-contracted-mode.active:hover,
+:root[data-theme='dark'] button.toggle-btn.processing-tool-toggle.rush-contracted-mode.active:hover,
 button.toggle-btn.processing-tool-toggle.subcontractor-mode.active:hover,
 :root[data-theme='dark'] button.toggle-btn.processing-tool-toggle.subcontractor-mode.active:hover{background:#6d28d9;border-color:#6d28d9;color:#fff}
 </style>
@@ -1092,6 +1101,7 @@ button.toggle-btn.processing-tool-toggle.subcontractor-mode.active:hover,
       <button class='secondary toggle-btn processing-tool-toggle' id='crmProcessingShippingBypasserToggleBtn' onclick='toggleCrmProcessingSelection("shipping_bypasser")'>Bypasser</button>
       <button class='secondary toggle-btn processing-tool-toggle' id='crmProcessingPushBackToggleBtn' onclick='toggleCrmProcessingSelection("push_back")'>Push Back</button>
     </div>
+    <div class='rough-action-note' id='crmProcessingRushToolHint' style='margin-top:8px'>Unlocker, Order Goods, Bypasser, and Push Back cycle through Regular (blue), Contracted (purple), and Off (gray).</div>
     <div class='muted' id='crmProcessingSelectionText' style='margin-top:8px'>Selected automations: loading...</div>
     <div class='rough-action-split'>
       <div class='rough-action-cell'>
@@ -2066,6 +2076,7 @@ let slackLunchTickTimer = null;
 let consoleAutoScroll = true;
 let consoleLastPayload = null;
 let crmProcessingStatusPayload = null;
+let crmProcessingSelectionPromise = null;
 let crmProcessingPollTimer = null;
 let crmProcessingPollIntervalMs = 0;
 let crmProcessingReportPeriod = 'daily';
@@ -2131,6 +2142,12 @@ const HIDDEN_CONFIG_KEYS = new Set([
   'CRM_SHIPPING_813_URL',
   'PRODUCT_SEPARATOR_LIST_URL_813',
 ]);
+const CRM_RUSH_CONTRACTED_LINK_KEYS = {
+  CRM_LOCKED_URL: 'CRM_UNLOCKER_RUSH_CONTRACTED_URL',
+  CRM_ORDER_GOODS_RUSH_URL: 'CRM_ORDER_GOODS_RUSH_CONTRACTED_URL',
+  CRM_SHIPPING_BYPASS_URL: 'CRM_SHIPPING_BYPASS_RUSH_CONTRACTED_URL',
+  CRM_PUSH_BACK_RUSH_URL: 'CRM_PUSH_BACK_RUSH_CONTRACTED_URL',
+};
 const CRM_LINK_SETTING_KEYS = [
   'CRM_LOGIN_URL',
   'CRM_LOCKED_URL',
@@ -2165,10 +2182,11 @@ const CRM_LINK_SETTING_KEYS = [
   'PRODUCT_SEPARATOR_LIST_URL_ALL',
   'PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE',
   'PRODUCT_SEPARATOR_LIST_URL',
+  ...Object.values(CRM_RUSH_CONTRACTED_LINK_KEYS),
 ];
 const CRM_LINK_LABEL_OVERRIDES = {
   CRM_LOGIN_URL: 'CRM Login',
-  CRM_LOCKED_URL: 'Unlocker List',
+  CRM_LOCKED_URL: 'Unlocker Rush List',
   CRM_UNLOCKER_FREE_URL: 'Unlocker Free List',
   CRM_UNLOCKER_ALL_URL: 'Unlocker All List',
   CRM_SHIPPING_FREE_URL: 'Validator Free List',
@@ -2209,7 +2227,7 @@ const CRM_LINK_SETTING_GROUPS = [
   },
   {
     title: 'Rush',
-    keys: ['CRM_SHIPPING_RUSH_URL', 'PRODUCT_SEPARATOR_LIST_URL_RUSH', 'CRM_AUTO_SPLITTER_LIST_URL_RUSH', 'CRM_ORDER_GOODS_RUSH_URL', 'CRM_SHIPPING_BYPASS_URL', 'CRM_PUSH_BACK_RUSH_URL'],
+    keys: ['CRM_SHIPPING_RUSH_URL', 'PRODUCT_SEPARATOR_LIST_URL_RUSH', 'CRM_AUTO_SPLITTER_LIST_URL_RUSH', 'CRM_LOCKED_URL', 'CRM_ORDER_GOODS_RUSH_URL', 'CRM_SHIPPING_BYPASS_URL', 'CRM_PUSH_BACK_RUSH_URL'],
   },
   {
     title: 'High Value',
@@ -2225,7 +2243,7 @@ const CRM_LINK_SETTING_GROUPS = [
   },
   {
     title: 'Core',
-    keys: ['CRM_LOGIN_URL', 'CRM_LOCKED_URL', 'CRM_SHIPPING_URL', 'PROCESSOR_LOGIN_URL', 'PROCESSOR_LIST_URL', 'PROCESSOR_ORDER_URL_TEMPLATE', 'PRODUCT_SEPARATOR_LIST_URL'],
+    keys: ['CRM_LOGIN_URL', 'CRM_SHIPPING_URL', 'PROCESSOR_LOGIN_URL', 'PROCESSOR_LIST_URL', 'PROCESSOR_ORDER_URL_TEMPLATE', 'PRODUCT_SEPARATOR_LIST_URL'],
   },
 ];
 
@@ -2249,12 +2267,34 @@ function canCrmProcessingFilterRunOrderSupport(value) {
   return ['rush', 'high_value', 'free', 'all', '813', 'custom'].includes(normalizeCrmProcessingFilter(value));
 }
 
-function updateCrmProcessingSubcontractorToolStyles(processingFilter) {
-  const subcontractorMode = ['free', 'all'].includes(normalizeCrmProcessingFilter(processingFilter));
-  for (const id of ['crmProcessingUnlockToggleBtn', 'crmProcessingOrderGoodsToggleBtn', 'crmProcessingShippingBypasserToggleBtn', 'crmProcessingPushBackToggleBtn']) {
+const CRM_PROCESSING_RUSH_TOOL_BUTTON_IDS = {
+  stock_unlocker: 'crmProcessingUnlockToggleBtn',
+  order_goods: 'crmProcessingOrderGoodsToggleBtn',
+  shipping_bypasser: 'crmProcessingShippingBypasserToggleBtn',
+  push_back: 'crmProcessingPushBackToggleBtn',
+};
+
+function updateCrmProcessingStockToolStyles(processingFilter, state) {
+  const rush = processingFilter === 'rush';
+  const subcontractorMode = ['free', 'all'].includes(processingFilter);
+  for (const [step, id] of Object.entries(CRM_PROCESSING_RUSH_TOOL_BUTTON_IDS)) {
     const button = document.getElementById(id);
-    if (button) button.classList.toggle('subcontractor-mode', subcontractorMode);
+    if (!button) continue;
+    const enabled = button.classList.contains('active');
+    const contracted = rush && enabled && (state.rush_contracted_steps || []).includes(step);
+    button.classList.toggle('subcontractor-mode', subcontractorMode);
+    button.classList.toggle('rush-contracted-mode', contracted);
+    if (rush) {
+      const current = contracted ? 'Contracted Orders' : (enabled ? 'Regular Orders' : 'Off');
+      const next = contracted ? 'turn off' : (enabled ? 'use Contracted Orders' : 'use Regular Orders');
+      button.setAttribute('aria-label', `${button.textContent} (${current})`);
+      button.title = `${current}. Click to ${next}. ${button.title}`;
+    } else {
+      button.removeAttribute('aria-label');
+    }
   }
+  const hint = document.getElementById('crmProcessingRushToolHint');
+  if (hint) hint.hidden = !rush;
 }
 
 function canCrmProcessingFilterRunOrderGoods(value) {
@@ -5587,7 +5627,7 @@ function renderCrmLinkButtonPanel(fields) {
 
   const fieldByKey = {};
   for (const field of fields) fieldByKey[field.key] = field;
-  const rendered = new Set();
+  const rendered = new Set(Object.values(CRM_RUSH_CONTRACTED_LINK_KEYS));
 
   function appendCategory(titleText, categoryFields) {
     if (!categoryFields.length) return;
@@ -5602,13 +5642,13 @@ function renderCrmLinkButtonPanel(fields) {
     grid.className = 'crm-link-grid';
     for (const field of categoryFields) {
       const label = CRM_LINK_LABEL_OVERRIDES[field.key] || keyLabel(field.key);
-      const currentValue = field.value == null ? '' : String(field.value).trim();
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'crm-link-btn' + (currentValue ? ' configured' : '');
+      btn.className = 'crm-link-btn';
       btn.dataset.key = field.key;
       btn.title = label;
-      btn.innerHTML = "<span class='name'>" + esc(label) + "</span><span class='state'>" + (currentValue ? 'Set' : 'Empty') + "</span>";
+      btn.innerHTML = "<span class='name'>" + esc(label) + "</span><span class='state'></span>";
+      updateCrmLinkButtonState(field.key, btn);
       btn.addEventListener('click', () => openCrmLinkEditor(field.key));
       grid.appendChild(btn);
       rendered.add(field.key);
@@ -6637,11 +6677,18 @@ function ensureCrmLinkModal() {
     "    <h2 id='crmLinkModalTitle'>CRM Link</h2>",
     "    <button class='secondary modal-close-btn' type='button' id='crmLinkModalCloseBtn' aria-label='Close CRM link editor'>X</button>",
     "  </div>",
-    "  <label class='sr-only' for='crmLinkModalInput'>CRM link URL</label>",
-    "  <textarea id='crmLinkModalInput' spellcheck='false'></textarea>",
-    "  <div class='muted' id='crmLinkModalKeyText'></div>",
-    "  <div class='modal-actions'>",
+    "  <div class='crm-link-modal-field'>",
+    "    <label id='crmLinkModalInputLabel' for='crmLinkModalInput'>CRM link URL</label>",
+    "    <textarea id='crmLinkModalInput' spellcheck='false'></textarea>",
+    "    <div class='muted' id='crmLinkModalKeyText'></div>",
     "    <button class='secondary' type='button' id='crmLinkModalOpenBtn'>Open Link</button>",
+    "  </div>",
+    "  <div class='crm-link-modal-field' id='crmLinkModalContractedField' hidden>",
+    "    <label for='crmLinkModalContractedInput'>Contracted Orders</label>",
+    "    <textarea id='crmLinkModalContractedInput' spellcheck='false'></textarea>",
+    "    <button class='secondary' type='button' id='crmLinkModalContractedOpenBtn' aria-label='Open Contracted Orders link'>Open Link</button>",
+    "  </div>",
+    "  <div class='modal-actions'>",
     "    <div class='row'>",
     "      <button class='secondary' type='button' id='crmLinkModalCancelBtn'>Cancel</button>",
     "      <button type='button' id='crmLinkModalSaveBtn'>Save Link</button>",
@@ -6658,10 +6705,18 @@ function ensureCrmLinkModal() {
   document.getElementById('crmLinkModalCloseBtn').addEventListener('click', close);
   document.getElementById('crmLinkModalCancelBtn').addEventListener('click', close);
   document.getElementById('crmLinkModalSaveBtn').addEventListener('click', saveCrmLinkEditor);
-  document.getElementById('crmLinkModalOpenBtn').addEventListener('click', openCurrentCrmLinkValue);
-  document.getElementById('crmLinkModalInput').addEventListener('input', (event) => {
-    document.getElementById('crmLinkModalOpenBtn').disabled = !String(event.target.value || '').trim();
-  });
+  for (const [inputId, buttonId] of [
+    ['crmLinkModalInput', 'crmLinkModalOpenBtn'],
+    ['crmLinkModalContractedInput', 'crmLinkModalContractedOpenBtn'],
+  ]) {
+    const input = document.getElementById(inputId);
+    const button = document.getElementById(buttonId);
+    button.addEventListener('click', () => {
+      const value = input.value.trim();
+      if (value) window.open(value, '_blank', 'noopener');
+    });
+    input.addEventListener('input', () => { button.disabled = !input.value.trim(); });
+  }
 
   return backdrop;
 }
@@ -6674,12 +6729,24 @@ function openCrmLinkEditor(key) {
   const label = CRM_LINK_LABEL_OVERRIDES[key] || keyLabel(key);
   const textarea = document.getElementById('crmLinkModalInput');
   const openBtn = document.getElementById('crmLinkModalOpenBtn');
+  const contracted = fieldMap[CRM_RUSH_CONTRACTED_LINK_KEYS[key]];
+  const contractedTextarea = document.getElementById('crmLinkModalContractedInput');
+  const inputLabel = document.getElementById('crmLinkModalInputLabel');
+  const keyText = document.getElementById('crmLinkModalKeyText');
 
   backdrop.dataset.key = key;
+  backdrop.classList.toggle('paired', Boolean(contracted));
   document.getElementById('crmLinkModalTitle').textContent = label;
-  document.getElementById('crmLinkModalKeyText').textContent = key;
+  inputLabel.textContent = contracted ? 'Regular Orders' : 'CRM link URL';
+  inputLabel.classList.toggle('sr-only', !contracted);
+  keyText.textContent = contracted ? '' : key;
   textarea.value = input.value || '';
   openBtn.disabled = !(textarea.value || '').trim();
+  openBtn.setAttribute('aria-label', contracted ? 'Open Regular Orders link' : 'Open Link');
+  document.getElementById('crmLinkModalContractedField').hidden = !contracted;
+  contractedTextarea.value = contracted ? contracted.value || '' : '';
+  document.getElementById('crmLinkModalContractedOpenBtn').disabled = !contractedTextarea.value.trim();
+  document.getElementById('crmLinkModalSaveBtn').textContent = contracted ? 'Save Links' : 'Save Link';
   backdrop.classList.add('active');
   textarea.focus();
   textarea.select();
@@ -6692,13 +6759,14 @@ function closeCrmLinkEditor() {
   backdrop.dataset.key = '';
 }
 
-function updateCrmLinkButtonState(key, value) {
-  const btn = document.querySelector(".crm-link-btn[data-key='" + key + "']");
+function updateCrmLinkButtonState(key, btn = document.querySelector(".crm-link-btn[data-key='" + key + "']")) {
   if (!btn) return;
-  const configured = Boolean(String(value || '').trim());
+  const inputs = [fieldMap[key], fieldMap[CRM_RUSH_CONTRACTED_LINK_KEYS[key]]].filter(Boolean);
+  const count = inputs.filter((input) => input.value.trim()).length;
+  const configured = count === inputs.length;
   btn.classList.toggle('configured', configured);
   const state = btn.querySelector('.state');
-  if (state) state.textContent = configured ? 'Set' : 'Empty';
+  if (state) state.textContent = inputs.length > 1 ? `${count}/${inputs.length} Set` : (configured ? 'Set' : 'Empty');
 }
 
 function saveCrmLinkEditor() {
@@ -6709,15 +6777,11 @@ function saveCrmLinkEditor() {
   if (!input || !textarea) return;
 
   input.value = textarea.value.trim();
-  updateCrmLinkButtonState(key, input.value);
+  const contracted = fieldMap[CRM_RUSH_CONTRACTED_LINK_KEYS[key]];
+  if (contracted) contracted.value = document.getElementById('crmLinkModalContractedInput').value.trim();
+  updateCrmLinkButtonState(key);
   input.dispatchEvent(new Event('change', { bubbles: true }));
   closeCrmLinkEditor();
-}
-
-function openCurrentCrmLinkValue() {
-  const value = (document.getElementById('crmLinkModalInput').value || '').trim();
-  if (!value) return;
-  window.open(value, '_blank', 'noopener');
 }
 
 document.addEventListener('keydown', (event) => {
@@ -6875,7 +6939,6 @@ function syncCrmProcessingPolling() {
 function renderCrmProcessingSelectionButtons(state = {}) {
   const selectedSteps = normalizeCrmProcessingStepList([], state);
   const processingFilter = normalizeCrmProcessingFilter(state && state.processing_filter);
-  updateCrmProcessingSubcontractorToolStyles(processingFilter);
   const unlockBtn = document.getElementById('crmProcessingUnlockToggleBtn');
   const addressBtn = document.getElementById('crmProcessingAddressToggleBtn');
   const separatorBtn = document.getElementById('crmProcessingSeparatorToggleBtn');
@@ -6965,6 +7028,7 @@ function renderCrmProcessingSelectionButtons(state = {}) {
       ? `Push Back is available in Rush, High Value, Free, ALL, and 813 modes, and is disabled while ${formatCrmAddressFilterLabel(processingFilter)} is selected.`
       : 'Toggle Push Back in Automate Processing.';
   }
+  updateCrmProcessingStockToolStyles(processingFilter, state);
   if (filterSelect) {
     filterSelect.disabled = false;
     filterSelect.value = processingFilter;
@@ -7372,97 +7436,59 @@ async function persistCrmProcessingSelection(payload, statusFallback) {
   return d;
 }
 
-async function toggleCrmProcessingSelection(stepKey) {
-  const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
-  const processingFilter = normalizeCrmProcessingFilter(state.processing_filter);
-  const rushLike = isCrmRushLikeProcessingFilter(processingFilter);
-  const unlockerCapable = canCrmProcessingFilterRunUnlocker(processingFilter);
-  const canRunOrderGoods = canCrmProcessingFilterRunOrderGoods(processingFilter);
-  const canRunOrderSupport = canCrmProcessingFilterRunOrderSupport(processingFilter);
-  if (stepKey === 'stock_unlocker' && !unlockerCapable) {
-    setStatus('Unlocker is available in Rush, High Value, Free, and ALL modes.');
-    return;
-  }
-  if ((stepKey === 'product_separator' || stepKey === 'auto_splitter') && processingFilter === '813') {
-    setStatus(`${stepKey === 'auto_splitter' ? 'Auto Splitter' : 'Separator'} is disabled in 813 mode.`);
-    return;
-  }
-  if (stepKey === 'order_goods' && !canRunOrderGoods) {
-    setStatus('Order Goods is available in every processing mode.');
-    return;
-  }
-  if ((stepKey === 'shipping_bypasser' || stepKey === 'push_back') && !canRunOrderSupport) {
-    const label = stepKey === 'shipping_bypasser' ? 'Shipping Bypasser' : 'Push Back';
-    setStatus(`${label} is available in Rush, High Value, Free, ALL, and 813 modes.`);
-    return;
-  }
-  const nextUnlock = stepKey === 'stock_unlocker'
-    ? !Boolean(state.stock_unlocker_enabled)
-    : Boolean(state.stock_unlocker_enabled);
-  const nextAddress = stepKey === 'address_validator_batch'
-    ? !Boolean(state.address_validator_enabled)
-    : Boolean(state.address_validator_enabled);
-  const nextSeparator = stepKey === 'product_separator'
-    ? !(state.product_separator_enabled !== false)
-    : state.product_separator_enabled !== false;
-  const nextAutoSplitter = stepKey === 'auto_splitter'
-    ? !(state.auto_splitter_enabled !== false)
-    : state.auto_splitter_enabled !== false;
-  let nextOrderGoods = Boolean(state.order_goods_enabled);
-  let nextShippingBypasser = Boolean(state.shipping_bypasser_enabled);
-  let nextPushBack = Boolean(state.push_back_enabled);
-  if (stepKey === 'order_goods') {
-    nextOrderGoods = !nextOrderGoods;
-  }
-  if (stepKey === 'shipping_bypasser') {
-    nextShippingBypasser = !nextShippingBypasser;
-  }
-  if (stepKey === 'push_back') {
-    nextPushBack = !nextPushBack;
-  }
-  const selectionPayload = {
-    stock_unlocker_enabled: nextUnlock,
-    address_validator_enabled: nextAddress,
-    product_separator_enabled: processingFilter === '813' ? false : nextSeparator,
-    auto_splitter_enabled: processingFilter === '813' ? false : nextAutoSplitter,
-    order_goods_enabled: nextOrderGoods,
-    shipping_bypasser_enabled: nextShippingBypasser,
-    push_back_enabled: nextPushBack,
-    processing_filter: processingFilter,
-  };
-  const label = stepKey === 'stock_unlocker'
-    ? 'Unlocker'
-    : (stepKey === 'order_goods'
-      ? 'Order Goods'
-      : (stepKey === 'shipping_bypasser'
-        ? 'Shipping Bypasser'
-        : (stepKey === 'push_back'
-          ? 'Push Back'
-          : (stepKey === 'product_separator'
-            ? 'Product Separator'
-            : (stepKey === 'auto_splitter' ? 'Auto Splitter' : 'Validator')))));
-  try {
-    await persistCrmProcessingSelection(selectionPayload, `${label} selection updated.`);
-  } catch (e) {
-    setErrorStatus(`Automate Processing selection update failed: ${e.message}`);
-  }
+function queueCrmProcessingSelectionUpdate(update) {
+  const pending = Promise.resolve(crmProcessingSelectionPromise)
+    .then(async (previous) => {
+      await update();
+      return previous !== false;
+    })
+    .catch((e) => {
+      setErrorStatus(`Automate Processing selection update failed: ${e.message}`);
+      return false;
+    })
+    .finally(() => {
+      if (crmProcessingSelectionPromise === pending) crmProcessingSelectionPromise = null;
+    });
+  crmProcessingSelectionPromise = pending;
+  return pending;
 }
 
-async function toggleCrmProcessingBulkSelection() {
-  const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
-  const processingFilter = normalizeCrmProcessingFilter(state.processing_filter);
-  const selectedSteps = normalizeCrmProcessingStepList([], { ...state, processing_filter: processingFilter });
-  const availableSteps = crmProcessingAvailableStepsForFilter(processingFilter);
-  const allAvailableSelected = availableSteps.every((step) => selectedSteps.includes(step));
-  const enableAll = !allAvailableSelected;
-  try {
-    await persistCrmProcessingSelection(
+function toggleCrmProcessingSelection(stepKey) {
+  return queueCrmProcessingSelectionUpdate(() => {
+    const state = (crmProcessingStatusPayload || {}).state || {};
+    const processingFilter = normalizeCrmProcessingFilter(state.processing_filter);
+    if (!crmProcessingAvailableStepsForFilter(processingFilter).includes(stepKey)) return;
+
+    const enabled = normalizeCrmProcessingStepList([], state).includes(stepKey);
+    const preferenceKey = stepKey === 'address_validator_batch' ? 'address_validator_enabled' : `${stepKey}_enabled`;
+    const payload = { processing_filter: processingFilter, [preferenceKey]: !enabled };
+    const label = formatCrmProcessingStepShortLabel(stepKey);
+    if (processingFilter === 'rush' && Object.hasOwn(CRM_PROCESSING_RUSH_TOOL_BUTTON_IDS, stepKey)) {
+      const contractedSteps = new Set(state.rush_contracted_steps || []);
+      if (enabled && !contractedSteps.has(stepKey)) {
+        contractedSteps.add(stepKey);
+        payload[preferenceKey] = true;
+      } else {
+        contractedSteps.delete(stepKey);
+      }
+      payload.rush_contracted_steps = [...contractedSteps];
+    }
+    return persistCrmProcessingSelection(payload, `${label} selection updated.`);
+  });
+}
+
+function toggleCrmProcessingBulkSelection() {
+  return queueCrmProcessingSelectionUpdate(() => {
+    const state = (crmProcessingStatusPayload || {}).state || {};
+    const processingFilter = normalizeCrmProcessingFilter(state.processing_filter);
+    const selectedSteps = normalizeCrmProcessingStepList([], state);
+    const availableSteps = crmProcessingAvailableStepsForFilter(processingFilter);
+    const enableAll = !availableSteps.every((step) => selectedSteps.includes(step));
+    return persistCrmProcessingSelection(
       crmProcessingBulkPayload(processingFilter, enableAll),
       enableAll ? 'All available mode-specific Automate Processing selections enabled.' : 'Mode-specific Automate Processing selections cleared.'
     );
-  } catch (e) {
-    setErrorStatus(`Automate Processing bulk selection failed: ${e.message}`);
-  }
+  });
 }
 
 async function toggleCrmProcessingFilter() {
@@ -7482,11 +7508,9 @@ async function setCrmProcessingFilter(nextFilter) {
     openCrmProcessingCustomInput();
     return;
   }
-  try {
-    await persistCrmProcessingSelection(payload, `Automate Processing switched to ${formatCrmAddressFilterLabel(nextFilter)}.`);
-  } catch (e) {
-    setErrorStatus(`Automate Processing filter switch failed: ${e.message}`);
-  }
+  await queueCrmProcessingSelectionUpdate(() => persistCrmProcessingSelection(
+    payload, `Automate Processing switched to ${formatCrmAddressFilterLabel(nextFilter)}.`
+  ));
 }
 
 function openCrmProcessingCustomInput() {
@@ -7548,9 +7572,10 @@ async function saveCrmProcessingCustomInput() {
 }
 
 async function loadCrmProcessingStatus(setStatusText = false) {
+  const previousPayload = crmProcessingStatusPayload;
   try {
     const d = await api('/crm/process/status');
-    renderCrmProcessingStatus(d);
+    if (previousPayload === crmProcessingStatusPayload) renderCrmProcessingStatus(d);
     if (setStatusText) {
       const statusMsg = d.running
         ? 'Automate Processing is running.'
@@ -7718,6 +7743,7 @@ function buildCrmProcessingAdvancedPayload() {
 
 async function startCrmProcessingRun(button = null) {
   return withButtonBusy(button, 'QUEUING...', async () => {
+  if (await crmProcessingSelectionPromise === false) return;
   const state = crmProcessingStatusPayload && crmProcessingStatusPayload.state ? crmProcessingStatusPayload.state : {};
   const processingFilter = normalizeCrmProcessingFilter(state.processing_filter);
   const rushLike = isCrmRushLikeProcessingFilter(processingFilter);
@@ -7734,6 +7760,7 @@ async function startCrmProcessingRun(button = null) {
     push_back_enabled: canRunOrderSupport ? Boolean(state.push_back_enabled) : false,
     processing_filter: processingFilter,
   };
+  if (processingFilter === 'rush') payload.rush_contracted_steps = state.rush_contracted_steps || [];
   if (processingFilter === 'custom') {
     payload.custom_input_type = state.custom_input_type || 'link';
     if (payload.custom_input_type === 'orders') payload.custom_order_ids = [...(state.custom_order_ids || [])];

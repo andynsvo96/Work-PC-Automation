@@ -7,7 +7,7 @@ from datetime import datetime
 
 from flask import g, jsonify, request
 
-from crm_list_url import normalize_custom_crm_target
+from crm_list_url import normalize_custom_crm_target, normalize_rush_contracted_steps
 
 
 def register_work_routes(
@@ -323,6 +323,7 @@ def register_work_routes(
                 request.args.get("push_back_enabled"),
                 request.args.get("pushBackEnabled"),
             ),
+            "rush_contracted_steps": _first_present(data.get("rush_contracted_steps"), data.get("rushContractedSteps")),
             "product_separator_enabled": _first_present(
                 data.get("product_separator_enabled"),
                 data.get("productSeparatorEnabled"),
@@ -454,6 +455,11 @@ def register_work_routes(
         }
         if processing_filter == "custom":
             effective.update(normalize_custom_crm_target(options, state))
+        if processing_filter == "rush":
+            effective["rush_contracted_steps"] = normalize_rush_contracted_steps(
+                _first_present(options.get("rush_contracted_steps"), fallback_state.get("rush_contracted_steps")),
+                effective,
+            )
         if processing_filter == "813":
             effective["stock_unlocker_enabled"] = False
             effective["product_separator_enabled"] = False
@@ -515,6 +521,8 @@ def register_work_routes(
         }
         if effective.get("processing_filter") == "custom":
             signature.update(normalize_custom_crm_target(effective))
+        if effective.get("rush_contracted_steps"):
+            signature["rush_contracted_steps"] = effective["rush_contracted_steps"]
         queue_options = {"automation_signature": signature}
         if mode in {"repeat", "scheduled_repeat"}:
             interval = options.get("repeat_interval_minutes")
@@ -553,6 +561,11 @@ def register_work_routes(
         steps = []
         processing_filter = effective.get("processing_filter")
         rush_like = processing_filter in {"rush", "high_value", "custom"}
+        contracted_steps = effective.get("rush_contracted_steps", [])
+
+        def report_label(step, label):
+            return f"{label} (Contracted)" if step in contracted_steps else label
+
         if effective.get("address_validator_enabled"):
             steps.append("Validator")
         if effective.get("product_separator_enabled") and processing_filter != "813":
@@ -560,16 +573,16 @@ def register_work_routes(
         if effective.get("auto_splitter_enabled") and processing_filter != "813":
             steps.append("Auto Splitter")
         if effective.get("stock_unlocker_enabled") and (rush_like or processing_filter in {"free", "all"}):
-            steps.append("Unlocker")
+            steps.append(report_label("stock_unlocker", "Unlocker"))
         if (
             effective.get("order_goods_enabled")
             and (rush_like or processing_filter in {"free", "all", "813"})
         ):
-            steps.append("Order Goods")
+            steps.append(report_label("order_goods", "Order Goods"))
         if effective.get("shipping_bypasser_enabled") and (rush_like or processing_filter in {"813", "free", "all"}):
-            steps.append("Shipping Bypasser")
+            steps.append(report_label("shipping_bypasser", "Shipping Bypasser"))
         if effective.get("push_back_enabled") and (rush_like or processing_filter in {"813", "free", "all"}):
-            steps.append("Push Back")
+            steps.append(report_label("push_back", "Push Back"))
         step_text = ", ".join(steps) if steps else "none selected"
         prefix = "Processing"
         if advanced_mode == "scheduled_repeat":
@@ -670,6 +683,7 @@ def register_work_routes(
                 "order_goods_enabled",
                 "shipping_bypasser_enabled",
                 "push_back_enabled",
+                "rush_contracted_steps",
                 "processing_filter",
                 "custom_list_url",
                 "custom_input_type",

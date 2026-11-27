@@ -1,7 +1,24 @@
-"""Validation for Custom Processing links and explicit order lists."""
+"""Report settings and target validation for CRM Processing."""
 
 import re
 from urllib.parse import urlsplit
+
+
+CRM_RUSH_REPORT_KEYS = {
+    "stock_unlocker": ("CRM_LOCKED_URL", "CRM_UNLOCKER_RUSH_CONTRACTED_URL"),
+    "order_goods": ("CRM_ORDER_GOODS_RUSH_URL", "CRM_ORDER_GOODS_RUSH_CONTRACTED_URL"),
+    "shipping_bypasser": ("CRM_SHIPPING_BYPASS_URL", "CRM_SHIPPING_BYPASS_RUSH_CONTRACTED_URL"),
+    "push_back": ("CRM_PUSH_BACK_RUSH_URL", "CRM_PUSH_BACK_RUSH_CONTRACTED_URL"),
+}
+
+
+def normalize_rush_contracted_steps(value, preferences):
+    if not isinstance(value, list):
+        return []
+    return [
+        step for step in CRM_RUSH_REPORT_KEYS
+        if step in value and preferences.get(f"{step}_enabled")
+    ]
 
 
 def normalize_custom_crm_list_url(value):
