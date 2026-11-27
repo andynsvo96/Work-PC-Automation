@@ -10,10 +10,10 @@ const names = [
   'canCrmProcessingFilterRunOrderSupport', 'normalizeCrmProcessingStepList',
   'crmProcessingAvailableStepsForFilter', 'updateCrmProcessingStockToolStyles',
   'renderCrmProcessingSelectionButtons',
-  'formatCrmProcessingStepLabel', 'formatCrmProcessingStepShortLabel',
+  'formatCrmProcessingStepLabel', 'formatCrmProcessingStepShortLabel', 'formatCrmProcessingStepLabelForState',
   'queueCrmProcessingSelectionUpdate', 'toggleCrmProcessingSelection',
   'toggleCrmProcessingBulkSelection', 'crmProcessingBulkPayload',
-  'startCrmPushBackRun',
+  'startCrmProcessingRun', 'startCrmPushBackRun',
 ];
 const functions = names.map((name) => {
   const start = source.indexOf(`function ${name}(`);
@@ -33,6 +33,7 @@ const otherTools = ['Address', 'Separator', 'AutoSplitter'];
 function dashboard() {
   const requests = [];
   const selections = [];
+  const errors = [];
   const elements = Object.fromEntries([...tools, ...otherTools].map((name) => {
     const classes = new Set();
     return [`crmProcessing${name}ToggleBtn`, {
@@ -51,9 +52,11 @@ function dashboard() {
     formatCrmAddressFilterLabel: (mode) => mode.toUpperCase(),
     crmProcessingStatusPayload: { state: {} },
     crmProcessingSelectionPromise: null,
+    withButtonBusy: (_button, _label, task) => task(),
+    buildCrmProcessingAdvancedPayload: () => ({}),
     getCrmStockAutomationOrderTarget: () => '',
     setStatus() {}, setAutomationButtonRunning() {}, renderCrmPushBackStatus() {},
-    setErrorStatus(message) { assert.fail(message); },
+    setErrorStatus(message) { errors.push(message); },
     async persistCrmProcessingSelection(payload) {
       selections.push(JSON.parse(JSON.stringify(payload)));
       Object.assign(context.crmProcessingStatusPayload.state, payload);
@@ -62,9 +65,13 @@ function dashboard() {
     async api(path, options) { requests.push({ path, payload: JSON.parse(options.body) }); return {}; },
     async loadCrmPushBackStatus() {}, async loadCrmStatus() {},
     async loadCrmProcessingStatus() {}, async loadQueue() {},
+    async loadCrmProductSeparatorStatus() {}, async loadCrmOrderGoodsStatus() {},
+    async loadCrmShippingBypasserStatus() {}, async loadCrmMassEmailerStatus() {},
+    async loadCrmAutoSplitterStatus() {}, async loadCrmAddressStatus() {},
+    renderCrmProcessingStatus() {},
   });
   vm.runInContext(`${constants}\n${functions}`, context);
-  return { context, elements, requests, selections };
+  return { context, elements, requests, selections, errors };
 }
 
 test('FREE and ALL render all four enabled stock tools with the subcontractor style', () => {
@@ -146,6 +153,21 @@ test('Rush contracted tools are independent and bulk enable leaves their report 
   assert.equal(elements.crmProcessingOrderGoodsToggleBtn.classList.contains('rush-contracted-mode'), false);
   context.renderCrmProcessingSelectionButtons({ ...state, processing_filter: 'high_value' });
   assert.equal(elements.crmProcessingPushBackToggleBtn.classList.contains('rush-contracted-mode'), false);
+});
+
+test('Add to Queue uses the newly saved report choice and stops if that save fails', async () => {
+  const { context, requests, errors } = dashboard();
+  const state = context.crmProcessingStatusPayload.state;
+  Object.assign(state, { processing_filter: 'rush', push_back_enabled: true });
+  await Promise.all([context.toggleCrmProcessingSelection('push_back'), context.startCrmProcessingRun()]);
+  assert.equal(requests[0].path, '/crm/process');
+  assert.deepEqual(requests[0].payload.rush_contracted_steps, ['push_back']);
+  assert.equal(requests[0].payload.push_back_enabled, true);
+
+  context.persistCrmProcessingSelection = async () => { throw new Error('Save failed'); };
+  await Promise.all([context.toggleCrmProcessingSelection('push_back'), context.startCrmProcessingRun()]);
+  assert.equal(requests.length, 1);
+  assert.match(errors[0], /Save failed/);
 });
 
 test('standalone Push Back keeps the selected FREE/ALL mode instead of sending Rush', async () => {
