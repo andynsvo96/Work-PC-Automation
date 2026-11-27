@@ -10070,7 +10070,7 @@ async function startCrmAddressRun(dryRun, button = null) {
   const customListUrl = String((document.getElementById('crmAddressListUrlInput') || {}).value || '').trim();
   const savedBatchPrefs = getSavedCrmBatchPreferences(crmAddressStatusPayload && crmAddressStatusPayload.state ? crmAddressStatusPayload.state : {});
   const batchSize = savedBatchPrefs.batchSize;
-  const parallelWorkers = savedBatchPrefs.parallelWorkers;
+  const parallelWorkers = Math.min(savedBatchPrefs.parallelWorkers, batchSize ?? Infinity);
   const batchScopeText = formatCrmBatchScopeText(batchSize);
   const usingSingleOrder = mode === 'single' && rawOrderTarget.length > 0;
   if (mode === 'single' && dryRun && !usingSingleOrder) {

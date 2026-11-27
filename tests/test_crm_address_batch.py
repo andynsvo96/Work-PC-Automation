@@ -12851,12 +12851,16 @@ class CrmAddressServerTests(unittest.TestCase):
             {"success": True, "message": "ok", "action": "validate_batch", "list_url": all_url},
         )
 
-        with mock.patch.object(server, "CRM_SHIPPING_ALL_URL", all_url):
+        snapshot = mock.Mock(worker_recommendation={"recommended_workers": 6})
+        with mock.patch.object(server, "CRM_SHIPPING_ALL_URL", all_url), mock.patch.object(
+            server, "load_node_preferences", return_value={"worker_mode": "auto"}
+        ), mock.patch.object(server, "get_platform_snapshot", return_value=snapshot):
             result = server._run_crm_processing_step("address_validator_batch", "all")
 
         self.assertTrue(result["success"])
         self.assertEqual(mock_start_runtime.call_args.kwargs["active_filter"], "all")
         self.assertEqual(mock_start_runtime.call_args.kwargs["list_url"], all_url)
+        self.assertEqual(mock_run_retry.call_args.kwargs["parallel_workers"], 3)
         self.assertEqual(mock_run_retry.call_args.kwargs["list_url"], all_url)
         self.assertEqual(mock_persist.call_args.kwargs["list_url"], all_url)
 
