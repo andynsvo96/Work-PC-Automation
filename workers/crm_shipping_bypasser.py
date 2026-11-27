@@ -388,50 +388,6 @@ def _validate_runtime_config(list_url=None):
     return target_url
 
 
-def _normalize_order_ids(raw_ids):
-    cleaned = []
-    seen = set()
-    values = raw_ids if isinstance(raw_ids, list) else []
-    for raw in values:
-        text = "".join(ch for ch in str(raw or "") if ch.isdigit())
-        if len(text) != 7 or text in seen:
-            continue
-        seen.add(text)
-        cleaned.append(text)
-    return cleaned
-
-
-def _load_historical_shipping_bypass_order_ids(state_path=CRM_STATE_PATH):
-    try:
-        with open(state_path, "r", encoding="utf-8-sig") as handle:
-            state = json.load(handle)
-    except FileNotFoundError:
-        return set()
-    except Exception as exc:
-        print(f"Warning: could not read previous Shipping Bypasser history for skip list: {exc}")
-        return set()
-    history = state.get("run_history") if isinstance(state, dict) else []
-    skipped = set()
-    for entry in history if isinstance(history, list) else []:
-        if not isinstance(entry, dict):
-            continue
-        automation_key = str(entry.get("automation_key") or "").strip().lower()
-        automation_label = str(entry.get("automation_label") or "").strip().lower()
-        if automation_key != "shipping_bypasser" and "shipping bypass" not in automation_label:
-            continue
-        if entry.get("dry_run"):
-            continue
-        order_results = entry.get("order_results") if isinstance(entry.get("order_results"), list) else []
-        if order_results:
-            for item in order_results:
-                if isinstance(item, dict) and item.get("success"):
-                    skipped.update(_normalize_order_ids([item.get("order_id")]))
-            continue
-        if entry.get("success"):
-            skipped.update(_normalize_order_ids(entry.get("order_ids")))
-    return skipped - _unfinished_nj_stock_order_ids()
-
-
 def _load_historical_shipping_bypass_customer_pos(state_path=CRM_STATE_PATH):
     try:
         with open(state_path, "r", encoding="utf-8-sig") as handle:
@@ -675,27 +631,6 @@ def _nj_stock_order_known(order_id, po):
         return True
     submission = _saved_shipping_bypass_submission(order_id, po)
     return bool(submission and submission.get("nj_order_po"))
-
-
-def _unfinished_nj_stock_order_ids():
-    unfinished = set()
-    try:
-        filenames = os.listdir(NJ_STOCK_ORDER_STATE_DIR)
-    except FileNotFoundError:
-        return unfinished
-    for filename in filenames:
-        match = re.fullmatch(r"(\d{7})_[a-f0-9]{24}\.json", filename)
-        if not match:
-            continue
-        try:
-            with open(os.path.join(NJ_STOCK_ORDER_STATE_DIR, filename), "r", encoding="utf-8") as handle:
-                receipt = json.load(handle)
-            complete = isinstance(receipt, dict) and receipt.get("complete") is True
-        except Exception:
-            complete = False
-        if not complete:
-            unfinished.add(match.group(1))
-    return unfinished
 
 
 def _nj_product_signature(products):
@@ -7585,8 +7520,9 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
     sanmar_driver = None
     report_items = []
     attempted_order_ids = []
-    historical_order_id_set = _load_historical_shipping_bypass_order_ids()
-    attempted_order_id_set = set(historical_order_id_set)
+    # Refresh passes share exclusions only within this invocation. Re-read every
+    # detected order on the next run; per-tab purchase receipts protect effects.
+    attempted_order_id_set = set()
     refresh_passes = 0
     completed_order_count = 0
     total_scanned_count = 0
@@ -7738,10 +7674,7 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
         safe_driver_quit(crm_driver, profile_path=resolved_profile_path)
         safe_driver_quit(sanmar_driver, profile_path=os.path.abspath(SANMAR_PROFILE_PATH))
     success = _report_orders_succeeded_or_partially_succeeded(report_items)
-    skipped_historical_count = len(historical_order_id_set)
     message = _summary_message(report_items, refresh_passes=refresh_passes, order_count=len(attempted_order_ids))
-    if skipped_historical_count:
-        message = f"{message} Skipped {skipped_historical_count} previously logged Shipping Bypasser order(s); clear Stock Tools history to make them eligible again."
     return {
         "action": "shipping_bypass_batch",
         "success": success,
@@ -7759,7 +7692,7 @@ def _run_batch_with_mode(headless_mode, dry_run=False, batch_size=None, profile_
         "duration_seconds": _elapsed_seconds(batch_started_at),
         "manual_review_required": _report_has_fully_failed_order(report_items),
         "resolution": "batch" if attempted_order_ids else "no_orders",
-        "skipped_historical_order_count": skipped_historical_count,
+        "skipped_historical_order_count": 0,
     }
 
 

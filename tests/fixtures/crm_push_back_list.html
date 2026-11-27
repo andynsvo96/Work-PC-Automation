@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Offline Push Back report</title>
+<style>
+  .report-row { display: block; width: 900px; height: 24px; background: white; }
+  .purple { background: rgb(128, 0, 128); }
+</style>
+<main id="orders"></main>
+<script>
+  // Ineligible rows and duplicate links precede the two contractor orders.
+  // A limit applied to raw links would hide both eligible rows.
+  for (let index = 0; index < 45; index++) {
+    const id = String(5000000 + index);
+    const row = document.createElement('div');
+    row.className = `report-row${index >= 43 ? ' purple' : ''}`;
+    row.innerHTML = `<a href="/order/${id}">${id}</a> <a href="/order/${id}">Open ${id}</a>`;
+    orders.append(row);
+  }
+</script>

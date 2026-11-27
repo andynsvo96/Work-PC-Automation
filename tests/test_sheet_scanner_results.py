@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -168,6 +169,63 @@ class SheetScannerEmailResultTests(unittest.TestCase):
                 else:
                     write_error.assert_called_once_with(worksheet, [], 2, self.details["salesforce"]["message"])
                     clear_row.assert_called_once_with(worksheet, 3)
+
+    def test_new_queue_run_retries_failed_rows_without_clearing_their_errors_first(self):
+        headers = [scanner.GOOGLE_SHEET_ORDER_REFERENCE_COLUMN, scanner.GOOGLE_SHEET_ISSUE_TYPE_COLUMN,
+                   scanner.GOOGLE_SHEET_REASON_COLUMN, scanner.GOOGLE_SHEET_ERROR_COLUMN]
+        values = [headers,
+                  ["5408963", scanner.OVERSIZE_EMB_TO_HDD_ISSUE_TYPE, "", "Earlier failure"],
+                  ["5408964", scanner.OVERSIZE_EMB_TO_HDD_ISSUE_TYPE, "", ""]]
+        worksheet = mock.Mock(title="Sheet1")
+        worksheet.get_all_values.side_effect = lambda: [list(row) for row in values]
+        worksheet.update_cell.side_effect = lambda row, column, value: values[row - 1].__setitem__(column - 1, value)
+        attempted = []
+
+        def process(rows, _args, _workers):
+            results = []
+            for row in rows:
+                attempted.append((row.order_id, row.error))
+                if row.order_id == "5408963" and row.error == "Earlier failure":
+                    results.append((row, None, RuntimeError("Temporary CRM failure")))
+                else:
+                    results.append((row, {"order_id": row.order_id, "salesforce": {"sent": True}}, None))
+            return results, 2
+
+        def clear(_worksheet, row_number):
+            values[row_number - 1] = ["", "", "", ""]
+
+        # False models old dashboard requests and restored scheduled tasks.
+        self.args.retry_errors = False
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(scanner, "_open_sheet", return_value=(mock.Mock(title="Queue"), worksheet)))
+            stack.enter_context(mock.patch.object(scanner, "_run_sheet_scanner_parallel_rows", side_effect=process))
+            stack.enter_context(mock.patch.object(scanner, "_clear_sheet_queue_row", side_effect=clear))
+            stack.enter_context(mock.patch.object(scanner, "_publish_status"))
+            self.assertEqual(scanner.run_process_queue(self.args), 1)
+            self.assertEqual(values[1][3], "Temporary CRM failure")
+            self.assertEqual(scanner.run_process_queue(self.args), 0)
+        self.assertEqual(sorted(attempted[:2]), [("5408963", "Earlier failure"), ("5408964", "")])
+        self.assertEqual(attempted[2:], [("5408963", "Temporary CRM failure")])
+        self.assertEqual(values[1:], [["", "", "", ""], ["", "", "", ""]])
+        self.assertEqual([row["order_id"] for row in self.read_result()["processed"]], ["5408963"])
+
+    def test_read_only_scan_includes_old_errors_and_still_rejects_invalid_requests(self):
+        headers = [scanner.GOOGLE_SHEET_ORDER_REFERENCE_COLUMN, scanner.GOOGLE_SHEET_ISSUE_TYPE_COLUMN,
+                   scanner.GOOGLE_SHEET_REASON_COLUMN, scanner.GOOGLE_SHEET_ERROR_COLUMN]
+        worksheet = mock.Mock(title="Sheet1")
+        worksheet.get_all_values.return_value = [headers,
+            ["5408963", scanner.OVERSIZE_EMB_TO_HDD_ISSUE_TYPE, "", "Earlier failure"],
+            ["5408964", scanner.COPYRIGHT_CANCEL_ISSUE_TYPE, "", "Missing Reason."],
+            ["5408965", "Unsupported issue", "", "Earlier failure"],
+        ]
+        with mock.patch.object(scanner, "_open_sheet", return_value=(mock.Mock(title="Queue"), worksheet)):
+            self.assertEqual(scanner.run_scan_sheet(result_file=self.args.result_file, include_error_rows=False), 0)
+        payload = self.read_result()
+        self.assertEqual([row["order_id"] for row in payload["eligible_rows"]], ["5408963"])
+        self.assertEqual(payload["eligible_rows"][0]["error"], "Earlier failure")
+        self.assertEqual(len(payload["skipped_rows"]), 2)
+        worksheet.update_cell.assert_not_called()
+        worksheet.batch_clear.assert_not_called()
 
 
 if __name__ == "__main__":

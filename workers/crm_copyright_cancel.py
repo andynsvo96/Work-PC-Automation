@@ -558,7 +558,12 @@ def _header_indexes(headers):
     }
 
 
-def _scan_queue_rows(include_error_rows=False):
+def _scan_queue_rows(include_error_rows=True):
+    """Read current requests, retaining prior errors as diagnostics.
+
+    include_error_rows remains accepted for older callers and saved queue tasks;
+    an ERROR value never excludes an otherwise valid request from a new run.
+    """
     spreadsheet, worksheet = _open_sheet()
     values = worksheet.get_all_values()
     headers = values[0] if values else []
@@ -593,9 +598,6 @@ def _scan_queue_rows(include_error_rows=False):
             continue
         if process.requires_reason and not reason:
             skipped.append({**record, "order_id": order_id, "reason": _missing_reason_error(process)})
-            continue
-        if error and not include_error_rows:
-            skipped.append({**record, "order_id": order_id, "reason": "ERROR column is not blank."})
             continue
         eligible.append(QueueRow(row_number, order_ref, order_id, issue_type, reason, process.key, error))
     return spreadsheet, worksheet, headers, eligible, skipped
@@ -9498,7 +9500,7 @@ def run_create_refund_case_order(args):
         return 1
 
 
-def run_scan_sheet(result_file=None, include_error_rows=False):
+def run_scan_sheet(result_file=None, include_error_rows=True):
     try:
         spreadsheet, worksheet, headers, eligible, skipped = _scan_queue_rows(include_error_rows=include_error_rows)
     except Exception as exc:
@@ -10243,7 +10245,8 @@ def main(argv=None):
         default=1,
         help="Process independent Sheets Scanner rows with up to this many isolated workers. Auto Splitter and Manual Stock Order rows remain serial.",
     )
-    parser.add_argument("--retry-errors", action="store_true")
+    parser.add_argument("--retry-errors", action="store_true", default=True,
+                        help="Compatibility option; valid rows with earlier errors are always included.")
     parser.add_argument("--delete-sheet-row", action="store_true")
     parser.add_argument("--sheet-row-number", type=int, default=0)
     parser.add_argument("--refund-fee-amount", default="", help="Override the CRM Refund fee amount for one-off recovery.")

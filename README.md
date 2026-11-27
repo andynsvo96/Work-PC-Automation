@@ -15,6 +15,7 @@ Each computer owns its queue, browser sessions, credentials, and recovery receip
 - Sends Slack start/end/lunch/custom status messages.
 - Rotates day-specific Slack messages.
 - Runs CRM automation workers for address validation, stock unlocks, rush goods ordering, auto-splitting, shipping bypasses, push-back handling, Sleeve Prints reachouts, and queue-driven issue processing.
+- **Reconsider detected orders on every run:** Shipping Bypasser no longer excludes whole orders using Stock Tools history, including orders with unfinished tabs. Sheets Scanner includes valid rows with an earlier ERROR value automatically; errors remain available until the row succeeds. Push Back scans all loaded report rows before applying its batch limit, so earlier ineligible or duplicate rows cannot hide later eligible orders. Each run uses its selected report filters and keeps its own attempted-order set to avoid looping over the same orders during that run. Confirmed purchases and messages keep their duplicate protection, and uncertain submissions still stop for review. Existing history and receipts do not need clearing. New workers load these changes on their next run; restart the app and refresh the dashboard to load the updated scanner queue labels and request defaults. No extension reload is needed.
 - Scans supported queue rows for cancellation, reachout, auto-split, and manual stock-order workflows.
 - Provides a local web UI and HTTP API for manual controls and external triggers.
 - Records automation results in a shared audit log.
@@ -390,6 +391,13 @@ checks, see the [extension guide](crm-order-dark-mode-extension/README.md).
 Queue persistence, pool isolation, scheduling, and recovery are covered by
 `tests/test_queue_persistence.py`, `tests/test_queue_parallel.py`,
 `tests/test_scheduled_repeat.py`, and `tests/test_queue_retry.py`.
+
+Verify fresh-run eligibility, Sheets Scanner error-row retries, and receipt-safe
+NJ/ADD recovery with `test_crm_run_rescan.py`, `test_sheet_scanner_results.py`,
+and `test_sanmar_nj_orders.py` using `python -m unittest discover -s tests -p <filename>`.
+`test_crm_run_rescan_browser.py` uses a local ChromeDriver (`CHROMEDRIVER` may
+override it), an isolated profile, and a local report fixture to check eligible
+purple rows below ineligible and duplicate links. It never opens live orders.
 
 Check CRM list selection, rush highlighting, tab opening, and the offline Chrome fixtures with:
 

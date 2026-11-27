@@ -11165,7 +11165,7 @@ def _crm_mass_emailer_runtime_snapshot():
         return dict(crm_mass_emailer_runtime)
 
 
-def _start_crm_mass_emailer_runtime(action="process_queue", dry_run=True, limit=None, retry_errors=False, parallel_workers=1):
+def _start_crm_mass_emailer_runtime(action="process_queue", dry_run=True, limit=None, retry_errors=True, parallel_workers=1):
     normalized_action = _normalize_crm_mass_emailer_action(action)
     with crm_mass_emailer_runtime_lock:
         crm_mass_emailer_runtime["running"] = True
@@ -11189,8 +11189,7 @@ def _start_crm_mass_emailer_runtime(action="process_queue", dry_run=True, limit=
         else:
             mode = "dry run" if dry_run else "live run"
             suffix = f" | Limit {int(limit)}" if int(_safe_float(limit, 0)) > 0 else ""
-            retry = " | Retry errors" if retry_errors else ""
-            message = f"Sheets Scanner {mode} queued{suffix}{retry}."
+            message = f"Sheets Scanner {mode} queued{suffix} | Includes previous errors."
         crm_mass_emailer_runtime["lastMessage"] = message
         crm_mass_emailer_runtime["lastSuccess"] = None
         crm_mass_emailer_runtime["dryRun"] = bool(dry_run)
@@ -11228,7 +11227,7 @@ def _execute_crm_mass_emailer_worker(
     action="process_queue",
     dry_run=True,
     limit=None,
-    retry_errors=False,
+    retry_errors=True,
     show_terminal=None,
     order_id=None,
     process=None,
@@ -11262,7 +11261,7 @@ def _execute_crm_mass_emailer_worker(
             args.extend(["--sheet-row-number", str(int(_safe_float(sheet_row_number, 0)))])
     if int(_safe_float(limit, 0)) > 0:
         args.extend(["--limit", str(int(_safe_float(limit, 0)))])
-    if retry_errors:
+    if retry_errors or normalized_action in {"scan_sheet", "process_queue"}:
         args.append("--retry-errors")
     normalized_parallel_workers = _normalize_crm_positive_int(
         parallel_workers,
@@ -11360,7 +11359,7 @@ def _persist_crm_mass_emailer_run_result(ok, message, payload, dry_run=True):
     return state
 
 
-def _crm_mass_emailer_run_thread(action="process_queue", dry_run=True, limit=None, retry_errors=False, parallel_workers=1):
+def _crm_mass_emailer_run_thread(action="process_queue", dry_run=True, limit=None, retry_errors=True, parallel_workers=1):
     ok = False
     message = "Sheets Scanner did not run."
     payload = {"success": False, "message": message}
@@ -11385,7 +11384,7 @@ def _crm_mass_emailer_run_thread(action="process_queue", dry_run=True, limit=Non
         _finish_crm_mass_emailer_runtime(ok, message, payload, release_lock=True)
 
 
-def start_crm_mass_emailer_run(action="process_queue", dry_run=True, limit=None, retry_errors=False, parallel_workers=None):
+def start_crm_mass_emailer_run(action="process_queue", dry_run=True, limit=None, retry_errors=True, parallel_workers=None):
     normalized_action = _normalize_crm_mass_emailer_action(action)
     normalized_parallel_workers = (
         1
@@ -14509,7 +14508,7 @@ def run_crm_auto_splitter_run_queued(order_target=None, tab_count=None, division
     return _wait_for_status_completion(get_crm_auto_splitter_status_payload, msg)
 
 
-def run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, limit=None, retry_errors=False, parallel_workers=None):
+def run_crm_mass_emailer_run_queued(action="process_queue", dry_run=True, limit=None, retry_errors=True, parallel_workers=None):
     ok, msg = start_crm_mass_emailer_run(
         action=action,
         dry_run=dry_run,

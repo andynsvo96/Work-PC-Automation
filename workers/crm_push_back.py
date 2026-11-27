@@ -445,7 +445,6 @@ def _precheck_row(row, use_saved_deadline=False):
 
 
 PUSH_BACK_REPORT_ROWS_JS = r"""
-const limit = Number(arguments[0] || 25);
 function clean(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
 function isTransparent(color){
   if(!color){ return true; }
@@ -576,9 +575,9 @@ for (const link of Array.from(document.querySelectorAll('a[href],a')).filter(isV
     colors: collectColors(row, link)
   });
 }
-return rows
-  .sort((a, b) => (a.top - b.top) || (a.left - b.left))
-  .slice(0, Math.max(limit * 4, limit, 25));
+// Apply the requested batch limit after Python filters colors, duplicates, and
+// this run's attempted IDs. Earlier ineligible rows must not hide later orders.
+return rows.sort((a, b) => (a.top - b.top) || (a.left - b.left));
 """
 
 

@@ -563,9 +563,28 @@ class NjStockOrderTests(unittest.TestCase):
     def test_incomplete_receipt_remains_eligible_despite_success_for_another_tab(self):
         self.fail_add_checkout = 2
         self.assertFalse(self.run_order()["success"])
+        self.cart.clear()  # Model the outer worker's cleanup of unsubmitted stock.
         history = Path(self.temp.name) / "history.json"
         history.write_text(json.dumps({"run_history": [{"automation_key": "shipping_bypasser", "order_results": [{"order_id": self.order["order_id"], "success": True}]}]}), encoding="utf-8")
-        self.assertEqual(worker._load_historical_shipping_bypass_order_ids(str(history)), set())
+        real_open = open
+        def open_with_history(path, *args, **kwargs):
+            return real_open(history if str(path) == str(worker.CRM_STATE_PATH) else path, *args, **kwargs)
+
+        def collect(*_args, exclude_order_ids, **_kwargs):
+            return [] if self.order["order_id"] in exclude_order_ids else [self.order["order_id"]]
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(worker, "open", side_effect=open_with_history, create=True))
+            stack.enter_context(mock.patch.object(worker, "_build_crm_session_driver", return_value=self.crm))
+            stack.enter_context(mock.patch.object(worker, "_build_sanmar_driver", return_value=self.sanmar))
+            stack.enter_context(mock.patch.object(worker, "safe_driver_quit"))
+            stack.enter_context(mock.patch.object(worker, "_collect_batch_order_ids_with_driver", side_effect=collect))
+            stack.enter_context(mock.patch.object(worker, "_run_order_with_drivers", side_effect=lambda *_a, **_k: [self.run_order()]))
+            result = worker._run_batch_with_mode(True, list_url="https://crm.example/report")
+        self.assertTrue(result["success"], result)
+        self.assertEqual(result["order_ids"], [self.order["order_id"]])
+        self.assertEqual([event[1] for event in self.purchases()], [self.order["po"], f"ADD-{self.order['po']}"])
+        self.assertTrue(worker._load_nj_stock_order(self.order["order_id"], self.order["po"])["complete"])
 
     def test_partial_result_is_not_promoted_to_complete_by_server_or_history(self):
         self.fail_add_checkout = 2

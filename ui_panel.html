@@ -3567,8 +3567,6 @@ async function retryAutomationQueueTask(taskId, button) {
     const d = await api(`/api/queue/${encodeURIComponent(taskId)}/retry`, {
       method: 'POST',
     });
-    const retryInput = document.getElementById('crmMassEmailerRetryErrorsInput');
-    if (retryInput) retryInput.checked = true;
     setStatus(d.message || 'Unfinished order task queued for retry.');
     await loadQueue(false);
     await loadCrmMassEmailerStatus(false);
@@ -9057,9 +9055,8 @@ function buildCrmMassEmailerPayload() {
   if (!Number.isFinite(limit) || limit < 0) {
     throw new Error('Enter a row limit of 0 or higher.');
   }
-  const retryErrors = Boolean((document.getElementById('crmMassEmailerRetryErrorsInput') || {}).checked);
   const payload = {
-    retry_errors: retryErrors,
+    retry_errors: true,
     parallel_workers: getSavedCrmWorkerPreference(),
   };
   if (limit > 0) payload.limit = Math.floor(limit);

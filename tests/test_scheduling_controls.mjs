@@ -9,6 +9,7 @@ const names = [
   'resolveCrmProcessingScheduledDateTime', 'syncScheduledTimeInput', 'syncCrmProcessingAdvancedControls',
   'buildCrmProcessingAdvancedPayload', 'communicationSchedulePayload', 'syncCommunicationScheduleControls',
   'renderM6PostingToggle', 'loadM6Posting', 'toggleM6Posting',
+  'buildCrmMassEmailerPayload',
 ];
 const functions = names.map(name => {
   let start = source.indexOf(`function ${name}(`);
@@ -35,6 +36,7 @@ function dashboard({ now = new Date(2026, 10, 16, 14, 0, 20), api } = {}) {
     document: { getElementById: id => elements[id] },
     Date: class extends Date { constructor(...args) { super(...(args.length ? args : [now.getTime()])); } },
     fmtDateTime: value => value,
+    getSavedCrmWorkerPreference: () => 4,
     setStatus: message => messages.push(message),
     setErrorStatus: message => messages.push(message),
     api: api || (async () => ({success: true, enabled: true})),
@@ -42,6 +44,12 @@ function dashboard({ now = new Date(2026, 10, 16, 14, 0, 20), api } = {}) {
   vm.runInContext(`${globals}\n${functions}`, context);
   return { context, elements, messages };
 }
+
+test('Sheets Scanner always includes earlier errors without the removed retry checkbox', () => {
+  const {context} = dashboard();
+  const payload = JSON.parse(JSON.stringify(context.buildCrmMassEmailerPayload()));
+  assert.deepEqual(payload, {retry_errors: true, parallel_workers: 4});
+});
 
 test('repeat and scheduled remain enabled together, with both values in the request', () => {
   const {context, elements} = dashboard();

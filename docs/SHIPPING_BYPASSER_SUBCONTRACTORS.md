@@ -89,6 +89,16 @@ Selections remain independent for each mode and are preserved in normal,
 scheduled, and repeating queue entries. Neither tool is enabled automatically
 by this update, and installing it does not start a run or create a schedule.
 
+Every new run scans its selected report again. Earlier failures do not create
+an order ignore list, and Shipping Bypasser no longer uses Stock Tools history
+to exclude entire orders with successful or unfinished tabs. Attempted-order
+sets apply only to refresh passes within the current run. Push Back reads all
+loaded report rows before filtering and limiting eligible orders. A Rush run
+and a FREE run still use different report filters; a failed Rush order must
+also match the FREE report to be detected there. Keep history and receipts:
+per-tab confirmed-purchase checks and uncertain-submission review stops remain
+in force when an order is reconsidered.
+
 The four additional machine-local settings are:
 
 | Mode | Tool | Setting | Configured report filters |

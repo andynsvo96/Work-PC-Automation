@@ -4934,50 +4934,6 @@ class ShippingBypasserTests(unittest.TestCase):
             "H-Example124 3 - QTY: 1",
         )
 
-    def test_shipping_bypasser_history_only_skips_successful_orders(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
-            state_path = handle.name
-            json.dump(
-                {
-                    "run_history": [
-                        {
-                            "automation_key": "shipping_bypasser",
-                            "success": False,
-                            "order_ids": ["4622786", "4622599"],
-                            "order_results": [
-                                {"order_id": "4622786", "success": False, "outcome": "sanmar_cart_mismatch"},
-                                {"order_id": "4622599", "success": False, "outcome": "sanmar_cart_not_empty"},
-                                {"order_id": "4623000", "success": True, "outcome": "shipping_bypass_ordered"},
-                            ],
-                            "dry_run": False,
-                        },
-                        {
-                            "automation_key": "shipping_bypasser",
-                            "success": True,
-                            "order_ids": ["4624000"],
-                            "order_results": [],
-                            "dry_run": False,
-                        },
-                        {
-                            "automation_key": "shipping_bypasser",
-                            "success": True,
-                            "order_ids": ["4625000"],
-                            "order_results": [
-                                {"order_id": "4625000", "success": True, "outcome": "shipping_bypass_ready"},
-                            ],
-                            "dry_run": True,
-                        },
-                    ]
-                },
-                handle,
-            )
-        try:
-            skipped = crm_shipping_bypasser._load_historical_shipping_bypass_order_ids(state_path)
-        finally:
-            Path(state_path).unlink(missing_ok=True)
-
-        self.assertEqual(skipped, {"4623000", "4624000"})
-
 
 class CrmAutoSplitterTests(unittest.TestCase):
     @mock.patch.object(crm_auto_splitter, "build_chrome_driver")

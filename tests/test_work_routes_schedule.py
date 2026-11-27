@@ -81,6 +81,18 @@ class WorkRouteScheduleTests(unittest.TestCase):
         self.assertEqual(captured["repeat_interval_minutes"], 12)
         self.assertIn("Repeat every 12 minutes", captured["advanced_summary"])
 
+    def test_scanner_runs_include_previous_errors_for_new_and_older_clients(self):
+        for options in ({}, {"retry_errors": False}, {"retryErrors": False}):
+            with self.subTest(options=options):
+                run = mock.Mock(return_value=(True, "Completed"))
+                app, captured = self._app_with_captured_queue(run_crm_mass_emailer_run_queued=run)
+                response = app.test_client().post("/crm/mass-emailer", json=options)
+                self.assertEqual(response.status_code, 202)
+                self.assertTrue(captured["task_arguments"]["retry_errors"])
+                self.assertIn("Includes previous errors", captured["details"])
+                captured["fn"]()
+                self.assertTrue(run.call_args.kwargs["retry_errors"])
+
     def test_scheduled_repeats_preserve_both_controls_for_processing_and_scanner(self):
         for endpoint in ("/crm/process", "/crm/mass-emailer"):
             with self.subTest(endpoint=endpoint):

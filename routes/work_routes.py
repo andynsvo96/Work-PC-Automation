@@ -832,14 +832,7 @@ def register_work_routes(
                 request.args.get("parallel_workers"),
                 request.args.get("parallelWorkers"),
             ),
-            "retry_errors": is_trueish(
-                _first_present(
-                    data.get("retry_errors"),
-                    data.get("retryErrors"),
-                    request.args.get("retry_errors"),
-                    request.args.get("retryErrors"),
-                )
-            ),
+            "retry_errors": True,
             "advanced_mode": _first_present(
                 data.get("advanced_mode"), data.get("advancedMode"), data.get("queue_mode"), data.get("queueMode"),
                 request.args.get("advanced_mode"), request.args.get("advancedMode"), request.args.get("queue_mode"), request.args.get("queueMode"),
@@ -860,7 +853,7 @@ def register_work_routes(
         if limit not in (None, ""):
             parts.append(f"Limit {limit}")
         if options.get("retry_errors"):
-            parts.append("Retry errors")
+            parts.append("Includes previous errors")
         workers = options.get("parallel_workers")
         if workers not in (None, ""):
             parts.append(f"Workers {workers}")
