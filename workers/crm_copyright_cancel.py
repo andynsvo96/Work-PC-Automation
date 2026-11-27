@@ -9,6 +9,7 @@ save. Use --real only after selector verification on a safe test order.
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import ctypes
+import hashlib
 import html
 import json
 import os
@@ -19,6 +20,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 
 from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.common.action_chains import ActionChains
@@ -6250,7 +6252,32 @@ def _prepare_and_maybe_send_salesforce_email(
     contact=None,
     designs=None,
     receipt_scope=None,
+    resume_confirmed=False,
 ):
+    if resume_confirmed and not dry_run:
+        from salesforce_templates import TemplateLibraryError, default_template_store
+        from workers.salesforce_activity_confirmation import previous_email_receipt
+
+        try:
+            template = default_template_store().get_template(process.salesforce_template)
+        except TemplateLibraryError:
+            template = None
+        if template:
+            subject = _clean_text(template["subject"])
+            if str(order_id) not in subject:
+                subject = LEGACY_PLACEHOLDER_RE.sub(str(order_id), ORDER_NUMBER_PLACEHOLDER_RE.sub(str(order_id), subject))
+            if str(order_id) in subject:
+                previous = previous_email_receipt(
+                    order_id, subject, customer_email, receipt_scope=receipt_scope or process.key,
+                )
+                if previous is not None:
+                    sf_handle = _open_salesforce_account(
+                        driver, crm_handle, customer_email, login_wait_seconds=login_wait_seconds, order_id=order_id,
+                    )
+                    _verify_salesforce_email(driver, customer_email)
+                    return {**previous, "salesforce_handle": sf_handle, "email": customer_email,
+                            "process": process.key, "dry_run": False}
+
     # The local JSON template loader uses the composer for both Accounts and
     # Contacts; neither record type needs Salesforce's template picker.
     preparation_retry_error = None
@@ -7183,41 +7210,42 @@ def _fill_salesforce_case_subject(driver, subject):
     raise CopyrightCancelError("Salesforce Case Subject could not be set and verified.")
 
 
-def _click_salesforce_case_save(driver):
+def _click_salesforce_case_save(driver, before_click=None):
     deadline = time.monotonic() + 20
+    script = """
+        function clean(value) {
+          return (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+        }
+        function visible(el) {
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          return rect.width > 0 && rect.height > 0
+            && style.display !== 'none' && style.visibility !== 'hidden'
+            && rect.bottom > 0 && rect.top < window.innerHeight
+            && rect.right > 0 && rect.left < window.innerWidth;
+        }
+        const form = Array.from(document.querySelectorAll('[role=dialog],section,div'))
+          .filter(el => visible(el) && /New Case/i.test(el.innerText || '')
+            && /Case Information/i.test(el.innerText || '')
+            && /Subject/i.test(el.innerText || ''))
+          .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)
+          .find(el => Array.from(el.querySelectorAll('button,input')).some(isSave));
+        function isSave(el) {
+          return visible(el) && !el.disabled && el.getAttribute('aria-disabled') !== 'true'
+            && clean(el.innerText || el.value || el.getAttribute('aria-label')) === 'save';
+        }
+        if (!form) return false;
+        const buttons = Array.from(form.querySelectorAll('button,input')).filter(isSave);
+        if (buttons.length !== 1) return false;
+        if (arguments[0]) buttons[0].click();
+        return true;
+    """
     while time.monotonic() < deadline:
-        clicked = bool(
-            driver.execute_script(
-                """
-                function clean(value) {
-                  return (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-                }
-                function visible(el) {
-                  const rect = el.getBoundingClientRect();
-                  const style = window.getComputedStyle(el);
-                  return rect.width > 0 && rect.height > 0
-                    && style.display !== 'none' && style.visibility !== 'hidden'
-                    && rect.bottom > 0 && rect.top < window.innerHeight
-                    && rect.right > 0 && rect.left < window.innerWidth;
-                }
-                const root = Array.from(document.querySelectorAll('[role=dialog],section,div'))
-                  .filter((el) => visible(el) && /New Case/i.test(el.innerText || '') && /Subject/i.test(el.innerText || ''))
-                  .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0] || document;
-                const buttons = Array.from(root.querySelectorAll('button,a,[role=button],input'))
-                  .filter((el) => visible(el) && clean(`${el.innerText || ''} ${el.value || ''} ${el.getAttribute('aria-label') || ''}`) === 'save')
-                  .sort((a, b) => {
-                    const ar = a.getBoundingClientRect();
-                    const br = b.getBoundingClientRect();
-                    return (br.bottom - ar.bottom) || (br.right - ar.right);
-                  });
-                if (!buttons.length) return false;
-                buttons[0].scrollIntoView({block: 'center', inline: 'center'});
-                buttons[0].click();
-                return true;
-                """
-            )
-        )
-        if clicked:
+        if driver.execute_script(script, False):
+            if before_click is not None:
+                before_click()
+            if not driver.execute_script(script, True):
+                raise CopyrightCancelError("Salesforce Case Save changed before it could be clicked.")
             return True
         time.sleep(0.5)
     raise CopyrightCancelError("Salesforce Case Save button was not found.")
@@ -7253,23 +7281,62 @@ def _create_salesforce_refund_pending_case(driver, order_id, process=COPYRIGHT_C
             "status": SALESFORCE_CASE_STATUS_REFUND_PENDING,
             "message": "Skipped Salesforce refund-pending Case creation in dry-run mode.",
         }
-    _click_salesforce_cases_new_button(driver)
-    _wait_for_salesforce_new_case_form(driver)
-    lookup_mode = _fill_salesforce_case_order_lookup(driver, order_id)
-    if lookup_mode != "advanced":
-        raise CopyrightCancelError("Salesforce Order Number lookup did not open Advanced Search.")
-    selected_order = _select_salesforce_advanced_search_order(driver, order_id)
-    _set_salesforce_case_status(driver)
-    _fill_salesforce_case_subject(driver, subject)
-    _click_salesforce_case_save(driver)
-    saved = _wait_for_salesforce_refund_case_saved(driver, subject)
-    return {
+    # Partial cancellations already keep a separate receipt per design selection.
+    receipt = None
+    if process.cancel_and_refund:
+        key = hashlib.sha256(json.dumps([str(order_id), process.key]).encode()).hexdigest()
+        receipt = Path(STATE_DIR) / "salesforce_refund_cases" / f"{key}.json"
+    unconfirmed = (
+        f"Salesforce refund Case submission for order {order_id} is unconfirmed. "
+        "Review Salesforce Cases before retrying."
+    )
+    if receipt is not None and receipt.exists():
+        try:
+            previous = json.loads(receipt.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise CopyrightCancelError(unconfirmed) from exc
+        if isinstance(previous, dict) and previous.get("created") is True:
+            return {**previous, "already_created": True}
+        raise CopyrightCancelError(unconfirmed)
+
+    def mark_pending():
+        if receipt is not None:
+            receipt.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with receipt.open("x", encoding="utf-8") as stream:
+                    json.dump({"created": False, "order_lookup": str(order_id)}, stream)
+            except FileExistsError as exc:
+                raise CopyrightCancelError(unconfirmed) from exc
+
+    step = "open New Case"
+    try:
+        _click_salesforce_cases_new_button(driver)
+        _wait_for_salesforce_new_case_form(driver)
+        step = "select Order Number"
+        if _fill_salesforce_case_order_lookup(driver, order_id) != "advanced":
+            raise CopyrightCancelError("Salesforce Order Number lookup did not open Advanced Search.")
+        selected_order = _select_salesforce_advanced_search_order(driver, order_id)
+        step = "set Refund Pending status"
+        _set_salesforce_case_status(driver)
+        step = "fill Subject"
+        _fill_salesforce_case_subject(driver, subject)
+        step = "save and confirm the Case"
+        _click_salesforce_case_save(driver, before_click=mark_pending)
+        saved = _wait_for_salesforce_refund_case_saved(driver, subject)
+    except Exception as exc:
+        detail = str(exc).partition("\nStacktrace:")[0].strip()
+        raise CopyrightCancelError(f"Salesforce refund Case could not {step}: {detail}") from exc
+    result = {
         "created": True,
         "dry_run": False,
         "order_lookup": str(order_id),
         "selected_order": selected_order,
         **saved,
     }
+    if receipt is not None:
+        from workers.salesforce_activity_confirmation import _write_receipt
+        _write_receipt(receipt, result)
+    return result
 
 
 def _read_payment_summary(driver):
@@ -9125,6 +9192,7 @@ def process_single_order(
             process=process,
             **({"full_selection": copyright_selection} if copyright_selection is not None else {}),
         )
+        refund_state = crm_action.get("refund") or {}
         salesforce = _prepare_and_maybe_send_salesforce_email(
             driver,
             crm_handle,
@@ -9135,10 +9203,10 @@ def process_single_order(
             process=process,
             reason=reason,
             login_wait_seconds=login_wait_seconds,
+            resume_confirmed=bool(refund_state.get("case_required")),
             **({"designs": designs} if process.key == COPYRIGHT_CANCEL_PROCESS.key else {}),
         )
         refund_case = None
-        refund_state = crm_action.get("refund") or {}
         if refund_state.get("case_required"):
             if not click_refund_button:
                 refund_case = {

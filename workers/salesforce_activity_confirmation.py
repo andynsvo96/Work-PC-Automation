@@ -78,6 +78,41 @@ def _write_receipt(path, receipt):
             temp_path.unlink(missing_ok=True)
 
 
+def _receipt_path(order_id, subject, recipient, receipt_scope):
+    if str(order_id) not in subject:
+        raise UnconfirmedEmailError('Email subject does not contain the order number.')
+    identity = [str(order_id), subject, recipient.lower()]
+    if receipt_scope is not None:
+        identity.insert(0, receipt_scope)
+    key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
+    return Path(STATE_DIR) / 'extra_print_email_confirmations' / f'{key}.json'
+
+
+def _read_previous_receipt(path, order_id):
+    try:
+        previous = json.loads(path.read_text(encoding='utf-8'))
+        if not isinstance(previous, dict):
+            raise ValueError('Invalid receipt')
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise UnconfirmedEmailError(
+            f'{FAILURE_MARKER} {order_id}: the previous email receipt cannot be read. '
+            'Review Salesforce Activity before retrying; no email was resent.'
+        ) from exc
+    if previous.get('activity_verified') is True:
+        return {**previous, 'skipped': True}
+    raise UnconfirmedEmailError(
+        f'{FAILURE_MARKER} {order_id}: a previous email send attempt is unconfirmed. '
+        'Review Salesforce Activity before retrying; no email was resent.'
+    )
+
+
+def previous_email_receipt(order_id, subject, recipient, *, receipt_scope):
+    subject = ' '.join(str(subject).split())
+    return _read_previous_receipt(_receipt_path(order_id, subject, recipient, receipt_scope), order_id)
+
+
 def send_and_confirm(driver, order_id, subject, recipient, click_send, *, timeout=30,
                      prepare_retry=None, body=None, receipt_scope=None):
     """Confirm Activity, refresh, then allow one validated resend within this run.
@@ -86,29 +121,10 @@ def send_and_confirm(driver, order_id, subject, recipient, click_send, *, timeou
     two-attempt budget, including when an older unconfirmed receipt exists.
     """
     subject = ' '.join(str(subject).split())
-    if str(order_id) not in subject:
-        raise UnconfirmedEmailError('Email subject does not contain the order number.')
-    identity = [str(order_id), subject, recipient.lower()]
-    if receipt_scope is not None:
-        identity.insert(0, receipt_scope)
-    key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
-    path = Path(STATE_DIR) / 'extra_print_email_confirmations' / f'{key}.json'
-    if path.exists():
-        try:
-            previous = json.loads(path.read_text(encoding='utf-8'))
-            if not isinstance(previous, dict):
-                raise ValueError('Invalid receipt')
-        except (OSError, ValueError) as exc:
-            raise UnconfirmedEmailError(
-                f'{FAILURE_MARKER} {order_id}: the previous email receipt cannot be read. '
-                'Review Salesforce Activity before retrying; no email was resent.'
-            ) from exc
-        if previous.get('activity_verified') is True:
-            return {**previous, 'skipped': True}
-        raise UnconfirmedEmailError(
-            f'{FAILURE_MARKER} {order_id}: a previous email send attempt is unconfirmed. '
-            'Review Salesforce Activity before retrying; no email was resent.'
-        )
+    path = _receipt_path(order_id, subject, recipient, receipt_scope)
+    previous = _read_previous_receipt(path, order_id)
+    if previous is not None:
+        return previous
     check_started = time.perf_counter()
     baseline = driver.execute_script(ACTIVITY_SCRIPT, subject) or []
     baseline_seconds = time.perf_counter() - check_started
