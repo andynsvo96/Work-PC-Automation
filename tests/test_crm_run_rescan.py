@@ -56,7 +56,9 @@ class CrmRunRescanTests(unittest.TestCase):
 
             def collect(*_args, exclude_order_ids, **_kwargs):
                 exclusions.append(set(exclude_order_ids))
-                return [order for order in orders if order not in exclude_order_ids]
+                # The third order becomes available on the next list refresh.
+                visible_orders = orders[:2] if not exclude_order_ids else orders
+                return [order for order in visible_orders if order not in exclude_order_ids]
 
             stack.enter_context(mock.patch.object(bypasser, "_collect_batch_order_ids_with_driver", side_effect=collect))
             process = stack.enter_context(mock.patch.object(bypasser, "_run_order_with_drivers"))
@@ -67,10 +69,11 @@ class CrmRunRescanTests(unittest.TestCase):
                 }]
                 payload = bypasser._run_batch_with_mode(True, list_url="https://crm.example/report")
                 self.assertEqual(payload["order_ids"], orders)
+                self.assertEqual(payload["refresh_passes"], 3)
                 self.assertEqual(payload["skipped_historical_order_count"], 0)
                 self.assertNotIn("clear Stock Tools history", payload["message"])
             self.assertEqual([call.args[2] for call in process.call_args_list], orders * 2)
-            self.assertEqual(exclusions, [set(), set(orders), set(), set(orders)])
+            self.assertEqual(exclusions, [set(), set(orders[:2]), set(orders)] * 2)
             self.assertEqual(history_path.read_text(encoding="utf-8"), original)
 
     def test_push_back_failures_are_attempted_once_per_run_in_every_report_mode(self):
@@ -85,7 +88,9 @@ class CrmRunRescanTests(unittest.TestCase):
 
                     def collect(*_args, exclude_order_ids, **_kwargs):
                         exclusions.append(set(exclude_order_ids))
-                        return [dict(row) for row in rows if row["orderId"] not in exclude_order_ids]
+                        # A newly scheduled order appears after the first fails.
+                        visible_rows = rows[:1] if not exclude_order_ids else rows
+                        return [dict(row) for row in visible_rows if row["orderId"] not in exclude_order_ids]
 
                     for name in ("_collect_push_back_rows", "_collect_push_back_rows_with_driver"):
                         stack.enter_context(mock.patch.object(push_back, name, side_effect=collect))
@@ -103,8 +108,9 @@ class CrmRunRescanTests(unittest.TestCase):
                         )
                         self.assertFalse(result["success"])
                         self.assertEqual(result["order_ids"], [row["orderId"] for row in rows])
+                        self.assertEqual(result["refresh_passes"], 3)
                     self.assertEqual(process.call_count, 4)
-                    self.assertEqual(exclusions, [set(), {"5000001", "5000002"}] * 2)
+                    self.assertEqual(exclusions, [set(), {"5000001"}, {"5000001", "5000002"}] * 2)
 
 
 if __name__ == "__main__":

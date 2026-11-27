@@ -99,6 +99,12 @@ also match the FREE report to be detected there. Keep history and receipts:
 per-tab confirmed-purchase checks and uncertain-submission review stops remain
 in force when an order is reconsidered.
 
+If an order fails, later list refreshes in that same run skip it while still
+collecting newly eligible orders. Starting a new manual run or the next scheduled
+repeat starts with an empty attempted-order set, so a previously failed order is
+attempted again when it still matches that run's report filters. Existing bounded
+recovery attempts within a worker retain their own limits.
+
 The four additional machine-local settings are:
 
 | Mode | Tool | Setting | Configured report filters |
