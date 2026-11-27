@@ -760,6 +760,16 @@
       "crm_product_id": "A4N3013",
       "sanmar_product_id": "A4N3013",
       "colors": []
+    },
+    {
+      "crm_product_id": "SXU029",
+      "sanmar_product_id": "SXU029",
+      "colors": [
+        {
+          "crm_color_id": "KaffaCof",
+          "sanmar_color_id": "Kaffa Coffee"
+        }
+      ]
     }
   ]
 }
