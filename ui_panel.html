@@ -176,8 +176,9 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .crm-link-filter-dialog .modal-actions{justify-content:flex-end}
 .crm-link-filter-dialog textarea{min-height:70px}
 .crm-link-filter-dialog .crm-link-change-field{display:flex;align-items:center;gap:6px;margin-top:6px}
-button.crm-link-filter-edit{padding:0;border:0;background:transparent;color:inherit;text-align:left;font:inherit;overflow-wrap:anywhere}
+button.crm-link-filter-edit,:root[data-theme='dark'] button.crm-link-filter-edit{padding:0;border:0;background:transparent;color:inherit;text-align:left;font:inherit;overflow-wrap:anywhere}
 button.crm-link-filter-edit:hover:not(:disabled),:root[data-theme='dark'] button.crm-link-filter-edit:hover:not(:disabled){background:transparent;text-decoration:underline;text-underline-offset:2px}
+button.crm-link-filter-edit:focus-visible{outline:1px solid currentColor;outline-offset:2px}
 .crm-link-compare-table th .crm-link-filter-edit{font-weight:700}
 .crm-link-columns summary{cursor:pointer;width:max-content}
 .crm-link-column-options{display:flex;flex-wrap:wrap;gap:7px 14px;margin-top:8px}
