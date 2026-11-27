@@ -380,11 +380,6 @@ def _validate_runtime_config(list_url=None):
     target_url = str(list_url or CRM_SHIPPING_BYPASS_URL or "").strip()
     if not target_url:
         raise RuntimeError("CRM_SHIPPING_BYPASS_URL is empty in config.py.")
-    if str(list_url or "").strip():
-        return target_url
-    lowered_url = target_url.lower()
-    if "shipping+is+too+expensive" not in lowered_url and "shipping is too expensive" not in lowered_url:
-        raise RuntimeError("Shipping Bypasser list URL must target Sales Notes = Shipping is too expensive.")
     return target_url
 
 

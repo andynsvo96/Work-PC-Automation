@@ -42,6 +42,8 @@ class CrmRunRescanTests(unittest.TestCase):
         folder = ROOT / "runtime/debug/run_rescan_tests"
         folder.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=folder) as directory, ExitStack() as stack:
+            configured_url = "https://crm.example/app#/report/967?salesNotes=High%20shipping%20cost"
+            stack.enter_context(mock.patch.object(bypasser, "CRM_SHIPPING_BYPASS_URL", configured_url))
             history_path = Path(directory) / "history.json"
             original = json.dumps(history)
             history_path.write_text(original, encoding="utf-8")
@@ -62,12 +64,13 @@ class CrmRunRescanTests(unittest.TestCase):
 
             stack.enter_context(mock.patch.object(bypasser, "_collect_batch_order_ids_with_driver", side_effect=collect))
             process = stack.enter_context(mock.patch.object(bypasser, "_run_order_with_drivers"))
-            for attempt in range(2):
+            for attempt, override in enumerate((None, "https://crm.example/app#/report/967")):
                 process.side_effect = lambda _crm, _vendor, order_id, **_kw: [{
                     "order_id": order_id, "success": bool(attempt),
                     "outcome": "already_stock_ordered" if attempt else "no_single_warehouse",
                 }]
-                payload = bypasser._run_batch_with_mode(True, list_url="https://crm.example/report")
+                payload = bypasser._run_batch_with_mode(True, list_url=override)
+                self.assertEqual(payload["list_url"], override or configured_url)
                 self.assertEqual(payload["order_ids"], orders)
                 self.assertEqual(payload["refresh_passes"], 3)
                 self.assertEqual(payload["skipped_historical_order_count"], 0)
@@ -81,6 +84,8 @@ class CrmRunRescanTests(unittest.TestCase):
         for mode in sorted(push_back.VALID_FILTERS):
             for workers in (1, 2):
                 with self.subTest(mode=mode, workers=workers), ExitStack() as stack:
+                    configured_url = "https://crm.example/app#/report/122?salesNotes=Delivery%20delay"
+                    stack.enter_context(mock.patch.object(push_back, f"CRM_PUSH_BACK_{mode.upper()}_URL", configured_url))
                     for name in ("_build_crm_session_driver", "safe_driver_quit", "_publish_status"):
                         stack.enter_context(mock.patch.object(push_back, name))
                     stack.enter_context(mock.patch.object(push_back, "_clone_profile_for_worker", return_value=(None, "fixture-profile")))
@@ -96,7 +101,7 @@ class CrmRunRescanTests(unittest.TestCase):
                         stack.enter_context(mock.patch.object(push_back, name, side_effect=collect))
                     process_name = "_run_order_with_driver" if workers == 1 else "_run_order_worker_payload"
                     process = stack.enter_context(mock.patch.object(push_back, process_name))
-                    for _ in range(2):
+                    for override in (None, "https://crm.example/app#/report/122"):
                         def process_row(*args, **_kwargs):
                             row = args[1] if workers == 1 else args[0]
                             return push_back._result(row["orderId"], False, "worker_exception", "Temporary failure")
@@ -104,9 +109,10 @@ class CrmRunRescanTests(unittest.TestCase):
                         process.side_effect = process_row
                         result = push_back._run_batch_with_mode(
                             True, processing_filter=mode, parallel_workers=workers,
-                            list_url="https://crm.example/report",
+                            list_url=override,
                         )
                         self.assertFalse(result["success"])
+                        self.assertEqual(result["list_url"], override or configured_url)
                         self.assertEqual(result["order_ids"], [row["orderId"] for row in rows])
                         self.assertEqual(result["refresh_passes"], 3)
                     self.assertEqual(process.call_count, 4)

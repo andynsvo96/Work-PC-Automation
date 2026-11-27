@@ -89,6 +89,11 @@ Selections remain independent for each mode and are preserved in normal,
 scheduled, and repeating queue entries. Neither tool is enabled automatically
 by this update, and installing it does not start a run or create a schedule.
 
+Both workers open the report link as saved and scan the rows returned by CRM.
+Sales Notes wording in the link can vary or be omitted. CRM still applies the
+filters in the saved link when it builds the report. This fix loads with the
+next worker run.
+
 Every new run scans its selected report again. Earlier failures do not create
 an order ignore list, and Shipping Bypasser no longer uses Stock Tools history
 to exclude entire orders with successful or unfinished tabs. Attempted-order
@@ -107,7 +112,7 @@ recovery attempts within a worker retain their own limits.
 
 The four additional machine-local settings are:
 
-| Mode | Tool | Setting | Configured report filters |
+| Mode | Tool | Setting | Originally supplied report filters |
 |---|---|---|---|
 | FREE | Bypasser | `CRM_SHIPPING_BYPASS_FREE_URL` | Report 967, shipping charge at most 1, Sales Notes `too expensive` |
 | FREE | Push Back | `CRM_PUSH_BACK_FREE_URL` | Report 967, shipping charge at most 1, Sales Notes `unable to be delivered on time` |
