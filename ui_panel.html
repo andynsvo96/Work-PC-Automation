@@ -169,6 +169,16 @@ body{font-family:Segoe UI,Tahoma,sans-serif;margin:0;background:#f4f6f8;color:#1
 .crm-link-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0 6px}
 .crm-link-heading .section-title{margin:0}
 .crm-link-columns{margin:4px 0 10px}
+.crm-link-view-controls{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 20px}
+.crm-link-group-control{display:inline-flex;align-items:center;gap:7px}
+.crm-link-group-control .select{width:auto}
+.crm-link-filter-dialog{width:min(500px,calc(100% - 32px));max-height:85vh;overflow:auto}
+.crm-link-filter-dialog .modal-actions{justify-content:flex-end}
+.crm-link-filter-dialog textarea{min-height:70px}
+.crm-link-filter-dialog .crm-link-change-field{display:flex;align-items:center;gap:6px;margin-top:6px}
+button.crm-link-filter-edit{padding:0;border:0;background:transparent;color:inherit;text-align:left;font:inherit;overflow-wrap:anywhere}
+button.crm-link-filter-edit:hover:not(:disabled),:root[data-theme='dark'] button.crm-link-filter-edit:hover:not(:disabled){background:transparent;text-decoration:underline;text-underline-offset:2px}
+.crm-link-compare-table th .crm-link-filter-edit{font-weight:700}
 .crm-link-columns summary{cursor:pointer;width:max-content}
 .crm-link-column-options{display:flex;flex-wrap:wrap;gap:7px 14px;margin-top:8px}
 .crm-link-column-options label{display:inline-flex;align-items:center;gap:4px}
@@ -5639,11 +5649,15 @@ function createHiddenConfigInput(field) {
   return input;
 }
 
+function crmLinkFragmentRoute(url) {
+  return url.hash.match(/^#(!?\/[^?]*)(?:\?(.*))?$/);
+}
+
 function parseCrmComparisonLink(value) {
   try {
     const url = new URL(value);
     if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return null;
-    const fragment = url.hash.match(/^#(!?\/[^?]*)(?:\?(.*))?$/);
+    const fragment = crmLinkFragmentRoute(url);
     const route = fragment ? fragment[1].replace(/^!/, '') : url.pathname;
     const report = route.match(/^\/reports?\/(\d+)\/?$/i);
     const filters = new Map();
@@ -5700,19 +5714,154 @@ function formatCrmLinkFilterValue(link, key) {
   return parts.join(', ') || '—';
 }
 
-function createCrmLinkComparison(groups) {
+function crmLinkFilterFields(key, links) {
+  const fields = [];
+  const range = links.some(({ filters }) => filters.has(`${key}[low]`) || filters.has(`${key}[high]`));
+  for (const [name, label] of [[key, 'Value'], [`${key}[]`, 'Values']]) {
+    const values = links.map(({ filters }) => filters.get(name) || []);
+    if (!values.some((list) => list.length)) continue;
+    const multiple = name.endsWith('[]') || values.some((list) => list.length > 1);
+    const boolean = !multiple && values.flat().every((value) => value === 'true' || value === 'false');
+    fields.push({ name, label, multiple, boolean });
+  }
+  if (range) fields.push({ name: `${key}[low]`, label: 'Minimum' }, { name: `${key}[high]`, label: 'Maximum' });
+  return fields;
+}
+
+function updateCrmLinkFilters(rawLink, changes) {
+  if (!parseCrmComparisonLink(rawLink)?.report) return rawLink;
+  const url = new URL(rawLink);
+  const fragment = crmLinkFragmentRoute(url);
+  const inner = fragment ? new URLSearchParams(fragment[2]) : null;
+  const originalInner = inner?.toString();
+  const outer = url.searchParams;
+  let updated = false;
+  for (const [key, values] of changes) {
+    const before = [...outer.getAll(key), ...(inner?.getAll(key) || [])].filter((value) => value.trim());
+    if (before.length === values.length && before.every((value, index) => value === values[index])) continue;
+    const destination = inner && (inner.has(key) || !outer.has(key)) ? inner : outer;
+    const placeholders = key.endsWith('[]') ? destination.getAll(key).filter((value) => !value.trim()) : [];
+    outer.delete(key);
+    inner?.delete(key);
+    if (values.length) {
+      for (const value of [...placeholders, ...values]) destination.append(key, value);
+    }
+    updated = true;
+  }
+  if (!updated) return rawLink;
+  if (inner && inner.toString() !== originalInner) {
+    const query = inner.toString();
+    url.hash = fragment[1] + (query ? `?${query}` : '');
+  }
+  return url.href;
+}
+
+function openCrmLinkFilterEditor(key, fields, targets, bulk, button) {
+  const dialog = document.createElement('dialog');
+  dialog.className = 'modal crm-link-filter-dialog';
+  dialog.setAttribute('aria-labelledby', 'crmLinkFilterTitle');
+  dialog.innerHTML = `
+    <form>
+      <div class='modal-title-row'><h2 id='crmLinkFilterTitle'></h2></div>
+      <p class='muted'></p>
+      <div class='crm-link-filter-fields'></div>
+      <div class='modal-actions'>
+        <button class='secondary' type='button'>Cancel</button>
+        <button type='submit'></button>
+      </div>
+    </form>`;
+  dialog.querySelector('h2').textContent = `Edit ${crmLinkFilterLabel(key)}`;
+  dialog.querySelector('p').textContent = bulk
+    ? `Applies to all ${targets.length} saved report links, across every mode.`
+    : targets[0].label;
+  const form = dialog.querySelector('form');
+  const fieldContainer = dialog.querySelector('.crm-link-filter-fields');
+  const current = bulk ? null : parseCrmComparisonLink(targets[0].input.value)?.filters;
+  const controls = fields.map(({ name, label, multiple, boolean }, index) => {
+    const row = document.createElement('div');
+    row.className = 'field';
+    const caption = document.createElement('label');
+    const control = document.createElement(boolean ? 'select' : (multiple ? 'textarea' : 'input'));
+    control.id = `crmLinkCriterion${index}`;
+    caption.htmlFor = control.id;
+    caption.textContent = label;
+    row.append(caption, control);
+    let apply;
+    if (boolean) {
+      if (bulk) control.add(new Option('Keep existing', 'keep'));
+      control.add(new Option('Any', ''));
+      control.add(new Option('Yes', 'true'));
+      control.add(new Option('No', 'false'));
+      control.value = bulk ? 'keep' : (current?.get(name)?.[0] || '');
+    } else {
+      if (!multiple) control.type = 'text';
+      control.value = (current?.get(name) || []).join('\n');
+      control.placeholder = multiple ? 'One value per line' : 'Any';
+      if (bulk) {
+        const change = document.createElement('label');
+        change.className = 'crm-link-change-field';
+        apply = document.createElement('input');
+        apply.type = 'checkbox';
+        control.disabled = true;
+        apply.addEventListener('change', () => { control.disabled = !apply.checked; });
+        change.append(apply, 'Apply to all links. Leave the value empty to clear it.');
+        row.insertBefore(change, control);
+      }
+    }
+    fieldContainer.appendChild(row);
+    return { name, control, apply, multiple, initial: control.value };
+  });
+  dialog.querySelector('button[type="button"]').addEventListener('click', () => dialog.close());
+  dialog.querySelector('button[type="submit"]').textContent = bulk ? `Save to ${targets.length} links` : 'Save filter';
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const changes = new Map();
+    for (const { name, control, apply, multiple, initial } of controls) {
+      if (apply ? !apply.checked : control.value === initial) continue;
+      const values = multiple ? control.value.split(/\r?\n/) : [control.value];
+      changes.set(name, values.map((value) => value.trim()).filter(Boolean));
+    }
+    const updated = targets.map(({ input, editKey }) => ({
+      input, editKey, value: updateCrmLinkFilters(input.value, changes),
+    })).filter(({ input, value }) => input.value !== value);
+    for (const { input, editKey, value } of updated) {
+      input.value = value;
+      updateCrmLinkButtonState(editKey);
+    }
+    dialog.close();
+    // A single change event saves the entire set through the existing settings queue.
+    updated[0]?.input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  dialog.addEventListener('close', () => {
+    dialog.remove();
+    if (button?.isConnected) button.focus();
+  });
+  document.body.appendChild(dialog);
+  dialog.showModal();
+}
+
+function createCrmLinkComparison(entries) {
   const view = document.createElement('div');
   view.id = 'crmLinkComparison';
   view.hidden = true;
   view.innerHTML = `
-    <details class='crm-link-columns'>
-      <summary>Filter columns</summary>
-      <div class='crm-link-column-options'></div>
-    </details>
+    <div class='crm-link-view-controls'>
+      <label class='crm-link-group-control'>Group by
+        <select class='select'>
+          <option value='automation'>Automation</option>
+          <option value='mode'>Mode</option>
+        </select>
+      </label>
+      <details class='crm-link-columns'>
+        <summary>Filter columns</summary>
+        <div class='crm-link-column-options'></div>
+      </details>
+    </div>
     <div class='tbl-wrap' tabindex='0' role='region' aria-label='CRM link comparison'>
       <table class='tbl crm-link-compare-table'><thead><tr></tr></thead></table>
     </div>`;
   const options = view.querySelector('.crm-link-column-options');
+  const groupBy = view.querySelector('select');
   const table = view.querySelector('table');
   const hidden = new Set(['_filterForm', 'sortColumn', 'sortDir']);
   let links = new Map();
@@ -5720,12 +5869,39 @@ function createCrmLinkComparison(groups) {
 
   function renderTable() {
     const visible = columns.filter((key) => !hidden.has(key));
+    const reports = entries.filter(({ key }) => links.get(key)?.report);
+    const reportLinks = reports.map(({ key }) => links.get(key));
+    const filterFields = new Map(visible.map((key) => [key, crmLinkFilterFields(key, reportLinks)]));
+    const groups = new Map();
+    for (const entry of entries) {
+      const title = entry[groupBy.value];
+      if (!groups.has(title)) groups.set(title, []);
+      groups.get(title).push(entry);
+    }
     const headerRow = table.tHead.rows[0];
     headerRow.replaceChildren();
-    for (const title of ['Link', 'Report #', 'Actions', ...visible.map(crmLinkFilterLabel)]) {
+    for (const title of ['Link', 'Report #', 'Actions']) {
       const header = document.createElement('th');
       header.scope = 'col';
       header.textContent = title;
+      headerRow.appendChild(header);
+    }
+    for (const key of visible) {
+      const header = document.createElement('th');
+      header.scope = 'col';
+      const label = crmLinkFilterLabel(key);
+      const fields = filterFields.get(key);
+      if (fields.length) {
+        const edit = document.createElement('button');
+        edit.type = 'button';
+        edit.className = 'crm-link-filter-edit';
+        edit.textContent = label;
+        edit.title = `Edit ${label} for all saved report links`;
+        edit.addEventListener('click', () => openCrmLinkFilterEditor(key, fields, reports, true, edit));
+        header.appendChild(edit);
+      } else {
+        header.textContent = label;
+      }
       headerRow.appendChild(header);
     }
     for (const body of [...table.tBodies]) body.remove();
@@ -5760,14 +5936,26 @@ function createCrmLinkComparison(groups) {
         edit.addEventListener('click', () => openCrmLinkEditor(entry.editKey, entry.key !== entry.editKey));
         action.appendChild(edit);
         if (!link) action.title = entry.input.value.trim() ? 'Invalid link' : 'No link saved';
-        for (const key of visible) appendCell(row, formatCrmLinkFilterValue(link, key));
+        for (const key of visible) {
+          const value = formatCrmLinkFilterValue(link, key);
+          const fields = filterFields.get(key);
+          const cell = appendCell(row, link?.report && fields.length ? '' : value);
+          if (!link?.report || !fields.length) continue;
+          const criterion = document.createElement('button');
+          criterion.type = 'button';
+          criterion.className = 'crm-link-filter-edit';
+          criterion.textContent = value;
+          criterion.setAttribute('aria-label', `Edit ${crmLinkFilterLabel(key)} for ${entry.label} (${value})`);
+          criterion.addEventListener('click', () => openCrmLinkFilterEditor(key, fields, [entry], false, criterion));
+          cell.appendChild(criterion);
+        }
       }
     }
   }
 
   function refresh() {
     if (view.hidden) return;
-    links = new Map([...groups.values()].flat().map(({ key, input }) => [key, parseCrmComparisonLink(input.value.trim())]));
+    links = new Map(entries.map(({ key, input }) => [key, parseCrmComparisonLink(input.value.trim())]));
     columns = crmLinkFilterColumns(links.values());
     const choices = columns.map((key) => {
       const label = document.createElement('label');
@@ -5785,6 +5973,7 @@ function createCrmLinkComparison(groups) {
     options.replaceChildren(...(choices.length ? choices : ['No filters detected']));
     renderTable();
   }
+  groupBy.addEventListener('change', renderTable);
   return { view, refresh };
 }
 
@@ -5800,7 +5989,7 @@ function renderCrmLinkButtonPanel(fields) {
   for (const field of fields) fieldByKey[field.key] = field;
   const rendered = new Set(Object.values(CRM_RUSH_CONTRACTED_LINK_KEYS));
   const editor = document.createElement('div');
-  const groups = new Map();
+  const entries = [];
 
   function appendCategory(titleText, categoryFields) {
     if (!categoryFields.length) return;
@@ -5818,10 +6007,10 @@ function renderCrmLinkButtonPanel(fields) {
       const label = CRM_LINK_LABEL_OVERRIDES[key] || keyLabel(key);
       const contracted = CRM_RUSH_CONTRACTED_LINK_KEYS[key];
       const tool = ['Core', 'Other'].includes(titleText) ? titleText : label.replace(/^813 /, '').replace(/ (?:Free |Rush |High Value |All |813 )?List$/, '');
-      if (!groups.has(tool)) groups.set(tool, []);
-      groups.get(tool).push({ key, editKey: key, label, input: fieldMap[key] });
+      const group = { mode: titleText, automation: tool };
+      entries.push({ ...group, key, editKey: key, label, input: fieldMap[key] });
       if (fieldByKey[contracted]) {
-        groups.get(tool).push({ key: contracted, editKey: key, label: `${label} — Contracted Orders`, input: fieldMap[contracted] });
+        entries.push({ ...group, key: contracted, editKey: key, label: `${label} — Contracted Orders`, input: fieldMap[contracted] });
       }
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -5843,7 +6032,7 @@ function renderCrmLinkButtonPanel(fields) {
   }
   appendCategory('Other', fields.filter((field) => !rendered.has(field.key)));
 
-  const comparison = createCrmLinkComparison(groups);
+  const comparison = createCrmLinkComparison(entries);
   const toggle = document.createElement('button');
   toggle.type = 'button';
   toggle.className = 'secondary tiny';
