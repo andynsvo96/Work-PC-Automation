@@ -56,6 +56,7 @@ from clipboard_runtime import (
 )
 from credential_store import CREDENTIAL_TARGETS
 from crm_list_url import (
+    CRM_LINK_SETTING_KEYS,
     CRM_RUSH_REPORT_KEYS,
     normalize_custom_crm_list_url,
     normalize_custom_crm_order_ids,
@@ -203,6 +204,7 @@ CRM_RETRY_DELAY_SECONDS = 3
 CRM_ACTION_TIMEOUT = 15
 CRM_UNLOCKER_FREE_URL = str(getattr(config_module, "CRM_UNLOCKER_FREE_URL", "") or "").strip()
 CRM_UNLOCKER_ALL_URL = str(getattr(config_module, "CRM_UNLOCKER_ALL_URL", "") or "").strip()
+CRM_UNLOCKER_HIGH_VALUE_URL = str(getattr(config_module, "CRM_UNLOCKER_HIGH_VALUE_URL", "") or "").strip()
 CRM_SHIPPING_ALL_URL = str(getattr(config_module, "CRM_SHIPPING_ALL_URL", "") or "").strip()
 CRM_SHIPPING_HIGH_VALUE_URL = str(getattr(config_module, "CRM_SHIPPING_HIGH_VALUE_URL", "") or "").strip()
 CRM_SHIPPING_813_URL = str(getattr(config_module, "CRM_SHIPPING_813_URL", "") or "").strip()
@@ -1829,7 +1831,7 @@ def _apply_runtime_config_from_module():
     global WORK_CLOCK_RESET_ON_FRIDAY_CLOCK_OUT, WORK_CLOCK_SYNC_FROM_PAYCOM
     global WORK_CLOCK_SYNC_BEFORE_CLOCK_IN, WORK_CLOCK_SYNC_AFTER_CLOCK_OUT
     global WORK_STATE_FILE, CRM_MAX_RETRIES, CRM_RETRY_DELAY_SECONDS, CRM_ACTION_TIMEOUT
-    global CRM_UNLOCKER_FREE_URL, CRM_UNLOCKER_ALL_URL
+    global CRM_UNLOCKER_FREE_URL, CRM_UNLOCKER_ALL_URL, CRM_UNLOCKER_HIGH_VALUE_URL
     global CRM_SHIPPING_ALL_URL, CRM_SHIPPING_HIGH_VALUE_URL, CRM_SHIPPING_813_URL, CRM_813_VALIDATOR_URL
     global CRM_813_ORDER_GOODS_URL, CRM_813_BYPASS_URL, CRM_ORDER_GOODS_HIGH_VALUE_URL
     global CRM_ORDER_GOODS_FREE_URL, CRM_ORDER_GOODS_ALL_URL
@@ -1892,6 +1894,7 @@ def _apply_runtime_config_from_module():
     CRM_PUSH_BACK_813_URL = str(getattr(config_module, "CRM_PUSH_BACK_813_URL", CRM_PUSH_BACK_813_URL) or "").strip()
     CRM_UNLOCKER_FREE_URL = str(getattr(config_module, "CRM_UNLOCKER_FREE_URL", CRM_UNLOCKER_FREE_URL) or "").strip()
     CRM_UNLOCKER_ALL_URL = str(getattr(config_module, "CRM_UNLOCKER_ALL_URL", CRM_UNLOCKER_ALL_URL) or "").strip()
+    CRM_UNLOCKER_HIGH_VALUE_URL = str(getattr(config_module, "CRM_UNLOCKER_HIGH_VALUE_URL", "") or "").strip()
     CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS = max(
         0,
         int(getattr(config_module, "CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS", CRM_AUTO_SPLITTER_PREFLIGHT_REUSE_SECONDS)),
@@ -6190,7 +6193,6 @@ CRM_PROCESSING_MODE_PREF_KEYS = (
     "push_back_enabled",
 )
 CRM_PROCESSING_PREF_KEYS = CRM_PROCESSING_GLOBAL_PREF_KEYS + CRM_PROCESSING_MODE_PREF_KEYS
-CRM_RUSH_REPORT_SETTING_KEYS = tuple(key for pair in CRM_RUSH_REPORT_KEYS.values() for key in pair)
 
 
 def _normalize_crm_shipping_filter(value):
@@ -6450,6 +6452,8 @@ def _crm_processing_mode_list_url_for_step(processing_filter, step_key):
             return str(CRM_SHIPPING_HIGH_VALUE_URL or "").strip() or None
         if step_key == "product_separator":
             return str(PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE or "").strip() or None
+        if step_key == "stock_unlocker":
+            return str(CRM_UNLOCKER_HIGH_VALUE_URL or "").strip() or None
         if step_key == "order_goods":
             return str(CRM_ORDER_GOODS_HIGH_VALUE_URL or "").strip() or None
         if step_key == "shipping_bypasser":
@@ -6515,6 +6519,8 @@ def _crm_processing_mode_url_config_key_for_step(processing_filter, step_key):
             return "CRM_SHIPPING_HIGH_VALUE_URL"
         if step_key == "product_separator":
             return "PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE"
+        if step_key == "stock_unlocker":
+            return "CRM_UNLOCKER_HIGH_VALUE_URL"
         if step_key == "order_goods":
             return "CRM_ORDER_GOODS_HIGH_VALUE_URL"
         if step_key == "shipping_bypasser":
@@ -14694,8 +14700,8 @@ def get_config_ui_payload():
     with config_lock:
         importlib.reload(config_module)
         _apply_runtime_config_from_module()
-        for key in dict.fromkeys([*_load_config_assignment_keys(), *CRM_RUSH_REPORT_SETTING_KEYS]):
-            if hasattr(config_module, key) or key in CRM_RUSH_REPORT_SETTING_KEYS:
+        for key in dict.fromkeys([*_load_config_assignment_keys(), *CRM_LINK_SETTING_KEYS]):
+            if hasattr(config_module, key) or key in CRM_LINK_SETTING_KEYS:
                 val = getattr(config_module, key, "")
                 groups[_cfg_group(key)].append({"key": key, "type": _field_kind(val), "value": val})
     return {"success": True, "groups": groups}
@@ -14709,14 +14715,14 @@ def update_config_values(updates):
         with open(CONFIG_FILE, "r", encoding="utf-8-sig") as config_file:
             src = config_file.read()
         keys = _load_config_assignment_keys()
-        allowed = set(keys).union(CRM_RUSH_REPORT_SETTING_KEYS)
+        allowed = set(keys).union(CRM_LINK_SETTING_KEYS)
         bad = [k for k in updates if k not in allowed]
         if bad:
             return False, f"Invalid config keys: {', '.join(sorted(bad))}"
 
         importlib.reload(config_module)
         current = {k: getattr(config_module, k) for k in keys if hasattr(config_module, k)}
-        current.update({k: getattr(config_module, k, "") for k in CRM_RUSH_REPORT_SETTING_KEYS})
+        current.update({k: getattr(config_module, k, "") for k in CRM_LINK_SETTING_KEYS})
         parsed = {}
         for k, raw in updates.items():
             if k in current:

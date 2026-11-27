@@ -25,6 +25,7 @@ const constants = [
   source.match(/^const CRM_PROCESSING_FILTER_SEQUENCE = .*;/m)[0],
   source.match(/^const CRM_PROCESSING_RUSH_TOOL_BUTTON_IDS = \{[\s\S]*?^\};/m)[0],
   source.match(/^const CRM_PROCESSING_STEP_LABELS = \{[\s\S]*?^\};/m)[0],
+  source.match(/^const CRM_LINK_SETTING_GROUPS = \[[\s\S]*?^\];/m)[0],
 ].join('\n');
 const steps = ['stock_unlocker', 'order_goods', 'shipping_bypasser', 'push_back'];
 const tools = ['Unlock', 'OrderGoods', 'ShippingBypasser', 'PushBack'];
@@ -34,6 +35,7 @@ function dashboard() {
   const requests = [];
   const selections = [];
   const errors = [];
+  const confirmations = [];
   const elements = Object.fromEntries([...tools, ...otherTools].map((name) => {
     const classes = new Set();
     return [`crmProcessing${name}ToggleBtn`, {
@@ -49,6 +51,7 @@ function dashboard() {
   }));
   const context = vm.createContext({
     document: { getElementById: (id) => elements[id] || null },
+    window: { confirm(message) { confirmations.push(message); return true; } },
     formatCrmAddressFilterLabel: (mode) => mode.toUpperCase(),
     crmProcessingStatusPayload: { state: {} },
     crmProcessingSelectionPromise: null,
@@ -71,8 +74,29 @@ function dashboard() {
     renderCrmProcessingStatus() {},
   });
   vm.runInContext(`${constants}\n${functions}`, context);
-  return { context, elements, requests, selections, errors };
+  return { context, elements, requests, selections, errors, confirmations };
 }
+
+test('each saved list mode has a settings link for every supported Run tool', () => {
+  const { context } = dashboard();
+  const groups = vm.runInContext('CRM_LINK_SETTING_GROUPS', context);
+  for (const [title, filter] of Object.entries({ Free: 'free', Rush: 'rush', 'High Value': 'high_value', All: 'all', 813: '813' })) {
+    const group = groups.find((group) => group.title === title);
+    assert.equal(group.keys.length, context.crmProcessingAvailableStepsForFilter(filter).length, title);
+  }
+});
+
+test('ALL confirmation names the selected Bypasser and Push Back tools', async () => {
+  const { context, confirmations, requests } = dashboard();
+  Object.assign(context.crmProcessingStatusPayload.state, {
+    processing_filter: 'all', product_separator_enabled: false, auto_splitter_enabled: false,
+    shipping_bypasser_enabled: true, push_back_enabled: true,
+  });
+  await context.startCrmProcessingRun();
+  assert.deepEqual(confirmations, ['ALL mode will run Bypasser, Push Back against their configured lists. Continue?']);
+  assert.equal(requests[0].payload.shipping_bypasser_enabled, true);
+  assert.equal(requests[0].payload.push_back_enabled, true);
+});
 
 test('FREE and ALL render all four enabled stock tools with the subcontractor style', () => {
   const { context, elements } = dashboard();

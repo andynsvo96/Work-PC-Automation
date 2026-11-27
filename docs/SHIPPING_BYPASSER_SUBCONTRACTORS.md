@@ -117,9 +117,10 @@ The four additional machine-local settings are:
 All four supplied reports retain their approval Production Notes filter,
 unordered stock, and quantity range 1–100. The supplied production-date lower
 bounds are November 22, 2022 for FREE and November 24, 2026 for ALL; they are
-fixed report filters, not daily rolling dates. Store these URLs in local
-`config.py`, without session/CSRF tokens. Other computers need their own local
-configuration and authenticated CRM browser session.
+fixed report filters, not daily rolling dates. Set these links in **Settings >
+CRM links & defaults > CRM Links** under **Free** or **All**. The dashboard saves
+them in the machine's `config.py`. Omit session/CSRF tokens from report URLs.
+Each computer needs its own links and authenticated CRM browser session.
 
 The selected **Unlocker**, **Order Goods**, **Bypasser**, and **Push Back**
 buttons are purple in FREE and ALL, in both color themes, to identify their

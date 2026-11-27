@@ -1,5 +1,6 @@
 """Subcontractor report selection and queue snapshots, without running workers."""
 
+import ast
 import inspect
 import tempfile
 import unittest
@@ -68,6 +69,21 @@ class SubcontractorProcessingTests(unittest.TestCase):
                     self.assertFalse(result["success"])
                     self.assertIn(key + " is empty", result["message"])
                     workers[step].assert_not_called()
+
+    def test_high_value_unlocker_prefers_its_override_and_keeps_the_rush_default(self):
+        rush = "https://crm.example/report/rush-unlock"
+        high_value = "https://crm.example/report/high-value-unlock"
+        with ExitStack() as stack:
+            unlocker = custom_tests.CustomCrmProcessingTests()._mock_workers(stack)["stock_unlocker"]
+            stack.enter_context(mock.patch.object(server.config_module, "CRM_LOCKED_URL", rush, create=True))
+            with mock.patch.object(server, "CRM_UNLOCKER_HIGH_VALUE_URL", high_value):
+                self.assertTrue(server._run_crm_processing_step("stock_unlocker", "high_value")["success"])
+                self.assertEqual(unlocker.call_args.kwargs["list_url"], high_value)
+                self.assertTrue(server._run_crm_processing_step("stock_unlocker", "rush")["success"])
+                self.assertEqual(unlocker.call_args.kwargs["list_url"], rush)
+            with mock.patch.object(server, "CRM_UNLOCKER_HIGH_VALUE_URL", ""):
+                self.assertTrue(server._run_crm_processing_step("stock_unlocker", "high_value")["success"])
+                self.assertEqual(unlocker.call_args.kwargs["list_url"], rush)
 
     def test_push_back_subprocess_accepts_free_and_all(self):
         for mode in ("free", "all"):
@@ -199,14 +215,27 @@ class RushContractedProcessingTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(server, "_apply_runtime_config_from_module"))
             stack.enter_context(mock.patch.object(server, "cancel_auto_clock_out_timer"))
             stack.enter_context(mock.patch.object(server, "restore_auto_clock_out_timer_from_state"))
-            fields = {item["key"]: item["value"] for item in server.get_config_ui_payload()["groups"]["crm"]}
-            self.assertEqual(set(fields), set(server.CRM_RUSH_REPORT_SETTING_KEYS))
+            groups = server.get_config_ui_payload()["groups"]
+            fields = {item["key"]: item["value"] for group in (groups["crm"], groups["other"]) for item in group}
+            self.assertEqual(set(fields), set(server.CRM_LINK_SETTING_KEYS))
             self.assertEqual(fields["CRM_PUSH_BACK_RUSH_URL"], "https://crm.example/regular")
-            self.assertEqual(fields["CRM_PUSH_BACK_RUSH_CONTRACTED_URL"], "")
-            fields["CRM_PUSH_BACK_RUSH_CONTRACTED_URL"] = "https://crm.example/contracted"
+            new_links = {
+                "CRM_PUSH_BACK_RUSH_CONTRACTED_URL": "https://crm.example/contracted",
+                "CRM_SHIPPING_BYPASS_FREE_URL": "https://crm.example/free-bypass",
+                "CRM_PUSH_BACK_FREE_URL": "https://crm.example/free-push-back",
+                "CRM_SHIPPING_BYPASS_ALL_URL": "https://crm.example/all-bypass",
+                "CRM_PUSH_BACK_ALL_URL": "https://crm.example/all-push-back",
+                "CRM_UNLOCKER_HIGH_VALUE_URL": "https://crm.example/high-value-unlock",
+            }
+            self.assertTrue(all(fields[key] == "" for key in new_links))
+            fields.update(new_links)
             ok, message = server.update_config_values(fields)
             self.assertTrue(ok, message)
-            self.assertEqual(path.read_text(encoding="utf-8"), source + 'CRM_PUSH_BACK_RUSH_CONTRACTED_URL = "https://crm.example/contracted"\n')
+            saved = ast.parse(path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                {node.targets[0].id: ast.literal_eval(node.value) for node in saved.body},
+                {"CRM_PUSH_BACK_RUSH_URL": "https://crm.example/regular", **new_links},
+            )
 
 
 if __name__ == "__main__":

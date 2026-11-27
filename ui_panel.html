@@ -2148,46 +2148,11 @@ const CRM_RUSH_CONTRACTED_LINK_KEYS = {
   CRM_SHIPPING_BYPASS_URL: 'CRM_SHIPPING_BYPASS_RUSH_CONTRACTED_URL',
   CRM_PUSH_BACK_RUSH_URL: 'CRM_PUSH_BACK_RUSH_CONTRACTED_URL',
 };
-const CRM_LINK_SETTING_KEYS = [
-  'CRM_LOGIN_URL',
-  'CRM_LOCKED_URL',
-  'CRM_UNLOCKER_FREE_URL',
-  'CRM_UNLOCKER_ALL_URL',
-  'CRM_SHIPPING_FREE_URL',
-  'CRM_SHIPPING_RUSH_URL',
-  'CRM_SHIPPING_ALL_URL',
-  'CRM_SHIPPING_HIGH_VALUE_URL',
-  'CRM_813_VALIDATOR_URL',
-  'CRM_813_ORDER_GOODS_URL',
-  'CRM_813_BYPASS_URL',
-  'CRM_ORDER_GOODS_RUSH_URL',
-  'CRM_ORDER_GOODS_FREE_URL',
-  'CRM_ORDER_GOODS_ALL_URL',
-  'CRM_ORDER_GOODS_HIGH_VALUE_URL',
-  'CRM_SHIPPING_BYPASS_URL',
-  'CRM_SHIPPING_BYPASS_HIGH_VALUE_URL',
-  'CRM_PUSH_BACK_RUSH_URL',
-  'CRM_PUSH_BACK_HIGH_VALUE_URL',
-  'CRM_PUSH_BACK_813_URL',
-  'CRM_SHIPPING_URL',
-  'PROCESSOR_LOGIN_URL',
-  'PROCESSOR_LIST_URL',
-  'PROCESSOR_ORDER_URL_TEMPLATE',
-  'CRM_AUTO_SPLITTER_LIST_URL_RUSH',
-  'CRM_AUTO_SPLITTER_LIST_URL_FREE',
-  'CRM_AUTO_SPLITTER_LIST_URL_ALL',
-  'CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE',
-  'PRODUCT_SEPARATOR_LIST_URL_FREE',
-  'PRODUCT_SEPARATOR_LIST_URL_RUSH',
-  'PRODUCT_SEPARATOR_LIST_URL_ALL',
-  'PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE',
-  'PRODUCT_SEPARATOR_LIST_URL',
-  ...Object.values(CRM_RUSH_CONTRACTED_LINK_KEYS),
-];
 const CRM_LINK_LABEL_OVERRIDES = {
   CRM_LOGIN_URL: 'CRM Login',
   CRM_LOCKED_URL: 'Unlocker Rush List',
   CRM_UNLOCKER_FREE_URL: 'Unlocker Free List',
+  CRM_UNLOCKER_HIGH_VALUE_URL: 'Unlocker High Value List',
   CRM_UNLOCKER_ALL_URL: 'Unlocker All List',
   CRM_SHIPPING_FREE_URL: 'Validator Free List',
   CRM_SHIPPING_RUSH_URL: 'Validator Rush List',
@@ -2201,8 +2166,12 @@ const CRM_LINK_LABEL_OVERRIDES = {
   CRM_ORDER_GOODS_ALL_URL: 'Order Goods All List',
   CRM_ORDER_GOODS_HIGH_VALUE_URL: 'Order Goods High Value List',
   CRM_SHIPPING_BYPASS_URL: 'Bypasser Rush List',
+  CRM_SHIPPING_BYPASS_FREE_URL: 'Bypasser Free List',
+  CRM_SHIPPING_BYPASS_ALL_URL: 'Bypasser All List',
   CRM_SHIPPING_BYPASS_HIGH_VALUE_URL: 'Bypasser High Value List',
   CRM_PUSH_BACK_RUSH_URL: 'Push Back Rush List',
+  CRM_PUSH_BACK_FREE_URL: 'Push Back Free List',
+  CRM_PUSH_BACK_ALL_URL: 'Push Back All List',
   CRM_PUSH_BACK_HIGH_VALUE_URL: 'Push Back High Value List',
   CRM_PUSH_BACK_813_URL: 'Push Back 813 List',
   CRM_SHIPPING_URL: 'Legacy Default Shipping List',
@@ -2223,7 +2192,7 @@ const CRM_LINK_LABEL_OVERRIDES = {
 const CRM_LINK_SETTING_GROUPS = [
   {
     title: 'Free',
-    keys: ['CRM_SHIPPING_FREE_URL', 'PRODUCT_SEPARATOR_LIST_URL_FREE', 'CRM_AUTO_SPLITTER_LIST_URL_FREE', 'CRM_UNLOCKER_FREE_URL', 'CRM_ORDER_GOODS_FREE_URL'],
+    keys: ['CRM_SHIPPING_FREE_URL', 'PRODUCT_SEPARATOR_LIST_URL_FREE', 'CRM_AUTO_SPLITTER_LIST_URL_FREE', 'CRM_UNLOCKER_FREE_URL', 'CRM_ORDER_GOODS_FREE_URL', 'CRM_SHIPPING_BYPASS_FREE_URL', 'CRM_PUSH_BACK_FREE_URL'],
   },
   {
     title: 'Rush',
@@ -2231,11 +2200,11 @@ const CRM_LINK_SETTING_GROUPS = [
   },
   {
     title: 'High Value',
-    keys: ['CRM_SHIPPING_HIGH_VALUE_URL', 'PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE', 'CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE', 'CRM_ORDER_GOODS_HIGH_VALUE_URL', 'CRM_SHIPPING_BYPASS_HIGH_VALUE_URL', 'CRM_PUSH_BACK_HIGH_VALUE_URL'],
+    keys: ['CRM_SHIPPING_HIGH_VALUE_URL', 'PRODUCT_SEPARATOR_LIST_URL_HIGH_VALUE', 'CRM_AUTO_SPLITTER_LIST_URL_HIGH_VALUE', 'CRM_UNLOCKER_HIGH_VALUE_URL', 'CRM_ORDER_GOODS_HIGH_VALUE_URL', 'CRM_SHIPPING_BYPASS_HIGH_VALUE_URL', 'CRM_PUSH_BACK_HIGH_VALUE_URL'],
   },
   {
     title: 'All',
-    keys: ['CRM_SHIPPING_ALL_URL', 'PRODUCT_SEPARATOR_LIST_URL_ALL', 'CRM_AUTO_SPLITTER_LIST_URL_ALL', 'CRM_UNLOCKER_ALL_URL', 'CRM_ORDER_GOODS_ALL_URL'],
+    keys: ['CRM_SHIPPING_ALL_URL', 'PRODUCT_SEPARATOR_LIST_URL_ALL', 'CRM_AUTO_SPLITTER_LIST_URL_ALL', 'CRM_UNLOCKER_ALL_URL', 'CRM_ORDER_GOODS_ALL_URL', 'CRM_SHIPPING_BYPASS_ALL_URL', 'CRM_PUSH_BACK_ALL_URL'],
   },
   {
     title: '813',
@@ -2245,6 +2214,10 @@ const CRM_LINK_SETTING_GROUPS = [
     title: 'Core',
     keys: ['CRM_LOGIN_URL', 'CRM_SHIPPING_URL', 'PROCESSOR_LOGIN_URL', 'PROCESSOR_LIST_URL', 'PROCESSOR_ORDER_URL_TEMPLATE', 'PRODUCT_SEPARATOR_LIST_URL'],
   },
+];
+const CRM_LINK_SETTING_KEYS = [
+  ...CRM_LINK_SETTING_GROUPS.flatMap((group) => group.keys),
+  ...Object.values(CRM_RUSH_CONTRACTED_LINK_KEYS),
 ];
 
 function normalizeCrmProcessingFilter(value) {
@@ -6740,6 +6713,9 @@ function openCrmLinkEditor(key) {
   inputLabel.textContent = contracted ? 'Regular Orders' : 'CRM link URL';
   inputLabel.classList.toggle('sr-only', !contracted);
   keyText.textContent = contracted ? '' : key;
+  if (key === 'CRM_UNLOCKER_HIGH_VALUE_URL') {
+    keyText.textContent = 'Uses the regular Rush Unlocker link when empty.';
+  }
   textarea.value = input.value || '';
   openBtn.disabled = !(textarea.value || '').trim();
   openBtn.setAttribute('aria-label', contracted ? 'Open Regular Orders link' : 'Open Link');
@@ -7778,7 +7754,8 @@ async function startCrmProcessingRun(button = null) {
     return;
   }
   if (processingFilter === 'all') {
-    const confirmed = window.confirm('ALL mode will run the selected Validator, Separator, Auto Splitter, Unlocker, and Order Goods steps against their configured queues/lists. Bypasser and Push Back will not run. Continue?');
+    const tools = selectedSteps.map(formatCrmProcessingStepShortLabel).join(', ');
+    const confirmed = window.confirm(`ALL mode will run ${tools} against their configured lists. Continue?`);
     if (!confirmed) {
       setStatus('ALL mode Automate Processing canceled.');
       return;

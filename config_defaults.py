@@ -154,6 +154,7 @@ CRM_LOGIN_URL = "https://crm2.legacy.printfly.com/login"
 CRM_LOCKED_URL = ""
 CRM_UNLOCKER_RUSH_CONTRACTED_URL = ""
 CRM_UNLOCKER_FREE_URL = ""  # Free-mode stock unlocker report.
+CRM_UNLOCKER_HIGH_VALUE_URL = ""  # Optional override of CRM_LOCKED_URL for High Value.
 CRM_SHIPPING_FREE_URL = ""
 CRM_SHIPPING_RUSH_URL = ""
 CRM_SHIPPING_ALL_URL = ""
