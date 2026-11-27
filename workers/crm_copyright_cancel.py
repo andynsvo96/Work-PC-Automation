@@ -6444,7 +6444,7 @@ def _wait_for_salesforce_new_case_form(driver, timeout=30):
     raise CopyrightCancelError("Salesforce New Case form did not open.")
 
 
-def _salesforce_field_control(driver, label_text, selectors):
+def _run_salesforce_case_field_action(driver, label_text, selectors, action, *values):
     return driver.execute_script(
         """
         const labelText = String(arguments[0] || '').replace(/^\\*/, '').trim().toLowerCase();
@@ -6496,6 +6496,7 @@ def _salesforce_field_control(driver, label_text, selectors):
             && rect.bottom > 0 && rect.top < window.innerHeight
             && rect.right > 0 && rect.left < window.innerWidth;
         }
+        function findField() {
         const fieldContainers = all('records-record-layout-item[field-label], lightning-input-field[field-label], [data-target-selection-name]')
           .filter((el) => {
             if (!visible(el)) return false;
@@ -6584,9 +6585,23 @@ def _salesforce_field_control(driver, label_text, selectors):
           if (nearby.length) return nearby[0];
         }
         return null;
-        """,
+        }
+        function clickPoint(element) {
+          if (!element) return null;
+          const rect = element.getBoundingClientRect();
+          return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2};
+        }
+        function setValue(field, value) {
+          const proto = field.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          Object.getOwnPropertyDescriptor(proto, 'value').set.call(field, value);
+          field.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
+        }
+        const field = findField();
+        if (!field) return null;
+        """ + action,
         label_text,
         selectors,
+        *values,
     )
 
 
@@ -6651,210 +6666,50 @@ def _salesforce_order_search_dialog_visible(driver):
 
 
 def _fill_salesforce_case_order_lookup(driver, order_id):
-    field = _salesforce_field_control(driver, "Order Number", "input,button,[role=combobox],.slds-combobox__input")
-    if field is None:
-        raise CopyrightCancelError("Salesforce Case Order Number lookup field was not found.")
-    field.click()
-    time.sleep(0.2)
-    try:
-        field.clear()
-    except Exception:
-        field.send_keys(Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL, "a")
-        field.send_keys(Keys.BACKSPACE)
-    field.send_keys(str(order_id))
-    time.sleep(1)
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
-        option = driver.execute_script(
+        if _salesforce_order_search_dialog_visible(driver):
+            return "advanced"
+        result = _run_salesforce_case_field_action(
+            driver, "Order Number", "input",
             """
-            const orderId = String(arguments[0] || '').trim().toLowerCase();
-            function clean(value) {
-              return (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+            const orderId = String(arguments[2]);
+            const options = all('lightning-base-combobox-item,[role=option],li,a,button,span')
+              .filter(el => visible(el)
+                && /show more results/i.test([el.innerText, el.title, el.getAttribute('aria-label')].join(' '))
+                && [el.innerText, el.title, el.getAttribute('aria-label')].join(' ').includes(orderId))
+              .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+            if (options.length) {
+              const more = options[0].closest('lightning-base-combobox-item,a,li,[role=option],button') || options[0];
+              return {more: clickPoint(more)};
             }
-            function all(selector, root) {
-              const start = root || document;
-              const found = [];
-              const seen = new Set();
-              function add(node) {
-                if (node && !seen.has(node)) {
-                  seen.add(node);
-                  found.push(node);
-                }
-              }
-              function walk(node) {
-                if (!node) return;
-                try {
-                  if (node.querySelectorAll) {
-                    Array.from(node.querySelectorAll(selector)).forEach(add);
-                    Array.from(node.querySelectorAll('*')).forEach((child) => {
-                      if (child.shadowRoot) walk(child.shadowRoot);
-                    });
-                  }
-                } catch (err) {}
-                if (node.shadowRoot) walk(node.shadowRoot);
-              }
-              walk(start);
-              return found;
+            if (!field.value) {
+              field.focus();
+              if (!field.isConnected) return null;
+              field.click();
+              if (!field.isConnected) return null;
+              field.select();
+              return {type: field.getRootNode().activeElement === field};
             }
-            function visible(el) {
-              const rect = el.getBoundingClientRect();
-              const style = window.getComputedStyle(el);
-              return rect.width > 0 && rect.height > 0
-                && style.display !== 'none' && style.visibility !== 'hidden'
-                && rect.bottom > 0 && rect.top < window.innerHeight
-                && rect.right > 0 && rect.left < window.innerWidth;
-            }
-            // Quick lookup suggestions match Salesforce Order Number. They do
-            // not prove that the record belongs to this CRM order, so never
-            // select one here. Advanced Search is mandatory because it exposes
-            // the authoritative Printfly Order Id column.
+            if (field.value !== orderId) return {mismatch: true};
             return null;
             """,
             str(order_id),
         )
-        more = driver.execute_script(
-            """
-            const orderId = String(arguments[0] || '').trim().toLowerCase();
-            function clean(value) {
-              return (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-            }
-            function visible(el) {
-              const rect = el.getBoundingClientRect();
-              const style = window.getComputedStyle(el);
-              return rect.width > 0 && rect.height > 0
-                && style.display !== 'none' && style.visibility !== 'hidden'
-                && rect.bottom > 0 && rect.top < window.innerHeight
-                && rect.right > 0 && rect.left < window.innerWidth;
-            }
-            const nodes = Array.from(document.querySelectorAll('lightning-base-combobox-item,[role=option],li,a,button,div,span'));
-            const moreOptions = nodes
-              .filter((el) => {
-                if (!visible(el)) return false;
-                const text = clean(`${el.innerText || ''} ${el.getAttribute('title') || ''} ${el.getAttribute('aria-label') || ''}`);
-                return text.includes('show more results') && (!orderId || text.includes(orderId));
-              })
-              .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
-            const more = moreOptions[0];
-            if (!more) return null;
-            const clickable = more.closest('lightning-base-combobox-item,a,li,[role=option]') || more;
-            clickable.scrollIntoView({block: 'center', inline: 'center'});
-            return clickable;
-            """,
-            str(order_id),
-        )
-        if more is not None:
-            for activate_more in ("enter", "events", "center"):
-                try:
-                    if activate_more == "enter":
-                        field.send_keys(Keys.ENTER)
-                    elif activate_more == "events":
-                        driver.execute_script(
-                            """
-                            const option = arguments[0];
-                            const target = option.closest('lightning-base-combobox-item,[role=option],a,li,button') || option;
-                            target.scrollIntoView({block: 'center', inline: 'center'});
-                            for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
-                              target.dispatchEvent(new MouseEvent(type, {bubbles: true, cancelable: true, view: window}));
-                            }
-                            """,
-                            more,
-                        )
-                    elif not _click_element_center(driver, more):
-                        continue
-                except Exception:
-                    continue
-                deadline_open = time.monotonic() + 5
-                while time.monotonic() < deadline_open:
+        if result and result.get("mismatch"):
+            raise CopyrightCancelError("Salesforce Case Order Number lookup contains a different search.")
+        if result and result.get("type"):
+            driver.execute_cdp_cmd("Input.insertText", {"text": str(order_id)})
+        if result and result.get("more"):
+            point = result["more"]
+            if _click_viewport_point(driver, point["x"], point["y"]):
+                opened = time.monotonic() + 5
+                while time.monotonic() < opened:
                     if _salesforce_order_search_dialog_visible(driver):
                         return "advanced"
                     time.sleep(0.25)
-        search_button = driver.execute_script(
-            """
-            const field = arguments[0];
-            function clean(value) {
-              return (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-            }
-            function all(selector, root) {
-              const start = root || document;
-              const found = [];
-              const seen = new Set();
-              function add(node) {
-                if (node && !seen.has(node)) {
-                  seen.add(node);
-                  found.push(node);
-                }
-              }
-              function walk(node) {
-                if (!node) return;
-                try {
-                  if (node.querySelectorAll) {
-                    Array.from(node.querySelectorAll(selector)).forEach(add);
-                    Array.from(node.querySelectorAll('*')).forEach((child) => {
-                      if (child.shadowRoot) walk(child.shadowRoot);
-                    });
-                  }
-                } catch (err) {}
-                if (node.shadowRoot) walk(node.shadowRoot);
-              }
-              walk(start);
-              return found;
-            }
-            function visible(el) {
-              const rect = el.getBoundingClientRect();
-              const style = window.getComputedStyle(el);
-              return rect.width > 0 && rect.height > 0
-                && style.display !== 'none' && style.visibility !== 'hidden'
-                && rect.bottom > 0 && rect.top < window.innerHeight
-                && rect.right > 0 && rect.left < window.innerWidth;
-            }
-            const form = field.closest('.slds-form-element, lightning-input-field, .uiInput, .forcePageBlockSectionRow')
-              || field.parentElement
-              || document;
-            const fr = field.getBoundingClientRect();
-            const controls = all('button,a,[role=button],lightning-button-icon,lightning-icon,.slds-input__icon', form)
-              .filter((el) => {
-                if (!visible(el) || el === field) return false;
-                const text = clean(`${el.innerText || ''} ${el.value || ''} ${el.getAttribute('title') || ''} ${el.getAttribute('aria-label') || ''} ${el.getAttribute('alternative-text') || ''} ${el.getAttribute('icon-name') || ''}`);
-                const rect = el.getBoundingClientRect();
-                const searchText = text.includes('search') || text.includes('lookup') || text.includes('utility:search');
-                const besideLookup = rect.left >= fr.right - 12
-                  && rect.left <= fr.right + 80
-                  && Math.abs((rect.top + rect.height / 2) - (fr.top + fr.height / 2)) < 36;
-                return searchText || besideLookup;
-              })
-              .sort((a, b) => {
-                const ar = a.getBoundingClientRect();
-                const br = b.getBoundingClientRect();
-                const ad = Math.abs(ar.left - fr.right) + Math.abs((ar.top + ar.height / 2) - (fr.top + fr.height / 2));
-                const bd = Math.abs(br.left - fr.right) + Math.abs((br.top + br.height / 2) - (fr.top + fr.height / 2));
-                return ad - bd;
-              });
-            const target = controls[0];
-            if (!target) return null;
-            const clickable = target.closest('button,a,[role=button]') || target;
-            clickable.scrollIntoView({block: 'center', inline: 'center'});
-            return clickable;
-            """,
-            field,
-        )
-        if search_button is not None:
-            if _click_element_center(driver, search_button):
-                deadline_open = time.monotonic() + 5
-                while time.monotonic() < deadline_open:
-                    if _salesforce_order_search_dialog_visible(driver):
-                        return "advanced"
-                    time.sleep(0.25)
-        try:
-            field.send_keys(Keys.ENTER)
-            deadline_open = time.monotonic() + 3
-            while time.monotonic() < deadline_open:
-                if _salesforce_order_search_dialog_visible(driver):
-                    return "advanced"
-                time.sleep(0.25)
-        except Exception:
-            pass
         time.sleep(0.5)
-    raise CopyrightCancelError(f'Salesforce order lookup did not show more results for "{order_id}".')
+    raise CopyrightCancelError(f'Salesforce Case Order Number lookup did not open Advanced Search for "{order_id}".')
 
 
 def _select_salesforce_advanced_search_order(driver, order_id):
@@ -7207,7 +7062,7 @@ def _select_salesforce_advanced_search_order(driver, order_id):
 def _click_salesforce_case_picklist_option(driver, value):
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
-        option = driver.execute_script(
+        point = driver.execute_script(
             """
             const expected = String(arguments[0] || '').trim().toLowerCase();
             function clean(value) {
@@ -7252,40 +7107,54 @@ def _click_salesforce_case_picklist_option(driver, value):
             if (!options.length) return null;
             const option = options[0].closest('[role=option],lightning-base-combobox-item,li,a') || options[0];
             option.scrollIntoView({block: 'center', inline: 'center'});
-            return option;
+            const rect = option.getBoundingClientRect();
+            return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2};
             """,
             value,
         )
-        if option is not None and _click_element_center(driver, option):
+        if point and _click_viewport_point(driver, point["x"], point["y"]):
             return True
         time.sleep(0.5)
     return False
 
 
 def _set_salesforce_case_status(driver):
-    field = _salesforce_field_control(driver, "Status", "button,[role=combobox],a,input,.slds-combobox__input,.slds-input_faux")
-    if field is None:
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        clicked = _run_salesforce_case_field_action(
+            driver, "Status", "button,[role=combobox],a,input,.slds-combobox__input,.slds-input_faux",
+            """
+            field.click();
+            return true;
+            """,
+        )
+        if clicked:
+            break
+        time.sleep(0.25)
+    else:
         raise CopyrightCancelError("Salesforce Case Status field was not found.")
-    field.click()
-    time.sleep(0.5)
     if not _click_salesforce_case_picklist_option(driver, SALESFORCE_CASE_STATUS_REFUND_PENDING):
-        try:
-            driver.switch_to.active_element.send_keys(Keys.ARROW_DOWN)
-            time.sleep(0.2)
-            driver.switch_to.active_element.send_keys(Keys.ARROW_DOWN)
-            time.sleep(0.2)
-        except Exception:
-            pass
-        if not _click_salesforce_case_picklist_option(driver, SALESFORCE_CASE_STATUS_REFUND_PENDING):
-            raise CopyrightCancelError("Salesforce Case Status option Refund Pending was not found.")
-    time.sleep(0.5)
+        raise CopyrightCancelError("Salesforce Case Status option Refund Pending was not found.")
 
 
 def _fill_salesforce_case_subject(driver, subject):
-    field = _salesforce_field_control(driver, "Subject", "input,textarea")
-    for _ in range(6):
-        if field is not None:
-            break
+    for _ in range(7):
+        filled = _run_salesforce_case_field_action(
+            driver, "Subject", "input,textarea",
+            """
+            const subject = arguments[2];
+            field.focus();
+            if (!field.isConnected) return false;
+            setValue(field, subject);
+            field.dispatchEvent(new Event('change', {bubbles: true}));
+            field.blur();
+            const current = findField();
+            return !!current && current.value === subject;
+            """,
+            subject,
+        )
+        if filled:
+            return
         driver.execute_script(
             """
             const scrollers = Array.from(document.querySelectorAll('*')).filter((el) => {
@@ -7311,28 +7180,7 @@ def _fill_salesforce_case_subject(driver, subject):
             """
         )
         time.sleep(0.4)
-        field = _salesforce_field_control(driver, "Subject", "input,textarea")
-    if field is None:
-        raise CopyrightCancelError("Salesforce Case Subject field was not found.")
-    driver.execute_script(
-        """
-        const field = arguments[0];
-        const value = arguments[1];
-        field.scrollIntoView({block: 'center', inline: 'center'});
-        field.focus();
-        const proto = field.tagName && field.tagName.toLowerCase() === 'textarea'
-          ? window.HTMLTextAreaElement.prototype
-          : window.HTMLInputElement.prototype;
-        const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
-        setter.call(field, value);
-        field.dispatchEvent(new Event('input', {bubbles: true}));
-        field.dispatchEvent(new Event('change', {bubbles: true}));
-        field.blur();
-        """,
-        field,
-        subject,
-    )
-    time.sleep(0.3)
+    raise CopyrightCancelError("Salesforce Case Subject could not be set and verified.")
 
 
 def _click_salesforce_case_save(driver):
